@@ -498,9 +498,13 @@ body[data-view="order"] .page-heading .btn.primary{animation:none}
 </style>
 
 <style id="skyryse-qa-fixes">
+.sidebar .nav [data-view="order"],.sidebar .nav [data-view="wis"]{display:none!important}
+body[data-module="wi"] .sidebar .nav>*{display:none!important}
+.ecr-choices{margin-top:8px}.ecr-edit-link{margin-top:14px;display:flex;flex-wrap:wrap;align-items:center;gap:6px}.ecr-list{list-style:none;margin:0 0 12px;padding:0;display:grid;gap:6px}.ecr-list li{padding:8px 12px;border:1px solid #E5E5EA;border-radius:10px}.ecr-list small{display:block;color:#6E6E73;font-size:13px}.ecr-banner{margin:0 0 18px}#ecr-jira-text{font-family:var(--mono);font-size:13px}
 .closed-as{background:#FDECEA!important;color:#B42318!important}.closed-as-obsolete{background:#F2F2F4!important;color:#3A3A3C!important}.closure-info{margin-top:10px}
 .brand[data-action="nav"]{position:relative}
-.brand-count{position:absolute;top:-4px;right:6px;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:#0A6CFF;color:#fff;font:600 11px/18px var(--sans);text-align:center;z-index:2;pointer-events:none}
+.brand-count{position:absolute;top:0;left:calc(100% + 6px);right:auto;min-width:17px;height:17px;padding:0 4px;border-radius:999px;background:#0A6CFF;color:#fff;font:600 10px/17px var(--sans);text-align:center;z-index:2;pointer-events:none;box-shadow:0 0 0 2px #0B0B0C}
+@media (max-width:700px){.brand-count{left:auto;right:-10px;top:-6px}}
 .brand-count[hidden]{display:none}
 .dash-assign{margin-top:16px;position:relative;z-index:1}
 .asg-item{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px}
@@ -1430,6 +1434,47 @@ main a{min-height:24px;display:inline-flex;align-items:center}
     return { ok: true, message: 'Assignment marked done.' };
   }
   const opAssignee = (state, orderId, opId) => (Array.isArray(state.assignments) ? state.assignments : []).find(a => a.status === 'Open' && a.type === 'op' && a.orderId === orderId && a.opId === opId)?.assignee || null;
+  const ECR_TYPES = Object.freeze({ process: 'Process ECR · update master WI', design: 'Design ECR · change the design' });
+  const ecrList = state => { if (!Array.isArray(state.ecrRequests)) state.ecrRequests = []; return state.ecrRequests; };
+  function submitECRRequest(state, input) {
+    { const d = denied('submit-ecr', 'submit an ECR'); if (d) return d; }
+    const list = ecrList(state);
+    const type = String(input?.type ?? '');
+    if (!Object.hasOwn(ECR_TYPES, type)) return fail('Choose a process or design ECR.');
+    const title = String(input?.title ?? '').trim(), description = String(input?.description ?? '').trim(), reason = String(input?.reason ?? '').trim();
+    if (!str(title, 120)) return fail('Give the ECR a short title (up to 120 characters).');
+    if (!str(description, 1000)) return fail('Describe the change (up to 1,000 characters).');
+    if (!str(reason, 500)) return fail('Explain why the change is needed (up to 500 characters).');
+    let wi = null, partNumber = String(input?.partNumber ?? '').trim();
+    if (type === 'process') {
+      wi = findWI(state, input.wiId, input.wiRevision);
+      if (!wi) return fail('Choose the master WI this process change applies to.');
+      partNumber = wi.partNumber;
+    } else if (!partDefinition(partNumber)) return fail('Choose the part number for the design change.');
+    const order = input?.orderId ? state.orders.find(o => o.id === input.orderId) : null;
+    const n = list.length + 1;
+    const entry = { id: `ECR-${String(n).padStart(4, '0')}`, type, title, description, reason, partNumber, ...(wi ? { wiId: wi.id, wiRevision: wi.revision } : {}), ...(order ? { orderId: order.id } : {}), status: type === 'process' ? 'Open' : 'Jira request pending', requestedBy: actor(state), at: new Date().toISOString() };
+    if (type === 'design') entry.jira = { project: 'ECR', issueType: 'ECR Request', summary: `[${partNumber}] ${title}`, description: `${description}\n\nReason: ${reason}\nPart: ${partNumber}${order ? `\nWork order: ${order.id}` : ''}\nRequested by: ${entry.requestedBy.name} (${entry.requestedBy.credentialId})\nMES reference: ${entry.id}` };
+    state.ecrRequests = [...list, entry].slice(-500);
+    if (wi) wiLog(state, wi, `${entry.id} process ECR submitted: ${title}.`);
+    if (order) record(state, order, `${entry.id} ${type} ECR submitted: ${title}.`);
+    return { ok: true, id: entry.id, message: type === 'process' ? `${entry.id} submitted. It will be flagged when ${wi.id} is revised.` : `${entry.id} created. Send the Jira ECR ticket request, then record the Jira key.` };
+  }
+  function linkECRJira(state, id, key, url) {
+    const e = ecrList(state).find(x => x.id === id);
+    if (!e || e.type !== 'design') return fail('Design ECR not found.');
+    const k = String(key ?? '').trim().toUpperCase(), u = String(url ?? '').trim();
+    if (!/^[A-Z][A-Z0-9]+-\d+$/.test(k)) return fail('Enter the Jira key, for example ECR-123.');
+    if (u && !/^https:\/\/[^\s]+$/.test(u)) return fail('The Jira link must be a full https:// address.');
+    e.jira = { ...e.jira, key: k, ...(u ? { url: u } : {}), linkedAt: new Date().toISOString(), linkedBy: actor(state) };
+    e.status = 'In Jira';
+    return { ok: true, message: `${e.id} linked to Jira ${k}.` };
+  }
+  function openProcessECRs(state, wiId) { return ecrList(state).filter(e => e.type === 'process' && e.wiId === wiId && ['Open', 'Incorporating'].includes(e.status)); }
+  function incorporateECRs(state, wiId, revision, ids) {
+    const chosen = new Set(Array.isArray(ids) ? ids : []);
+    ecrList(state).filter(e => e.type === 'process' && e.wiId === wiId && e.status === 'Open' && chosen.has(e.id)).forEach(e => { e.status = 'Incorporating'; e.incorporatedIn = revision; });
+  }
   const CLOSURE_REASONS = Object.freeze(['Obsolete', 'Scrap']);
   function requestOrderClosure(state, id, input) {
     if (!can('adjust-wo') && !can('approve-wo')) return fail('Your role cannot request closing a work order. Ask Manufacturing or Quality Engineering.');
@@ -1734,7 +1779,9 @@ main a{min-height:24px;display:inline-flex;align-items:center}
     const at = new Date().toISOString();
     state.masterWIs.filter(item => item.id === wi.id && item.status === 'Released').forEach(item => { item.status = 'Obsolete'; item.obsoletedAt = at; wiLog(state, item, `Superseded by Rev ${wi.revision}.`); });
     wi.status = 'Released'; wi.releasedAt = at; wi.releasedBy = actor(state);
-    wiLog(state, wi, 'Released by QA.');
+    const incorporated = (Array.isArray(state.ecrRequests) ? state.ecrRequests : []).filter(e => e.type === 'process' && e.wiId === wi.id && e.status === 'Incorporating' && e.incorporatedIn === wi.revision);
+    incorporated.forEach(e => { e.status = 'Incorporated'; e.incorporatedAt = at; });
+    wiLog(state, wi, `Released by QA.${incorporated.length ? ` Incorporates ${incorporated.map(e => e.id).join(', ')}.` : ''}`);
     return { ok: true, message: `${wiKey(wi)} released. New work orders will be cloned from this revision.` };
   }
 
@@ -2971,7 +3018,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
     return { version: 3, profile: defaultProfile(), orders: [], activity: [] };
   }
 
-  const MES = { NETSUITE_STOCK, availableLots, lotInStock, woRevLabel, nextWoRev, ensureRevisions, revisionEntries, rollWorkOrderRevision, addSavedView, removeSavedView, ensureSavedViews, stepLetter, addAttachment, removeAttachment, aogActive, aogDue, aogMessage, logAogBroadcast, resolveAog, AOG_THREAD, setSchedule, scheduleDays, dateOnly, editOrderOperation, AIRCRAFT, stockedUnits, setWIStepImage, PROFILE_OPTIONS, profileOptionFor, selectProfile, TORQUE_UNITS, isTorqueTool, torqueValid, inventoryReadiness, assignSerial, voidSerial, nextSerial, orderSerials, isSerialized, SERIALIZED_PARTS, moveToInventory, markNetSuitePosted, netsuiteCsv, ensureMasterWIs, findWI, wiKey, nextWIRevision, addMasterWI, updateMasterWI, saveWIOperations, releaseMasterWI, reviseMasterWI, setStepCheck, BUYOFF_TYPES, OP_CLASSIFICATIONS, EXTERNAL_CLASS, INSPECTION_CLASS, ATP_CLASS, atpPending, pushATPSoftware, reviewATPPush, linkATPSoftware, addPurchaseOrder, CLOSURE_REASONS, requestOrderClosure, decideOrderClosure, ASSIGN_TYPES, assignWork, completeAssignment, syncAssignments, opAssignee, INSPECTION_BUYOFF_TYPES, pendingSequenceChange, inspectionGate, firstInsertIndex, addOrderOperation, removeOrderOperation, approveSequenceChange, toolCheck, stampCheck, stampCredential, stampHolderFor, CAL_TOOLS, CAL_SNAPSHOT, STAMP_HOLDERS, setMaterialLot, PEDIGREES, PRIORITIES, SUBCATEGORIES, PART_CATALOG, partDefinition, revisionLabel, requiresReleaseQA, releaseApproval, approveRelease, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, approveECR, approveEngineeringChange, SITES, orderSite, MESSAGE_TARGETS, seed, validate, upgrade, getOrder, summary, canAdvance, advance, setMaterial, setPriority, completeOperation, closeOrder, addOrder, addAdhocOrder, splitOrder, requestPedigreeChange, approvePedigreeChange, peerReviewMasterWI, dispositionTicket, DISPOSITIONS, ADHOC_ONLY, CALLOUTS, GROUNDING, FOD_LEVELS, CONSUMABLES, addNote, blockingTickets, createTicket, resolveTicket, updateProfile, attachEvidence, reviewEvidence, removeEvidence, addMessage, setSlackThread, slackThreadValid };
+  const MES = { NETSUITE_STOCK, availableLots, lotInStock, woRevLabel, nextWoRev, ensureRevisions, revisionEntries, rollWorkOrderRevision, addSavedView, removeSavedView, ensureSavedViews, stepLetter, addAttachment, removeAttachment, aogActive, aogDue, aogMessage, logAogBroadcast, resolveAog, AOG_THREAD, setSchedule, scheduleDays, dateOnly, editOrderOperation, AIRCRAFT, stockedUnits, setWIStepImage, PROFILE_OPTIONS, profileOptionFor, selectProfile, TORQUE_UNITS, isTorqueTool, torqueValid, inventoryReadiness, assignSerial, voidSerial, nextSerial, orderSerials, isSerialized, SERIALIZED_PARTS, autoAssignSerials, moveToInventory, markNetSuitePosted, netsuiteCsv, ensureMasterWIs, findWI, wiKey, nextWIRevision, addMasterWI, updateMasterWI, saveWIOperations, releaseMasterWI, reviseMasterWI, setStepCheck, BUYOFF_TYPES, OP_CLASSIFICATIONS, EXTERNAL_CLASS, INSPECTION_CLASS, ATP_CLASS, atpPending, pushATPSoftware, reviewATPPush, linkATPSoftware, addPurchaseOrder, CLOSURE_REASONS, requestOrderClosure, ECR_TYPES, submitECRRequest, linkECRJira, openProcessECRs, incorporateECRs, decideOrderClosure, ASSIGN_TYPES, assignWork, completeAssignment, syncAssignments, opAssignee, INSPECTION_BUYOFF_TYPES, pendingSequenceChange, inspectionGate, firstInsertIndex, addOrderOperation, removeOrderOperation, approveSequenceChange, toolCheck, stampCheck, stampCredential, stampHolderFor, CAL_TOOLS, CAL_SNAPSHOT, STAMP_HOLDERS, setMaterialLot, PEDIGREES, PRIORITIES, SUBCATEGORIES, PART_CATALOG, partDefinition, revisionLabel, requiresReleaseQA, releaseApproval, approveRelease, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, approveECR, approveEngineeringChange, SITES, orderSite, MESSAGE_TARGETS, seed, validate, upgrade, getOrder, summary, canAdvance, advance, setMaterial, setPriority, completeOperation, closeOrder, addOrder, addAdhocOrder, splitOrder, requestPedigreeChange, approvePedigreeChange, peerReviewMasterWI, dispositionTicket, DISPOSITIONS, ADHOC_ONLY, CALLOUTS, GROUNDING, FOD_LEVELS, CONSUMABLES, addNote, blockingTickets, createTicket, resolveTicket, updateProfile, attachEvidence, reviewEvidence, removeEvidence, addMessage, setSlackThread, slackThreadValid };
   if (typeof module !== 'undefined' && module.exports) module.exports = MES;
   if (root) root.MES = MES;
 })(typeof window !== 'undefined' ? window: null);
@@ -3199,7 +3246,8 @@ function renderWIDetail() {
   return `<section aria-labelledby="wi-title"><div class="page-heading"><div><p class="wi-eyebrow mono">${esc(wi.partNumber)} · Part Rev ${esc(wi.partRevision)}</p><h1 id="wi-title" tabindex="-1">${esc(wi.id)} Rev ${esc(wi.revision)} ${badge(wi.status)}</h1><p>${esc(wi.title)}</p></div><div class="heading-actions">
     ${wi.status === 'Released' ? `<button class="btn primary" data-action="wi-create-order" data-wi="${esc(wi.id)}" data-rev="${esc(wi.revision)}">${icon('plus')} Create work order</button>${hasDraft ? '' : `<button class="btn" data-action="wi-revise">Revise to Rev ${esc(MES.nextWIRevision(state, wi.id))}</button>`}` : ''}
     ${draft ? `${wi.peerReview ? `<span class="pill ready" title="${esc(wi.peerReview.name)} · ${esc(wi.peerReview.credentialId)}">Peer reviewed · ${esc(wi.peerReview.name)}</span>` : skCan('peer-review-wi') ? `<button class="btn" data-action="wi-peer-review">ME peer review Rev ${esc(wi.revision)}</button>` : '<span class="pill missing">Awaiting ME peer review</span>'}<button class="btn primary" data-action="wi-release" ${wi.peerReview ? '' : 'disabled'} title="${wi.peerReview ? 'Release this revision' : 'Peer review first'}">QE release Rev ${esc(wi.revision)}</button>` : ''}
-    <button class="btn dark" data-action="nav" data-view="wis">Master WI library ${icon('arrow')}</button></div></div>
+    ${skCan('submit-ecr') && wi.status === 'Released' ? `<button class="btn" data-action="ecr-process-wi">Submit process ECR</button>` : ''}<button class="btn dark" data-action="nav" data-view="wis">Master WI library ${icon('arrow')}</button></div></div>
+    ${(() => { const list = (state.ecrRequests || []).filter(e => e.type === 'process' && e.wiId === wi.id && (e.status === 'Open' || (e.status === 'Incorporating' && e.incorporatedIn === wi.revision))); return list.length ? `<div class="inline-info warning ecr-banner" role="status">${icon('info')}<p><strong>${draft ? `ECRs to incorporate in Rev ${esc(wi.revision)}` : 'Open process ECRs on this work instruction'}</strong><br>${list.map(e => `${esc(e.id)} · ${esc(e.title)}${e.status === 'Incorporating' ? ' (marked for this revision)' : ''}`).join('<br>')}</p></div>` : ''; })()}
     <div class="wi-layout">
       <section class="panel" aria-labelledby="wi-release-heading"><div class="panel-head"><h2 id="wi-release-heading">Release</h2>${badge(wi.status)}</div><div class="panel-body">
         ${draft ? `<form id="wi-header-form" class="wi-title-form"><div class="field"><label for="wi-title-input">Title</label><input id="wi-title-input" name="title" maxlength="120" required value="${esc(wi.title)}"></div><button class="btn" type="submit">Save title</button><p id="wi-header-error" class="form-error" role="alert"></p></form>
@@ -3538,6 +3586,10 @@ function dashboardTasks(){
     if(skCan('operate')&&o.status==='Building'){const cur=o.operations.find(x=>!x.done);if(cur)add('Floor',{title:`Op ${operationNumber(o,cur.id)} · ${cur.title}`,o,op:cur,tab:'operations',why:`${o.operations.filter(x=>x.done).length} of ${o.operations.length} operations complete`});}
     for(let i=start;i<tasks.length;i++)tasks[i].aog=aog;
   });
+  (state.ecrRequests||[]).forEach(e=>{
+    if(e.type==='design'&&e.status==='Jira request pending'&&(skCan('edit-wi')||skCan('approve-wo')||e.requestedBy?.credentialId===me.credentialId))add('Engineering',{title:`Send ${e.id} to Jira`,ecr:e,why:`${e.partNumber} · ${e.title}`});
+    if(e.type==='process'&&e.status==='Open'&&skCan('edit-wi'))add('Engineering',{title:`Incorporate ${e.id} in ${e.wiId}`,wi:(state.masterWIs||[]).find(w=>w.id===e.wiId&&w.status==='Released')||(state.masterWIs||[]).find(w=>w.id===e.wiId),why:e.title});
+  });
   (state.masterWIs||[]).filter(w=>w.status==='Draft').forEach(w=>{
     if(skCan('peer-review-wi')&&!w.peerReview)add('Master WI',{title:`Peer review ${w.id} Rev ${w.revision}`,wi:w,why:w.title});
     else if(skCan('approve-wi')&&w.peerReview)add('Master WI',{title:`Release ${w.id} Rev ${w.revision}`,wi:w,why:w.title});
@@ -3564,13 +3616,21 @@ function assignmentRow(a,mine){
   const manual=['create-wo','add-op'].includes(a.type);
   return `<li class="asg-item"><button class="task-row" data-action="assignment-open" data-id="${esc(a.id)}"><span class="task-main"><strong>${esc(assignmentLabel(a))}</strong><small>${mine?`Assigned by ${esc(a.by?.name||'')}`:`Assigned to ${esc(a.assignee.name)}`}${a.due?` · due ${esc(a.due)}`:''}${a.note?` · ${esc(a.note)}`:''}</small></span>${a.due&&a.due<new Date().toISOString().slice(0,10)?'<span class="pill aog">Overdue</span>':''}<span class="task-go" aria-hidden="true">${icon('arrow')}</span></button>${manual||!mine?`<button class="btn quiet asg-done" data-action="assignment-done" data-id="${esc(a.id)}">${mine?'Mark done':'Close'}</button>`:''}</li>`;
 }
+const ASSIGN_ELIGIBLE={
+  'add-op':o=>['Draft','Kitting','Building'].includes(o.status)&&!MES.engineeringChange(o),
+  'approve-ecr':o=>!!MES.engineeringChange(o),
+  split:o=>['Draft','Kitting'].includes(o.status)&&o.quantity>=2&&!MES.engineeringChange(o),
+  op:o=>o.operations.some(x=>!x.done),
+  ticket:o=>o.tickets.some(t=>t.status==='Open'),
+  'review-push':o=>o.operations.some(op=>MES.atpPending(op).length)
+};
 function assignDialog(){
   const users=window.skAuth?.users?.()||[];
   const orders=state.orders.filter(o=>o.status!=='Closed');
   const pushes=state.orders.flatMap(o=>o.operations.flatMap(op=>MES.atpPending(op).map(p=>({o,op,p}))));
   const wis=(state.masterWIs||[]).filter(w=>w.status==='Draft');
   openDialog('Assign work',`<form id="assign-form"><div class="form-grid">
-    <div class="field"><label for="asg-type">What</label><select id="asg-type" name="type" required>${Object.entries(MES.ASSIGN_TYPES).map(([k,v])=>`<option value="${k}">${esc(v)}</option>`).join('')}</select></div>
+    <div class="field"><label for="asg-type">What</label><select id="asg-type" name="type" required>${Object.entries(MES.ASSIGN_TYPES).map(([k,v])=>{const n=k==='create-wo'?null:k==='review-wi'?wis.length:state.orders.filter(o=>o.status!=='Closed'&&ASSIGN_ELIGIBLE[k]?.(o)).length;return `<option value="${k}" ${n===0?'disabled':''}>${esc(v)}${n===null?'':n===0?' · none open':` · ${n}`}</option>`;}).join('')}</select></div>
     <div class="field"><label for="asg-user">Assign to</label><select id="asg-user" name="assignee" required><option value="">Choose a person…</option>${users.map(u=>`<option value="${esc(u.username)}" data-name="${esc(u.name)}">${esc(u.name)} · ${esc((window.skAuth.ROLES.find(r=>r.key===u.role)||{}).label||u.role)}</option>`).join('')}</select></div>
     <div class="field wide asg-f" data-for="add-op approve-ecr split op ticket"><label for="asg-order">Work order</label><select id="asg-order" name="orderId">${orders.map(o=>`<option value="${esc(o.id)}">${esc(o.id)} · ${esc(o.partNumber)} · ${esc(o.status)}</option>`).join('')}</select></div>
     <div class="field wide asg-f" data-for="op"><label for="asg-op">Operation</label><select id="asg-op" name="opId"></select></div>
@@ -3580,12 +3640,17 @@ function assignDialog(){
     <div class="field"><label for="asg-due">Due <span class="muted">(optional)</span></label><input id="asg-due" name="due" type="date"></div>
     <div class="field"><label for="asg-note">Note <span class="muted">(optional)</span></label><input id="asg-note" name="note" maxlength="300"></div>
   </div><p id="assign-error" class="form-error" role="alert"></p><div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Cancel</button><button class="btn primary" type="submit">Assign</button></div></form>`);
+  {const t=document.getElementById('asg-type');if(t.selectedOptions[0]?.disabled){const first=[...t.options].find(o=>!o.disabled);if(first)t.value=first.value;}}
   syncAssignForm();
 }
 function syncAssignForm(){
   const f=document.getElementById('assign-form');if(!f)return;
   const type=f.elements.type.value;
   f.querySelectorAll('.asg-f').forEach(el=>{el.hidden=!el.dataset.for.split(' ').includes(type);});
+  const oSel=f.elements.orderId,keep=oSel.value,elig=state.orders.filter(o=>o.status!=='Closed'&&(!ASSIGN_ELIGIBLE[type]||ASSIGN_ELIGIBLE[type](o)));
+  const why={'approve-ecr':o=>`${MES.engineeringChange(o).ecrId||MES.engineeringChange(o).id} · ${MES.engineeringChange(o).status}`,split:o=>`qty ${o.quantity}`,ticket:o=>`${o.tickets.filter(t=>t.status==='Open').length} open NC/IDR`,'review-push':o=>'software push pending'}[type];
+  oSel.innerHTML=elig.length?elig.map(o=>`<option value="${esc(o.id)}" ${o.id===keep?'selected':''}>${esc(o.id)} · ${esc(o.partNumber)} · ${esc(o.status)}${why?` · ${esc(why(o))}`:''}</option>`).join(''):'<option value="">No work orders need this right now</option>';
+  f.querySelector('[type=submit]').disabled=ASSIGN_ELIGIBLE[type]?!elig.length:false;
   const o=MES.getOrder(state,f.elements.orderId.value);
   const opSel=f.elements.opId,tSel=f.elements.ticketId;
   opSel.innerHTML=o?o.operations.filter(x=>!x.done).map(x=>`<option value="${esc(x.id)}">Op ${operationNumber(o,x.id)} · ${esc(x.title)}${(()=>{const a=MES.opAssignee(state,o.id,x.id);return a?` · assigned to ${esc(a.name)}`:'';})()}</option>`).join('')||'<option value="">No open operations</option>':'';
@@ -3637,13 +3702,63 @@ document.addEventListener('submit',e=>{
   if(f.id==='closure-form'){e.preventDefault();const r=MES.requestOrderClosure(state,selectedId,{reason:f.elements.reason.value,note:f.elements.note.value});if(!r.ok){$('#closure-error').textContent=r.message;return;}if(!save())return;$('#dialog').close();render();notify(r.message);}
   if(f.id==='closure-decide-form'){e.preventDefault();const r=MES.decideOrderClosure(state,selectedId,e.submitter?.value==='approve',f.elements.note.value);if(!r.ok){$('#closure-decide-error').textContent=r.message;return;}if(!save())return;$('#dialog').close();render();notify(r.message);}
 });
+function ecrChooser(){
+  const o=view==='order'?order():null;
+  openDialog('Engineering change',`<p>What kind of change is this?</p><div class="wiz-choices ecr-choices">
+    <button type="button" class="wiz-choice" data-action="ecr-new" data-type="process"><strong>Process ECR</strong><span>Update a master work instruction. How we build it: operations, steps, tooling, callouts. Flagged when the WI is revised.</span></button>
+    <button type="button" class="wiz-choice" data-action="ecr-new" data-type="design"><strong>Design ECR</strong><span>Change the design: drawing, part, material or form, fit and function. Sent as a Jira ECR ticket request.</span></button>
+  </div>${o&&o.status!=='Closed'?`<p class="small muted ecr-edit-link">Need to correct this work order only (revision, quantity or an operation instruction)? <button type="button" class="btn quiet" data-action="ecr-wo-edit">Edit ${esc(o.id)} with QA re-release</button></p>`:''}`);
+}
+function ecrFormDialog(type,prefill={}){
+  const o=view==='order'?order():null;
+  const wis=(state.masterWIs||[]).filter(w=>w.status==='Released');
+  const defaultWI=o?.masterWI?`${o.masterWI.id}|${o.masterWI.revision}`:prefill.wi||'';
+  openDialog(type==='process'?'Process ECR · update master WI':'Design ECR · change the design',`<form id="ecr-form" data-type="${type}"><div class="form-grid">
+    ${type==='process'?`<div class="field wide"><label for="ecr-wi">Master WI</label><select id="ecr-wi" name="wi" required>${wis.map(w=>`<option value="${esc(w.id)}|${esc(w.revision)}" ${`${w.id}|${w.revision}`===defaultWI?'selected':''}>${esc(w.id)} Rev ${esc(w.revision)} · ${esc(w.partNumber)} · ${esc(w.title)}</option>`).join('')}</select></div>`
+    :`<div class="field wide"><label for="ecr-part">Part number</label><select id="ecr-part" name="partNumber" required>${MES.PART_CATALOG.map(p=>`<option value="${esc(p.partNumber)}" ${p.partNumber===(o?.partNumber||prefill.partNumber)?'selected':''}>${esc(p.partNumber)} · ${esc(p.title)}</option>`).join('')}</select></div>`}
+    <div class="field wide"><label for="ecr-title">Title</label><input id="ecr-title" name="title" maxlength="120" required placeholder="${type==='process'?'e.g. Add torque stripe step to Op 030':'e.g. Change bracket material to 7075-T73'}"></div>
+    <div class="field wide"><label for="ecr-desc">Proposed change</label><textarea id="ecr-desc" name="description" rows="3" maxlength="1000" required></textarea></div>
+    <div class="field wide"><label for="ecr-reason">Reason</label><textarea id="ecr-reason" name="reason" rows="2" maxlength="500" required placeholder="e.g. Repeat NC-0031, supplier obsolescence, test finding"></textarea></div>
+  </div>${o?`<input type="hidden" name="orderId" value="${esc(o.id)}"><p class="small muted">Raised from ${esc(o.id)}.</p>`:''}${type==='design'?'<p class="small muted">This creates a Jira ECR ticket request. Copy it into Jira (project ECR), then record the Jira key here.</p>':''}<p id="ecr-error" class="form-error" role="alert"></p><div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Cancel</button><button class="btn primary" type="submit">Submit ECR</button></div></form>`);
+}
+function ecrJiraDialog(id){
+  const e=(state.ecrRequests||[]).find(x=>x.id===id);if(!e)return;
+  const text=`Project: ${e.jira.project}\nIssue type: ${e.jira.issueType}\nSummary: ${e.jira.summary}\n\n${e.jira.description}`;
+  openDialog(`${e.id} · Jira ECR request`,`<p><strong>${esc(e.title)}</strong> · ${esc(e.partNumber)} · ${esc(e.status)}</p><div class="field"><label for="ecr-jira-text">Jira ticket request</label><textarea id="ecr-jira-text" rows="9" readonly>${esc(text)}</textarea></div><p><button type="button" class="btn" data-action="ecr-copy" data-id="${esc(e.id)}">Copy for Jira</button></p><form id="ecr-jira-form" data-id="${esc(e.id)}"><div class="form-grid"><div class="field"><label for="ecr-jira-key">Jira key</label><input id="ecr-jira-key" name="key" maxlength="30" placeholder="ECR-123" value="${esc(e.jira.key||'')}" required></div><div class="field"><label for="ecr-jira-url">Jira link <span class="muted">(optional)</span></label><input id="ecr-jira-url" name="url" type="url" maxlength="300" value="${esc(e.jira.url||'')}"></div></div><p id="ecr-jira-error" class="form-error" role="alert"></p><div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Close</button><button class="btn primary" type="submit">Record Jira key</button></div></form>`);
+}
+function wiReviseDialog(wi){
+  const open=MES.openProcessECRs(state,wi.id).filter(e=>e.status==='Open');
+  const design=(state.ecrRequests||[]).filter(e=>e.type==='design'&&e.partNumber===wi.partNumber&&e.status!=='Closed');
+  const woEdits=state.orders.filter(o=>o.masterWI?.id===wi.id).flatMap(o=>(o.engineeringChanges||[]).map(c=>({o,c})));
+  const next=MES.nextWIRevision(state,wi.id);
+  openDialog(`Revise ${wi.id} to Rev ${next}`,`${open.length||design.length||woEdits.length?`<div class="inline-info warning" role="status">${icon('info')}<p><strong>Previous ECRs on this work instruction</strong><br>Review these before starting Rev ${esc(next)}.</p></div>`:`<p class="small muted">No previous ECRs are recorded against ${esc(wi.id)} or ${esc(wi.partNumber)}.</p>`}
+  <form id="wi-revise-form">
+    ${open.length?`<h3 class="wi-subhead">Open process ECRs</h3><ul class="ecr-list">${open.map(e=>`<li><label class="check-label"><input type="checkbox" name="incorporate" value="${esc(e.id)}" checked><span><strong>${esc(e.id)} · ${esc(e.title)}</strong><small>${esc(e.description)} · ${esc(e.requestedBy?.name||'')}</small></span></label></li>`).join('')}</ul><p class="small muted">Checked ECRs are marked for Rev ${esc(next)} and close as incorporated when it is released.</p>`:''}
+    ${design.length?`<h3 class="wi-subhead">Design ECRs on ${esc(wi.partNumber)}</h3><ul class="ecr-list">${design.map(e=>`<li><strong>${esc(e.id)} · ${esc(e.title)}</strong><small>${esc(e.status)}${e.jira?.key?` · Jira ${esc(e.jira.key)}`:''}</small></li>`).join('')}</ul>`:''}
+    ${woEdits.length?`<h3 class="wi-subhead">Work order engineering edits from ${esc(wi.id)}</h3><ul class="ecr-list">${woEdits.map(({o,c})=>`<li><strong>${esc(c.ecrId||c.id)} · ${esc(o.id)}</strong><small>${esc(c.status)} · ${esc(c.reason)}</small></li>`).join('')}</ul>`:''}
+    <div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Cancel</button><button class="btn primary" type="submit">Start Rev ${esc(next)}</button></div></form>`);
+}
+document.addEventListener('click',e=>{
+  const b=e.target.closest('[data-action="ecr-new"],[data-action="ecr-wo-edit"],[data-action="ecr-jira"],[data-action="ecr-copy"],[data-action="ecr-process-wi"]');if(!b)return;
+  if(b.dataset.action==='ecr-new')ecrFormDialog(b.dataset.type);
+  if(b.dataset.action==='ecr-wo-edit'){$('#dialog').close();engineeringDialog();}
+  if(b.dataset.action==='ecr-jira')ecrJiraDialog(b.dataset.id);
+  if(b.dataset.action==='ecr-process-wi'){const wi=currentWI();ecrFormDialog('process',{wi:wi?`${wi.id}|${wi.revision}`:''});}
+  if(b.dataset.action==='ecr-copy'){const t=$('#ecr-jira-text');t.select();try{navigator.clipboard?.writeText(t.value);}catch(err){}document.execCommand?.('copy');notify('Jira ECR request copied.');}
+});
+document.addEventListener('submit',e=>{
+  const f=e.target;
+  if(f.id==='ecr-form'){e.preventDefault();const [wiId,wiRevision]=(f.elements.wi?.value||'').split('|');const r=MES.submitECRRequest(state,{type:f.dataset.type,wiId,wiRevision,partNumber:f.elements.partNumber?.value,orderId:f.elements.orderId?.value,title:f.elements.title.value,description:f.elements.description.value,reason:f.elements.reason.value});if(!r.ok){$('#ecr-error').textContent=r.message;return;}if(!save())return;if(f.dataset.type==='design'){render();ecrJiraDialog(r.id);}else{$('#dialog').close();render();}notify(r.message);}
+  if(f.id==='ecr-jira-form'){e.preventDefault();const r=MES.linkECRJira(state,f.dataset.id,f.elements.key.value,f.elements.url.value);if(!r.ok){$('#ecr-jira-error').textContent=r.message;return;}if(!save())return;$('#dialog').close();render();notify(r.message);}
+  if(f.id==='wi-revise-form'){e.preventDefault();const wi=currentWI();if(!wi)return;const ids=[...f.querySelectorAll('[name=incorporate]:checked')].map(x=>x.value);const result=MES.reviseMasterWI(state,wi.id,wi.revision);if(result.ok){MES.incorporateECRs(state,wi.id,result.revision,ids);selectedWI={id:result.id,revision:result.revision};$('#dialog').close();}applyResult(result);}
+});
 function renderDashboard(){
   const me=window.skAuth?.actor?.()||{name:state.profile.name};
   const first=String(me.name||'').trim().split(/\s+/)[0]||'there';
   const tasks=dashboardTasks(),mine=myAssignments(),byMe=assignedByMe();
-  const groups=['Approvals','Quality','Software','Planning','Floor','Master WI'].map(g=>[g,tasks.filter(t=>t.group===g)]).filter(([,l])=>l.length);
+  const groups=['Approvals','Quality','Engineering','Software','Planning','Floor','Master WI'].map(g=>[g,tasks.filter(t=>t.group===g)]).filter(([,l])=>l.length);
   const hour=new Date().getHours(),greet=hour<12?'Good morning':hour<18?'Good afternoon':'Good evening';
-  const row=t=>`<li><button class="task-row ${t.aog?'task-aog':''}" data-action="task-open" ${t.wi?`data-wi="${esc(t.wi.id)}" data-rev="${esc(t.wi.revision)}"`:`data-order="${esc(t.o.id)}" data-tab="${esc(t.tab)}" ${t.op?`data-op="${esc(t.op.id)}"`:''}`}><span class="task-main"><strong>${esc(t.title)}</strong><small>${t.wi?`Master WI · ${esc(t.wi.partNumber)}`:`<span class="mono">${esc(t.o.id)}</span> · ${esc(t.o.partNumber)} · ${esc(MES.orderSite?MES.orderSite(t.o):t.o.site||'')}`}${t.why?` · ${esc(t.why)}`:''}</small></span>${t.aog?'<span class="pill aog">AOG</span>':''}${t.o?badge(t.o.status):''}<span class="task-go" aria-hidden="true">${icon('arrow')}</span></button></li>`;
+  const row=t=>t.ecr?`<li><button class="task-row" data-action="ecr-jira" data-id="${esc(t.ecr.id)}"><span class="task-main"><strong>${esc(t.title)}</strong><small>${esc(t.why)}</small></span><span class="pill kitting">Design ECR</span><span class="task-go" aria-hidden="true">${icon('arrow')}</span></button></li>`:`<li><button class="task-row ${t.aog?'task-aog':''}" data-action="task-open" ${t.wi?`data-wi="${esc(t.wi.id)}" data-rev="${esc(t.wi.revision)}"`:`data-order="${esc(t.o.id)}" data-tab="${esc(t.tab)}" ${t.op?`data-op="${esc(t.op.id)}"`:''}`}><span class="task-main"><strong>${esc(t.title)}</strong><small>${t.wi?`Master WI · ${esc(t.wi.partNumber)}`:`<span class="mono">${esc(t.o.id)}</span> · ${esc(t.o.partNumber)} · ${esc(MES.orderSite?MES.orderSite(t.o):t.o.site||'')}`}${t.why?` · ${esc(t.why)}`:''}</small></span>${t.aog?'<span class="pill aog">AOG</span>':''}${t.o?badge(t.o.status):''}<span class="task-go" aria-hidden="true">${icon('arrow')}</span></button></li>`;
   return `<section aria-labelledby="dash-heading"><div class="page-heading dash-heading"><div><p class="hero-eyebrow">My dashboard · ${esc(skRoleLabel())}</p><h1 id="dash-heading">${greet}, ${esc(first)}</h1><p>${(tasks.length+mine.length)?`${tasks.length+mine.length} open item${tasks.length+mine.length===1?'':'s'} need${tasks.length+mine.length===1?'s':''} you.`:'You’re all caught up. Nothing is waiting on you.'}</p>${skCan('assign-work')?`<button class="btn primary dash-assign" data-action="assign-work">${icon('plus')} Assign work</button>`:''}</div></div>
   ${mine.length?`<section class="panel dash-group dash-mine" aria-labelledby="dash-mine-h"><div class="panel-head"><h2 id="dash-mine-h">Assigned to me</h2><span class="mono">${mine.length}</span></div><ol class="task-list">${mine.map(a=>assignmentRow(a,true)).join('')}</ol></section>`:''}
   ${groups.length?`<div class="dash-summary">${groups.map(([g,l])=>`<a class="dash-card" href="#dash-${esc(g.replace(/\s+/g,'-').toLowerCase())}"><span class="dash-count">${l.length}</span><span>${esc(g)}</span></a>`).join('')}</div>
@@ -3696,7 +3811,7 @@ function renderSteps(o, op, active) {
       <p class="step-eyebrow mono">Step ${MES.stepLetter(i)} of ${steps.length}${step.recordsTorque ? ' · Torque record' : ''}${step.consumables?.length ? ' · Consumables' : ''}</p>
       <h4>${esc(step.title)}</h4>
       <p class="step-text">${esc(step.instruction)}</p>${step.image ? `<figure class="step-figure"><img src="${esc(step.image.dataUrl)}" alt="${esc(step.image.caption || step.title)}" loading="lazy">${step.image.caption ? `<figcaption>${esc(step.image.caption)}</figcaption>` : ''}</figure>` : ''}
-      ${check ? `<p class="step-signed">${icon('check')} Checked off by ${esc(check.name)} · ${esc(check.credentialId)} · ${esc(buyoffDate(check.at))}</p>${check.torque ? `<p class="step-torque-result"><span class="mono">${esc(check.torque.value)} ${esc(check.torque.unit)}</span> · ${esc(check.torque.tool)}</p>` : ''}${(check.consumables || []).map(c => `<p class="step-torque-result">${esc(c.name)} · lot <span class="mono">${esc(c.lot)}</span> · exp ${esc(c.expires)}</p>`).join('')}` : ''}
+      ${check ? `${check.torque ? `<p class="step-torque-result"><span class="mono">${esc(check.torque.value)} ${esc(check.torque.unit)}</span> · ${esc(check.torque.tool)}</p>` : ''}${(check.consumables || []).map(c => `<p class="step-torque-result">${esc(c.name)} · lot <span class="mono">${esc(c.lot)}</span> · exp ${esc(c.expires)}</p>`).join('')}` : ''}
       ${canCheck && step.recordsTorque && !check ? renderStepTorque(key, step) : ''}${canCheck && step.consumables?.length && !check ? renderStepConsumables(key, step) : ''}${canCheck ? `<label class="check-label step-check"><input type="checkbox" data-step-check="${esc(step.id)}" data-order="${esc(o.id)}" data-op="${esc(op.id)}" ${check ? 'checked' : ''} ${earlierOpen || laterChecked ? 'disabled' : ''}><span>${check ? (laterChecked ? 'Step complete · uncheck later steps to change' : 'Step complete') : earlierOpen ? 'Check off the earlier steps first' : 'I completed this step'}</span></label>` : note}
     </article>
     <div class="stepper-nav"><button type="button" class="btn" data-action="step-go" data-dir="prev" data-key="${esc(key)}" data-step="${i - 1}" ${i === 0 ? 'disabled' : ''}><span class="flip">${icon('arrow')}</span> Previous</button><span class="small muted stepper-hint">Swipe or use ← → keys</span><button type="button" class="btn ${check && i < steps.length - 1 ? 'primary' : ''}" data-action="step-go" data-dir="next" data-key="${esc(key)}" data-step="${i + 1}" ${i === steps.length - 1 ? 'disabled' : ''}>Next step ${icon('arrow')}</button></div>
@@ -3746,7 +3861,7 @@ document.addEventListener('click', event => {
   if (a === 'wi-create-order') createDialog(`${button.dataset.wi}|${button.dataset.rev}`);
   if (a === 'wi-release') { const wi = currentWI(); if (wi && applyResult(MES.releaseMasterWI(state, wi.id, wi.revision))) $('#wi-title')?.focus(); }
   if (a === 'wi-peer-review') { const wi = currentWI(); if (wi) applyResult(MES.peerReviewMasterWI(state, wi.id, wi.revision)); }
-  if (a === 'wi-revise') { const wi = currentWI(); if (!wi) return; const result = MES.reviseMasterWI(state, wi.id, wi.revision); if (result.ok) selectedWI = { id: result.id, revision: result.revision }; applyResult(result); }
+  if (a === 'wi-revise') { const wi = currentWI(); if (!wi) return; wiReviseDialog(wi); }
   if (a === 'wi-op-add') saveWIForm(ops => ops.push(blankOperation()), ops => `wi-op-${ops.length - 1}-title`);
   if (a === 'wi-op-remove') saveWIForm(ops => ops.splice(Number(button.dataset.op), 1));
   if (a === 'wi-op-move') { const i = Number(button.dataset.op), j = i + Number(button.dataset.dir); saveWIForm(ops => ops.splice(j, 0, ops.splice(i, 1)[0]), () => `wi-op-${j}-title`); }
@@ -4300,9 +4415,9 @@ const slackMark=()=>'<svg class="slack-mark" viewBox="0 0 24 24" aria-hidden="tr
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const $=selector=>document.querySelector(selector);
 const KEY='skyryse-mes-work-order-v1';
-let state=MES.ensureMasterWIs(MES.seed()),view='home',tab='operations',selectedId=null,selectedOp=null,search='',filter='All',storageBlocked=false,toastTimer,selectedRev='Baseline';
+let state=MES.ensureMasterWIs(MES.seed());state.orders.filter(o=>o.status!=='Closed'&&!o.inventory&&!o.sourceBuild&&MES.isSerialized(o.partNumber)).forEach(o=>MES.autoAssignSerials(state,o));let view='home',tab='operations',selectedId=null,selectedOp=null,search='',filter='All',storageBlocked=false,toastTimer,selectedRev='Baseline';
 const drafts=(()=>{const K='skyryse-mes-drafts-v1';let init=[];try{init=JSON.parse(localStorage.getItem(K)||'[]');if(!Array.isArray(init))init=[];}catch(e){init=[];}const m=new Map(init);const persist=()=>{try{localStorage.setItem(K,JSON.stringify([...m].map(([k,v])=>[k,{...v,stampNumber:''}])));}catch(e){}};const s0=m.set.bind(m),d0=m.delete.bind(m);m.set=(k,v)=>{s0(k,v);persist();return m;};m.delete=k=>{const r=d0(k);persist();return r;};return m;})();
-try{const raw=localStorage.getItem(KEY);if(raw){const saved=MES.upgrade(JSON.parse(raw));if(!saved)throw Error('Invalid saved workspace');state=saved;}}catch(error){storageBlocked=true;$('#storage-alert').hidden=false;$('#storage-alert').textContent='Saved data could not be loaded. A fresh workspace is displayed without overwriting your saved copy. Use Reset workspace to start over.';}MES.ensureMasterWIs(state);
+try{const raw=localStorage.getItem(KEY);if(raw){const saved=MES.upgrade(JSON.parse(raw));if(!saved)throw Error('Invalid saved workspace');state=saved;try{const missing=state.orders.filter(o=>o.status!=='Closed'&&!o.inventory&&!o.sourceBuild&&MES.isSerialized(o.partNumber)&&MES.orderSerials(state,o).length<o.quantity);if(missing.length){missing.forEach(o=>MES.autoAssignSerials(state,o));if(MES.validate(state))localStorage.setItem(KEY,JSON.stringify(state));}}catch(e){}}}catch(error){storageBlocked=true;$('#storage-alert').hidden=false;$('#storage-alert').textContent='Saved data could not be loaded. A fresh workspace is displayed without overwriting your saved copy. Use Reset workspace to start over.';}MES.ensureMasterWIs(state);
 let lastSaved=structuredClone(state);
 function save(){try{if(storageBlocked)throw Error('blocked');localStorage.setItem(KEY,JSON.stringify(state));lastSaved=structuredClone(state);return true;}catch(error){if(!storageBlocked){storageBlocked=true;$('#storage-alert').hidden=false;$('#storage-alert').textContent='Browser storage is full or unavailable. Free browser storage and reload before making changes.';}state=structuredClone(lastSaved);render();notify('Change not saved. '+$('#storage-alert').textContent);return false;}}
 function paintIcons(root=document){root.querySelectorAll('[data-icon]').forEach(el=>el.innerHTML=icon(el.dataset.icon));}
@@ -4315,7 +4430,7 @@ function date(value){const d=new Date(value);return Number.isNaN(d.getTime())?es
 function badge(status){return `<span class="pill ${esc(String(status).toLowerCase().replace(/\s/g,'-'))}">${esc(status)}</span>`;}
 function footer(){return `<footer class="app-footer"><span>Flight Control · work order execution and quality records.</span><button class="btn quiet" data-action="help">Help ${icon('arrow')}</button></footer>`;}
 function setRoute(){if(view==='home'){history.replaceState(null,'','#home');return;}history.replaceState(null,'',view==='wi'&&selectedWI?`#wi/${encodeURIComponent(selectedWI.id+'|'+selectedWI.revision)}`:`#${view}${selectedId?'/'+encodeURIComponent(selectedId):''}/${tab}${view==='order'&&selectedOp?'/'+encodeURIComponent(selectedOp):''}`);}
-function render({focus=false}={}){const profileButton=$('#profile-button');{const signed=window.skAuth?.actor?.()?.name||state.profile.name;profileButton.textContent=signed.trim().split(/\s+/).map(s=>s[0]).slice(0,2).join('').toUpperCase();profileButton.dataset.actingAs=signed!==state.profile.name?state.profile.name:'';}profileButton.title=state.profile.name+' · '+state.profile.credentialId+'';if(!MES.getOrder(state,selectedId))selectedId=state.orders.length?state.orders[0].id:null;document.querySelectorAll('.nav button').forEach(btn=>{const savedActive=view==='orders'&&typeof activeViewId!=='undefined'&&activeViewId;if(btn.dataset.view===view&&!savedActive)btn.setAttribute('aria-current','page');else if(btn.dataset.view)btn.removeAttribute('aria-current');});const wiModule=['wis','wi'].includes(view);document.querySelectorAll('.nav button').forEach(btn=>{btn.hidden=['wis','wi'].includes(btn.dataset.view)!==wiModule;if(view==='wi'&&btn.dataset.view==='wis')btn.setAttribute('aria-current','page');});document.querySelectorAll('.module-switch button').forEach(btn=>btn.setAttribute('aria-pressed',String((btn.dataset.module==='wi')===wiModule)));$('#wi-count').textContent=(state.masterWIs||[]).filter(wi=>wi.status!=='Obsolete').length;$('#order-count').textContent=state.orders.length;{const tc=$('#task-count');if(tc){const n=dashboardTasks().length+myAssignments().length;tc.textContent=n;tc.hidden=!n;}}renderSavedViews();document.body.dataset.view=view;$('#breadcrumb').textContent={home:'My dashboard',order:'Work order',orders:'All work orders',quality:'Quality queue',activity:'Activity record',wis:'Master WI library',wi:'Master WI',serials:'Serial numbers'}[view];$('#main').innerHTML=(view==='home'?renderDashboard():view==='serials'?renderSerialLog():view==='wis'?renderWILibrary():view==='wi'?renderWIDetail():view==='order'?(state.orders.length?renderOrder():renderNoOrders()):view==='activity'?renderActivity():renderOrders())+footer();paintIcons();setRoute();observeHoldRows();document.title=`Flight Control · ${(view==='order'&&selectedId)?selectedId:($('#breadcrumb').textContent||'Work orders')}`;if(focus)$('#main').focus({preventScroll:true});if(window.__pendingReveal){const f=window.__pendingReveal;window.__pendingReveal=null;setTimeout(f,30);}window.__ready=true;}
+function render({focus=false}={}){const profileButton=$('#profile-button');{const signed=window.skAuth?.actor?.()?.name||state.profile.name;profileButton.textContent=signed.trim().split(/\s+/).map(s=>s[0]).slice(0,2).join('').toUpperCase();profileButton.dataset.actingAs=signed!==state.profile.name?state.profile.name:'';}profileButton.title=state.profile.name+' · '+state.profile.credentialId+'';if(!MES.getOrder(state,selectedId))selectedId=state.orders.length?state.orders[0].id:null;document.querySelectorAll('.nav button').forEach(btn=>{const savedActive=view==='orders'&&typeof activeViewId!=='undefined'&&activeViewId;if(btn.dataset.view===view&&!savedActive)btn.setAttribute('aria-current','page');else if(btn.dataset.view)btn.removeAttribute('aria-current');});const wiModule=['wis','wi'].includes(view);document.querySelectorAll('.nav button').forEach(btn=>{btn.hidden=['wis','wi'].includes(btn.dataset.view)!==wiModule;if(view==='wi'&&btn.dataset.view==='wis')btn.setAttribute('aria-current','page');});document.querySelectorAll('.module-switch button').forEach(btn=>btn.setAttribute('aria-pressed',String((btn.dataset.module==='wi')===wiModule)));document.body.dataset.module=wiModule?'wi':'execution';$('#wi-count').textContent=(state.masterWIs||[]).filter(wi=>wi.status!=='Obsolete').length;$('#order-count').textContent=state.orders.length;{const tc=$('#task-count');if(tc){const n=dashboardTasks().length+myAssignments().length;tc.textContent=n;tc.hidden=!n;}}renderSavedViews();document.body.dataset.view=view;$('#breadcrumb').textContent={home:'My dashboard',order:'Work order',orders:'All work orders',quality:'Quality queue',activity:'Activity record',wis:'Master WI library',wi:'Master WI',serials:'Serial numbers'}[view];$('#main').innerHTML=(view==='home'?renderDashboard():view==='serials'?renderSerialLog():view==='wis'?renderWILibrary():view==='wi'?renderWIDetail():view==='order'?(state.orders.length?renderOrder():renderNoOrders()):view==='activity'?renderActivity():renderOrders())+footer();paintIcons();setRoute();observeHoldRows();document.title=`Flight Control · ${(view==='order'&&selectedId)?selectedId:($('#breadcrumb').textContent||'Work orders')}`;if(focus)$('#main').focus({preventScroll:true});if(window.__pendingReveal){const f=window.__pendingReveal;window.__pendingReveal=null;setTimeout(f,30);}window.__ready=true;}
 function revStrip(o){return `<div class="rev-strip" aria-label="Work order revisions"><span class="rev-chip"><small>Drawing rev</small><strong class="mono">${esc(o.drawingRev||'—')}</strong></span><span class="rev-chip"><small>WI rev</small><strong class="mono">${esc(o.wiRev||'—')}</strong></span><button type="button" class="rev-chip rev-chip-action" data-action="tab" data-tab="record"><small>WO rev</small><strong class="mono">${esc(MES.woRevLabel(o.woRev||'Baseline'))}</strong></button></div>`;}
 
 function revisionPanel(o){
@@ -5111,7 +5226,7 @@ function engineeringReviewDialog(stage) {
 }
 document.addEventListener('click',event=>{
   const b=event.target.closest('[data-action]');if(!b)return;
-  if(b.dataset.action==='engineering-change')engineeringDialog();
+  if(b.dataset.action==='engineering-change')ecrChooser();
   if(b.dataset.action==='review-ecr')engineeringReviewDialog('ecr');
   if(b.dataset.action==='review-engineering')engineeringReviewDialog('qa');
   if(['engineering--role','engineering-qa-role'].includes(b.dataset.action)){

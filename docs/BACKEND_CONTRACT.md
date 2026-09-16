@@ -105,3 +105,10 @@ ATP operations carry `atp: { repo, baseline: { sha, version }, pushes[] }`. In t
 - An External Sub-Processing operation carries either `externalPO { number, url? }` or `poRequest { vendor, process, needBy?, notes?, requestedBy, requestedAt, fulfilledAt? }`.
 - With a backend, creating a PO request should create a NetSuite purchase requisition and store its internal ID; a NetSuite PO approval webhook fills `externalPO` and sets `fulfilledAt`.
 - Buy-off is refused until `externalPO` exists.
+
+## ECR requests (added 2026-09-16)
+
+- `state.ecrRequests[]`: `{ id: 'ECR-nnnn', type: 'process'|'design', title, description, reason, partNumber, wiId?, wiRevision?, orderId?, status, requestedBy, at, jira? , incorporatedIn? }`.
+- Process ECRs (how we build) attach to a master WI. Revising the WI flags open process ECRs; checked ones are marked `Incorporating` for the new revision and become `Incorporated` when it is released.
+- Design ECRs (change the design) produce a Jira ECR ticket request (`jira.project`, `issueType`, `summary`, `description`). With a backend: `POST https://<site>.atlassian.net/rest/api/3/issue` with a service account, store the returned key, and move status to `In Jira`. Today the key is recorded by hand.
+- Work-order engineering edits (revision, quantity, instructions with QA re-release) remain on `order.engineeringChanges` and are listed in the WI revise flag.
