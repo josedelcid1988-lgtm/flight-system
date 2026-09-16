@@ -200,6 +200,18 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 /* intro */
 #sk-boot{position:fixed;inset:0;z-index:1000;animation:sk-zoom 3.2s cubic-bezier(.2,.7,.2,1) both;background:#0B0B0C url('assets/hero-cockpit.jpg') 62% 55%/cover no-repeat;color:#fff;display:grid;place-items:center;font-family:var(--sans);transition:opacity .7s ease,visibility .7s}
 #sk-boot[data-gone]{opacity:0;visibility:hidden;pointer-events:none}
+.sk-login{margin:18px 0 0;max-width:380px;text-align:left}
+.sk-login-title{margin:0 0 12px;font:600 15px/1.3 var(--sans,sans-serif);color:#fff;letter-spacing:.02em}
+.sk-login-fields{display:grid;gap:10px}
+.sk-login label{display:grid;gap:5px;font:500 12px/1.2 var(--sans,sans-serif);color:#B8C4CC;letter-spacing:.06em;text-transform:uppercase}
+.sk-login input{height:44px;border-radius:9px;border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.08);color:#fff;padding:0 14px;font:16px/1 var(--sans,sans-serif);letter-spacing:0;text-transform:none}
+.sk-login input:focus-visible{outline:3px solid #0A84FF;outline-offset:2px}
+.sk-login-error{min-height:18px;margin:10px 0 0;color:#FF8A80;font:500 13px/1.4 var(--sans,sans-serif)}
+#sk-login-submit{margin-top:8px;width:100%;height:46px;border:0;border-radius:10px;background:#fff;color:#0B0B0C;font:600 15px/1 var(--sans,sans-serif);cursor:pointer}
+#sk-login-submit:disabled{opacity:.6;cursor:progress}
+.sk-login-note{margin:12px 0 0;color:#8E8E93;font:12px/1.5 var(--sans,sans-serif)}
+.sk-session-line{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.sk-session-line:empty{display:none}
 body:has(#sk-boot)>*:not(#sk-boot){visibility:hidden}
 #sk-boot::before{content:'';position:absolute;inset:0;background:linear-gradient(180deg,#0B0B0C33,#0B0B0C33 55%,#0B0B0CF2 85%);animation:sk-dim 3s ease both}@keyframes sk-zoom{from{background-size:112% auto}to{background-size:100% auto}}@keyframes sk-dim{from{opacity:.4}to{opacity:1}}#sk-boot .sk-wrap{position:relative;display:flex;flex-direction:column;align-items:center;gap:40px;padding:24px;text-align:center;align-self:end;padding-bottom:12vh}
 #sk-boot .sk-horizon{display:none;width:min(560px,70vw);height:1px;background:#fff;transform-origin:center;animation:sk-level 1.6s cubic-bezier(.2,.7,.2,1) both}
@@ -505,13 +517,19 @@ small,.rev-chip small,.meta dt,.meta .mono{font-size:11px!important}
 .module-switch button,.nav button{font-size:12px!important}
 /* 'Flagged only' sat 10px above its row: it carried margin-block:10px inside an align-items:flex-end row */
 .filter-bar .flagged-check{margin-block:0}
+/* The theme set `padding:14px 16px` on step rows, dropping the 46px left
+   padding the absolutely-positioned letter badge needs, so A/B/C sat on top
+   of the step title. */
+.wi-steps>li,.op-steps>li,.done-step-list li{padding-left:46px}
+.wi-steps>li::before,.op-steps>li::before{left:14px;top:15px}
 /* operation callouts: ESD / FOD / MSDS */
 .callouts{display:inline-flex;gap:6px;flex-wrap:wrap;margin-left:8px;vertical-align:middle}
 .callout{display:inline-flex;align-items:center;gap:4px;font:600 11px/1 var(--mono);letter-spacing:.04em;padding:4px 7px;border-radius:6px;border:1px solid currentColor;white-space:nowrap}
 .callout svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
 .callout-esd{color:#111;background:#F7D117;border-color:#111}
-.callout-fod{color:#C8102E;background:#fff;border-color:#C8102E}
-.callout-msds{color:#111;background:#fff;border-color:#C8102E}
+.callout-fod{color:#fff;background:#1863dc;border-color:#1863dc}
+.callout-msds{color:#fff;background:#C8102E;border-color:#C8102E}
+.callout-msds svg path{stroke:#fff!important}
 .operation-btn .callouts{margin:4px 0 0;display:flex}
 .task-heading h2 .callouts,.wi-op-head strong .callouts,h3 .callouts{position:relative;top:-2px}
 .callout-fieldset{border:1px solid var(--line);border-radius:9px;padding:10px 14px 6px;margin:4px 0 0;display:grid;gap:2px}
@@ -522,9 +540,36 @@ small,.rev-chip small,.meta dt,.meta .mono{font-size:11px!important}
 /* callout reminders */
 .callout-reminder{margin-bottom:12px}
 .callout-reminder svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
-.callout-reminder-esd{color:#111;background:#FFF3B8;border:1px solid #E5C100}
-.callout-reminder-fod{color:#C8102E;background:#FFF0EB;border:1px solid #F5C2B8}
-.callout-reminder-msds{color:#111;background:#FFF0EB;border:1px solid #F5C2B8}
+/* palettes: ESD yellow/black, FOD blue, MSDS red */
+.callout-reminder-esd{color:#3d3000;background:#FFF3B8;border:1px solid #E5C100}
+.callout-reminder-fod{color:#0f3f8f;background:#EEF4FF;border:1px solid #9dbcf3}
+.callout-reminder-msds{color:#7a1020;background:#FFF0EB;border:1px solid #F5C2B8}
+.callout-anim{width:48px;height:48px;flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+/* ESD: bolt draws and flickers, glow pulses, sparks flash */
+.esd-glow{fill:#F7D117;stroke:none;opacity:.35;transform-origin:24px 24px;animation:esd-glow 1.6s ease-in-out infinite}
+.esd-frame{stroke:#111}
+.esd-bolt{fill:#F7D117;stroke:#111;stroke-dasharray:60;stroke-dashoffset:60;animation:esd-draw 1.6s ease-out infinite}
+.esd-spark{stroke:#111;opacity:0;animation:esd-spark 1.6s infinite}
+.esd-spark.s2{animation-delay:.25s}
+@keyframes esd-glow{0%,100%{transform:scale(.9);opacity:.2}50%{transform:scale(1.1);opacity:.5}}
+@keyframes esd-draw{0%{stroke-dashoffset:60;opacity:.4}45%{stroke-dashoffset:0;opacity:1}55%{opacity:.6}62%{opacity:1}100%{stroke-dashoffset:0;opacity:1}}
+@keyframes esd-spark{0%,30%,100%{opacity:0}40%,48%{opacity:1}}
+/* FOD: broom sweeps, dust lifts and fades */
+.fod-broom{transform-origin:22px 38px;animation:fod-sweep 1.4s ease-in-out infinite alternate}
+.fod-dust{fill:currentColor;stroke:none;opacity:0;animation:fod-dust 1.4s ease-out infinite}
+.fod-dust.d2{animation-delay:.2s}.fod-dust.d3{animation-delay:.4s}
+@keyframes fod-sweep{from{transform:rotate(-14deg)}to{transform:rotate(14deg)}}
+@keyframes fod-dust{0%{opacity:0;transform:translate(0,0)}30%{opacity:.9}100%{opacity:0;transform:translate(-6px,-6px)}}
+/* MSDS: goggles, respirator, gloves cycle */
+.msds-ppe{opacity:0;animation:msds-cycle 3.6s infinite}
+.msds-ppe.p2{animation-delay:1.2s}.msds-ppe.p3{animation-delay:2.4s}
+@keyframes msds-cycle{0%,33.4%,100%{opacity:0}4%,29%{opacity:1}}
+@media(prefers-reduced-motion:reduce){.callout-anim *{animation:none!important}.esd-bolt{stroke-dashoffset:0}.esd-glow{opacity:.35}.msds-ppe{opacity:1}.msds-ppe.p2,.msds-ppe.p3{opacity:0}.fod-dust{opacity:.6}}
+/* grounding radios inside the callout fieldset */
+.grounding-options{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;padding:4px 0 8px 32px}
+.grounding-title{font-size:12px;color:var(--muted);width:100%}
+.grounding-opt{display:inline-flex;align-items:center;gap:6px;font-size:13px;min-height:32px}
+.grounding-opt input{width:16px;height:16px;margin:0;accent-color:var(--blue)}
 .callout-reminder p{color:var(--ink)}
 /* create chooser */
 .create-choice{display:grid;gap:12px;margin:8px 0 20px}
@@ -546,7 +591,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
 </head>
 <body>
 <div id="sk-boot" role="status" aria-live="polite" data-phase="mission">
- <button type="button" id="sk-skip">Skip</button>
+ <button type="button" id="sk-skip" hidden>Skip</button>
  <img class="sk-bg" src="assets/hero-hangar.jpg" alt="" decoding="async" fetchpriority="high"><div class="sk-veil"></div>
  <div class="sk-grid"></div><div class="sk-scan"></div>
  <div class="sk-corner tl"></div><div class="sk-corner tr"></div><div class="sk-corner bl"></div><div class="sk-corner br"></div>
@@ -554,17 +599,64 @@ main a{min-height:24px;display:inline-flex;align-items:center}
  <div class="sk-hud sk-hud-tr"><span>SYS <b>NOMINAL</b></span><span id="sk-hud-clock"></span></div>
  <div class="sk-hud sk-hud-bl"><span>33.9425° N · 118.4081° W</span></div>
  <div class="sk-hud sk-hud-br"><span>OPERATOR AUTH <b>PENDING</b></span></div>
- <div class="sk-mission"><p class="sk-eyebrow"><i></i>PRIME DIRECTIVE · 001</p><h1 class="sk-decode"><span data-text="SAFETY">SAFETY</span> <span data-text="IS THE">IS THE</span> <span data-text="MISSION.">MISSION.</span></h1><div class="sk-rule"></div><p id="sk-greet"><span id="sk-typed"></span></p><p class="sk-sub">El Segundo · Flight Control MES</p></div>
+ <div class="sk-mission"><p class="sk-eyebrow"><i></i>PRIME DIRECTIVE · 001</p><h1 class="sk-decode"><span data-text="SAFETY">SAFETY</span> <span data-text="IS THE">IS THE</span> <span data-text="MISSION.">MISSION.</span></h1><div class="sk-rule"></div>
+ <form id="sk-login" class="sk-login" autocomplete="on" hidden>
+  <p class="sk-login-title" id="sk-login-title">Sign in</p>
+  <div class="sk-login-fields">
+   <label id="sk-name-field" hidden><span>Your name</span><input id="sk-displayname" name="displayName" maxlength="60" autocomplete="name" placeholder="First Last"></label>
+   <label><span>Username</span><input id="sk-username" name="username" maxlength="40" autocomplete="username" required autocapitalize="none" spellcheck="false"></label>
+   <label><span>Password</span><input id="sk-password" name="password" type="password" minlength="8" maxlength="128" autocomplete="current-password" required></label>
+   <label id="sk-confirm-field" hidden><span>Confirm password</span><input id="sk-confirm" name="confirm" type="password" maxlength="128" autocomplete="new-password"></label>
+  </div>
+  <p id="sk-login-error" class="sk-login-error" role="alert"></p>
+  <button type="submit" id="sk-login-submit">Sign in</button>
+  <p class="sk-login-note" id="sk-login-note">Local sign-in on this device. Accounts are stored in this browser only.</p>
+ </form>
+ <p id="sk-greet"><span id="sk-typed"></span></p><p class="sk-sub">El Segundo · Flight Control MES</p></div>
 </div>
 <script>
 (function(){
  var el=document.getElementById('sk-boot');if(!el)return;
- var name='Jose';try{var raw=localStorage.getItem('skyryse-mes-work-order-v1');if(raw){var p=JSON.parse(raw).profile;if(p&&p.name){var full=p.name.trim();name=/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+$/.test(full)?full.split(/\s+/)[0]:full;}}}catch(e){}
+ // ---- local sign-in gate (hashed in-browser; a real deployment authenticates against a server) ----
+ var AUTH_KEY='skyryse-mes-auth-v1',SESSION_KEY='skyryse-mes-session-v1';
+ function loadAuth(){try{var a=JSON.parse(localStorage.getItem(AUTH_KEY)||'null');return a&&Array.isArray(a.users)?a:{users:[]};}catch(e){return {users:[]};}}
+ function saveAuth(a){localStorage.setItem(AUTH_KEY,JSON.stringify(a));}
+ function toHex(buf){return Array.prototype.map.call(new Uint8Array(buf),function(b){return ('0'+b.toString(16)).slice(-2);}).join('');}
+ function randomSalt(){var b=new Uint8Array(16);(window.crypto||{}).getRandomValues?crypto.getRandomValues(b):b.forEach(function(_,i){b[i]=Math.floor(Math.random()*256);});return toHex(b);}
+ function hashPassword(salt,password){if(!(window.crypto&&crypto.subtle))return Promise.reject(new Error('Secure hashing is not available in this browser context.'));return crypto.subtle.digest('SHA-256',new TextEncoder().encode(salt+':'+password)).then(toHex);}
+ function currentUser(){try{var u=sessionStorage.getItem(SESSION_KEY);if(!u)return null;var a=loadAuth();return a.users.find(function(x){return x.username===u;})||null;}catch(e){return null;}}
+ window.skSignOut=function(){try{sessionStorage.removeItem(SESSION_KEY);}catch(e){}location.reload();};
+ var user=currentUser();
+ var name=user?firstName(user.displayName):'';
+ function firstName(full){full=String(full||'').trim();return /^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+$/.test(full)?full.split(/\s+/)[0]:full;}
  var REDUCE=matchMedia('(prefers-reduced-motion:reduce)').matches;
  var TYPE_AT=0;
  var TYPE_MS=3000,SPLIT=22,TAIL_MS=900;
  var hc=document.getElementById('sk-hud-clock');function hud(){if(hc)hc.textContent=new Date().toLocaleTimeString('en-US',{timeZone:'America/Los_Angeles',hour12:false})+' PT';}hud();var hi=setInterval(hud,1000);
- var typed=document.getElementById('sk-typed');var caret=document.createElement('i');caret.className='sk-caret';typed.after(caret);var full='Ready to take flight, '+name+'.';var ci=0;
+ var typed=document.getElementById('sk-typed');var caret=document.createElement('i');caret.className='sk-caret';typed.after(caret);var full='';var ci=0;
+ var loginForm=document.getElementById('sk-login'),greet=document.getElementById('sk-greet'),skipBtn=document.getElementById('sk-skip');
+ function startGreeting(displayName){name=firstName(displayName);full='Ready to take flight, '+name+'.';loginForm.hidden=true;greet.hidden=false;skipBtn.hidden=false;runTyping();t=setTimeout(dismiss,REDUCE?1200:(TYPE_AT+TYPE_MS+TAIL_MS));}
+ function showLogin(){var a=loadAuth(),firstRun=!a.users.length;greet.hidden=true;loginForm.hidden=false;
+  document.getElementById('sk-login-title').textContent=firstRun?'Create your account':'Sign in';
+  document.getElementById('sk-login-submit').textContent=firstRun?'Create account and sign in':'Sign in';
+  document.getElementById('sk-name-field').hidden=!firstRun;document.getElementById('sk-confirm-field').hidden=!firstRun;
+  document.getElementById('sk-displayname').required=firstRun;document.getElementById('sk-confirm').required=firstRun;
+  document.getElementById('sk-password').autocomplete=firstRun?'new-password':'current-password';
+  document.getElementById('sk-login-note').textContent=firstRun?'First run on this device. This creates the local account the greeting and sign-in use. Passwords are salted and hashed in the browser; nothing is sent anywhere.':'Local sign-in on this device. Accounts are stored in this browser only.';
+  setTimeout(function(){(firstRun?document.getElementById('sk-displayname'):document.getElementById('sk-username')).focus();},50);}
+ loginForm.addEventListener('submit',function(ev){ev.preventDefault();var err=document.getElementById('sk-login-error');err.textContent='';
+  var a=loadAuth(),firstRun=!a.users.length;var username=document.getElementById('sk-username').value.trim().toLowerCase(),pw=document.getElementById('sk-password').value;
+  if(!/^[a-z0-9._-]{3,40}$/.test(username)){err.textContent='Username: 3 to 40 characters, letters, numbers, dot, dash, underscore.';return;}
+  if(pw.length<8){err.textContent='Password must be at least 8 characters.';return;}
+  var btn=document.getElementById('sk-login-submit');btn.disabled=true;
+  if(firstRun){var dn=document.getElementById('sk-displayname').value.trim(),cf=document.getElementById('sk-confirm').value;
+   if(dn.length<2){err.textContent='Enter your name.';btn.disabled=false;return;}
+   if(cf!==pw){err.textContent='Passwords do not match.';btn.disabled=false;return;}
+   var salt=randomSalt();hashPassword(salt,pw).then(function(h){a.users.push({username:username,displayName:dn,salt:salt,hash:h,createdAt:new Date().toISOString()});saveAuth(a);sessionStorage.setItem(SESSION_KEY,username);startGreeting(dn);}).catch(function(e){err.textContent=e.message;btn.disabled=false;});return;}
+  var u=a.users.find(function(x){return x.username===username;});
+  if(!u){err.textContent='No account with that username on this device.';btn.disabled=false;return;}
+  hashPassword(u.salt,pw).then(function(h){if(h!==u.hash){err.textContent='Incorrect password.';btn.disabled=false;document.getElementById('sk-password').select();return;}sessionStorage.setItem(SESSION_KEY,username);startGreeting(u.displayName);}).catch(function(e){err.textContent=e.message;btn.disabled=false;});});
+ function runTyping(){
  // One continuous run at a single cadence from the "R" of Ready to the final period.
  // Every character is laid out up front (visibility:hidden) so the line never reflows,
  // and reveal is driven by requestAnimationFrame against elapsed time, so timer drift
@@ -580,10 +672,11 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   function frame(now){if(t0===null)t0=now;var n=Math.min(full.length,Math.floor((now-t0)/step)+1);if(n>shown)reveal(n);
    if(shown<full.length)requestAnimationFrame(frame);else setTimeout(function(){caret.remove();},TAIL_MS);}
   setTimeout(function(){requestAnimationFrame(frame);},TYPE_AT);}
+ }
  var gone=false,t;
  function dismiss(){if(gone)return;gone=true;clearTimeout(t);clearInterval(hi);el.remove();}
  document.getElementById('sk-skip').addEventListener('click',dismiss);
- t=setTimeout(dismiss,REDUCE?1200:(TYPE_AT+TYPE_MS+TAIL_MS));
+ if(user)startGreeting(user.displayName);else showLogin();
  function deco(){var ph=document.querySelector('.page-heading');if(!ph||ph.querySelector('.sk-ticker'))return;var t=document.createElement('div');t.className='sk-ticker';t.innerHTML='<i>Live</i><span>El Segundo <b id="sk-site">Floor</b></span><span id="sk-clock"></span>';ph.appendChild(t);}
  function site(){var b=document.getElementById('sk-site');if(!b)return;var o=null;try{o=(typeof order==='function')?order():null;}catch(e){}var v=o&&o.site?String(o.site):'Floor';if(b.textContent!==v)b.textContent=v;}
  function tick(){site();var c=document.getElementById('sk-clock');if(c)c.textContent=new Date().toLocaleTimeString('en-US',{timeZone:'America/Los_Angeles',hour12:false})+' PT';}
@@ -626,7 +719,11 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   // Operation callouts: shown with their symbol on every operation they apply to.
   const CALLOUTS = Object.freeze(['ESD', 'FOD', 'MSDS']);
   const calloutList = value => { const raw = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : []; return [...new Set(raw.map(v => String(v).trim().toUpperCase()).filter(v => CALLOUTS.includes(v)))]; };
-  const calloutsValid = op => op.callouts === undefined || (Array.isArray(op.callouts) && op.callouts.length <= CALLOUTS.length && unique(op.callouts) && op.callouts.every(c => CALLOUTS.includes(c)));
+  const GROUNDING = Object.freeze(['wrist', 'foot', 'both']);
+  // grounding is recorded only on ESD operations; wrist strap is the default.
+  const groundingFor = (callouts, value) => callouts.includes('ESD') ? (GROUNDING.includes(value) ? value : 'wrist') : undefined;
+  const calloutsValid = op => (op.callouts === undefined || (Array.isArray(op.callouts) && op.callouts.length <= CALLOUTS.length && unique(op.callouts) && op.callouts.every(c => CALLOUTS.includes(c))))
+    && (op.grounding === undefined || (GROUNDING.includes(op.grounding) && Array.isArray(op.callouts) && op.callouts.includes('ESD')));
   const CHANGE_AUTHORITY = /^(ECR|ECO)-[A-Z0-9][A-Z0-9-]{2,30}$/;
   //  catalog revisions support this local record, not a controlled engineering source.
   const PART_CATALOG = Object.freeze([
@@ -743,7 +840,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   const releaseApprovalValid = (approval, order) => approval === null || (plain(approval) && requiresReleaseQA(order) && isQAProfile(approval) && timestamp(approval.at) && approval.virtual === true && plain(approval.configuration) && Object.entries(releaseConfiguration(order)).every(([key, value]) => approval.configuration[key] === value));
 
   function creationFieldsValid(order) {
-    if (Object.hasOwn(order, 'sourceTicket') && order.sourceTicket !== null && (!correctiveOrder(order) || !plain(order.sourceTicket) || !str(order.sourceTicket.orderId, 14) || !/^WO-\d{5,8}(?:-[A-Z])?$/.test(order.sourceTicket.orderId) || !str(order.sourceTicket.ticketId, 24) || !/^(IDR|NC)-\d{4,8}$/.test(order.sourceTicket.ticketId) || order.sourceTicket.orderId === order.id)) return false;
+    if (Object.hasOwn(order, 'sourceTicket') && order.sourceTicket !== null && (!correctiveOrder(order) || !plain(order.sourceTicket) || !str(order.sourceTicket.orderId, 24) || !/^WO-\d{5,8}(?:-Split-\d{1,2})?$/.test(order.sourceTicket.orderId) || !str(order.sourceTicket.ticketId, 24) || !/^(IDR|NC)-\d{4,8}$/.test(order.sourceTicket.ticketId) || order.sourceTicket.orderId === order.id)) return false;
     if (Object.hasOwn(order, 'releaseApproval') && !releaseApprovalValid(order.releaseApproval, order)) return false;
     if (!Object.hasOwn(order, 'creationVersion')) return true;
     const part = partDefinition(order.partNumber);
@@ -796,7 +893,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   const orderSite = order => {
     if (!plain(order)) return null;
     if (SITES.includes(order.site)) return order.site;
-    if (typeof order.id !== 'string' || !/^WO-\d{5,8}(?:-[A-Z])?$/.test(order.id)) return null;
+    if (typeof order.id !== 'string' || !/^WO-\d{5,8}(?:-Split-\d{1,2})?$/.test(order.id)) return null;
     // Orders without an explicit site get a stable default derived from the order number.
     return SITES[parseInt(order.id.slice(3), 10) % SITES.length];
   };
@@ -843,7 +940,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   }
 
   function orderValid(order, version = 3) {
-    if (!plain(order) || !str(order.id, 14) || !/^WO-\d{5,8}(?:-[A-Z])?$/.test(order.id) || !str(order.title, 120) || !str(order.partNumber, 50) || !str(order.serial, 60) || !str(order.revision, 24) || !PEDIGREES.includes(order.pedigree) || !PRIORITIES.includes(order.priority) || !count(order.quantity) || !STATUSES.includes(order.status) || !str(order.owner, 80) || !str(order.due, 10) || !/^\d{4}-\d{2}-\d{2}$/.test(order.due) || !Number.isFinite(Date.parse(order.due)) || new Date(order.due).toISOString().slice(0, 10) !== order.due) return false;
+    if (!plain(order) || !str(order.id, 24) || !/^WO-\d{5,8}(?:-Split-\d{1,2})?$/.test(order.id) || !str(order.title, 120) || !str(order.partNumber, 50) || !str(order.serial, 60) || !str(order.revision, 24) || !PEDIGREES.includes(order.pedigree) || !PRIORITIES.includes(order.priority) || !count(order.quantity) || !STATUSES.includes(order.status) || !str(order.owner, 80) || !str(order.due, 10) || !/^\d{4}-\d{2}-\d{2}$/.test(order.due) || !Number.isFinite(Date.parse(order.due)) || new Date(order.due).toISOString().slice(0, 10) !== order.due) return false;
     if (Object.hasOwn(order, 'start') && !(str(order.start, 10) && /^\d{4}-\d{2}-\d{2}$/.test(order.start) && Number.isFinite(Date.parse(order.start)) && order.start <= order.due)) return false;
     if (Object.hasOwn(order, 'site') && order.site !== null && !SITES.includes(order.site)) return false;
     if (!Array.isArray(order.materials) || order.materials.length < 1 || order.materials.length > 20 || !unique(order.materials.map(item => item && item.id)) || !order.materials.every(item => plain(item) && str(item.id, 40) && str(item.name, 120) && str(item.partNumber, 50) && count(item.required) && typeof item.ready === 'boolean' && (item.lot === undefined || str(item.lot, 60, 0)))) return false;
@@ -1026,7 +1123,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
         steps.push({ id: `step-${j + 1}`, title: stepTitle, instruction, recordsTorque: step.recordsTorque === true, ...(carried ? { image: carried } : {}) });
 
       }
-      result.push({ id: opId, title, description, requiresRecording: op.requiresRecording === true, buyoffType: op.buyoffType, inspectionPoint: op.inspectionPoint === true, requiresTooling: op.requiresTooling === true, callouts: calloutList(op.callouts), steps });
+      result.push({ id: opId, title, description, requiresRecording: op.requiresRecording === true, buyoffType: op.buyoffType, inspectionPoint: op.inspectionPoint === true, requiresTooling: op.requiresTooling === true, callouts: calloutList(op.callouts), ...(calloutList(op.callouts).includes('ESD') ? { grounding: groundingFor(calloutList(op.callouts), op.grounding) } : {}), steps });
     }
     wi.operations = result;
     return { ok: true, message: `${wiKey(wi)} saved.` };
@@ -1085,7 +1182,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
     if (!Number.isInteger(position) || position < min || position > order.operations.length) return fail('New operations can’t be inserted before completed or in-progress work.');
     let n = 1;
     while (order.operations.some(op => op.id === `op-add-${n}`)) n++;
-    const op = { id: `op-add-${n}`, title, description, done: false, note: '', buyoff: null, evidence: [], requiresRecording: false, steps: lines.map((line, i) => ({ id: `step-${i + 1}`, title: line.length > 80 ? `${line.slice(0, 77)}…` : line, instruction: line, recordsTorque: /torque/i.test(line) })), stepChecks: {}, buyoffType: input.buyoffType, inspectionPoint, requiresTooling, classification, addedToSequence: true, callouts: calloutList(input.callouts) };
+    const op = { id: `op-add-${n}`, title, description, done: false, note: '', buyoff: null, evidence: [], requiresRecording: false, steps: lines.map((line, i) => ({ id: `step-${i + 1}`, title: line.length > 80 ? `${line.slice(0, 77)}…` : line, instruction: line, recordsTorque: /torque/i.test(line) })), stepChecks: {}, buyoffType: input.buyoffType, inspectionPoint, requiresTooling, classification, addedToSequence: true, callouts: calloutList(input.callouts), ...(calloutList(input.callouts).includes('ESD') ? { grounding: groundingFor(calloutList(input.callouts), input.grounding) } : {}) };
     order.operations.splice(position, 0, op);
     const number = opNumber(order, op.id);
     queueSequenceChange(state, order, { type: 'add', opId: op.id, title, classification, position: number });
@@ -1150,8 +1247,11 @@ main a{min-height:24px;display:inline-flex;align-items:center}
     if (previousSteps.length !== steps.length || previousSteps.some((step, i) => step.instruction !== steps[i].instruction)) changes.push(`steps (${previousSteps.length} → ${steps.length})`);
     const callouts = calloutList(input.callouts);
     if ([...callouts].sort().join() !== [...(op.callouts || [])].sort().join()) changes.push(`callouts (${callouts.join(', ') || 'none'})`);
+    const grounding = groundingFor(callouts, input.grounding);
+    if (grounding !== op.grounding) changes.push(`grounding (${grounding || 'none'})`);
     if (!changes.length) return fail('Nothing changed. Edit a field before saving.');
     Object.assign(op, { title, description, buyoffType: input.buyoffType, inspectionPoint, requiresTooling, steps, stepChecks: {}, callouts });
+    if (grounding) op.grounding = grounding; else delete op.grounding;
     const number = opNumber(order, op.id);
     queueSequenceChange(state, order, { type: 'edit', opId: op.id, title, classification: op.classification || null, position: number, reason, changes });
     record(state, order, `Operation Op ${number} edited (${changes.join(', ')}): ${title}. Reason: ${reason}. QA release required.`);
@@ -1460,8 +1560,39 @@ main a{min-height:24px;display:inline-flex;align-items:center}
     return { ok: true, message: checked ? (remaining ? `Step ${stepLetter(index)} checked off. ${remaining} to go.` : 'All steps checked off. Complete the buy-off below.') : `Step ${stepLetter(index)} unchecked.` };
   }
 
+  // Workspaces saved while splits were numbered WO-nnnnn-A carry ids the current
+  // scheme rejects. Rewrite them, and every reference to them, before validating.
+  function migrateSplitIds(state) {
+    if (!plain(state) || !Array.isArray(state.orders)) return state;
+    const legacy = state.orders.filter(o => plain(o) && typeof o.id === 'string' && /^WO-\d{5,8}-[A-Z]$/.test(o.id));
+    if (!legacy.length) return state;
+    const map = new Map();
+    for (const order of legacy) {
+      const base = order.id.slice(0, -2);
+      const seq = order.id.charCodeAt(order.id.length - 1) - 64;
+      map.set(order.id, `${base}-Split-${seq}`);
+    }
+    const remap = id => (typeof id === 'string' && map.has(id) ? map.get(id) : id);
+    for (const order of state.orders) {
+      if (!plain(order)) continue;
+      const before = order.id;
+      order.id = remap(order.id);
+      if (order.id !== before) {
+        if (typeof order.serial === 'string') order.serial = order.serial.replace(/-[A-Z]$/, `-Split-${order.id.slice(order.id.lastIndexOf('-') + 1)}`);
+        if (Array.isArray(order.history)) order.history.forEach((event, i) => { if (plain(event)) event.id = `${order.id}-event-${i + 1}`; });
+      }
+      order.splitFrom = remap(order.splitFrom);
+      if (Array.isArray(order.splitInto)) order.splitInto = order.splitInto.map(remap);
+      if (plain(order.sourceTicket)) order.sourceTicket.orderId = remap(order.sourceTicket.orderId);
+      if (plain(order.sourceBuild)) order.sourceBuild.orderId = remap(order.sourceBuild.orderId);
+    }
+    for (const list of [state.activity, state.serialLog]) if (Array.isArray(list)) list.forEach(row => { if (plain(row)) row.orderId = remap(row.orderId); });
+    return state;
+  }
+
   function upgrade(state) {
     try {
+      state = migrateSplitIds(state);
       if (validate(state)) return JSON.parse(JSON.stringify(state));
       if (!validateVersion(state, 1) && !validateVersion(state, 2)) return null;
       const upgraded = JSON.parse(JSON.stringify(state));
@@ -1865,13 +1996,13 @@ main a{min-height:24px;display:inline-flex;align-items:center}
     const qty = Number(quantity);
     if (!Number.isInteger(qty) || qty < 1 || qty >= order.quantity) return fail(`Enter a quantity from 1 to ${order.quantity - 1} to move onto the new work order.`);
     if (state.orders.length >= MAX_ORDERS) return fail('A workspace holds up to 100 work orders. Reset the workspace to start again.');
-    const base = order.id.replace(/-[A-Z]$/, '');
-    const used = new Set(state.orders.map(o => o.id).filter(id => id.startsWith(`${base}-`)).map(id => id.slice(-1)));
-    const letter = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].find(l => !used.has(l));
-    if (!letter) return fail(`${base} has already been split 26 times.`);
-    const id = `${base}-${letter}`;
+    const base = order.id.replace(/-Split-\d+$/, '');
+    const used = new Set(state.orders.map(o => o.id).filter(id => id.startsWith(`${base}-Split-`)).map(id => parseInt(id.slice(`${base}-Split-`.length), 10)));
+    let seq = 1; while (used.has(seq)) seq++;
+    if (seq > 99) return fail(`${base} has already been split 99 times.`);
+    const id = `${base}-Split-${seq}`;
     const child = JSON.parse(JSON.stringify(order));
-    Object.assign(child, { id, quantity: qty, serial: `${order.serial.replace(/-[A-Z]$/, '')}-${letter}`, history: [], tickets: [], reports: [], releaseApproval: null, splitFrom: order.id, splitAt: new Date().toISOString() });
+    Object.assign(child, { id, quantity: qty, serial: `${order.serial.replace(/-Split-\d+$/, '')}-Split-${seq}`, history: [], tickets: [], reports: [], releaseApproval: null, splitFrom: order.id, splitAt: new Date().toISOString() });
     delete child.engineeringChanges; delete child.splitInto;
     child.operations = child.operations.map(op => ({ ...op, done: false, note: '', buyoff: null, evidence: [], stepChecks: {} }));
     const approvalReset = order.releaseApproval !== null && order.releaseApproval !== undefined;
@@ -1921,7 +2052,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
     const number = Math.max(10000, ...state.orders.map(order => parseInt(order.id.slice(3), 10))) + 1;
     if (number > 99999999) return fail('The work order number limit has been reached.');
     const id = `WO-${number}`;
-    const order = { id, title: part.title, partNumber: part.partNumber, serial: `SN-${number}`, revision, pedigree: input.pedigree, subcategory: input.subcategory, site: input.site ?? null, priority, aircraft: input.aircraft, quantity: input.quantity, status: 'Draft', owner: 'Assembly operator', start, due: finish, materials: materials(), operations: wi.operations.map(op => ({ id: op.id, title: op.title, description: op.description, done: false, note: '', buyoff: null, evidence: [], requiresRecording: op.requiresRecording, buyoffType: op.buyoffType, inspectionPoint: op.inspectionPoint, requiresTooling: op.requiresTooling === true, callouts: calloutList(op.callouts), steps: op.steps.map(step => ({ ...step })), stepChecks: {} })), masterWI: wiRef(wi), history: [], tickets: [], reports: [], sourceBuild: sourceUnit ? { serial: sourceUnit.serial, lotNumber: sourceUnit.lotNumber, orderId: sourceUnit.orderId, partNumber: sourceUnit.partNumber, revision: sourceUnit.revision, stockedAt: sourceUnit.stockedAt || null } : null, creationVersion: 1, sourceTicket: source ? { orderId: source.id, ticketId: input.sourceTicketId } : null, releaseApproval: null };
+    const order = { id, title: part.title, partNumber: part.partNumber, serial: `SN-${number}`, revision, pedigree: input.pedigree, subcategory: input.subcategory, site: input.site ?? null, priority, aircraft: input.aircraft, quantity: input.quantity, status: 'Draft', owner: 'Assembly operator', start, due: finish, materials: materials(), operations: wi.operations.map(op => ({ id: op.id, title: op.title, description: op.description, done: false, note: '', buyoff: null, evidence: [], requiresRecording: op.requiresRecording, buyoffType: op.buyoffType, inspectionPoint: op.inspectionPoint, requiresTooling: op.requiresTooling === true, callouts: calloutList(op.callouts), ...(op.grounding ? { grounding: op.grounding } : {}), steps: op.steps.map(step => ({ ...step })), stepChecks: {} })), masterWI: wiRef(wi), history: [], tickets: [], reports: [], sourceBuild: sourceUnit ? { serial: sourceUnit.serial, lotNumber: sourceUnit.lotNumber, orderId: sourceUnit.orderId, partNumber: sourceUnit.partNumber, revision: sourceUnit.revision, stockedAt: sourceUnit.stockedAt || null } : null, creationVersion: 1, sourceTicket: source ? { orderId: source.id, ticketId: input.sourceTicketId } : null, releaseApproval: null };
     state.orders.unshift(order);
     ensureRevisions(state);
     if (sourceUnit) sourceUnit.reworkOrders = [...(Array.isArray(sourceUnit.reworkOrders) ? sourceUnit.reworkOrders: []), id];
@@ -2060,7 +2191,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
     return { version: 3, profile: defaultProfile(), orders: [], activity: [] };
   }
 
-  const MES = { NETSUITE_STOCK, availableLots, lotInStock, woRevLabel, nextWoRev, ensureRevisions, revisionEntries, rollWorkOrderRevision, addSavedView, removeSavedView, ensureSavedViews, stepLetter, addAttachment, removeAttachment, aogActive, aogDue, aogMessage, logAogBroadcast, resolveAog, AOG_THREAD, setSchedule, scheduleDays, dateOnly, editOrderOperation, AIRCRAFT, stockedUnits, setWIStepImage, PROFILE_OPTIONS, profileOptionFor, selectProfile, TORQUE_UNITS, isTorqueTool, torqueValid, inventoryReadiness, assignSerial, voidSerial, nextSerial, orderSerials, moveToInventory, markNetSuitePosted, netsuiteCsv, ensureMasterWIs, findWI, wiKey, nextWIRevision, addMasterWI, updateMasterWI, saveWIOperations, releaseMasterWI, reviseMasterWI, setStepCheck, BUYOFF_TYPES, OP_CLASSIFICATIONS, pendingSequenceChange, inspectionGate, firstInsertIndex, addOrderOperation, removeOrderOperation, approveSequenceChange, toolCheck, stampCheck, stampCredential, stampHolderFor, CAL_TOOLS, CAL_SNAPSHOT, STAMP_HOLDERS, setMaterialLot, PEDIGREES, PRIORITIES, SUBCATEGORIES, PART_CATALOG, partDefinition, revisionLabel, requiresReleaseQA, releaseApproval, approveRelease, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, approveECR, approveEngineeringChange, SITES, orderSite, MESSAGE_TARGETS, seed, validate, upgrade, getOrder, summary, canAdvance, advance, setMaterial, setPriority, completeOperation, closeOrder, addOrder, addAdhocOrder, splitOrder, ADHOC_ONLY, CALLOUTS, addNote, blockingTickets, createTicket, resolveTicket, updateProfile, attachEvidence, reviewEvidence, removeEvidence, addMessage, setSlackThread, slackThreadValid };
+  const MES = { NETSUITE_STOCK, availableLots, lotInStock, woRevLabel, nextWoRev, ensureRevisions, revisionEntries, rollWorkOrderRevision, addSavedView, removeSavedView, ensureSavedViews, stepLetter, addAttachment, removeAttachment, aogActive, aogDue, aogMessage, logAogBroadcast, resolveAog, AOG_THREAD, setSchedule, scheduleDays, dateOnly, editOrderOperation, AIRCRAFT, stockedUnits, setWIStepImage, PROFILE_OPTIONS, profileOptionFor, selectProfile, TORQUE_UNITS, isTorqueTool, torqueValid, inventoryReadiness, assignSerial, voidSerial, nextSerial, orderSerials, moveToInventory, markNetSuitePosted, netsuiteCsv, ensureMasterWIs, findWI, wiKey, nextWIRevision, addMasterWI, updateMasterWI, saveWIOperations, releaseMasterWI, reviseMasterWI, setStepCheck, BUYOFF_TYPES, OP_CLASSIFICATIONS, pendingSequenceChange, inspectionGate, firstInsertIndex, addOrderOperation, removeOrderOperation, approveSequenceChange, toolCheck, stampCheck, stampCredential, stampHolderFor, CAL_TOOLS, CAL_SNAPSHOT, STAMP_HOLDERS, setMaterialLot, PEDIGREES, PRIORITIES, SUBCATEGORIES, PART_CATALOG, partDefinition, revisionLabel, requiresReleaseQA, releaseApproval, approveRelease, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, approveECR, approveEngineeringChange, SITES, orderSite, MESSAGE_TARGETS, seed, validate, upgrade, getOrder, summary, canAdvance, advance, setMaterial, setPriority, completeOperation, closeOrder, addOrder, addAdhocOrder, splitOrder, ADHOC_ONLY, CALLOUTS, GROUNDING, addNote, blockingTickets, createTicket, resolveTicket, updateProfile, attachEvidence, reviewEvidence, removeEvidence, addMessage, setSlackThread, slackThreadValid };
   if (typeof module !== 'undefined' && module.exports) module.exports = MES;
   if (root) root.MES = MES;
 })(typeof window !== 'undefined' ? window: null);
@@ -2229,7 +2360,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
       <div class="table-wrap"><table class="sequence"><caption>Work performed and buy-off record</caption><thead><tr><th scope="col">Op no.</th><th scope="col">Operation</th><th scope="col">Instruction / completion note</th><th scope="col">Status</th><th scope="col">Stamp</th><th scope="col">Date</th></tr></thead><tbody>${order.operations.map(operation => {
         const stamp = operation.done ? operation.buyoff: null;
         const held = list(order.tickets).some(ticket => ticket.operationId === operation.id && ticket.hold && ticket.status === 'Open');
-        return `<tr><th scope="row">${escape(number(operation))}</th><td>${escape(operation.title)}${Array.isArray(operation.callouts) && operation.callouts.length ? `<div class="callouts">${operation.callouts.map(c => `<span class="callout">${escape(c)}</span>`).join('')}${operation.callouts.includes('ESD') ? '<p class="callout-note">ESD: smock up and be grounded before handling.</p>' : ''}${operation.callouts.includes('FOD') ? '<p class="callout-note">FOD: 6S as you go; account for all tools and hardware before and after.</p>' : ''}${operation.callouts.includes('MSDS') ? '<p class="callout-note">MSDS: review the safety data sheet and wear the proper protective equipment.</p>' : ''}</div>` : ''}</td><td>${paragraph(operation.description)}${operation.note ? `<p class="preserve"><strong>Completion note:</strong> ${escape(operation.note)}</p>` : ''}${list(stamp?.evidenceIds).length ? `<p class="reference">Buy-off evidence: ${stamp.evidenceIds.map(escape).join(', ')}</p>` : ''}${list(stamp?.tools).length ? `<p class="reference">Calibrated tools: ${stamp.tools.map(tool => escape(`${tool.tag} (${tool.description}${tool.torque ? `, ${tool.torque.value} ${tool.torque.unit}` : ''}, cal due ${tool.expires})`)).join('; ')}</p>` : ''}${stamp?.stamp ? `<p class="reference">Stamp: ${escape(`${stamp.stamp.type} stamp ${stamp.stamp.number}`)}</p>` : ''}${list(operation.attachments).length ? `<p class="reference">Attachments: ${operation.attachments.map(file => escape(file.name)).join(', ')}</p>` : ''}${list(operation.steps).length ? `<p class="reference">Work instruction steps for this operation are listed in full after this table.</p>` : ''}</td><td>${operation.done ? 'Complete' : held ? 'Open · held' : 'Open'}</td><td>${person(stamp)}</td><td>${escape(time(stamp?.at))}</td></tr>`;
+        return `<tr><th scope="row">${escape(number(operation))}</th><td>${escape(operation.title)}${Array.isArray(operation.callouts) && operation.callouts.length ? `<div class="callouts">${operation.callouts.map(c => `<span class="callout">${escape(c)}</span>`).join('')}${operation.callouts.includes('ESD') ? `<p class="callout-note">ESD: smock up and be grounded before handling (${operation.grounding === 'foot' ? 'heel grounders' : operation.grounding === 'both' ? 'wrist strap and heel grounders' : 'wrist strap'}).</p>` : ''}${operation.callouts.includes('FOD') ? '<p class="callout-note">FOD: 6S as you go; account for all tools and hardware before and after.</p>' : ''}${operation.callouts.includes('MSDS') ? '<p class="callout-note">MSDS: review the safety data sheet and wear the proper protective equipment.</p>' : ''}</div>` : ''}</td><td>${paragraph(operation.description)}${operation.note ? `<p class="preserve"><strong>Completion note:</strong> ${escape(operation.note)}</p>` : ''}${list(stamp?.evidenceIds).length ? `<p class="reference">Buy-off evidence: ${stamp.evidenceIds.map(escape).join(', ')}</p>` : ''}${list(stamp?.tools).length ? `<p class="reference">Calibrated tools: ${stamp.tools.map(tool => escape(`${tool.tag} (${tool.description}${tool.torque ? `, ${tool.torque.value} ${tool.torque.unit}` : ''}, cal due ${tool.expires})`)).join('; ')}</p>` : ''}${stamp?.stamp ? `<p class="reference">Stamp: ${escape(`${stamp.stamp.type} stamp ${stamp.stamp.number}`)}</p>` : ''}${list(operation.attachments).length ? `<p class="reference">Attachments: ${operation.attachments.map(file => escape(file.name)).join(', ')}</p>` : ''}${list(operation.steps).length ? `<p class="reference">Work instruction steps for this operation are listed in full after this table.</p>` : ''}</td><td>${operation.done ? 'Complete' : held ? 'Open · held' : 'Open'}</td><td>${person(stamp)}</td><td>${escape(time(stamp?.at))}</td></tr>`;
       }).join('')}</tbody></table></div>
       ${stepSections(order)}
       ${order.operations.map(operation => operationRecords(order, operation)).join('')}
@@ -2303,7 +2434,7 @@ function renderWIReadOnly(wi) {
 
 function renderWIEditor(wi) {
   const n = wi.operations.length;
-  return `<form id="wi-ops-form"><ol class="wi-ops">${wi.operations.map((op, i) => `<li class="wi-op editing" data-wi-op><div class="wi-op-head"><span class="op-number">${sequence(i)}</span><div class="wi-op-fields"><div class="field"><label for="wi-op-${i}-title">Operation title</label><input id="wi-op-${i}-title" name="title" maxlength="120" required value="${esc(op.title)}"></div><div class="field"><label for="wi-op-${i}-desc">Summary</label><textarea id="wi-op-${i}-desc" name="description" maxlength="400" rows="2" required>${esc(op.description)}</textarea></div><div class="wi-op-options"><div class="field"><label for="wi-op-${i}-buyoff">Buy-off type</label><select id="wi-op-${i}-buyoff" name="buyoffType">${MES.BUYOFF_TYPES.map(t => `<option ${t === op.buyoffType ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></div><label class="check-label"><input type="checkbox" name="inspectionPoint" ${op.inspectionPoint ? 'checked' : ''}><span>Inspection point</span></label><label class="check-label"><input type="checkbox" name="requiresTooling" ${op.requiresTooling ? 'checked' : ''}><span>Requires calibrated tooling</span></label><label class="check-label"><input type="checkbox" name="requiresRecording" ${op.requiresRecording ? 'checked' : ''}><span>Require reviewed video</span></label></div>${calloutChecks('callouts', op.callouts || [], `wi-op-${i}-callout`)}</div><div class="wi-tools"><button type="button" class="btn quiet" data-action="wi-op-move" data-op="${i}" data-dir="-1" ${i === 0 ? 'disabled' : ''} aria-label="Move operation ${sequence(i)} up">Up</button><button type="button" class="btn quiet" data-action="wi-op-move" data-op="${i}" data-dir="1" ${i === n - 1 ? 'disabled' : ''} aria-label="Move operation ${sequence(i)} down">Down</button><button type="button" class="btn quiet" data-action="wi-op-remove" data-op="${i}" ${n === 1 ? 'disabled' : ''} aria-label="Remove operation ${sequence(i)}">Remove</button></div></div>
+  return `<form id="wi-ops-form"><ol class="wi-ops">${wi.operations.map((op, i) => `<li class="wi-op editing" data-wi-op><div class="wi-op-head"><span class="op-number">${sequence(i)}</span><div class="wi-op-fields"><div class="field"><label for="wi-op-${i}-title">Operation title</label><input id="wi-op-${i}-title" name="title" maxlength="120" required value="${esc(op.title)}"></div><div class="field"><label for="wi-op-${i}-desc">Summary</label><textarea id="wi-op-${i}-desc" name="description" maxlength="400" rows="2" required>${esc(op.description)}</textarea></div><div class="wi-op-options"><div class="field"><label for="wi-op-${i}-buyoff">Buy-off type</label><select id="wi-op-${i}-buyoff" name="buyoffType">${MES.BUYOFF_TYPES.map(t => `<option ${t === op.buyoffType ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></div><label class="check-label"><input type="checkbox" name="inspectionPoint" ${op.inspectionPoint ? 'checked' : ''}><span>Inspection point</span></label><label class="check-label"><input type="checkbox" name="requiresTooling" ${op.requiresTooling ? 'checked' : ''}><span>Requires calibrated tooling</span></label><label class="check-label"><input type="checkbox" name="requiresRecording" ${op.requiresRecording ? 'checked' : ''}><span>Require reviewed video</span></label></div>${calloutChecks('callouts', op.callouts || [], `wi-op-${i}-callout`, op.grounding || 'wrist')}</div><div class="wi-tools"><button type="button" class="btn quiet" data-action="wi-op-move" data-op="${i}" data-dir="-1" ${i === 0 ? 'disabled' : ''} aria-label="Move operation ${sequence(i)} up">Up</button><button type="button" class="btn quiet" data-action="wi-op-move" data-op="${i}" data-dir="1" ${i === n - 1 ? 'disabled' : ''} aria-label="Move operation ${sequence(i)} down">Down</button><button type="button" class="btn quiet" data-action="wi-op-remove" data-op="${i}" ${n === 1 ? 'disabled' : ''} aria-label="Remove operation ${sequence(i)}">Remove</button></div></div>
     <ol class="wi-steps">${op.steps.map((s, j) => `<li data-wi-step data-step-key="${esc(op.id)}/${esc(s.id)}"><div class="field"><label for="wi-op-${i}-step-${j}-title">Step ${MES.stepLetter(j)} title</label><input id="wi-op-${i}-step-${j}-title" name="stepTitle" maxlength="120" required value="${esc(s.title)}"></div><div class="field"><label for="wi-op-${i}-step-${j}-text">Step ${MES.stepLetter(j)} instruction</label><textarea id="wi-op-${i}-step-${j}-text" name="instruction" maxlength="1000" rows="3" required>${esc(s.instruction)}</textarea></div><label class="check-label"><input type="checkbox" name="recordsTorque" ${s.recordsTorque ? 'checked' : ''}><span>Records a torque value</span></label><div class="step-media">${s.image ? `<figure class="step-media-preview"><img src="${esc(s.image.dataUrl)}" alt="${esc(s.image.caption || s.title)}">${s.image.name ? `<figcaption>${esc(s.image.name)}</figcaption>` : ''}</figure><div class="field"><label for="wi-op-${i}-step-${j}-caption">Picture caption</label><input id="wi-op-${i}-step-${j}-caption" name="imageCaption" maxlength="200" value="${esc(s.image.caption || '')}"></div><button type="button" class="btn quiet" data-action="wi-step-image-remove" data-op="${esc(op.id)}" data-step="${esc(s.id)}">Remove picture</button>` : `<label class="btn wi-image-btn" for="wi-image-${i}-${j}">${icon('upload')} Add picture</label><input class="sr-only" type="file" id="wi-image-${i}-${j}" accept="image/png,image/jpeg,image/webp" data-wi-image data-op="${esc(op.id)}" data-step="${esc(s.id)}">`}</div>
 <div class="wi-tools"><button type="button" class="btn quiet" data-action="wi-step-move" data-op="${i}" data-step="${j}" data-dir="-1" ${j === 0 ? 'disabled' : ''} aria-label="Move step ${MES.stepLetter(j)} up">Up</button><button type="button" class="btn quiet" data-action="wi-step-move" data-op="${i}" data-step="${j}" data-dir="1" ${j === op.steps.length - 1 ? 'disabled' : ''} aria-label="Move step ${MES.stepLetter(j)} down">Down</button><button type="button" class="btn quiet" data-action="wi-step-remove" data-op="${i}" data-step="${j}" ${op.steps.length === 1 ? 'disabled' : ''}>Remove step</button></div></li>`).join('')}</ol>
     <button type="button" class="btn wi-add-step" data-action="wi-step-add" data-op="${i}">${icon('plus')} Add step</button></li>`).join('')}</ol>
@@ -2311,7 +2442,7 @@ function renderWIEditor(wi) {
 }
 
 function readWIForm(form) {
-  return [...form.querySelectorAll('[data-wi-op]')].map(li => ({ title: li.querySelector('[name=title]').value, description: li.querySelector('[name=description]').value, buyoffType: li.querySelector('[name=buyoffType]').value, inspectionPoint: li.querySelector('[name=inspectionPoint]').checked, requiresTooling: li.querySelector('[name=requiresTooling]').checked, requiresRecording: li.querySelector('[name=requiresRecording]').checked, callouts: [...li.querySelectorAll('[name=callouts]:checked')].map(c => c.value), steps: [...li.querySelectorAll('[data-wi-step]')].map(step => ({ title: step.querySelector('[name=stepTitle]').value, instruction: step.querySelector('[name=instruction]').value, recordsTorque: step.querySelector('[name=recordsTorque]').checked, sourceKey: step.dataset.stepKey || '', imageCaption: step.querySelector('[name=imageCaption]')?.value || '' })) }));
+  return [...form.querySelectorAll('[data-wi-op]')].map(li => ({ title: li.querySelector('[name=title]').value, description: li.querySelector('[name=description]').value, buyoffType: li.querySelector('[name=buyoffType]').value, inspectionPoint: li.querySelector('[name=inspectionPoint]').checked, requiresTooling: li.querySelector('[name=requiresTooling]').checked, requiresRecording: li.querySelector('[name=requiresRecording]').checked, callouts: [...li.querySelectorAll('[name=callouts]:checked')].map(c => c.value), grounding: li.querySelector('[name$="-grounding"]:checked')?.value, steps: [...li.querySelectorAll('[data-wi-step]')].map(step => ({ title: step.querySelector('[name=stepTitle]').value, instruction: step.querySelector('[name=instruction]').value, recordsTorque: step.querySelector('[name=recordsTorque]').checked, sourceKey: step.dataset.stepKey || '', imageCaption: step.querySelector('[name=imageCaption]')?.value || '' })) }));
 }
 
 function saveWIForm(mutate, focusId) {
@@ -2503,6 +2634,7 @@ document.addEventListener('submit', event => {
     data.inspectionPoint = form.elements.inspectionPoint.checked;
     data.requiresTooling = form.elements.requiresTooling.checked;
     data.callouts = [...form.querySelectorAll('[name=callouts]:checked')].map(c => c.value);
+    data.grounding = form.querySelector('[name$="-grounding"]:checked')?.value;
     const result = MES.addOrderOperation(state, form.dataset.order, data);
     if (!result.ok) { $('#seq-add-error').textContent = result.message; return; }
     if (!save()) return;
@@ -2747,7 +2879,7 @@ function sequenceEditDialog(opId) {
     <div class="field"><label for="edit-buyoff">Buy-off type</label><select id="edit-buyoff" name="buyoffType">${MES.BUYOFF_TYPES.map(type => `<option ${type === op.buyoffType ? 'selected' : ''}>${esc(type)}</option>`).join('')}</select></div>
     <label class="check-label seq-inspection"><input type="checkbox" name="inspectionPoint" id="edit-inspection" ${op.inspectionPoint ? 'checked' : ''}><span>Inspection point · work can’t move past it until bought off</span></label>
     <label class="check-label seq-inspection"><input type="checkbox" name="requiresTooling" id="edit-tooling" ${op.requiresTooling ? 'checked' : ''}><span>Requires calibrated tooling (torque, measurement)</span></label>
-    <div class="field wide">${calloutChecks('callouts',op.callouts||[],'edit-callout')}</div>
+    <div class="field wide">${calloutChecks('callouts',op.callouts||[],'edit-callout',op.grounding||'wrist')}</div>
     <div class="field wide"><label for="edit-steps">Steps · one per line</label><textarea id="edit-steps" name="steps" rows="6" required>${esc((op.steps || []).map(step => step.instruction).join('\n'))}</textarea><p class="creation-note">Lines you leave unchanged keep their picture and torque setting. Checked-off steps are cleared by an edit.</p></div>
     <div class="field wide"><label for="edit-reason">Reason for the change</label><textarea id="edit-reason" name="reason" maxlength="300" rows="2" required></textarea></div>
   </div><p id="seq-edit-error" class="form-error" role="alert"></p><div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Cancel</button><button class="btn primary" type="submit">Save changes</button></div></form>`);
@@ -2764,6 +2896,7 @@ document.addEventListener('submit', event => {
   data.inspectionPoint = form.elements.inspectionPoint.checked;
   data.requiresTooling = form.elements.requiresTooling.checked;
   data.callouts = [...form.querySelectorAll('[name=callouts]:checked')].map(c => c.value);
+  data.grounding = form.querySelector('[name$="-grounding"]:checked')?.value;
   const result = MES.editOrderOperation(state, form.dataset.order, form.dataset.op, data);
   if (!result.ok) { $('#seq-edit-error').textContent = result.message; return; }
   if (!save()) return;
@@ -2958,9 +3091,19 @@ const paths={esd:'<path d="M12 2.6 22 21.4H2L12 2.6Z"/><path d="M8.6 17.2v-3.6a.
 const icon=name=>`<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name]||paths.file}</svg>`;
 const CALLOUT_TEXT={ESD:'ESD sensitive · static control required',FOD:'FOD critical · foreign object control',MSDS:'MSDS · hazardous material, consult the safety data sheet'};
 const calloutBadges=op=>Array.isArray(op?.callouts)&&op.callouts.length?`<span class="callouts" role="list" aria-label="Operation callouts">${op.callouts.map(c=>`<span class="callout callout-${c.toLowerCase()}" role="listitem" title="${esc(CALLOUT_TEXT[c]||c)}">${icon(c.toLowerCase())}<span>${esc(c)}</span><span class="sr-only"> · ${esc(CALLOUT_TEXT[c]||c)}</span></span>`).join('')}</span>`:'';
-const CALLOUT_REMINDER={ESD:'Smock up and be grounded. Wrist strap on and tested at a grounded ESD workstation before touching the part.',FOD:'6S as you go: sort, set in order, shine, standardize, sustain, safety. Account for every tool and fastener before and after.',MSDS:'Review the MSDS for every material in this operation and wear the proper protective equipment it calls for.'};
-const calloutReminders=op=>Array.isArray(op?.callouts)&&op.callouts.length?op.callouts.map(c=>`<div class="inline-info callout-reminder callout-reminder-${c.toLowerCase()}" role="status">${icon(c.toLowerCase())}<p><strong>${esc(c)} operation</strong><br>${esc(CALLOUT_REMINDER[c]||'')}</p></div>`).join(''):'';
-const calloutChecks=(name,selected=[],idPrefix='')=>`<fieldset class="callout-fieldset"><legend>Callouts · shown on this operation</legend>${MES.CALLOUTS.map(c=>`<label class="check-label callout-check"><input type="checkbox" name="${name}" value="${c}" ${selected.includes(c)?'checked':''} ${idPrefix?`id="${idPrefix}-${c.toLowerCase()}"`:''}><span class="callout callout-${c.toLowerCase()}">${icon(c.toLowerCase())}<span>${c}</span></span><span class="callout-desc">${esc(CALLOUT_TEXT[c])}</span></label>`).join('')}</fieldset>`;
+const GROUNDING_TEXT={wrist:'Wrist strap on and tested at a grounded ESD workstation before touching the part.',foot:'Heel grounders on both feet, tested, standing on the grounded ESD floor before touching the part.',both:'Wrist strap and heel grounders on and tested at a grounded ESD workstation before touching the part.'};
+const GROUNDING_LABEL={wrist:'Wrist grounding',foot:'Foot grounding',both:'Wrist and foot grounding'};
+const CALLOUT_REMINDER={ESD:op=>`Smock up and be grounded. ${GROUNDING_TEXT[op?.grounding]||GROUNDING_TEXT.wrist}`,FOD:()=>'6S as you go: sort, set in order, shine, standardize, sustain, safety. Account for every tool and fastener before and after.',MSDS:()=>'Review the MSDS for every material in this operation and wear the proper protective equipment it calls for.'};
+// Reminder animations are CSS keyframes on inline SVG; they stop under prefers-reduced-motion.
+const CALLOUT_ANIM={
+ ESD:'<svg class="callout-anim anim-esd" viewBox="0 0 48 48" aria-hidden="true"><circle class="esd-glow" cx="24" cy="24" r="16"/><path class="esd-frame" d="M24 6 42 40H6L24 6Z"/><path class="esd-bolt" d="M26 16l-6 10h5l-2 8 7-11h-5l1-7Z"/><path class="esd-spark s1" d="M10 14l-3-2M9 20H5"/><path class="esd-spark s2" d="M38 14l3-2M39 20h4"/></svg>',
+ FOD:'<svg class="callout-anim anim-fod" viewBox="0 0 48 48" aria-hidden="true"><path class="fod-floor" d="M6 40h36"/><g class="fod-broom"><path d="M30 8 20 30"/><path d="M14 30h12l3 9H12z"/><path d="M15 34h11M14 37h13"/></g><circle class="fod-dust d1" cx="12" cy="38" r="1.4"/><circle class="fod-dust d2" cx="9" cy="35" r="1.1"/><circle class="fod-dust d3" cx="15" cy="34" r="1"/></svg>',
+ MSDS:'<svg class="callout-anim anim-msds" viewBox="0 0 48 48" aria-hidden="true"><g class="msds-ppe p1"><rect x="8" y="18" width="14" height="10" rx="4"/><rect x="26" y="18" width="14" height="10" rx="4"/><path d="M22 23h4M8 22H5M40 22h3"/></g><g class="msds-ppe p2"><path d="M12 22c0-7 5-12 12-12s12 5 12 12v4c0 5-6 10-12 10S12 31 12 26v-4Z"/><path d="M18 24h12M18 29h12M12 24H7M36 24h5"/></g><g class="msds-ppe p3"><path d="M17 40V22a3 3 0 0 1 6 0v10M23 20a3 3 0 0 1 6 0v12M29 22a3 3 0 0 1 6 0v10"/><path d="M17 32h18v4a8 8 0 0 1-8 8h-2a8 8 0 0 1-8-8v-4Z"/></g></svg>'};
+const calloutReminders=op=>Array.isArray(op?.callouts)&&op.callouts.length?op.callouts.map(c=>`<div class="inline-info callout-reminder callout-reminder-${c.toLowerCase()}" role="status">${CALLOUT_ANIM[c]||icon(c.toLowerCase())}<p><strong>${esc(c)} operation${c==='ESD'&&op.grounding?` · ${esc(GROUNDING_LABEL[op.grounding])}`:''}</strong><br>${esc((CALLOUT_REMINDER[c]||(()=>''))(op))}</p></div>`).join(''):'';
+const groundingRadios=(name,selected='wrist')=>`<div class="grounding-options" data-grounding hidden><span class="grounding-title">Grounding method</span>${MES.GROUNDING.map(g=>`<label class="grounding-opt"><input type="radio" name="${name}" value="${g}" ${g===selected?'checked':''}><span>${esc(GROUNDING_LABEL[g])}</span></label>`).join('')}</div>`;
+const calloutChecks=(name,selected=[],idPrefix='',grounding='wrist')=>`<fieldset class="callout-fieldset"><legend>Callouts · shown on this operation</legend>${MES.CALLOUTS.map(c=>`<label class="check-label callout-check"><input type="checkbox" name="${name}" value="${c}" ${selected.includes(c)?'checked':''} ${idPrefix?`id="${idPrefix}-${c.toLowerCase()}"`:''}><span class="callout callout-${c.toLowerCase()}">${icon(c.toLowerCase())}<span>${c}</span></span><span class="callout-desc">${esc(CALLOUT_TEXT[c])}</span></label>${c==='ESD'?groundingRadios(`${idPrefix||name}-grounding`,grounding):''}`).join('')}</fieldset>`;
+document.addEventListener('change',e=>{const cb=e.target;if(!(cb.matches&&cb.matches('input[type=checkbox][value=ESD]')))return;const g=cb.closest('.callout-fieldset')?.querySelector('[data-grounding]');if(g)g.hidden=!cb.checked;});
+document.addEventListener('mes:dialog-open',()=>{});
 const slackMark=()=>'<svg class="slack-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="#E01E5A" d="M5.1 15.2a2.1 2.1 0 1 1-2.1-2.1h2.1v2.1Zm1.1 0a2.1 2.1 0 0 1 4.2 0v5.3a2.1 2.1 0 0 1-4.2 0v-5.3Z"/><path fill="#36C5F0" d="M8.3 6.7a2.1 2.1 0 1 1 2.1-2.1v2.1H8.3Zm0 1.1a2.1 2.1 0 0 1 0 4.2H3a2.1 2.1 0 0 1 0-4.2h5.3Z"/><path fill="#2EB67D" d="M18.9 8.8a2.1 2.1 0 1 1 2.1 2.1h-2.1V8.8Zm-1.1 0a2.1 2.1 0 0 1-4.2 0V3.5a2.1 2.1 0 0 1 4.2 0v5.3Z"/><path fill="#ECB22E" d="M15.7 17.3a2.1 2.1 0 1 1-2.1 2.1v-2.1h2.1Zm0-1.1a2.1 2.1 0 0 1 0-4.2H21a2.1 2.1 0 0 1 0 4.2h-5.3Z"/></svg>';
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const $=selector=>document.querySelector(selector);
@@ -3176,15 +3319,16 @@ document.addEventListener('change',event=>{if(event.target.dataset.revSelect!==u
 document.addEventListener('click',event=>{const button=event.target.closest('[data-action]');if(!button)return;const a=button.dataset.action;if(a==='nav'){view=button.dataset.view;search='';filter='All';siteFilter='All';render({focus:true});window.scrollTo(0,0);}if(a==='tab'){tab=button.dataset.tab;render();}if(a==='operation'){selectedOp=button.dataset.op;render();if(innerWidth<=700)$('#operation-detail').scrollIntoView({behavior:'auto'});}if(a==='add-tool')addTool();if(a==='remove-tool')removeTool(button.dataset.tag);if(a==='open-order')openOrder(button.dataset.order);if(a==='close-dialog')$('#dialog').close();if(a==='dismiss-toast')$('#toast').hidden=true;if(a==='advance'){try{const next=structuredClone(state),result=MES.advance(next,selectedId);if(!result.ok)throw Error(result.message);mediaCommit(next);selectedOp=null;render();notify(result.message);}catch(error){notify('Order was not advanced. '+(storageBlocked?'Reload your saved workspace before retrying.':error.message));}}if(a==='clear-filters'){search='';filter='All';siteFilter='All';render();}if(a==='export')exportRecord();if(a==='help')help();if(a==='create')createChoiceDialog();if(a==='split-order')splitDialog();if(a==='create-master')createDialog();if(a==='create-adhoc')adhocDialog();if(a==='instruction')instructionDialog(Number(button.dataset.index));if(a==='review')reviewDialog();if(a==='reset')resetDialog();if(a==='confirm-reset')resetWorkspace();});
 document.addEventListener('submit',async event=>{const form=event.target;if(form.id==='operation-form'){event.preventDefault();const draft=draftFromForm(form);if(!draft.instruction||!draft.evidence){$('#operation-error').textContent='Review both evidence checks.';return;}{const opx=MES.getOrder(state,form.dataset.order)?.operations.find(x=>x.id===form.dataset.op);const openCount=(opx?.steps||[]).filter(s=>!(opx.stepChecks||{})[s.id]).length;if(openCount){$('#operation-error').textContent=`Check off the remaining ${openCount} work instruction step${openCount===1?'':'s'} before buy-off.`;document.querySelector('.stepper')?.scrollIntoView({block:'center'});return;}}{const opt=MES.getOrder(state,form.dataset.order)?.operations.find(x=>x.id===form.dataset.op);if(opt?.requiresTooling&&!draft.tools.length){$('#operation-error').textContent='This operation requires calibrated tooling. Log each calibrated tool you used.';$('#tool-tag')?.focus();return;}if(opt&&!opt.requiresTooling)draft.tools=[];}{const missingTorque=draft.tools.map(tag=>MES.toolCheck(tag)).filter(check=>check.ok&&MES.isTorqueTool(check.tool)).find(check=>!MES.torqueValid((draft.torque||{})[check.tool.tag]));if(missingTorque){$('#operation-error').textContent=`Enter the torque value applied with ${missingTorque.tool.tag}.`;document.getElementById('torque-'+missingTorque.tool.tag)?.focus();return;}}const blockedTool=draft.tools.map(tag=>MES.toolCheck(tag)).find(check=>!check.ok);if(blockedTool){$('#operation-error').textContent=blockedTool.message;return;}const stampResult=MES.stampCheck(state.profile);if(!stampResult.ok){$('#operation-error').textContent=stampResult.message;return;}{const opy=MES.getOrder(state,form.dataset.order)?.operations.find(x=>x.id===form.dataset.op);const needType=opy?.buyoffType||'Technician';if(stampResult.holder.buyoffType!==needType){$('#operation-error').textContent=`This operation needs a ${needType} buy-off. ${stampResult.holder.name} holds a ${stampResult.holder.buyoffType} credential.`;return;}}if(draft.stampNumber.trim()!==stampResult.holder.number){$('#operation-error').textContent='The stamp number entered does not match the stamp issued to '+stampResult.holder.name+'.';$('#stamp-number')?.focus();return;}const op=mediaOperation(form.dataset.order,form.dataset.op);const submit=form.querySelector('[type=submit]');submit.disabled=true;try{await ensureMediaForBuyoff(MES.getOrder(state,form.dataset.order),op);}catch(error){if($('#operation-error'))$('#operation-error').textContent=error.message;submit.disabled=false;return;}if(!form.isConnected){submit.disabled=false;return;}const buyoffState=op.requiresRecording||op.evidence?.length?structuredClone(state):state;const result=MES.completeOperation(buyoffState,form.dataset.order,form.dataset.op,draft.note.trim(),{tools:draft.tools,noTools:draft.noTools,stampNumber:draft.stampNumber,torque:draft.torque});submit.disabled=false;if(result.ok&&buyoffState!==state){try{mediaCommit(buyoffState);}catch(error){$('#operation-error').textContent=error.message;return;}}if(applyResult(result)){drafts.delete(`${form.dataset.order}/${form.dataset.op}`);selectedOp=null;render();}}if(form.id==='record-note-form'){event.preventDefault();applyResult(MES.addNote(state,selectedId,form.elements.note.value.trim()));}if(form.id==='create-form'){event.preventDefault();const data=Object.fromEntries(new FormData(form));data.quantity=Number(data.quantity);try{const next=structuredClone(state),result=MES.addOrder(next,data);if(!result.ok)throw Error(result.message);mediaCommit(next);$('#dialog').close();openOrder(result.id);notify(result.message);}catch(error){$('#create-error').textContent='Order was not created. '+(storageBlocked?'Reload your saved workspace before retrying.':error.message);$('#create-error').focus();}}if(form.id==='split-form'){event.preventDefault();const result=MES.splitOrder(state,selectedId,form.elements.quantity.value);if(!result.ok){$('#split-error').textContent=result.message;$('#split-error').focus();return;}if(!save())return;$('#dialog').close();openOrder(result.id);notify(result.message);}if(form.id==='adhoc-form'){event.preventDefault();const pinned=[...form.querySelectorAll('#adhoc-part:disabled,#adhoc-revision:disabled')];pinned.forEach(el=>el.disabled=false);const data=Object.fromEntries(new FormData(form));pinned.forEach(el=>el.disabled=true);data.quantity=Number(data.quantity);if(data.partNumber==='__other'){data.partNumber=data.partNumberOther;data.revision=data.revisionOther;}delete data.partNumberOther;delete data.revisionOther;try{const next=structuredClone(state),result=MES.addAdhocOrder(next,data);if(!result.ok)throw Error(result.message);mediaCommit(next);$('#dialog').close();openOrder(result.id);notify(result.message);}catch(error){$('#adhoc-error').textContent='Order was not created. '+(storageBlocked?'Reload your saved workspace before retrying.':error.message);$('#adhoc-error').focus();}}if(form.id==='review-form'){event.preventDefault();if(!form.elements.acknowledge.checked)return;const result=MES.closeOrder(state,selectedId);if(result.ok)$('#dialog').close();applyResult(result);}});
 $('#dialog').addEventListener('click',event=>{if(event.target===$('#dialog')&&!mediaBusy){const rect=$('#dialog').getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)$('#dialog').close();}});
-function instructionDialog(index){const o=order(),op=o.operations[index],ref=o.masterWI,steps=op.steps||[],checks=op.stepChecks||{};openDialog(ref?'Work instruction':'Instruction',`<p class="mono">${ref?`${esc(ref.id)} Rev ${esc(ref.revision)} · Master WI`:`WI-${sequence(index)} · Revision ${esc(o.revision)}`}</p><h3 style="margin-bottom:8px">Op ${sequence(index)} · ${esc(op.title)}${calloutBadges(op)}</h3>${calloutReminders(op)}<p>${esc(op.description)}</p><p class="small muted">Buy-off type: ${esc(op.buyoffType||'Technician')}${op.inspectionPoint?' · Inspection point':''}${op.requiresTooling?' · Calibrated tooling required':''}${op.classification?` · ${esc(op.classification)}`:''}</p>${steps.length?`<ol class="wi-steps dialog-steps">${steps.map(s=>`<li class="${checks[s.id]?'checked':''}"><strong>${esc(s.title)}</strong><p>${esc(s.instruction)}</p>${s.image?`<img class="step-thumb" src="${esc(s.image.dataUrl)}" alt="${esc(s.image.caption||s.title)}" loading="lazy">${s.image.caption?`<small>${esc(s.image.caption)}</small>`:''}`:''}${checks[s.id]?`<small>Checked off by ${esc(checks[s.id].name)} · ${esc(buyoffDate(checks[s.id].at))}${checks[s.id].torque?` · ${esc(checks[s.id].torque.value)} ${esc(checks[s.id].torque.unit)} (${esc(checks[s.id].torque.tool)})`:''}</small>`:''}</li>`).join('')}</ol>`:''}<div class="dialog-actions">${ref?`<button class="btn" data-action="wi-open" data-wi="${esc(ref.id)}" data-rev="${esc(ref.revision)}">Open master WI</button>`:''}<button class="btn primary" data-action="close-dialog">Return to operation</button></div>`);}
+function instructionDialog(index){const o=order(),op=o.operations[index],ref=o.masterWI,steps=op.steps||[],checks=op.stepChecks||{};openDialog(ref?'Work instruction':'Instruction',`<p class="mono">${ref?`${esc(ref.id)} Rev ${esc(ref.revision)} · Master WI`:`WI-${sequence(index)} · Revision ${esc(o.revision)}`}</p><h3 style="margin-bottom:8px">Op ${sequence(index)} · ${esc(op.title)}${calloutBadges(op)}</h3>${calloutReminders(op)}<p>${esc(op.description)}</p><p class="small muted">Buy-off type: ${esc(op.buyoffType||'Technician')}${op.inspectionPoint?' · Inspection point':''}${op.requiresTooling?' · Calibrated tooling required':''}${op.classification?` · ${esc(op.classification)}`:''}</p>${steps.length?`<ol class="wi-steps dialog-steps">${steps.map(s=>`<li class="${checks[s.id]?'checked':''}"><strong>${esc(s.title)}</strong><p>${esc(s.instruction)}</p>${s.image?`<img class="step-thumb" src="${esc(s.image.dataUrl)}" alt="${esc(s.image.caption||s.title)}" loading="lazy">${s.image.caption?`<small>${esc(s.image.caption)}</small>`:''}`:''}${checks[s.id]?`<small>Checked off by ${esc(checks[s.id].name)} · ${esc(buyoffDate(checks[s.id].at))}${checks[s.id].torque?` · ${esc(checks[s.id].torque.value)} ${esc(checks[s.id].torque.unit)} (${esc(checks[s.id].torque.tool)})`:''}</small>`:''}</li>`).join('')}</ol>`:''}<div class="dialog-actions"><button class="btn primary" data-action="close-dialog">Return to operation</button></div>`);}
 function help(){openDialog('Using Flight Control',`<p>Work orders are cloned from a released work instruction, then run operation by operation.</p><ol><li><strong>Create work order</strong> — choose the part revision, pedigree, subcategory, site, aircraft, and priority. The operation sequence comes across with the instruction.</li><li>Release the draft to kitting. Production / Mfg. and Development NFF skip pre-release QA; other combinations need a QA approval first.</li><li>In <strong>Material kit</strong>, choose each material's lot from NetSuite on-hand stock.</li><li>Work the operations in order. Check off every step, add a note, then choose <strong>Complete operation</strong>. Later operations can be previewed but cannot be completed out of sequence, and an inspection point blocks everything behind it.</li><li>Use <strong>Create IDR / NC</strong> inside an issued operation to raise a ticket, optionally holding the operation.</li><li>Send the order to QA and close it. Closure needs a Quality Manager, Quality Engineer, or QA Reviewer.</li></ol><p>Every work order is issued at <strong>Baseline</strong> and rolls to <strong>WO_Rev-A</strong> as QA releases each change. Open <strong>Record</strong> to see each revision, what changed, and who approved it.</p><p><strong>Team discussion</strong> posts messages against an operation and can link an existing Slack thread; messages are not sent to or synced from Slack. <strong>Print work order</strong> offers an internal edition with messages and an external edition without them.</p><p>Your credential is captured on each new buy-off. Select your initials in the top bar to change it; earlier stamps are unchanged.</p><p>Records are kept in this browser. Nothing connects to Jira, PDM, NetSuite, or another MES.</p><div class="dialog-actions"><button class="btn primary" data-action="close-dialog">Got it</button></div>`);}
 function reviewDialog(){const o=order();if(!MES.isQAProfile(state.profile)){openDialog('QA closure review',`<p>A QA profile is required to close a work order. Switching roles here is only a record, not real authentication.</p><div class="dialog-actions"><button class="btn" data-action="close-dialog">Cancel</button><button class="btn primary" data-action="engineering-qa-role" data-stage="review">Use QA reviewer</button></div>`);return;}openDialog('Quality review',`<p><strong>${esc(o.id)}</strong> has ${doneCount(o)} of ${o.operations.length} operations recorded.</p><div class="inline-info">${icon('shield')}<p>Real closure requires an authorized quality decision. This action only closes a browser record.</p></div><form id="review-form"><label class="check-label" style="margin-top:18px"><input name="acknowledge" type="checkbox" required><span>I have reviewed the record and understand this is not a real release or signature.</span></label><div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Cancel</button><button class="btn primary" type="submit">Close work order</button></div></form>`);}
 function resetDialog(){if($('#dialog').open)$('#dialog').close();openDialog('Reset this application?',`<p>This replaces only this app’s saved work orders, operation notes, team messages, Slack thread links, history, and locally saved recordings. Other browser data is not affected.</p><p>Export any record you want to keep first.</p><div class="dialog-actions"><button class="btn" data-action="close-dialog">Keep my changes</button><button class="btn primary" data-action="confirm-reset">Reset data</button></div>`);}
 function resetWorkspace(){discussionDrafts.clear();slackDrafts.clear();messageTargetDrafts.clear();siteFilter='All';MESMedia.clear().catch(()=>notify('Records reset, but local recordings could not be erased.'));state=MES.ensureMasterWIs(MES.seed());storageBlocked=false;$('#storage-alert').hidden=true;drafts.clear();selectedOp=null;selectedId=null;view='order';tab='operations';lastSaved=structuredClone(state);save();$('#dialog').close();render();notify('Workspace reset.');}
+function syncGroundingBlocks(root=document){root.querySelectorAll('.callout-fieldset').forEach(fs=>{const g=fs.querySelector('[data-grounding]'),cb=fs.querySelector('input[type=checkbox][value=ESD]');if(g&&cb)g.hidden=!cb.checked;});}
 function splitChips(o){
   const parts=[];
   if(o.splitFrom)parts.push(`<button class="wi-ref" data-action="open-order" data-order="${esc(o.splitFrom)}">${icon('layers')} Split from ${esc(o.splitFrom)}</button>`);
-  if(Array.isArray(o.splitInto)&&o.splitInto.length)parts.push(...o.splitInto.map(id=>`<button class="wi-ref" data-action="open-order" data-order="${esc(id)}">${icon('layers')} Split ${esc(id.slice(id.lastIndexOf('-')))} · ${esc(id)}</button>`));
+  if(Array.isArray(o.splitInto)&&o.splitInto.length)parts.push(...o.splitInto.map(id=>`<button class="wi-ref" data-action="open-order" data-order="${esc(id)}">${icon('layers')} ${esc(id)}</button>`));
   return parts.join('');
 }
 function splitDialog(){
@@ -3310,7 +3454,7 @@ function ticketDialog(id){const o=order(),t=o.tickets.find(t=>t.id===id);if(!t)r
 function reportContent(o,r){return `<div class="report-title"><h3>${esc(r.title)}</h3><span class="report-result ${r.result==='Pass'?'pass':r.result==='Fail'?'fail':''}">${esc(r.result)}</span></div><dl class="dialog-context"><div><dt>Report ID</dt><dd class="mono">${esc(r.id)}</dd></div><div><dt>Work order / operation</dt><dd class="mono">${esc(o.id)} / ${operationNumber(o,r.operationId)}</dd></div><div><dt>Serial number</dt><dd class="mono">${esc(o.serial)}</dd></div><div><dt>Revision</dt><dd class="mono">${esc(r.revision)}</dd></div><div><dt>Performed</dt><dd>${date(r.performedAt)}</dd></div></dl><p class="report-summary">${esc(r.summary)}</p><div class="table-wrap" tabindex="0" role="region" aria-label="ATP results"><table class="data-table atp-table"><thead><tr><th scope="col">Check</th><th scope="col">Expected</th><th scope="col">Observed</th><th scope="col">Result</th></tr></thead><tbody>${r.checks.map(c=>`<tr><td>${esc(c.name)}</td><td>${esc(c.expected)}</td><td>${esc(c.observed)}</td><td><span class="report-result ${c.result==='Pass'?'pass':'fail'}">${esc(c.result)}</span></td></tr>`).join('')}</tbody></table></div><div class="inline-info warning">${icon('info')}<p>Categorical checks only. Values are recorded labels, not engineering acceptance criteria.</p></div>`;}
 function reportDialog(id){const o=order(),r=o.reports.find(r=>r.id===id);if(!r)return;$('#dialog').classList.add('report-dialog');openDialog('ATP report',`${reportContent(o,r)}<div class="dialog-actions"><button class="btn" data-action="ticket-operation" data-op="${esc(r.operationId)}">Open linked operation</button><button class="btn primary" data-action="download-report" data-report="${esc(r.id)}">${icon('download')} Download report</button></div>`);}
 function downloadReport(id){const o=order(),r=o.reports.find(r=>r.id===id);if(!r)return;const html='<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>'+esc(r.id)+'</title><style>body{font:16px/1.5 sans-serif;color:#0a1217;max-width:1000px;margin:36px auto;padding:0 24px}h1{font-size:28px}h3{font-size:22px}dt{color:#536670;font-size:13px}dd{margin:0 0 16px}table{border-collapse:collapse;width:100%;font-size:14px}th,td{padding:12px;text-align:left;border:1px solid #ccd7dd}.report-result{font-weight:bold}.fail{color:#a63724}.pass{color:#24634e}.inline-info{background:#fff4df;padding:16px;margin-top:24px}.dialog-context{display:grid;grid-template-columns:1fr 1fr;gap:12px}.table-wrap{overflow:auto}svg{display:none}@media print{body{margin:12mm}}</style><body><h1>ATP report</h1>'+reportContent(o,r)+'<p>Linked report in the Flight Control record.</p></body></html>';saveFile(new Blob([html],{type:'text/html'}),r.id+'-report.html');notify(`Downloaded ${r.id}.`);}
-function profileDialog(){const current=MES.profileOptionFor(state.profile)||MES.PROFILE_OPTIONS[0];const groups=[...new Set(MES.PROFILE_OPTIONS.map(option=>option.group))];openDialog('Your credentials',`<p>Pick who you are signed in as. Credentials are selected here, not authenticated. New buy-offs capture a snapshot of the credential; earlier stamps do not change.</p><form id="profile-form"><div id="profile-error" class="form-error" role="alert" tabindex="-1"></div><div class="field"><label for="profile-choice">Signed in as</label><select id="profile-choice" name="profileId" required>${groups.map(group=>`<optgroup label="${esc(group)}">${MES.PROFILE_OPTIONS.filter(option=>option.group===group).map(option=>`<option value="${esc(option.id)}" ${current.id===option.id?'selected':''}>${esc(option.label)}</option>`).join('')}</optgroup>`).join('')}</select><small>Stamp Control Log holders (Quality → Quality, Production → Technician), -only A&P, Engineering, and 8130-9 Authorized Inspector credentials, and roles that hold no stamp. Each operation’s buy-off type must match.</small></div><dl class="dialog-context profile-preview" id="profile-preview">${profilePreview(current)}</dl><p class="small muted">Names, roles, and credential IDs come from the credential list and can’t be edited here.</p><div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Cancel</button><button class="btn primary" type="submit">Use these credentials</button></div></form>`);}
+function profileDialog(){const current=MES.profileOptionFor(state.profile)||MES.PROFILE_OPTIONS[0];const groups=[...new Set(MES.PROFILE_OPTIONS.map(option=>option.group))];openDialog('Your credentials',`<p class="sk-session-line">${(()=>{try{const u=sessionStorage.getItem('skyryse-mes-session-v1');return u?`Signed in as <strong>${esc(u)}</strong> on this device. <button type="button" class="btn quiet" onclick="skSignOut()">Sign out</button>`:'';}catch(_){return ''}})()}</p><p>Pick the credential you are working under. Credentials are selected here for buy-offs; the sign-in above is your account. New buy-offs capture a snapshot of the credential; earlier stamps do not change.</p><form id="profile-form"><div id="profile-error" class="form-error" role="alert" tabindex="-1"></div><div class="field"><label for="profile-choice">Signed in as</label><select id="profile-choice" name="profileId" required>${groups.map(group=>`<optgroup label="${esc(group)}">${MES.PROFILE_OPTIONS.filter(option=>option.group===group).map(option=>`<option value="${esc(option.id)}" ${current.id===option.id?'selected':''}>${esc(option.label)}</option>`).join('')}</optgroup>`).join('')}</select><small>Stamp Control Log holders (Quality → Quality, Production → Technician), -only A&P, Engineering, and 8130-9 Authorized Inspector credentials, and roles that hold no stamp. Each operation’s buy-off type must match.</small></div><dl class="dialog-context profile-preview" id="profile-preview">${profilePreview(current)}</dl><p class="small muted">Names, roles, and credential IDs come from the credential list and can’t be edited here.</p><div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Cancel</button><button class="btn primary" type="submit">Use these credentials</button></div></form>`);}
 
 document.addEventListener('click',event=>{const b=event.target.closest('[data-action]');if(!b)return;if(b.dataset.action==='create-ticket')createTicketDialog(b.dataset.op);if(b.dataset.action==='ticket')ticketDialog(b.dataset.ticket);if(b.dataset.action==='atp-report')reportDialog(b.dataset.report);if(b.dataset.action==='download-report')downloadReport(b.dataset.report);if(b.dataset.action==='profile')profileDialog();if(b.dataset.action==='ticket-operation'){if($('#dialog').open)$('#dialog').close();selectedOp=b.dataset.op;tab='operations';view='order';render();$('#operation-detail').scrollIntoView({behavior:'auto'});}});
 document.addEventListener('submit',event=>{const f=event.target;if(f.id==='ticket-form'){event.preventDefault();const data=Object.fromEntries(new FormData(f));data.hold=f.elements.hold.checked;const result=MES.createTicket(state,f.dataset.order,f.dataset.op,data);if(!result.ok){$('#ticket-error').textContent=result.message;$('#ticket-error').focus();return;}if(!save())return;$('#dialog').close();render();notify(result.message);ticketDialog(result.id);}if(f.id==='resolve-ticket-form'){event.preventDefault();if(!f.elements.acknowledge.checked)return;const result=MES.resolveTicket(state,selectedId,f.dataset.ticket,f.elements.resolution.value.trim());if(!result.ok){$('#resolution-error').textContent=result.message;$('#resolution-error').focus();return;}const ticketId=f.dataset.ticket;if(!save())return;$('#dialog').close();render();notify(result.message);ticketDialog(ticketId);}if(f.id==='profile-form'){event.preventDefault();const result=MES.selectProfile(state,f.elements.profileId.value);if(!result.ok){$('#profile-error').textContent=result.message;$('#profile-error').focus();return;}if(!save())return;$('#dialog').close();render();notify(result.message);}});
