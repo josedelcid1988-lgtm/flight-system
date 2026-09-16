@@ -498,6 +498,27 @@ body[data-view="order"] .page-heading .btn.primary{animation:none}
 </style>
 
 <style id="skyryse-qa-fixes">
+.notice-feed .panel-head .btn{min-height:36px}
+.notice-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;padding:12px 16px 16px}
+.notice{display:flex;flex-direction:column;gap:6px;padding:16px;border:1px solid #E5E5EA;border-radius:14px;background:#fff;border-top:4px solid #0A6CFF}
+.notice-great-work{border-top-color:#1C8A4B}.notice-shout-out{border-top-color:#F5A524}.notice-qms-change{border-top-color:#6E56CF}
+.notice-me{box-shadow:0 0 0 2px #F5A52466}.notice-pinned{background:#FBFBFD}
+.notice-top{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12px}
+.notice-kind{font:600 11px/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:#3A3A3C}
+.notice-pin{padding:1px 8px;border-radius:999px;background:#F2F2F4;color:#6E6E73}
+.notice-meta{margin-left:auto;color:#8E8E93}
+.notice h3{margin:4px 0 0;font-size:17px;letter-spacing:-.01em}
+.notice-mention{margin:0;font-size:14px;color:#8A5A00}
+.notice-body{margin:0;font-size:14px;line-height:1.5;color:#3A3A3C;white-space:pre-wrap}
+.notice-doc{margin:0;font-size:13px;color:#4B3A9C}
+.notice-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:6px}
+.notice-actions .btn{min-height:36px}
+.notice-acks summary{cursor:pointer;font-size:13px;color:#0A6CFF}.notice-acks ul{margin:6px 0 0;padding-left:18px;font-size:13px}
+.notice-more{padding:0 16px 14px;margin:0}
+.notice-empty{padding:4px 0}
+.notice-kinds{grid-template-columns:repeat(3,1fr)}
+.notice-f[hidden]{display:none!important}
+@media (max-width:700px){.notice-kinds{grid-template-columns:1fr}}
 .assignee-combo{width:100%}.assignee-native[hidden]{display:none!important}.wi-assign .field{margin:0}
 .closure-ticket[hidden],.closure-nff[hidden]{display:none}.closure-ticket{margin-top:12px}
 .asg-actions{display:flex;gap:4px}
@@ -937,7 +958,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   me: EVERYONE.concat(['operate','split','request-pedigree','approve-pedigree','edit-wi','peer-review-wi','create-wo','adjust-wo','dispo-nc','push-software','assign-work']),
   swe: EVERYONE.concat(['push-software','accept-software']),
   qe: EVERYONE.concat(['request-pedigree','approve-pedigree','approve-wo','approve-wi','approve-nc','assign-work']),
-  qm: EVERYONE.concat(['operate','split','request-pedigree','approve-pedigree','edit-wi','peer-review-wi','create-wo','adjust-wo','dispo-nc','approve-wo','approve-wi','approve-nc','push-software','accept-software','assign-work'])
+  qm: EVERYONE.concat(['operate','split','request-pedigree','approve-pedigree','edit-wi','peer-review-wi','create-wo','adjust-wo','dispo-nc','approve-wo','approve-wi','approve-nc','push-software','accept-software','assign-work','post-notice'])
  };
  var ALL_CAPS=ROLE_CAPS.qm;
  var ACTION_CAP={
@@ -955,7 +976,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   'create-form':'create-wo','adhoc-form':'create-wo',
   'seq-add-form':'adjust-wo','seq-edit-form':'adjust-wo','seq-remove-form':'adjust-wo','split-form':'split','schedule-form':'operate',
   'closure-decide-form':'approve-wo',
-  'atp-push-form':'push-software','atp-review-form':'accept-software','assign-form':'assign-work','atp-link-form':'adjust-wo','po-add-form':'adjust-wo',
+  'atp-push-form':'push-software','atp-review-form':'accept-software','assign-form':'assign-work','notice-form':'post-notice','atp-link-form':'adjust-wo','po-add-form':'adjust-wo',
   'release-form':'approve-wo','review-form':'approve-wo','engineering-approval-form':'approve-wo','engineering-form':'submit-ecr',
   'ticket-form':'raise-nc','ticket-dispo-form':'dispo-nc','resolve-ticket-form':'approve-nc',
   'pedigree-form':'request-pedigree','inventory-form':'operate','serial-form':'operate','serial-void-form':'operate','aog-form':'operate','operation-form':'operate','record-note-form':'operate','media-form':'operate'};
@@ -1537,6 +1558,40 @@ main a{min-height:24px;display:inline-flex;align-items:center}
     if (!str(note, 300)) return fail('Enter a reason for declining the request.');
     Object.assign(e, { status: 'Declined', note, decidedBy: who, decidedAt: at });
     return { ok: true, message: `${e.id} declined.` };
+  }
+  const NOTICE_KINDS = Object.freeze(['Great work', 'Shout-out', 'QMS change']);
+  function postNotice(state, input) {
+    { const d = denied('post-notice', 'post announcements'); if (d) return d; }
+    const list = Array.isArray(state.notices) ? state.notices : [];
+    const kind = String(input?.kind ?? ''), title = String(input?.title ?? '').trim(), body = String(input?.body ?? '').trim();
+    if (!NOTICE_KINDS.includes(kind)) return fail('Choose Great work, Shout-out or QMS change.');
+    if (!str(title, 120)) return fail('Add a headline (up to 120 characters).');
+    if (!str(body, 1000)) return fail('Write the announcement (up to 1,000 characters).');
+    const mention = input?.mentionUsername ? { username: String(input.mentionUsername).slice(0, 40), name: String(input.mentionName || input.mentionUsername).slice(0, 60) } : null;
+    const doc = String(input?.docNumber ?? '').trim(), rev = String(input?.docRevision ?? '').trim(), effective = String(input?.effective ?? '').trim();
+    if (kind === 'QMS change' && !str(doc, 40)) return fail('Enter the QMS document number, for example QP-7.5-001.');
+    if (!str(rev, 10, 0)) return fail('Keep the revision under 10 characters.');
+    if (effective && !/^\d{4}-\d{2}-\d{2}$/.test(effective)) return fail('Use a valid effective date.');
+    const entry = { id: `NTC-${String(list.length + 1).padStart(4, '0')}`, kind, title, body, ...(mention ? { mention } : {}), ...(kind === 'QMS change' ? { doc: { number: doc, ...(rev ? { revision: rev } : {}), ...(effective ? { effective } : {}) }, ackRequired: input.ackRequired === true, acks: [] } : {}), pinned: input.pinned === true, by: actor(state), at: new Date().toISOString() };
+    state.notices = [...list, entry].slice(-200);
+    return { ok: true, id: entry.id, message: `${kind} posted.` };
+  }
+  function acknowledgeNotice(state, id) {
+    const n = (state.notices || []).find(x => x.id === id);
+    if (!n || !n.ackRequired) return fail('This announcement does not need acknowledgment.');
+    const me = actor(state);
+    if (n.acks.some(a => a.credentialId === me.credentialId)) return fail('Already acknowledged.');
+    n.acks = [...n.acks, { name: me.name, role: me.role, credentialId: me.credentialId, at: new Date().toISOString() }].slice(-500);
+    return { ok: true, message: `Acknowledged ${n.doc?.number || n.title}.` };
+  }
+  function updateNotice(state, id, action) {
+    const n = (state.notices || []).find(x => x.id === id);
+    if (!n) return fail('Announcement not found.');
+    const me = actor(state);
+    if (n.by?.credentialId !== me.credentialId && !can('post-notice')) return fail('Only the poster or leadership can change this announcement.');
+    if (action === 'pin') { n.pinned = !n.pinned; return { ok: true, message: n.pinned ? 'Pinned to the top.' : 'Unpinned.' }; }
+    if (action === 'remove') { state.notices = state.notices.filter(x => x.id !== id); return { ok: true, message: 'Announcement removed.' }; }
+    return fail('Unknown action.');
   }
   const CLOSURE_REASONS = Object.freeze(['Obsolete', 'Scrap']);
   function requestOrderClosure(state, id, input) {
@@ -3089,7 +3144,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
     return { version: 3, profile: defaultProfile(), orders: [], activity: [] };
   }
 
-  const MES = { NETSUITE_STOCK, availableLots, lotInStock, woRevLabel, nextWoRev, ensureRevisions, revisionEntries, rollWorkOrderRevision, addSavedView, removeSavedView, ensureSavedViews, stepLetter, addAttachment, removeAttachment, aogActive, aogDue, aogMessage, logAogBroadcast, resolveAog, AOG_THREAD, setSchedule, scheduleDays, dateOnly, editOrderOperation, AIRCRAFT, stockedUnits, setWIStepImage, PROFILE_OPTIONS, profileOptionFor, selectProfile, TORQUE_UNITS, isTorqueTool, torqueValid, inventoryReadiness, assignSerial, voidSerial, nextSerial, orderSerials, isSerialized, SERIALIZED_PARTS, autoAssignSerials, moveToInventory, markNetSuitePosted, netsuiteCsv, ensureMasterWIs, findWI, wiKey, nextWIRevision, addMasterWI, updateMasterWI, saveWIOperations, releaseMasterWI, reviseMasterWI, setStepCheck, BUYOFF_TYPES, OP_CLASSIFICATIONS, EXTERNAL_CLASS, INSPECTION_CLASS, ATP_CLASS, atpPending, pushATPSoftware, reviewATPPush, linkATPSoftware, addPurchaseOrder, CLOSURE_REASONS, requestOrderClosure, requestWorkOrder, decideWORequest, ECR_TYPES, submitECRRequest, linkECRJira, openProcessECRs, incorporateECRs, decideOrderClosure, ASSIGN_TYPES, assignWork, completeAssignment, syncAssignments, opAssignee, INSPECTION_BUYOFF_TYPES, pendingSequenceChange, inspectionGate, firstInsertIndex, addOrderOperation, removeOrderOperation, approveSequenceChange, toolCheck, stampCheck, stampCredential, stampHolderFor, CAL_TOOLS, CAL_SNAPSHOT, STAMP_HOLDERS, setMaterialLot, PEDIGREES, PRIORITIES, SUBCATEGORIES, PART_CATALOG, partDefinition, revisionLabel, requiresReleaseQA, releaseApproval, approveRelease, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, approveECR, approveEngineeringChange, SITES, orderSite, MESSAGE_TARGETS, seed, validate, upgrade, getOrder, summary, canAdvance, advance, setMaterial, setPriority, completeOperation, closeOrder, addOrder, addAdhocOrder, splitOrder, requestPedigreeChange, approvePedigreeChange, peerReviewMasterWI, dispositionTicket, DISPOSITIONS, ADHOC_ONLY, CALLOUTS, GROUNDING, FOD_LEVELS, CONSUMABLES, addNote, blockingTickets, createTicket, resolveTicket, updateProfile, attachEvidence, reviewEvidence, removeEvidence, addMessage, setSlackThread, slackThreadValid };
+  const MES = { NETSUITE_STOCK, availableLots, lotInStock, woRevLabel, nextWoRev, ensureRevisions, revisionEntries, rollWorkOrderRevision, addSavedView, removeSavedView, ensureSavedViews, stepLetter, addAttachment, removeAttachment, aogActive, aogDue, aogMessage, logAogBroadcast, resolveAog, AOG_THREAD, setSchedule, scheduleDays, dateOnly, editOrderOperation, AIRCRAFT, stockedUnits, setWIStepImage, PROFILE_OPTIONS, profileOptionFor, selectProfile, TORQUE_UNITS, isTorqueTool, torqueValid, inventoryReadiness, assignSerial, voidSerial, nextSerial, orderSerials, isSerialized, SERIALIZED_PARTS, autoAssignSerials, moveToInventory, markNetSuitePosted, netsuiteCsv, ensureMasterWIs, findWI, wiKey, nextWIRevision, addMasterWI, updateMasterWI, saveWIOperations, releaseMasterWI, reviseMasterWI, setStepCheck, BUYOFF_TYPES, OP_CLASSIFICATIONS, EXTERNAL_CLASS, INSPECTION_CLASS, ATP_CLASS, atpPending, pushATPSoftware, reviewATPPush, linkATPSoftware, addPurchaseOrder, CLOSURE_REASONS, requestOrderClosure, NOTICE_KINDS, postNotice, acknowledgeNotice, updateNotice, requestWorkOrder, decideWORequest, ECR_TYPES, submitECRRequest, linkECRJira, openProcessECRs, incorporateECRs, decideOrderClosure, ASSIGN_TYPES, assignWork, completeAssignment, syncAssignments, opAssignee, INSPECTION_BUYOFF_TYPES, pendingSequenceChange, inspectionGate, firstInsertIndex, addOrderOperation, removeOrderOperation, approveSequenceChange, toolCheck, stampCheck, stampCredential, stampHolderFor, CAL_TOOLS, CAL_SNAPSHOT, STAMP_HOLDERS, setMaterialLot, PEDIGREES, PRIORITIES, SUBCATEGORIES, PART_CATALOG, partDefinition, revisionLabel, requiresReleaseQA, releaseApproval, approveRelease, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, approveECR, approveEngineeringChange, SITES, orderSite, MESSAGE_TARGETS, seed, validate, upgrade, getOrder, summary, canAdvance, advance, setMaterial, setPriority, completeOperation, closeOrder, addOrder, addAdhocOrder, splitOrder, requestPedigreeChange, approvePedigreeChange, peerReviewMasterWI, dispositionTicket, DISPOSITIONS, ADHOC_ONLY, CALLOUTS, GROUNDING, FOD_LEVELS, CONSUMABLES, addNote, blockingTickets, createTicket, resolveTicket, updateProfile, attachEvidence, reviewEvidence, removeEvidence, addMessage, setSlackThread, slackThreadValid };
   if (typeof module !== 'undefined' && module.exports) module.exports = MES;
   if (root) root.MES = MES;
 })(typeof window !== 'undefined' ? window: null);
@@ -3946,6 +4001,49 @@ function enhanceAssigneeSelects(root=document){
 }
 new MutationObserver(()=>enhanceAssigneeSelects()).observe(document.body,{childList:true,subtree:true});
 function teamAssignments(){MES.syncAssignments(state);const me=window.skAuth?.actor?.();return skCan('assign-work')?state.assignments.filter(a=>a.status==='Open'&&a.assignee.username!==myAccount()&&a.by?.credentialId!==me?.credentialId):[];}
+function noticeFeed(){
+  const me=window.skAuth?.actor?.(),mine=myAccount();
+  const list=[...(state.notices||[])].sort((a,b)=>(b.pinned?1:0)-(a.pinned?1:0)||b.at.localeCompare(a.at));
+  const canPost=skCan('post-notice');
+  if(!list.length&&!canPost)return '';
+  const shown=list.slice(0,dashNoticesAll?list.length:4);
+  const card=n=>{const acked=n.ackRequired&&n.acks.some(a=>a.credentialId===me?.credentialId);const forMe=n.mention?.username===mine;const canEdit=canPost||n.by?.credentialId===me?.credentialId;
+    return `<article class="notice notice-${n.kind.replace(/\s+/g,'-').toLowerCase()} ${forMe?'notice-me':''} ${n.pinned?'notice-pinned':''}"><div class="notice-top"><span class="notice-kind">${n.kind==='Great work'?'★ ':n.kind==='Shout-out'?'👏 ':'§ '}${esc(n.kind)}</span>${n.pinned?'<span class="notice-pin">Pinned</span>':''}<span class="notice-meta">${esc(n.by?.name||'')} · ${esc(buyoffDate(n.at))}</span></div>
+      <h3>${esc(n.title)}</h3>${n.mention?`<p class="notice-mention">${forMe?'For you, ':'For '}<strong>${esc(n.mention.name)}</strong></p>`:''}<p class="notice-body">${esc(n.body)}</p>
+      ${n.doc?`<p class="notice-doc mono">${esc(n.doc.number)}${n.doc.revision?` Rev ${esc(n.doc.revision)}`:''}${n.doc.effective?` · effective ${esc(n.doc.effective)}`:''}</p>`:''}
+      <div class="notice-actions">${n.ackRequired?(acked?`<span class="pill ready">Acknowledged</span>`:`<button class="btn primary" data-action="notice-ack" data-id="${esc(n.id)}">Acknowledge</button>`)+`<span class="small muted">${n.acks.length} acknowledged</span>`:''}${canEdit?`<button class="btn quiet" data-action="notice-pin" data-id="${esc(n.id)}">${n.pinned?'Unpin':'Pin'}</button><button class="btn quiet" data-action="notice-remove" data-id="${esc(n.id)}">Remove</button>`:''}${n.ackRequired&&canEdit&&n.acks.length?`<details class="notice-acks"><summary>Who acknowledged</summary><ul>${n.acks.map(a=>`<li>${esc(a.name)} · ${esc(buyoffDate(a.at))}</li>`).join('')}</ul></details>`:''}</div></article>`;};
+  return `<section class="panel dash-group notice-feed" aria-labelledby="dash-notices-h"><div class="panel-head"><h2 id="dash-notices-h">Announcements</h2>${canPost?`<button class="btn" data-action="notice-new">${icon('plus')} Post</button>`:''}</div><div class="notice-list">${shown.map(card).join('')||'<p class="small muted notice-empty">No announcements yet. Post great work, a shout-out or a QMS change.</p>'}</div>${list.length>4?`<p class="notice-more"><button class="btn quiet" data-action="notice-all">${dashNoticesAll?'Show fewer':`Show all ${list.length}`}</button></p>`:''}</section>`;
+}
+let dashNoticesAll=false;
+function noticeDialog(){
+  openDialog('Post an announcement',`<form id="notice-form"><div class="po-mode notice-kinds" role="radiogroup" aria-label="Type">${[['Great work','Recognize a team result.'],['Shout-out','Thank a specific person.'],['QMS change','A procedure, form or policy changed.']].map(([k,d],i)=>`<label class="po-mode-opt"><input type="radio" name="kind" value="${k}" ${i===0?'checked':''}><span><strong>${k}</strong><small>${d}</small></span></label>`).join('')}</div><div class="form-grid">
+    <div class="field wide"><label for="notice-title">Headline</label><input id="notice-title" name="title" maxlength="120" required></div>
+    <div class="field wide notice-f" data-for="Shout-out|Great work"><label for="notice-mention">Recognize <span class="muted">(optional)</span></label><select id="notice-mention" name="mention">${assigneeOptions('view')}</select></div>
+    <div class="field notice-f" data-for="QMS change" hidden><label for="notice-doc">Document number</label><input id="notice-doc" name="docNumber" maxlength="40" placeholder="QP-7.5-001"></div>
+    <div class="field notice-f" data-for="QMS change" hidden><label for="notice-rev">Revision <span class="muted">(optional)</span></label><input id="notice-rev" name="docRevision" maxlength="10" placeholder="C"></div>
+    <div class="field notice-f" data-for="QMS change" hidden><label for="notice-eff">Effective <span class="muted">(optional)</span></label><input id="notice-eff" name="effective" type="date"></div>
+    <label class="check-label field notice-f" data-for="QMS change" hidden><input type="checkbox" name="ackRequired" checked><span>Everyone must acknowledge</span></label>
+    <div class="field wide"><label for="notice-body">Message</label><textarea id="notice-body" name="body" rows="4" maxlength="1000" required></textarea></div>
+    <label class="check-label field wide"><input type="checkbox" name="pinned"><span>Pin to the top of everyone’s dashboard</span></label>
+  </div><p id="notice-error" class="form-error" role="alert"></p><div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Cancel</button><button class="btn primary" type="submit">Post</button></div></form>`);
+}
+document.addEventListener('change',e=>{if(e.target.name!=='kind'||!e.target.closest('#notice-form'))return;document.querySelectorAll('#notice-form .notice-f').forEach(el=>{el.hidden=!el.dataset.for.split('|').includes(e.target.value);});});
+document.addEventListener('click',e=>{
+  const b=e.target.closest('[data-action^="notice-"]');if(!b)return;
+  const a=b.dataset.action;
+  if(a==='notice-new')return noticeDialog();
+  if(a==='notice-all'){dashNoticesAll=!dashNoticesAll;return render();}
+  if(a==='notice-ack')return applyResult(MES.acknowledgeNotice(state,b.dataset.id));
+  if(a==='notice-pin')return applyResult(MES.updateNotice(state,b.dataset.id,'pin'));
+  if(a==='notice-remove'){if(confirm('Remove this announcement for everyone?'))applyResult(MES.updateNotice(state,b.dataset.id,'remove'));}
+});
+document.addEventListener('submit',e=>{
+  const f=e.target;if(f.id!=='notice-form')return;e.preventDefault();
+  const kind=f.elements.kind.value,m=f.elements.mention;
+  const r=MES.postNotice(state,{kind,title:f.elements.title.value,body:f.elements.body.value,mentionUsername:kind!=='QMS change'&&m?.value?m.value:'',mentionName:m?.selectedOptions[0]?.dataset.name||'',docNumber:f.elements.docNumber.value,docRevision:f.elements.docRevision.value,effective:f.elements.effective.value,ackRequired:kind==='QMS change'&&f.elements.ackRequired.checked,pinned:f.elements.pinned.checked});
+  if(!r.ok){$('#notice-error').textContent=r.message;return;}
+  if(!save())return;$('#dialog').close();render();notify(r.message);
+});
 function renderDashboard(){
   const me=window.skAuth?.actor?.()||{name:state.profile.name};
   const first=String(me.name||'').trim().split(/\s+/)[0]||'there';
@@ -3954,6 +4052,7 @@ function renderDashboard(){
   const hour=new Date().getHours(),greet=hour<12?'Good morning':hour<18?'Good afternoon':'Good evening';
   const row=t=>t.wor?`<li><button class="task-row" data-action="wo-request-open" data-id="${esc(t.wor.id)}"><span class="task-main"><strong>${esc(t.title)}</strong><small>${esc(t.why)}</small></span><span class="pill kitting">Request</span><span class="task-go" aria-hidden="true">${icon('arrow')}</span></button></li>`:t.ecr?`<li><button class="task-row" data-action="ecr-jira" data-id="${esc(t.ecr.id)}"><span class="task-main"><strong>${esc(t.title)}</strong><small>${esc(t.why)}</small></span><span class="pill kitting">Design ECR</span><span class="task-go" aria-hidden="true">${icon('arrow')}</span></button></li>`:`<li><button class="task-row ${t.aog?'task-aog':''}" data-action="task-open" ${t.wi?`data-wi="${esc(t.wi.id)}" data-rev="${esc(t.wi.revision)}"`:`data-order="${esc(t.o.id)}" data-tab="${esc(t.tab)}" ${t.op?`data-op="${esc(t.op.id)}"`:''}`}><span class="task-main"><strong>${esc(t.title)}</strong><small>${t.wi?`Master WI · ${esc(t.wi.partNumber)}`:`<span class="mono">${esc(t.o.id)}</span> · ${esc(t.o.partNumber)} · ${esc(MES.orderSite?MES.orderSite(t.o):t.o.site||'')}`}${t.why?` · ${esc(t.why)}`:''}</small></span>${t.aog?'<span class="pill aog">AOG</span>':''}${t.o?badge(t.o.status):''}<span class="task-go" aria-hidden="true">${icon('arrow')}</span></button></li>`;
   return `<section aria-labelledby="dash-heading"><div class="page-heading dash-heading"><div><p class="hero-eyebrow">My dashboard · ${esc(skRoleLabel())}</p><h1 id="dash-heading">My Path toward Certification</h1><p>${greet}, ${esc(first)}. ${(tasks.length+mine.length)?`${tasks.length+mine.length} open item${tasks.length+mine.length===1?'':'s'} need${tasks.length+mine.length===1?'s':''} you.`:'You’re all caught up. Nothing is waiting on you.'}</p><div class="dash-actions">${skCan('create-wo')?'':createWOButton()}</div>${(()=>{const me=window.skAuth?.actor?.();const mineReq=(state.woRequests||[]).filter(r=>me&&r.requestedBy?.credentialId===me.credentialId&&(r.status==='Open'||Date.now()-Date.parse(r.decidedAt||0)<7*864e5));return mineReq.length?`<p class="dash-requests">${mineReq.map(r=>`${esc(r.id)} · ${esc(r.partNumber)} × ${r.quantity} · ${r.status==='Fulfilled'?`fulfilled by ${esc(r.orderId)}`:r.status==='Declined'?`declined: ${esc(r.note)}`:'waiting for Manufacturing Engineering'}`).join('<br>')}</p>`:'';})()}</div></div>
+  ${noticeFeed()}
   ${mine.length?`<section class="panel dash-group dash-mine" aria-labelledby="dash-mine-h"><div class="panel-head"><h2 id="dash-mine-h">Assigned to me</h2><span class="mono">${mine.length}</span></div><ol class="task-list">${mine.map(a=>assignmentRow(a,true)).join('')}</ol></section>`:''}
   ${groups.length?`<div class="dash-summary">${groups.map(([g,l])=>`<a class="dash-card" href="#dash-${esc(g.replace(/\s+/g,'-').toLowerCase())}"><span class="dash-count">${l.length}</span><span>${esc(g)}</span></a>`).join('')}</div>
   ${groups.map(([g,l])=>`<section class="panel dash-group" id="dash-${esc(g.replace(/\s+/g,'-').toLowerCase())}" aria-labelledby="dash-${esc(g.replace(/\s+/g,'-').toLowerCase())}-h"><div class="panel-head"><h2 id="dash-${esc(g.replace(/\s+/g,'-').toLowerCase())}-h">${esc(g)}</h2><span class="mono">${l.length}</span></div><ol class="task-list">${l.map(row).join('')}</ol></section>`).join('')}`
@@ -4625,7 +4724,7 @@ function date(value){const d=new Date(value);return Number.isNaN(d.getTime())?es
 function badge(status){return `<span class="pill ${esc(String(status).toLowerCase().replace(/\s/g,'-'))}">${esc(status)}</span>`;}
 function footer(){return `<footer class="app-footer"><span>Flight Control · work order execution and quality records.</span><button class="btn quiet" data-action="help">Help ${icon('arrow')}</button></footer>`;}
 function setRoute(){if(view==='home'){history.replaceState(null,'','#home');return;}history.replaceState(null,'',view==='wi'&&selectedWI?`#wi/${encodeURIComponent(selectedWI.id+'|'+selectedWI.revision)}`:`#${view}${selectedId?'/'+encodeURIComponent(selectedId):''}/${tab}${view==='order'&&selectedOp?'/'+encodeURIComponent(selectedOp):''}`);}
-function render({focus=false}={}){const profileButton=$('#profile-button');{const signed=window.skAuth?.actor?.()?.name||state.profile.name;profileButton.textContent=signed.trim().split(/\s+/).map(s=>s[0]).slice(0,2).join('').toUpperCase();profileButton.dataset.actingAs=signed!==state.profile.name?state.profile.name:'';}profileButton.title=state.profile.name+' · '+state.profile.credentialId+'';if(!MES.getOrder(state,selectedId))selectedId=state.orders.length?state.orders[0].id:null;document.querySelectorAll('.nav button').forEach(btn=>{const savedActive=view==='orders'&&typeof activeViewId!=='undefined'&&activeViewId;if(btn.dataset.view===view&&!savedActive)btn.setAttribute('aria-current','page');else if(btn.dataset.view)btn.removeAttribute('aria-current');});const wiModule=['wis','wi'].includes(view);document.querySelectorAll('.nav button').forEach(btn=>{btn.hidden=['wis','wi'].includes(btn.dataset.view)!==wiModule;if(view==='wi'&&btn.dataset.view==='wis')btn.setAttribute('aria-current','page');});document.querySelectorAll('.module-switch button').forEach(btn=>btn.setAttribute('aria-pressed',String((btn.dataset.module==='wi')===wiModule)));document.body.dataset.module=wiModule?'wi':'execution';$('#wi-count').textContent=(state.masterWIs||[]).filter(wi=>wi.status!=='Obsolete').length;$('#order-count').textContent=state.orders.length;{const tc=$('#task-count');if(tc){const n=dashboardTasks().length+myAssignments().length;tc.textContent=n;tc.hidden=!n;}}renderSavedViews();document.body.dataset.view=view;$('#breadcrumb').textContent={home:'My dashboard',order:'Work order',orders:'All work orders',quality:'Quality queue',activity:'Activity record',wis:'Master WI library',wi:'Master WI',serials:'Serial numbers'}[view];$('#main').innerHTML=(view==='home'?renderDashboard():view==='serials'?renderSerialLog():view==='wis'?renderWILibrary():view==='wi'?renderWIDetail():view==='order'?(state.orders.length?renderOrder():renderNoOrders()):view==='activity'?renderActivity():renderOrders())+footer();paintIcons();setRoute();observeHoldRows();document.title=`Flight Control · ${(view==='order'&&selectedId)?selectedId:($('#breadcrumb').textContent||'Work orders')}`;if(focus)$('#main').focus({preventScroll:true});if(window.__pendingReveal){const f=window.__pendingReveal;window.__pendingReveal=null;setTimeout(f,30);}window.__ready=true;}
+function render({focus=false}={}){const profileButton=$('#profile-button');{const signed=window.skAuth?.actor?.()?.name||state.profile.name;profileButton.textContent=signed.trim().split(/\s+/).map(s=>s[0]).slice(0,2).join('').toUpperCase();profileButton.dataset.actingAs=signed!==state.profile.name?state.profile.name:'';}profileButton.title=state.profile.name+' · '+state.profile.credentialId+'';if(!MES.getOrder(state,selectedId))selectedId=state.orders.length?state.orders[0].id:null;document.querySelectorAll('.nav button').forEach(btn=>{const savedActive=view==='orders'&&typeof activeViewId!=='undefined'&&activeViewId;if(btn.dataset.view===view&&!savedActive)btn.setAttribute('aria-current','page');else if(btn.dataset.view)btn.removeAttribute('aria-current');});const wiModule=['wis','wi'].includes(view);document.querySelectorAll('.nav button').forEach(btn=>{btn.hidden=['wis','wi'].includes(btn.dataset.view)!==wiModule;if(view==='wi'&&btn.dataset.view==='wis')btn.setAttribute('aria-current','page');});document.querySelectorAll('.module-switch button').forEach(btn=>btn.setAttribute('aria-pressed',String((btn.dataset.module==='wi')===wiModule)));document.body.dataset.module=wiModule?'wi':'execution';$('#wi-count').textContent=(state.masterWIs||[]).filter(wi=>wi.status!=='Obsolete').length;$('#order-count').textContent=state.orders.length;{const tc=$('#task-count');if(tc){const n=dashboardTasks().length+myAssignments().length+(state.notices||[]).filter(x=>x.ackRequired&&!x.acks.some(a=>a.credentialId===window.skAuth?.actor?.()?.credentialId)).length;tc.textContent=n;tc.hidden=!n;}}renderSavedViews();document.body.dataset.view=view;$('#breadcrumb').textContent={home:'My dashboard',order:'Work order',orders:'All work orders',quality:'Quality queue',activity:'Activity record',wis:'Master WI library',wi:'Master WI',serials:'Serial numbers'}[view];$('#main').innerHTML=(view==='home'?renderDashboard():view==='serials'?renderSerialLog():view==='wis'?renderWILibrary():view==='wi'?renderWIDetail():view==='order'?(state.orders.length?renderOrder():renderNoOrders()):view==='activity'?renderActivity():renderOrders())+footer();paintIcons();setRoute();observeHoldRows();document.title=`Flight Control · ${(view==='order'&&selectedId)?selectedId:($('#breadcrumb').textContent||'Work orders')}`;if(focus)$('#main').focus({preventScroll:true});if(window.__pendingReveal){const f=window.__pendingReveal;window.__pendingReveal=null;setTimeout(f,30);}window.__ready=true;}
 function revStrip(o){return `<div class="rev-strip" aria-label="Work order revisions"><span class="rev-chip"><small>Drawing rev</small><strong class="mono">${esc(o.drawingRev||'—')}</strong></span><span class="rev-chip"><small>WI rev</small><strong class="mono">${esc(o.wiRev||'—')}</strong></span><button type="button" class="rev-chip rev-chip-action" data-action="tab" data-tab="record"><small>WO rev</small><strong class="mono">${esc(MES.woRevLabel(o.woRev||'Baseline'))}</strong></button></div>`;}
 
 function revisionPanel(o){
