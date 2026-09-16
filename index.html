@@ -498,6 +498,12 @@ body[data-view="order"] .page-heading .btn.primary{animation:none}
 </style>
 
 <style id="skyryse-qa-fixes">
+.check-label.callout-check{display:grid!important;grid-template-columns:24px auto minmax(0,1fr);align-items:center!important;column-gap:12px;min-height:56px;padding:12px 16px}
+.check-label.callout-check>input{grid-column:1;margin:0;align-self:center}
+.check-label.callout-check>.callout{grid-column:2;margin:0;align-self:center;white-space:nowrap}
+.check-label.callout-check>span:not(.callout),.check-label.callout-check>small{grid-column:3;align-self:center;margin:0;font-size:15px;line-height:1.35;color:#3A3A3C}
+.check-label.seq-inspection[hidden]{display:none!important}
+.insp-note{margin:8px 0 0}
 @media (min-width:701px){.module-switch button{width:100%;min-height:66px;padding:10px 3px 9px;gap:7px;font-size:9.5px;line-height:1.15;letter-spacing:.05em;text-wrap:balance;overflow-wrap:normal;border-radius:12px}.module-switch button::before{width:20px;height:20px}.module-switch button:hover{transform:none}}
 /* All work orders filter toolbar */
 .filter-bar{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px 14px;margin-bottom:20px}
@@ -1343,7 +1349,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
         steps.push({ id: `step-${j + 1}`, title: stepTitle, instruction, recordsTorque: step.recordsTorque === true, ...(carried ? { image: carried } : {}) });
 
       }
-      result.push({ id: opId, title, description, requiresRecording: op.requiresRecording === true, buyoffType: op.buyoffType, inspectionPoint: op.inspectionPoint === true, requiresTooling: op.requiresTooling === true, callouts: calloutList(op.callouts), ...(calloutList(op.callouts).includes('ESD') ? { grounding: groundingFor(calloutList(op.callouts), op.grounding) } : {}), steps });
+      result.push({ id: opId, title, description, requiresRecording: op.requiresRecording === true, buyoffType: op.buyoffType, inspectionPoint: INSPECTION_BUYOFF_TYPES.includes(op.buyoffType), requiresTooling: op.requiresTooling === true, callouts: calloutList(op.callouts), ...(calloutList(op.callouts).includes('ESD') ? { grounding: groundingFor(calloutList(op.callouts), op.grounding) } : {}), steps });
     }
     wi.operations = result;
     if (plain(wi.peerReview)) { delete wi.peerReview; wiLog(state, wi, 'Operations changed after peer review; peer review cleared.'); }
@@ -1408,7 +1414,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
     if (!str(title, 100)) return fail('Enter an operation title of 1 to 100 characters.');
     if (!str(description, 400)) return fail('Enter a summary of 1 to 400 characters.');
     if (!BUYOFF_TYPES.includes(input.buyoffType)) return fail('Choose a buy-off type.');
-    const inspectionPoint = input.inspectionPoint === true;
+    const inspectionPoint = INSPECTION_BUYOFF_TYPES.includes(input.buyoffType);
     const requiresTooling = input.requiresTooling === true;
     if (inspectionPoint && !INSPECTION_BUYOFF_TYPES.includes(input.buyoffType)) return fail('Inspection points need a Quality or 8130-9 Authorized Inspector buy-off.');
     const lines = String(input.steps ?? '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
@@ -1464,7 +1470,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
     if (!str(title, 100)) return fail('Enter an operation title of 1 to 100 characters.');
     if (!str(description, 400)) return fail('Enter a summary of 1 to 400 characters.');
     if (!BUYOFF_TYPES.includes(input.buyoffType)) return fail('Choose a buy-off type.');
-    const inspectionPoint = input.inspectionPoint === true, requiresTooling = input.requiresTooling === true;
+    const inspectionPoint = INSPECTION_BUYOFF_TYPES.includes(input.buyoffType), requiresTooling = input.requiresTooling === true;
     if (inspectionPoint && !INSPECTION_BUYOFF_TYPES.includes(input.buyoffType)) return fail('Inspection points need a Quality or 8130-9 Authorized Inspector buy-off.');
     const lines = String(input.steps ?? '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
     if (!lines.length || lines.length > 30) return fail('Enter 1 to 30 steps, one per line.');
@@ -1805,8 +1811,9 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   // scheme rejects. Rewrite them, and every reference to them, before validating.
   function renameKitOp(state) {
     const fix = op => { if (op && op.title === 'Verify issued kit') { op.title = 'Verify kit at bench'; if (op.description === 'Match the issued kit against the work package and confirm every line is present.') op.description = 'Build step: match the kit issued by stores against the work package and confirm every line is present before starting assembly.'; } };
-    (Array.isArray(state?.orders) ? state.orders : []).forEach(o => (o.operations || []).forEach(fix));
-    (Array.isArray(state?.masterWIs) ? state.masterWIs : []).forEach(wi => (wi.operations || []).forEach(fix));
+    const derive = op => { if (op && op.buyoffType !== undefined) op.inspectionPoint = INSPECTION_BUYOFF_TYPES.includes(op.buyoffType); };
+    (Array.isArray(state?.orders) ? state.orders : []).forEach(o => (o.operations || []).forEach(op => { fix(op); derive(op); }));
+    (Array.isArray(state?.masterWIs) ? state.masterWIs : []).forEach(wi => (wi.operations || []).forEach(op => { fix(op); derive(op); }));
     return state;
   }
   function migrateSplitIds(state) {
@@ -2773,7 +2780,7 @@ function renderWIReadOnly(wi) {
 
 function renderWIEditor(wi) {
   const n = wi.operations.length;
-  return `<form id="wi-ops-form"><ol class="wi-ops">${wi.operations.map((op, i) => `<li class="wi-op editing" data-wi-op><div class="wi-op-head"><span class="op-number">${sequence(i)}</span><div class="wi-op-fields"><div class="field"><label for="wi-op-${i}-title">Operation title</label><input id="wi-op-${i}-title" name="title" maxlength="120" required value="${esc(op.title)}"></div><div class="field"><label for="wi-op-${i}-desc">Summary</label><textarea id="wi-op-${i}-desc" name="description" maxlength="400" rows="2" required>${esc(op.description)}</textarea></div><div class="wi-op-options"><div class="field"><label for="wi-op-${i}-buyoff">Buy-off type</label><select id="wi-op-${i}-buyoff" name="buyoffType">${MES.BUYOFF_TYPES.map(t => `<option ${t === op.buyoffType ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></div><label class="check-label"><input type="checkbox" name="inspectionPoint" ${op.inspectionPoint ? 'checked' : ''}><span>Inspection point</span></label><label class="check-label"><input type="checkbox" name="requiresTooling" ${op.requiresTooling ? 'checked' : ''}><span>Requires calibrated tooling</span></label><label class="check-label"><input type="checkbox" name="requiresRecording" ${op.requiresRecording ? 'checked' : ''}><span>Require reviewed video</span></label></div>${calloutChecks('callouts', op.callouts || [], `wi-op-${i}-callout`, op.grounding || 'wrist')}</div><div class="wi-tools"><button type="button" class="btn quiet" data-action="wi-op-move" data-op="${i}" data-dir="-1" ${i === 0 ? 'disabled' : ''} aria-label="Move operation ${sequence(i)} up">Up</button><button type="button" class="btn quiet" data-action="wi-op-move" data-op="${i}" data-dir="1" ${i === n - 1 ? 'disabled' : ''} aria-label="Move operation ${sequence(i)} down">Down</button><button type="button" class="btn quiet" data-action="wi-op-remove" data-op="${i}" ${n === 1 ? 'disabled' : ''} aria-label="Remove operation ${sequence(i)}">Remove</button></div></div>
+  return `<form id="wi-ops-form"><ol class="wi-ops">${wi.operations.map((op, i) => `<li class="wi-op editing" data-wi-op><div class="wi-op-head"><span class="op-number">${sequence(i)}</span><div class="wi-op-fields"><div class="field"><label for="wi-op-${i}-title">Operation title</label><input id="wi-op-${i}-title" name="title" maxlength="120" required value="${esc(op.title)}"></div><div class="field"><label for="wi-op-${i}-desc">Summary</label><textarea id="wi-op-${i}-desc" name="description" maxlength="400" rows="2" required>${esc(op.description)}</textarea></div><div class="wi-op-options"><div class="field"><label for="wi-op-${i}-buyoff">Buy-off type</label><select id="wi-op-${i}-buyoff" name="buyoffType">${MES.BUYOFF_TYPES.map(t => `<option ${t === op.buyoffType ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></div><label class="check-label" hidden><input type="checkbox" name="inspectionPoint" ${op.inspectionPoint ? 'checked' : ''}><span>Inspection point</span></label><label class="check-label"><input type="checkbox" name="requiresTooling" ${op.requiresTooling ? 'checked' : ''}><span>Requires calibrated tooling</span></label><label class="check-label"><input type="checkbox" name="requiresRecording" ${op.requiresRecording ? 'checked' : ''}><span>Require reviewed video</span></label></div>${calloutChecks('callouts', op.callouts || [], `wi-op-${i}-callout`, op.grounding || 'wrist')}</div><div class="wi-tools"><button type="button" class="btn quiet" data-action="wi-op-move" data-op="${i}" data-dir="-1" ${i === 0 ? 'disabled' : ''} aria-label="Move operation ${sequence(i)} up">Up</button><button type="button" class="btn quiet" data-action="wi-op-move" data-op="${i}" data-dir="1" ${i === n - 1 ? 'disabled' : ''} aria-label="Move operation ${sequence(i)} down">Down</button><button type="button" class="btn quiet" data-action="wi-op-remove" data-op="${i}" ${n === 1 ? 'disabled' : ''} aria-label="Remove operation ${sequence(i)}">Remove</button></div></div>
     <ol class="wi-steps">${op.steps.map((s, j) => `<li data-wi-step data-step-key="${esc(op.id)}/${esc(s.id)}"><div class="field"><label for="wi-op-${i}-step-${j}-title">Step ${MES.stepLetter(j)} title</label><input id="wi-op-${i}-step-${j}-title" name="stepTitle" maxlength="120" required value="${esc(s.title)}"></div><div class="field"><label for="wi-op-${i}-step-${j}-text">Step ${MES.stepLetter(j)} instruction</label><textarea id="wi-op-${i}-step-${j}-text" name="instruction" maxlength="1000" rows="3" required>${esc(s.instruction)}</textarea></div><label class="check-label"><input type="checkbox" name="recordsTorque" ${s.recordsTorque ? 'checked' : ''}><span>Records a torque value</span></label><div class="step-media">${s.image ? `<figure class="step-media-preview"><img src="${esc(s.image.dataUrl)}" alt="${esc(s.image.caption || s.title)}">${s.image.name ? `<figcaption>${esc(s.image.name)}</figcaption>` : ''}</figure><div class="field"><label for="wi-op-${i}-step-${j}-caption">Picture caption</label><input id="wi-op-${i}-step-${j}-caption" name="imageCaption" maxlength="200" value="${esc(s.image.caption || '')}"></div><button type="button" class="btn quiet" data-action="wi-step-image-remove" data-op="${esc(op.id)}" data-step="${esc(s.id)}">Remove picture</button>` : `<label class="btn wi-image-btn" for="wi-image-${i}-${j}">${icon('upload')} Add picture</label><input class="sr-only" type="file" id="wi-image-${i}-${j}" accept="image/png,image/jpeg,image/webp" data-wi-image data-op="${esc(op.id)}" data-step="${esc(s.id)}">`}</div>
 <div class="wi-tools"><button type="button" class="btn quiet" data-action="wi-step-move" data-op="${i}" data-step="${j}" data-dir="-1" ${j === 0 ? 'disabled' : ''} aria-label="Move step ${MES.stepLetter(j)} up">Up</button><button type="button" class="btn quiet" data-action="wi-step-move" data-op="${i}" data-step="${j}" data-dir="1" ${j === op.steps.length - 1 ? 'disabled' : ''} aria-label="Move step ${MES.stepLetter(j)} down">Down</button><button type="button" class="btn quiet" data-action="wi-step-remove" data-op="${i}" data-step="${j}" ${op.steps.length === 1 ? 'disabled' : ''}>Remove step</button></div></li>`).join('')}</ol>
     <button type="button" class="btn wi-add-step" data-action="wi-step-add" data-op="${i}">${icon('plus')} Add step</button></li>`).join('')}</ol>
@@ -2837,7 +2844,7 @@ function sequenceAddDialog() {
     <div class="field wide"><label for="seq-title">Operation title</label><input id="seq-title" name="title" maxlength="100" required></div>
     <div class="field wide"><label for="seq-desc">Summary</label><textarea id="seq-desc" name="description" maxlength="400" rows="2" required></textarea></div>
     <div class="field"><label for="seq-buyoff">Buy-off type</label><select id="seq-buyoff" name="buyoffType">${MES.BUYOFF_TYPES.map(t => `<option>${esc(t)}</option>`).join('')}</select></div>
-    <label class="check-label seq-inspection"><input type="checkbox" name="inspectionPoint" id="seq-inspection"><span>Inspection point · work can’t move past it until bought off</span></label>
+    <label class="check-label seq-inspection" hidden><input type="checkbox" name="inspectionPoint" id="seq-inspection"><span>Inspection point</span></label><p class="small muted insp-note">Quality and 8130-9 buy-offs are inspection points automatically. Work cannot move past them until bought off.</p>
     <label class="check-label seq-inspection"><input type="checkbox" name="requiresTooling" id="seq-tooling"><span>Requires calibrated tooling (torque, measurement)</span></label>
     <div class="field wide">${calloutChecks('callouts',[],'seq-callout')}</div>
     <div class="field wide"><label for="seq-steps">Steps · one per line</label><textarea id="seq-steps" name="steps" rows="5" required placeholder="Remove the damaged connector&#10;Install the replacement connector&#10;Perform a continuity check"></textarea></div>
@@ -3217,7 +3224,7 @@ function sequenceEditDialog(opId) {
     <div class="field wide"><label for="edit-title">Operation title</label><input id="edit-title" name="title" maxlength="100" required value="${esc(op.title)}"></div>
     <div class="field wide"><label for="edit-desc">Summary</label><textarea id="edit-desc" name="description" maxlength="400" rows="2" required>${esc(op.description)}</textarea></div>
     <div class="field"><label for="edit-buyoff">Buy-off type</label><select id="edit-buyoff" name="buyoffType">${MES.BUYOFF_TYPES.map(type => `<option ${type === op.buyoffType ? 'selected' : ''}>${esc(type)}</option>`).join('')}</select></div>
-    <label class="check-label seq-inspection"><input type="checkbox" name="inspectionPoint" id="edit-inspection" ${op.inspectionPoint ? 'checked' : ''}><span>Inspection point · work can’t move past it until bought off</span></label>
+    <label class="check-label seq-inspection" hidden><input type="checkbox" name="inspectionPoint" id="edit-inspection" ${op.inspectionPoint ? 'checked' : ''}><span>Inspection point</span></label><p class="small muted insp-note">Quality and 8130-9 buy-offs are inspection points automatically. Work cannot move past them until bought off.</p>
     <label class="check-label seq-inspection"><input type="checkbox" name="requiresTooling" id="edit-tooling" ${op.requiresTooling ? 'checked' : ''}><span>Requires calibrated tooling (torque, measurement)</span></label>
     <div class="field wide">${calloutChecks('callouts',op.callouts||[],'edit-callout',op.grounding||'wrist')}</div>
     <div class="field wide"><label for="edit-steps">Steps · one per line</label><textarea id="edit-steps" name="steps" rows="6" required>${esc((op.steps || []).map(step => step.instruction).join('\n'))}</textarea><p class="creation-note">Lines you leave unchanged keep their picture and torque setting. Checked-off steps are cleared by an edit.</p></div>
