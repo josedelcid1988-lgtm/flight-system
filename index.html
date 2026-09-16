@@ -498,6 +498,7 @@ body[data-view="order"] .page-heading .btn.primary{animation:none}
 </style>
 
 <style id="skyryse-qa-fixes">
+.pedigree-hint{display:block;margin-top:6px;font-size:13px;line-height:1.35;color:#6E6E73}
 .wiz-progress{display:flex;gap:10px;list-style:none;margin:0 0 18px;padding:0}
 .wiz-progress li{flex:1;padding-top:8px;border-top:3px solid #E5E5EA;font:500 11px/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:#8E8E93}
 .wiz-progress li.current{color:#0B0B0C;border-color:#0A6CFF}
@@ -2969,6 +2970,10 @@ document.addEventListener('change', async event => {
   catch (error) { const e = document.getElementById('seq-add-error'); if (e) e.textContent = error.message; }
 });
 
+const PEDIGREE_INFO={'Production':'Fully conforming part build','Development':'For flight hardware, cannot be used for credit','Development NFF':'Prototype, cannot be used for flight or for credit'};
+function pedigreeOptions(list,selected){return list.map(p=>`<option value="${esc(p)}" ${p===selected?'selected':''}>${esc(p)} · ${esc(PEDIGREE_INFO[p]||'')}</option>`).join('');}
+function pedigreeHint(id,value){return `<small class="pedigree-hint" id="${id}-hint" aria-live="polite">${esc(PEDIGREE_INFO[value]||'')}</small>`;}
+document.addEventListener('change',e=>{const t=e.target;if(t.matches&&t.matches('#new-pedigree,#adhoc-pedigree,#pedigree-to')){const h=document.getElementById(t.id+'-hint');if(h)h.textContent=PEDIGREE_INFO[t.value]||'';}});
 function sequenceRemoveDialog(opId) {
   const o = order(), op = o.operations.find(x => x.id === opId);
   if (!op) return;
@@ -3815,7 +3820,7 @@ function pedigreeDialog(){
   openDialog(`Change pedigree on ${esc(o.id)}`,`<p>Pedigree drives which QA approvals a work order needs. A change takes effect only after two approvals from two different disciplines (Operator, Manufacturing Engineering, Quality Engineering, QA Manager). General User accounts cannot approve.</p>
   <form id="pedigree-form"><div class="form-grid">
     <div class="field"><label for="pedigree-from">Current</label><output id="pedigree-from">${esc(o.pedigree)}</output></div>
-    <div class="field"><label for="pedigree-to">Change to</label><select id="pedigree-to" name="pedigree" required>${MES.PEDIGREES.filter(p=>p!==o.pedigree).map(p=>`<option>${esc(p)}</option>`).join('')}</select></div>
+    <div class="field"><label for="pedigree-to">Change to</label><select id="pedigree-to" name="pedigree" required aria-describedby="pedigree-to-hint">${pedigreeOptions(MES.PEDIGREES.filter(p=>p!==o.pedigree))}</select>${pedigreeHint('pedigree-to',MES.PEDIGREES.filter(p=>p!==o.pedigree)[0])}</div>
     <div class="field wide"><label for="pedigree-reason">Reason</label><textarea id="pedigree-reason" name="reason" rows="3" maxlength="500" required></textarea></div>
   </div>${o.releaseApproval?'<div class="inline-info" role="status">'+icon('shield')+'<p><strong>QA release approval will be reset</strong><br>The approval covered the current pedigree.</p></div>':''}<div id="pedigree-error" class="form-error" role="alert" tabindex="-1"></div><div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Cancel</button><button class="btn primary" type="submit">Request change</button></div></form>`);
   $('#pedigree-to').focus();
@@ -3887,7 +3892,7 @@ function adhocDialog(){
     <div class="field wide"><label for="adhoc-title">Description</label><input id="adhoc-title" name="title" required maxlength="120"><p class="creation-note">Filled from the catalog for a listed part. Edit it if this order needs a different description.</p></div>
     <div class="field wide"><label for="adhoc-firstop">First operation</label><input id="adhoc-firstop" name="firstOp" maxlength="100" value="Operation 010"><p class="creation-note">Every work order carries at least one operation. Add the rest from the Operations tab before issue.</p></div>
     <div class="field"><label for="adhoc-quantity">Quantity</label><input id="adhoc-quantity" name="quantity" type="number" min="1" max="100" value="1" required></div>
-    <div class="field"><label for="adhoc-pedigree">Pedigree</label><select id="adhoc-pedigree" name="pedigree"><option>Development</option><option>Development NFF</option><option>Production</option></select></div>
+    <div class="field"><label for="adhoc-pedigree">Pedigree</label><select id="adhoc-pedigree" name="pedigree" aria-describedby="adhoc-pedigree-hint">${pedigreeOptions(['Development','Development NFF','Production'],'Development')}</select>${pedigreeHint('adhoc-pedigree','Development')}</div>
     <div class="field"><label for="adhoc-subcategory">Subcategory</label><select id="adhoc-subcategory" name="subcategory" required>${MES.SUBCATEGORIES.map(s=>`<option ${s==='Mfg.'?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
     <div class="field wide" id="adhoc-unit-field" hidden><label for="adhoc-unit">Unit being worked · required</label><select id="adhoc-unit" name="sourceUnit" disabled><option value="">Choose a stocked serial number</option>${units.map(unit=>`<option value="${esc(unit.serial)}" data-part="${esc(unit.partNumber)}" data-rev="${esc(unit.revision)}">${esc(unit.serial)} · ${esc(unit.partNumber)} Rev ${esc(unit.revision)} · lot ${esc(unit.lotNumber)} · built on ${esc(unit.orderId)}</option>`).join('')}</select><p class="creation-note">${units.length?'Rework, Repair, and Upgrade are traced to the unit. Choosing it sets the part number and revision.':'No stocked units. Move a unit to inventory first, then return here.'}</p></div>
     <div class="field wide" id="adhoc-ticket-field" hidden><label for="adhoc-ticket">Linked IDR / NC · required</label><select id="adhoc-ticket" name="sourceTicketId" disabled><option value="">Choose an existing IDR / NC</option>${tickets.map(t=>`<option value="${esc(t.id)}">${esc(t.id)} · ${esc(t.orderId)} · ${esc(t.title)}</option>`).join('')}</select><p class="creation-note">${tickets.length?'The source ticket stays linked to its original order. Creating corrective work does not resolve it or copy its hold.':'No tickets are available. Create an IDR / NC from an existing issued operation first, then return here.'}</p></div>
@@ -3930,7 +3935,7 @@ function createDialog(preset=''){
     <div class="field"><label for="new-start">Planned start</label><input id="new-start" name="start" type="date" required value="${new Date().toISOString().slice(0,10)}"></div>
     <div class="field"><label for="new-due">Planned finish</label><input id="new-due" name="due" type="date" required value="${new Date(Date.now()+7*86400000).toISOString().slice(0,10)}"></div>
     <p id="revision-notice" class="wide creation-note" role="status"></p>
-    <div class="field"><label for="new-pedigree">Pedigree</label><select id="new-pedigree" name="pedigree"><option>Development</option><option>Development NFF</option><option>Production</option></select></div>
+    <div class="field"><label for="new-pedigree">Pedigree</label><select id="new-pedigree" name="pedigree" aria-describedby="new-pedigree-hint">${pedigreeOptions(['Development','Development NFF','Production'],'Development')}</select>${pedigreeHint('new-pedigree','Development')}</div>
     <div class="field"><label for="new-subcategory">Subcategory</label><select id="new-subcategory" name="subcategory" required>${MES.SUBCATEGORIES.filter(s=>!MES.ADHOC_ONLY.includes(s)).map(s=>`<option ${s==='Mfg.'?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
     <div class="field wide" hidden><label for="new-source-unit">Rework a unit already in stock <span class="muted">(optional)</span></label><select id="new-source-unit" name="sourceUnit"><option value="">Not from stock · new build</option>${MES.stockedUnits(state).map(unit=>`<option value="${esc(unit.serial)}">${esc(unit.serial)} · ${esc(unit.partNumber)} · lot ${esc(unit.lotNumber)} · built on ${esc(unit.orderId)}</option>`).join('')}</select><p id="source-unit-help" class="creation-note">Links this order to the as-built record of a stocked unit: its serial, lot, and original work order. Leave it blank for a new build.</p></div><div class="field wide" id="source-ticket-field" hidden><label for="new-source-ticket">Linked IDR / NC · required</label><select id="new-source-ticket" name="sourceTicketId" aria-describedby="source-ticket-help" disabled><option value="">Choose an existing IDR / NC</option>${tickets.map(t=>`<option value="${esc(t.id)}">${esc(t.id)} · ${esc(t.orderId)} · ${esc(t.title)}</option>`).join('')}</select><p id="source-ticket-help" class="creation-note">${tickets.length?'The source ticket stays linked to its original order. Creating corrective work does not resolve it or copy its hold.':'No tickets are available. Create an IDR / NC from an existing issued operation first, then return here.'}</p></div>
     <div class="field"><label for="new-site">Site</label><select id="new-site" name="site">${MES.SITES.map(site=>`<option>${site}</option>`).join('')}</select></div>
