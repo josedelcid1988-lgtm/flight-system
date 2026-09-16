@@ -498,6 +498,33 @@ body[data-view="order"] .page-heading .btn.primary{animation:none}
 </style>
 
 <style id="skyryse-qa-fixes">
+.wiz-progress{display:flex;gap:10px;list-style:none;margin:0 0 18px;padding:0}
+.wiz-progress li{flex:1;padding-top:8px;border-top:3px solid #E5E5EA;font:500 11px/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:#8E8E93}
+.wiz-progress li.current{color:#0B0B0C;border-color:#0A6CFF}
+.wiz-progress li.done{color:#1C8A4B;border-color:#1C8A4B}
+.wiz-progress li[hidden]{display:none}
+.wiz-page[hidden]{display:none}
+.wiz-q{font-size:22px;font-weight:600;letter-spacing:-.02em;margin:6px 0 16px}
+.wiz-choices{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.wiz-choice{display:flex;flex-direction:column;align-items:flex-start;gap:8px;text-align:left;padding:20px;min-height:132px;border:1px solid #DCDCE1;border-radius:16px;background:#fff;color:#0B0B0C;cursor:pointer;transition:border-color .15s,box-shadow .15s}
+.wiz-choice strong{font-size:17px;font-weight:600}
+.wiz-choice span{font-size:14px;line-height:1.45;color:#6E6E73}
+.wiz-choice:hover,.wiz-choice:focus-visible{border-color:#0A6CFF;box-shadow:0 0 0 3px #0A6CFF26;outline:none}
+.wiz-dots{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 14px}
+.wiz-dot{width:44px;height:44px;border-radius:50%;border:1.5px solid #C7C7CC;background:#fff;color:#3A3A3C;font:600 14px/1 var(--mono);cursor:pointer}
+.wiz-dot.filled{border-color:#1C8A4B;color:#1C8A4B}
+.wiz-dot.active{background:#0A6CFF;border-color:#0A6CFF;color:#fff}
+.wiz-dot.add{border-style:dashed;color:#6E6E73;font-size:20px}
+.wiz-slide-card{display:grid;gap:14px;padding:20px;border:1px solid #DCDCE1;border-radius:16px;background:#FAFAFB}
+.wiz-slide-card .field{margin:0}
+.wiz-label{display:block;font-size:14px;font-weight:600;margin-bottom:8px}
+.wiz-photo{margin:0 0 8px;display:grid;gap:8px}
+.wiz-photo img{width:100%;max-height:280px;object-fit:contain;border:1px solid #E5E5EA;border-radius:12px;background:#fff}
+.wiz-photo-drop{width:100%;min-height:92px;justify-content:center;border-style:dashed!important;background:#fff}
+.wiz-slide-nav{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px}
+.wiz-slide-nav [data-wiz-prev] svg{transform:rotate(180deg)}
+.wiz-delete{color:#B42318}
+@media (max-width:700px){.wiz-choices{grid-template-columns:1fr}.wiz-slide-nav .btn{flex:1 1 40%}}
 .check-label.callout-check{display:grid!important;grid-template-columns:24px auto minmax(0,1fr);align-items:center!important;column-gap:12px;min-height:56px;padding:12px 16px}
 .check-label.callout-check>input{grid-column:1;margin:0;align-self:center}
 .check-label.callout-check>.callout{grid-column:2;margin:0;align-self:center;white-space:nowrap}
@@ -1417,14 +1444,26 @@ main a{min-height:24px;display:inline-flex;align-items:center}
     const inspectionPoint = INSPECTION_BUYOFF_TYPES.includes(input.buyoffType);
     const requiresTooling = input.requiresTooling === true;
     if (inspectionPoint && !INSPECTION_BUYOFF_TYPES.includes(input.buyoffType)) return fail('Inspection points need a Quality or 8130-9 Authorized Inspector buy-off.');
-    const lines = String(input.steps ?? '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-    if (!lines.length || lines.length > 30) return fail('Enter 1 to 30 steps, one per line.');
-    if (lines.some(line => !str(line, 1000))) return fail('Keep each step under 1,000 characters.');
+    let structured = null, lines = [];
+    if (Array.isArray(input.stepList)) {
+      structured = input.stepList.map(step => ({ title: String(step?.title ?? '').trim(), instruction: String(step?.instruction ?? '').trim(), image: step?.image || undefined }));
+      if (!structured.length || structured.length > 30) return fail('Add 1 to 30 steps.');
+      const bad = structured.findIndex(step => !step.title || step.title.length > 120 || !step.instruction || step.instruction.length > 1000);
+      if (bad >= 0) return fail(`Step ${stepLetter(bad)} needs a title (up to 120 characters) and instructions (up to 1,000 characters).`);
+      if (structured.some(step => step.image !== undefined && !stepImageValid(step.image))) return fail('Use a PNG, JPEG, or WebP picture. It is resized to fit 300 KB.');
+      const adding = structured.reduce((sum, step) => sum + (step.image ? step.image.dataUrl.length : 0), 0);
+      const existing = state.orders.reduce((total, o) => total + o.operations.reduce((sum, op) => sum + (Array.isArray(op.steps) ? op.steps : []).reduce((n, st) => n + (st.image ? st.image.dataUrl.length : 0), 0), 0), 0) + imageBytes(state);
+      if (adding && existing + adding > MAX_IMAGE_TOTAL) return fail('This workspace is near its picture limit. Remove a picture from a step before adding the operation.');
+    } else {
+      lines = String(input.steps ?? '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+      if (!lines.length || lines.length > 30) return fail('Enter 1 to 30 steps, one per line.');
+      if (lines.some(line => !str(line, 1000))) return fail('Keep each step under 1,000 characters.');
+    }
     const position = Number(input.position), min = firstInsertIndex(order);
     if (!Number.isInteger(position) || position < min || position > order.operations.length) return fail('New operations can’t be inserted before completed or in-progress work.');
     let n = 1;
     while (order.operations.some(op => op.id === `op-add-${n}`)) n++;
-    const op = { id: `op-add-${n}`, title, description, done: false, note: '', buyoff: null, evidence: [], requiresRecording: false, steps: lines.map((line, i) => ({ id: `step-${i + 1}`, title: line.length > 80 ? `${line.slice(0, 77)}…` : line, instruction: line, recordsTorque: /torque/i.test(line) })), stepChecks: {}, buyoffType: input.buyoffType, inspectionPoint, requiresTooling, classification, addedToSequence: true, callouts: calloutList(input.callouts), ...(calloutList(input.callouts).includes('ESD') ? { grounding: groundingFor(calloutList(input.callouts), input.grounding) } : {}) };
+    const op = { id: `op-add-${n}`, title, description, done: false, note: '', buyoff: null, evidence: [], requiresRecording: false, steps: structured ? structured.map((step, i) => ({ id: `step-${i + 1}`, title: step.title, instruction: step.instruction, recordsTorque: /torque/i.test(step.title + ' ' + step.instruction), ...(step.image ? { image: { dataUrl: step.image.dataUrl, caption: String(step.image.caption ?? '').trim().slice(0, 200), name: String(step.image.name ?? '').slice(0, 120) } } : {}) })) : lines.map((line, i) => ({ id: `step-${i + 1}`, title: line.length > 80 ? `${line.slice(0, 77)}…` : line, instruction: line, recordsTorque: /torque/i.test(line) })), stepChecks: {}, buyoffType: input.buyoffType, inspectionPoint, requiresTooling, classification, addedToSequence: true, callouts: calloutList(input.callouts), ...(calloutList(input.callouts).includes('ESD') ? { grounding: groundingFor(calloutList(input.callouts), input.grounding) } : {}) };
     order.operations.splice(position, 0, op);
     const number = opNumber(order, op.id);
     queueSequenceChange(state, order, { type: 'add', opId: op.id, title, classification, position: number });
@@ -2835,21 +2874,100 @@ function renderSequenceTools(o) {
   </div>`;
 }
 
+let seqWiz = null;
 function sequenceAddDialog() {
   const o = order(), min = MES.firstInsertIndex(o), positions = [];
   for (let i = min; i <= o.operations.length; i++) positions.push(i);
-  openDialog('Add an operation', `<p>Classify the new operation and choose where it goes. It can’t be placed before completed or in-progress work, and QA must release the updated sequence.</p><form id="seq-add-form" data-order="${esc(o.id)}"><div class="form-grid">
+  seqWiz = { page: 1, mode: null, idx: 0, steps: [{ title: '', instruction: '', image: null }] };
+  openDialog('Add an operation', `<form id="seq-add-form" data-order="${esc(o.id)}" novalidate>
+  <ol class="wiz-progress" aria-label="Add operation progress"><li data-wiz-p="1">1 · Details</li><li data-wiz-p="2">2 · Steps</li><li data-wiz-p="3">3 · Build steps</li></ol>
+  <section class="wiz-page" data-page="1"><p class="muted small">Classify the new operation and choose where it goes. It can’t be placed before completed or in-progress work, and QA must release the updated sequence.</p><div class="form-grid">
     <div class="field"><label for="seq-class">Classification</label><select id="seq-class" name="classification" required><option value="">Choose…</option>${MES.OP_CLASSIFICATIONS.map(c => `<option>${esc(c)}</option>`).join('')}</select></div>
     <div class="field"><label for="seq-position">Position</label><select id="seq-position" name="position" required>${positions.map(i => `<option value="${i}" ${i === o.operations.length ? 'selected' : ''}>${i < o.operations.length ? `Before Op ${sequence(i)} · ${esc(o.operations[i].title)}` : 'End of sequence'}</option>`).join('')}</select></div>
     <div class="field wide"><label for="seq-title">Operation title</label><input id="seq-title" name="title" maxlength="100" required></div>
     <div class="field wide"><label for="seq-desc">Summary</label><textarea id="seq-desc" name="description" maxlength="400" rows="2" required></textarea></div>
     <div class="field"><label for="seq-buyoff">Buy-off type</label><select id="seq-buyoff" name="buyoffType">${MES.BUYOFF_TYPES.map(t => `<option>${esc(t)}</option>`).join('')}</select></div>
-    <label class="check-label seq-inspection" hidden><input type="checkbox" name="inspectionPoint" id="seq-inspection"><span>Inspection point</span></label><p class="small muted insp-note">Quality and 8130-9 buy-offs are inspection points automatically. Work cannot move past them until bought off.</p>
-    <label class="check-label seq-inspection"><input type="checkbox" name="requiresTooling" id="seq-tooling"><span>Requires calibrated tooling (torque, measurement)</span></label>
-    <div class="field wide">${calloutChecks('callouts',[],'seq-callout')}</div>
-    <div class="field wide"><label for="seq-steps">Steps · one per line</label><textarea id="seq-steps" name="steps" rows="5" required placeholder="Remove the damaged connector&#10;Install the replacement connector&#10;Perform a continuity check"></textarea></div>
-  </div><p id="seq-add-error" class="form-error" role="alert"></p><div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Cancel</button><button class="btn primary" type="submit">Add operation</button></div></form>`);
+    <div class="field"><label class="check-label seq-inspection" hidden><input type="checkbox" name="inspectionPoint" id="seq-inspection"><span>Inspection point</span></label><p class="small muted insp-note">Quality and 8130-9 buy-offs are inspection points automatically. Work cannot move past them until bought off.</p></div>
+    <label class="check-label seq-inspection field wide"><input type="checkbox" name="requiresTooling" id="seq-tooling"><span>Requires calibrated tooling (torque, measurement)</span></label>
+    <div class="field wide">${calloutChecks('callouts', [], 'seq-callout')}</div>
+  </div></section>
+  <section class="wiz-page" data-page="2" hidden>
+    <h3 class="wiz-q" id="wiz-q">Is this a multi-step operation?</h3>
+    <div class="wiz-choices" role="group" aria-labelledby="wiz-q">
+      <button type="button" class="wiz-choice" data-wiz-mode="single"><strong>No, a single step</strong><span>The summary becomes the instruction. The operation is added right away.</span></button>
+      <button type="button" class="wiz-choice" data-wiz-mode="multi"><strong>Yes, multiple steps</strong><span>Build each step one slide at a time, with instructions and an optional photo.</span></button>
+    </div>
+  </section>
+  <section class="wiz-page" data-page="3" hidden><div id="wiz-slide"></div></section>
+  <p id="seq-add-error" class="form-error" role="alert"></p>
+  <div class="dialog-actions" id="wiz-actions"></div>
+  </form>`);
+  renderWiz();
 }
+function wizSync() {
+  if (!seqWiz || seqWiz.page !== 3) return;
+  const st = seqWiz.steps[seqWiz.idx]; if (!st) return;
+  const t = document.getElementById('wiz-title'), i = document.getElementById('wiz-instruction'), c = document.getElementById('wiz-caption');
+  if (t) st.title = t.value; if (i) st.instruction = i.value; if (c && st.image) st.image.caption = c.value;
+}
+function renderWiz(focusSel) {
+  const form = document.getElementById('seq-add-form'); if (!form || !seqWiz) return;
+  const { page, mode, idx, steps } = seqWiz;
+  form.querySelectorAll('.wiz-page').forEach(p => { p.hidden = Number(p.dataset.page) !== page; });
+  form.querySelectorAll('.wiz-progress li').forEach(li => { const n = Number(li.dataset.wizP); li.className = n === page ? 'current' : n < page ? 'done' : ''; if (n === 3) li.hidden = mode === 'single'; });
+  const err = document.getElementById('seq-add-error'); if (err) err.textContent = '';
+  const actions = document.getElementById('wiz-actions');
+  if (page === 1) actions.innerHTML = `<button class="btn" type="button" data-action="close-dialog">Cancel</button><button class="btn primary" type="button" data-wiz-next-page>Next: steps ${icon('arrow')}</button>`;
+  if (page === 2) actions.innerHTML = `<button class="btn" type="button" data-wiz-back>Back</button>`;
+  if (page === 3) {
+    const n = steps.length, st = steps[idx], L = i => MES.stepLetter ? MES.stepLetter(i) : String.fromCharCode(65 + i);
+    const filled = s => s.title.trim() && s.instruction.trim();
+    document.getElementById('wiz-slide').innerHTML = `
+      <div class="wiz-dots" role="tablist" aria-label="Steps">${steps.map((s, i) => `<button type="button" role="tab" aria-selected="${i === idx}" class="wiz-dot ${i === idx ? 'active' : ''} ${filled(s) ? 'filled' : ''}" data-wiz-go="${i}" aria-label="Step ${L(i)}${filled(s) ? ', complete' : ''}">${L(i)}</button>`).join('')}${n < 30 ? `<button type="button" class="wiz-dot add" data-wiz-add aria-label="Add a step">+</button>` : ''}</div>
+      <div class="wiz-slide-card">
+        <p class="step-eyebrow">Step ${L(idx)} of ${n}</p>
+        <div class="field"><label for="wiz-title">Step title</label><input id="wiz-title" maxlength="120" value="${esc(st.title)}" placeholder="Remove the damaged connector"></div>
+        <div class="field"><label for="wiz-instruction">Instructions</label><textarea id="wiz-instruction" rows="4" maxlength="1000" placeholder="What the technician does, including values, tools and checks.">${esc(st.instruction)}</textarea></div>
+        <div class="field"><span class="wiz-label">Photo <span class="muted">(optional)</span></span>${st.image
+          ? `<figure class="wiz-photo"><img src="${esc(st.image.dataUrl)}" alt="${esc(st.image.caption || st.title || 'Step photo')}"><figcaption><input id="wiz-caption" maxlength="200" value="${esc(st.image.caption || '')}" placeholder="Caption (optional)" aria-label="Photo caption"></figcaption></figure><button type="button" class="btn quiet" data-wiz-photo-remove>Remove photo</button>`
+          : `<label class="btn att-btn wiz-photo-drop" for="wiz-photo">${icon('upload')} Add a photo</label><input class="sr-only" type="file" id="wiz-photo" accept="image/png,image/jpeg,image/webp">`}</div>
+        <div class="wiz-slide-nav"><button type="button" class="btn" data-wiz-prev ${idx === 0 ? 'disabled' : ''}>${icon('chevron')} Previous</button>${n > 1 ? `<button type="button" class="btn quiet wiz-delete" data-wiz-delete>Delete step</button>` : ''}<button type="button" class="btn" data-wiz-next>${idx === n - 1 ? `${icon('plus')} Add next step` : `Next step ${icon('arrow')}`}</button></div>
+      </div>`;
+    const ready = steps.filter(filled).length;
+    actions.innerHTML = `<button class="btn" type="button" data-wiz-back>Back</button><button class="btn primary" type="submit">Add operation · ${ready} step${ready === 1 ? '' : 's'}</button>`;
+  }
+  const f = focusSel && document.querySelector(focusSel); if (f) f.focus();
+}
+document.addEventListener('click', event => {
+  if (!seqWiz || !document.getElementById('seq-add-form')) return;
+  const b = event.target.closest('[data-wiz-next-page],[data-wiz-back],[data-wiz-mode],[data-wiz-go],[data-wiz-add],[data-wiz-prev],[data-wiz-next],[data-wiz-delete],[data-wiz-photo-remove]');
+  if (!b) return;
+  const form = document.getElementById('seq-add-form');
+  if (b.hasAttribute('data-wiz-next-page')) {
+    for (const id of ['seq-class', 'seq-position', 'seq-title', 'seq-desc', 'seq-buyoff']) { const el = document.getElementById(id); if (!el.checkValidity() || (el.required && !el.value.trim())) { el.reportValidity(); el.focus(); return; } }
+    seqWiz.page = 2; renderWiz('.wiz-choice'); return;
+  }
+  if (b.hasAttribute('data-wiz-back')) { wizSync(); seqWiz.page = seqWiz.page === 3 ? 2 : 1; renderWiz(seqWiz.page === 2 ? '.wiz-choice' : '#seq-title'); return; }
+  if (b.dataset.wizMode === 'single') { seqWiz.mode = 'single'; form.requestSubmit(); return; }
+  if (b.dataset.wizMode === 'multi') { seqWiz.mode = 'multi'; seqWiz.page = 3; seqWiz.idx = 0; renderWiz('#wiz-title'); return; }
+  wizSync();
+  const s = seqWiz.steps;
+  if (b.dataset.wizGo !== undefined) seqWiz.idx = Number(b.dataset.wizGo);
+  if (b.hasAttribute('data-wiz-add')) { s.push({ title: '', instruction: '', image: null }); seqWiz.idx = s.length - 1; }
+  if (b.hasAttribute('data-wiz-prev')) seqWiz.idx = Math.max(0, seqWiz.idx - 1);
+  if (b.hasAttribute('data-wiz-next')) { if (seqWiz.idx === s.length - 1) { if (s.length >= 30) return; s.push({ title: '', instruction: '', image: null }); } seqWiz.idx++; }
+  if (b.hasAttribute('data-wiz-delete') && s.length > 1) { s.splice(seqWiz.idx, 1); seqWiz.idx = Math.min(seqWiz.idx, s.length - 1); }
+  if (b.hasAttribute('data-wiz-photo-remove')) s[seqWiz.idx].image = null;
+  renderWiz('#wiz-title');
+});
+document.addEventListener('change', async event => {
+  if (event.target.id !== 'wiz-photo' || !seqWiz) return;
+  const file = event.target.files && event.target.files[0]; event.target.value = '';
+  if (!file) return;
+  wizSync();
+  try { seqWiz.steps[seqWiz.idx].image = await compressStepImage(file); renderWiz('#wiz-caption'); }
+  catch (error) { const e = document.getElementById('seq-add-error'); if (e) e.textContent = error.message; }
+});
 
 function sequenceRemoveDialog(opId) {
   const o = order(), op = o.operations.find(x => x.id === opId);
@@ -2982,10 +3100,19 @@ document.addEventListener('submit', event => {
     data.requiresTooling = form.elements.requiresTooling.checked;
     data.callouts = [...form.querySelectorAll('[name=callouts]:checked')].map(c => c.value);
     data.grounding = form.querySelector('[name$="-grounding"]:checked')?.value;
+    delete data.steps;
+    if (seqWiz?.mode === 'single') data.stepList = [{ title: data.title, instruction: data.description }];
+    else if (seqWiz?.mode === 'multi') {
+      wizSync();
+      let list = seqWiz.steps.filter((st, i, all) => st.title.trim() || st.instruction.trim() || st.image || all.length === 1);
+      const gap = list.findIndex(st => !st.title.trim() || !st.instruction.trim());
+      if (gap >= 0) { seqWiz.steps = list; seqWiz.idx = gap; renderWiz('#wiz-title'); $('#seq-add-error').textContent = `Step ${String.fromCharCode(65 + gap)} needs a title and instructions.`; return; }
+      data.stepList = list.map(st => ({ title: st.title.trim(), instruction: st.instruction.trim(), ...(st.image ? { image: st.image } : {}) }));
+    } else { seqWiz && (seqWiz.page = 2); renderWiz('.wiz-choice'); return; }
     const result = MES.addOrderOperation(state, form.dataset.order, data);
-    if (!result.ok) { $('#seq-add-error').textContent = result.message; return; }
+    if (!result.ok) { if (seqWiz?.mode === 'single') { seqWiz.page = 1; renderWiz(); } $('#seq-add-error').textContent = result.message; return; }
     if (!save()) return;
-    $('#dialog').close(); selectedOp = result.opId; render(); notify(result.message);
+    seqWiz = null; $('#dialog').close(); selectedOp = result.opId; render(); notify(result.message);
   }
   if (form.id === 'seq-remove-form') {
     event.preventDefault();
@@ -3512,7 +3639,7 @@ ${qualityBanner(o)}
 ${o.status==='Draft'?releaseSummary(o):''}
 <nav class="tabs" role="tablist" aria-label="Work order sections">${[['operations','Operations',`${doneCount(o)}/${o.operations.length}`],['materials','Material kit',`${o.materials.filter(m=>m.ready).length}/${o.materials.length}`],['quality','Quality',o.tickets.length+o.reports.length],['record','Record',o.history.length],['inventory','Inventory',o.inventory?'Stocked':`${MES.orderSerials(state,o).length}/${o.quantity} S/N`]].map(([key,label,count])=>`<button role="tab" aria-selected="${tab===key}" data-action="tab" data-tab="${key}" ${tab===key?'aria-current="page"':''}>${label}<span class="badge">${count}</span></button>`).join('')}</nav>
 ${tab==='operations'?renderExecution(o):tab==='materials'?renderMaterials(o):tab==='quality'?renderQuality(o):tab==='inventory'?renderInventory(o):renderRecord(o)}</section>`;}
-function renderExecution(o){const next=currentIndex(o);if(!o.operations.some(op=>op.id===selectedOp))selectedOp=o.operations[next].id;const op=o.operations.find(x=>x.id===selectedOp);const index=o.operations.indexOf(op);const active=o.status==='Building'&&!op.done&&index===next&&!MES.engineeringChange(o)&&!MES.pendingSequenceChange(o);const complete=doneCount(o);return `<div class="execution-layout"><section class="sequence-panel" aria-labelledby="sequence-heading"><div class="panel-head"><h2 id="sequence-heading">Operation sequence</h2><button class="btn quiet" data-action="tab" data-tab="record">Sign-offs</button></div><div class="sequence-progress"><progress max="${o.operations.length}" value="${complete}" aria-label="Completed operations"></progress><span>${complete} of ${o.operations.length} complete</span></div><ol class="sequence-list">${o.operations.map((item,i)=>`<li><button class="operation-btn ${item.done?'done':i===next&&o.status==='Building'?'current':''}" data-action="operation" data-op="${esc(item.id)}" aria-pressed="${item.id===selectedOp}" aria-label="Operation ${sequence(i)}: ${esc(item.title)}. ${item.done?'Complete':i===next&&o.status==='Building'?'Current step':'Pending'}"><span class="op-number">${sequence(i)}</span><span><span class="op-label">${esc(item.title)}</span>${calloutBadges(item)}${openTickets(o,item.id).length?'<span class="op-flag">'+esc(openTickets(o,item.id).map(t=>t.type).join(' / '))+' open'+(MES.blockingTickets(o,item.id).length?' · Hold':'')+'</span>':''}${o.reports.some(r=>r.operationId===item.id)?'<span class="op-report">ATP report linked</span>':''}${item.inspectionPoint?'<span class="op-inspection">Inspection point</span>':''}${item.requiresTooling?'<span class="op-tooling">Cal tooling</span>':''}${item.classification?`<span class="op-class">${esc(item.classification)}</span>`:''}${!item.done&&MES.inspectionGate(o,i)?'<span class="op-locked">Locked behind inspection</span>':''}<span class="op-sub">${item.done?'Complete':i===next&&o.status==='Building'?'Current step':o.status==='Draft'?'Awaiting issue':o.status==='Kitting'?'Awaiting kit':'Pending'}</span></span>${icon(item.done?'check':'chevron')}</button></li>`).join('')}</ol>${renderSequenceTools(o)}</section><section class="task-panel" id="operation-detail" aria-labelledby="task-title"><header class="task-heading"><span class="task-number">${sequence(index)}</span><div><h2 id="task-title">${esc(op.title)}${calloutBadges(op)}</h2><p>${esc(op.description)}</p></div></header><div class="task-content">${calloutReminders(op)}<dl class="task-info"><div><dt>Work center</dt><dd> assembly cell</dd></div><div><dt>Sequence rule</dt><dd>Complete in order</dd></div><div><dt>Buy-off type</dt><dd>${esc(op.buyoffType||'Technician')}${op.inspectionPoint?' · Inspection point':''}</dd></div><div><dt>Calibrated tooling</dt><dd>${op.requiresTooling?'Required':'Not used'}</dd></div></dl><button class="doc-link" data-action="instruction" data-index="${index}">${icon('file')}<span><strong>${o.masterWI?'Work instruction · all steps':'Work instruction'}</strong><small class="mono">${o.masterWI?`${esc(o.masterWI.id)} Rev ${esc(o.masterWI.revision)} · Master WI`:`WI-${sequence(index)} · Rev ${esc(o.revision)} · Example only`}</small></span>${icon('external')}</button>
+function renderExecution(o){const next=currentIndex(o);if(!o.operations.some(op=>op.id===selectedOp))selectedOp=o.operations[next].id;const op=o.operations.find(x=>x.id===selectedOp);const index=o.operations.indexOf(op);const active=o.status==='Building'&&!op.done&&index===next&&!MES.engineeringChange(o)&&!MES.pendingSequenceChange(o);const complete=doneCount(o);return `<div class="execution-layout"><section class="sequence-panel" aria-labelledby="sequence-heading"><div class="panel-head"><h2 id="sequence-heading">Operation sequence</h2><button class="btn quiet" data-action="tab" data-tab="record">Sign-offs</button></div><div class="sequence-progress"><progress max="${o.operations.length}" value="${complete}" aria-label="Completed operations"></progress><span>${complete} of ${o.operations.length} complete</span></div><ol class="sequence-list">${o.operations.map((item,i)=>`<li><button class="operation-btn ${item.done?'done':i===next&&o.status==='Building'?'current':''}" data-action="operation" data-op="${esc(item.id)}" aria-pressed="${item.id===selectedOp}" aria-label="Operation ${sequence(i)}: ${esc(item.title)}. ${item.done?'Complete':i===next&&o.status==='Building'?'Current step':'Pending'}"><span class="op-number">${sequence(i)}</span><span><span class="op-label">${esc(item.title)}</span>${calloutBadges(item)}${openTickets(o,item.id).length?'<span class="op-flag">'+esc(openTickets(o,item.id).map(t=>t.type).join(' / '))+' open'+(MES.blockingTickets(o,item.id).length?' · Hold':'')+'</span>':''}${o.reports.some(r=>r.operationId===item.id)?'<span class="op-report">ATP report linked</span>':''}${item.inspectionPoint?'<span class="op-inspection">Inspection point</span>':''}${item.requiresTooling?'<span class="op-tooling">Cal tooling</span>':''}${item.classification?`<span class="op-class">${esc(item.classification)}</span>`:''}${!item.done&&MES.inspectionGate(o,i)?'<span class="op-locked">Locked behind inspection</span>':''}<span class="op-sub">${item.done?'Complete':i===next&&o.status==='Building'?'Current step':o.status==='Draft'?'Awaiting issue':o.status==='Kitting'?'Awaiting kit':'Pending'}</span></span>${icon(item.done?'check':'chevron')}</button></li>`).join('')}</ol>${renderSequenceTools(o)}</section><section class="task-panel" id="operation-detail" aria-labelledby="task-title"><header class="task-heading"><span class="task-number">${sequence(index)}</span><div><h2 id="task-title">${esc(op.title)}${calloutBadges(op)}</h2><p>${esc(op.description)}</p></div></header><div class="task-content">${calloutReminders(op)}<dl class="task-info"><div><dt>Work center</dt><dd> assembly cell</dd></div><div><dt>Sequence rule</dt><dd>Complete in order</dd></div><div><dt>Buy-off type</dt><dd>${esc(op.buyoffType||'Technician')}${op.inspectionPoint?' · Inspection point':''}</dd></div><div><dt>Calibrated tooling</dt><dd>${op.requiresTooling?'Required':'Not used'}</dd></div></dl>${(op.steps||[]).some(st=>st.image)?`<button class="doc-link" data-action="instruction" data-index="${index}">${icon('file')}<span><strong>Step photos · all steps</strong><small class="mono">${(op.steps||[]).filter(st=>st.image).length} of ${(op.steps||[]).length} steps have a photo</small></span>${icon('external')}</button>`:''}
 ${renderSteps(o,op,active)}${op.done?`${buyoffStamp(op)}<h3 style="margin-bottom:12px">Completion note</h3><div class="record-note">${esc(op.note||'Evidence retained in the work order record.')}</div>`:active?(MES.blockingTickets(o,op.id).length?operationHold(o,op):renderTaskForm(o,op,index)):`<div class="inline-info ${o.status==='Kitting'?'warning':''}">${icon('lock')}<p>${o.status==='Kitting'?'The material kit must be complete before operations can begin.':o.status==='Draft'?'Issue this work order to kitting before starting operations.':(MES.inspectionGate(o,index)?`Locked behind inspection point Op ${operationNumber(o,MES.inspectionGate(o,index).id)} · ${esc(MES.inspectionGate(o,index).title)}. It must be bought off before work can move past it.`:MES.pendingSequenceChange(o)?'QA must release the updated operation sequence before work continues.':`Operation ${sequence(next)} must be completed before this step can be recorded.`)}</p></div>`}
 ${renderHandoff(o)}
 <div class="task-records" aria-label="Operation files and quality records"><div class="task-record-actions">${operationActions(o,op)}</div>${renderMediaEvidence(o,op)}${renderAttachments(o,op)}${operationLinks(o,op)}</div>${renderDiscussion(o,op)}
