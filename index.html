@@ -544,23 +544,26 @@ small,.rev-chip small,.meta dt,.meta .mono{font-size:11px!important}
 .callout-check{align-items:center;min-height:40px}
 .callout-check .callout{margin-left:0}
 .callout-desc{font-size:13px;color:var(--muted);flex:1}
-/* Account permissions. Signing in gives view and execution; these hide the
-   authoring and approval affordances an account does not hold. Operation
-   buy-offs are stamp-gated elsewhere and are never hidden here. */
-body[data-perm-wi="no"] [data-action="wi-create"],body[data-perm-wi="no"] [data-action="wi-revise"],body[data-perm-wi="no"] [data-action="wi-op-add"],body[data-perm-wi="no"] [data-action="wi-op-move"],body[data-perm-wi="no"] [data-action="wi-op-remove"],body[data-perm-wi="no"] [data-action="wi-step-add"],body[data-perm-wi="no"] [data-action="wi-step-move"],body[data-perm-wi="no"] [data-action="wi-step-remove"],
-body[data-perm-wo="no"] [data-action="create"],body[data-perm-wo="no"] [data-action="wi-create-order"],
-body[data-perm-adj="no"] [data-action="seq-add"],body[data-perm-adj="no"] [data-action="seq-edit"],body[data-perm-adj="no"] [data-action="seq-remove"],body[data-perm-adj="no"] [data-action="engineering-change"],body[data-perm-adj="no"] [data-action="split-order"],body[data-perm-adj="no"] [data-action="schedule"],
-body[data-perm-apr="no"] [data-action="review-release"],body[data-perm-apr="no"] [data-action="seq-approve"],body[data-perm-apr="no"] [data-action="review"],
-body[data-perm-wia="no"] [data-action="wi-release"],
-body[data-perm-ncr="no"] [data-action="create-ticket"]{display:none!important}
+/* Account roles. Hide the affordances a role does not hold. Operation buy-offs are
+   stamp-gated elsewhere and are never hidden here. */
+body[data-can-edit-wi="no"] [data-action="wi-create"],body[data-can-edit-wi="no"] [data-action="wi-revise"],body[data-can-edit-wi="no"] [data-action="wi-op-add"],body[data-can-edit-wi="no"] [data-action="wi-op-move"],body[data-can-edit-wi="no"] [data-action="wi-op-remove"],body[data-can-edit-wi="no"] [data-action="wi-step-add"],body[data-can-edit-wi="no"] [data-action="wi-step-move"],body[data-can-edit-wi="no"] [data-action="wi-step-remove"],
+body[data-can-approve-wi="no"] [data-action="wi-release"],
+body[data-can-create-wo="no"] [data-action="create"],body[data-can-create-wo="no"] [data-action="wi-create-order"],
+body[data-can-adjust-wo="no"] [data-action="seq-add"],body[data-can-adjust-wo="no"] [data-action="seq-edit"],body[data-can-adjust-wo="no"] [data-action="seq-remove"],
+body[data-can-split="no"] [data-action="split-order"],
+body[data-can-approve-wo="no"] [data-action="review-release"],body[data-can-approve-wo="no"] [data-action="seq-approve"],body[data-can-approve-wo="no"] [data-action="review"],
+body[data-can-request-pedigree="no"] [data-action="pedigree-change"],
+body[data-can-operate="no"] [data-action="schedule"],body[data-can-operate="no"] [data-action="advance"],body[data-can-operate="no"] [data-action="aog-resolve"],body[data-can-operate="no"] [data-action="open-inventory"],body[data-can-operate="no"] [data-action="serial-next"],body[data-can-operate="no"] [data-action="serial-void"],body[data-can-operate="no"] [data-action="record-media"],body[data-can-operate="no"] .att-btn,body[data-can-operate="no"] [data-material],body[data-can-operate="no"] [data-material-lot],body[data-can-operate="no"] [data-priority-order],body[data-can-operate="no"] .step-check{display:none!important}
 .access-panel{margin:14px 0 0;border:1px solid var(--line);border-radius:9px;padding:10px 14px}
 .access-panel summary{cursor:pointer;font-weight:600;font-size:14px;min-height:32px;display:flex;align-items:center}
-.access-table th[scope=col]{font-size:11px;line-height:1.25;text-align:center;vertical-align:bottom;font-weight:500}
 .access-table th[scope=row]{font-weight:600;white-space:nowrap}
 .access-table th[scope=row] small{display:block;font-weight:400;color:var(--muted);font-family:var(--mono)}
-.access-table td{text-align:center}
-.perm-cell{display:inline-flex;min-width:44px;min-height:44px;align-items:center;justify-content:center;cursor:pointer}
-.perm-cell input{width:18px;height:18px;accent-color:var(--blue)}
+.access-table select{min-height:40px;border:1px solid var(--line);border-radius:8px;padding:0 10px;font-size:14px}
+.role-legend{margin:12px 0 0;padding-left:18px;font-size:13px;color:var(--muted);display:grid;gap:4px}
+.role-legend strong{color:var(--ink)}
+.pedigree-pending{margin:12px 0 0;flex-wrap:wrap}
+.pedigree-pending .btn{margin-left:auto}
+
 .access-add{margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
 .access-add-title{font-weight:600;font-size:14px;margin:0 0 8px}
 .access-add-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
@@ -656,77 +659,89 @@ main a{min-height:24px;display:inline-flex;align-items:center}
  function hashPassword(salt,password){if(!(window.crypto&&crypto.subtle))return Promise.reject(new Error('Secure hashing is not available in this browser context.'));return crypto.subtle.digest('SHA-256',new TextEncoder().encode(salt+':'+password)).then(toHex);}
  function currentUser(){try{var u=sessionStorage.getItem(SESSION_KEY);if(!u)return null;var a=loadAuth();return a.users.find(function(x){return x.username===u;})||null;}catch(e){return null;}}
  window.skSignOut=function(){try{sessionStorage.removeItem(SESSION_KEY);}catch(e){}location.reload();};
- // ---- account permissions ----------------------------------------------
- // Signing in grants view and shop-floor execution. These six gate authoring and
- // approval. Operation buy-offs are NOT here: those stay on stamp credentials.
- var PERMS=[
-  {key:'wi', label:'Create and edit work instructions', hint:'Author, revise, and release master WIs.'},
-  {key:'wia', label:'Approve WI releases', hint:'Release a master WI. A QA stamp credential is still required at release.'},
-  {key:'wo', label:'Create work orders', hint:'Clone from a master WI or start an ad hoc order.'},
-  {key:'adj', label:'Adjust work orders', hint:'Add, edit, or remove operations; engineering change; split quantity; reschedule.'},
-  {key:'apr', label:'Approve work orders', hint:'QA release, sequence-change release, and final quality review.'},
-  {key:'ncr', label:'Raise and resolve NCR / IDR', hint:'Create and close nonconformance records.'},
-  {key:'ecr', label:'Approve ECR / ECO', hint:'Authorise engineering change requests and orders.'}
+ // ---- account roles -----------------------------------------------------------
+ // Signing in identifies the person. The role decides what they may author or approve.
+ // Operation buy-offs are NOT here: those stay on stamp credentials, and stamps apply
+ // to operations only.
+ var ROLES=[
+  {key:'general', label:'General User', profileRole:'General user', hint:'View only, plus raising an NC/IDR and submitting an ECR.'},
+  {key:'operator', label:'Operator', profileRole:'Assembly technician', hint:'Kit parts, mark AOG, adjust schedule, advance stages, run and buy off operations (stamp), split quantity.'},
+  {key:'me', label:'Manufacturing Engineering', profileRole:'Manufacturing Engineer', hint:'Everything an Operator can, plus author WIs and WOs, adjust operations, peer-review WIs, and record the NC initial disposition. No QA approvals.'},
+  {key:'qe', label:'Quality Engineering', profileRole:'Quality Engineer', hint:'Approve WO release, sequence changes, ECR/ECO and closure; release WIs after ME peer review; approve NCs after ME disposition.'},
+  {key:'qm', label:'QA Manager', profileRole:'Quality Manager', hint:'Everything.'}
  ];
- var ACTION_PERM={
-  'wi-create':'wi','wi-revise':'wi','wi-op-add':'wi','wi-op-move':'wi','wi-op-remove':'wi','wi-step-add':'wi','wi-step-move':'wi','wi-step-remove':'wi','wi-step-image-remove':'wi',
-  'create':'wo','create-master':'wo','create-adhoc':'wo','wi-create-order':'wo',
-  'seq-add':'adj','seq-edit':'adj','seq-remove':'adj','engineering-change':'adj','split-order':'adj','schedule':'adj',
-  'review-release':'apr','seq-approve':'apr','review':'apr','wi-release':'wia',
-  'create-ticket':'ncr'
+ var EVERYONE=['view','raise-nc','submit-ecr'];
+ var ROLE_CAPS={
+  general: EVERYONE,
+  operator: EVERYONE.concat(['operate','split','request-pedigree','approve-pedigree']),
+  me: EVERYONE.concat(['operate','split','request-pedigree','approve-pedigree','edit-wi','peer-review-wi','create-wo','adjust-wo','dispo-nc']),
+  qe: EVERYONE.concat(['request-pedigree','approve-pedigree','approve-wo','approve-wi','approve-nc']),
+  qm: EVERYONE.concat(['operate','split','request-pedigree','approve-pedigree','edit-wi','peer-review-wi','create-wo','adjust-wo','dispo-nc','approve-wo','approve-wi','approve-nc'])
  };
- var FORM_PERM={'wi-create-form':'wi','wi-header-form':'wi','wi-ops-form':'wi',
-  'create-form':'wo','adhoc-form':'wo',
-  'seq-add-form':'adj','seq-edit-form':'adj','seq-remove-form':'adj','split-form':'adj','schedule-form':'adj',
-  'release-form':'apr','review-form':'apr',
-  'ticket-form':'ncr','resolve-ticket-form':'ncr',
-  'engineering-form':'ecr','engineering-approval-form':'ecr'};
- function permsOf(u){var out={};PERMS.forEach(function(p){out[p.key]=!!(u&&u.perms&&u.perms[p.key]);});return out;}
- function allPerms(){var out={};PERMS.forEach(function(p){out[p.key]=true;});return out;}
- function applyPermClasses(u){var g=permsOf(u);PERMS.forEach(function(p){document.body.setAttribute('data-perm-'+p.key,g[p.key]?'yes':'no');});}
+ var ALL_CAPS=ROLE_CAPS.qm;
+ var ACTION_CAP={
+  'wi-create':'edit-wi','wi-revise':'edit-wi','wi-op-add':'edit-wi','wi-op-move':'edit-wi','wi-op-remove':'edit-wi','wi-step-add':'edit-wi','wi-step-move':'edit-wi','wi-step-remove':'edit-wi','wi-step-image-remove':'edit-wi',
+  'wi-peer-review':'peer-review-wi','wi-release':'approve-wi',
+  'create':'create-wo','create-master':'create-wo','create-adhoc':'create-wo','wi-create-order':'create-wo',
+  'seq-add':'adjust-wo','seq-edit':'adjust-wo','seq-remove':'adjust-wo',
+  'engineering-change':'submit-ecr','split-order':'split',
+  'review-release':'approve-wo','seq-approve':'approve-wo','review':'approve-wo',
+  'create-ticket':'raise-nc',
+  'pedigree-change':'request-pedigree','pedigree-approve':'approve-pedigree',
+  'schedule':'operate','advance':'operate','aog-resolve':'operate','open-inventory':'operate','serial-next':'operate','serial-void':'operate','record-media':'operate','upload-media':'operate','start-recording':'operate','add-tool':'operate'
+ };
+ var FORM_CAP={'wi-create-form':'edit-wi','wi-header-form':'edit-wi','wi-ops-form':'edit-wi',
+  'create-form':'create-wo','adhoc-form':'create-wo',
+  'seq-add-form':'adjust-wo','seq-edit-form':'adjust-wo','seq-remove-form':'adjust-wo','split-form':'split','schedule-form':'operate',
+  'release-form':'approve-wo','review-form':'approve-wo','engineering-approval-form':'approve-wo','engineering-form':'submit-ecr',
+  'ticket-form':'raise-nc','ticket-dispo-form':'dispo-nc','resolve-ticket-form':'approve-nc',
+  'pedigree-form':'request-pedigree','inventory-form':'operate','serial-form':'operate','serial-void-form':'operate','aog-form':'operate','operation-form':'operate','record-note-form':'operate','media-form':'operate'};
+ function roleOf(u){return (u&&ROLES.some(function(r){return r.key===u.role;}))?u.role:'general';}
+ function capsOf(u){return ROLE_CAPS[roleOf(u)]||EVERYONE;}
+ function applyPermClasses(u){var caps=capsOf(u);document.body.setAttribute('data-role',roleOf(u));ALL_CAPS.forEach(function(c){document.body.setAttribute('data-can-'+c,caps.indexOf(c)>=0?'yes':'no');});}
+ function roleLabel(k){var r=ROLES.find(function(x){return x.key===k;});return r?r.label:k;}
  window.skAuth={
-  PERMS:PERMS,
-  can:function(k){var u=currentUser();return !!(u&&u.perms&&u.perms[k]);},
+  ROLES:ROLES,
+  can:function(cap){var u=currentUser();return !!u&&capsOf(u).indexOf(cap)>=0;},
+  role:function(){return roleOf(currentUser());},
   user:currentUser,
-  label:function(k){var p=PERMS.find(function(x){return x.key===k;});return p?p.label:k;},
-  accessHtml:function(){var a=loadAuth(),me=currentUser();if(!me)return '';
-   var rows=a.users.map(function(u){var g=permsOf(u);
-    return '<tr><th scope="row">'+u.displayName.replace(/[<&]/g,'')+'<small>'+u.username+'</small></th>'+PERMS.map(function(p){
-     return '<td><label class="perm-cell"><input type="checkbox" data-perm-user="'+u.username+'" data-perm-key="'+p.key+'"'+(g[p.key]?' checked':'')+(u.username===me.username&&p.key==='wi'?'':'')+'><span class="sr-only">'+p.label+' for '+u.username+'</span></label></td>';}).join('')+'</tr>';}).join('');
-   var isAdmin=PERMS.every(function(p){return me.perms&&me.perms[p.key];});
-   var addForm=isAdmin?'<form class="access-add" data-access-add><p class="access-add-title">Add an account</p><div class="access-add-grid"><label>Name<input name="displayName" required maxlength="60" autocomplete="off"></label><label>Username<input name="username" required maxlength="40" autocomplete="off" autocapitalize="none" spellcheck="false"></label><label>Temporary password<input name="password" type="password" required minlength="8" maxlength="128" autocomplete="new-password"></label></div><p class="access-add-error" role="alert"></p><button class="btn" type="submit">Add account</button><p class="small muted">New accounts can view and run operations. Grant authoring and approval above.</p></form>':'';
-   return '<details class="access-panel" open><summary>Account access ('+a.users.length+')</summary><p class="small muted">Signing in gives view and shop-floor execution. These six gate authoring and approval. Operation buy-offs are separate and stay on stamp credentials.</p><div class="table-wrap"><table class="data-table access-table"><thead><tr><th scope="col">Account</th>'+PERMS.map(function(p){return '<th scope="col" title="'+p.hint+'">'+p.label.replace(/ /g,'<br>')+'</th>';}).join('')+'</tr></thead><tbody>'+rows+'</tbody></table></div>'+addForm+'</details>';}
+  actor:function(){var u=currentUser();if(!u)return null;var r=ROLES.find(function(x){return x.key===roleOf(u);});return {name:u.displayName,role:r.profileRole,credentialId:'ACCT-'+u.username,account:u.username,accountRole:roleOf(u)};},
+  label:function(cap){return ({'view':'view','operate':'work the floor (kit, AOG, schedule, stages, steps)','raise-nc':'raise an NC/IDR','submit-ecr':'submit an ECR','edit-wi':'author work instructions','peer-review-wi':'peer-review a work instruction','approve-wi':'release a work instruction','create-wo':'create work orders','adjust-wo':'adjust work-order operations','split':'split a work order','approve-wo':'approve work orders','dispo-nc':'record the NC initial disposition','approve-nc':'approve an NC','request-pedigree':'request a pedigree change','approve-pedigree':'approve a pedigree change'})[cap]||cap;},
+  accessHtml:function(){var a=loadAuth(),me=currentUser();if(!me)return '';var isQM=roleOf(me)==='qm';var esc=function(v){return String(v).replace(/[<&>"]/g,'');};
+   var rows=a.users.map(function(u){return '<tr><th scope="row">'+esc(u.displayName)+'<small>'+esc(u.username)+'</small></th><td>'+(isQM?'<select data-role-user="'+esc(u.username)+'" aria-label="Role for '+esc(u.username)+'">'+ROLES.map(function(r){return '<option value="'+r.key+'"'+(roleOf(u)===r.key?' selected':'')+'>'+r.label+'</option>';}).join('')+'</select>':'<span class="pill">'+roleLabel(roleOf(u))+'</span>')+'</td></tr>';}).join('');
+   var legend='<ul class="role-legend">'+ROLES.map(function(r){return '<li><strong>'+r.label+'</strong> · '+r.hint+'</li>';}).join('')+'</ul>';
+   var addForm=isQM?'<form class="access-add" data-access-add><p class="access-add-title">Add an account</p><div class="access-add-grid"><label>Name<input name="displayName" required maxlength="60" autocomplete="off"></label><label>Username<input name="username" required maxlength="40" autocomplete="off" autocapitalize="none" spellcheck="false"></label><label>Temporary password<input name="password" type="password" required minlength="8" maxlength="128" autocomplete="new-password"></label><label>Role<select name="role">'+ROLES.map(function(r){return '<option value="'+r.key+'"'+(r.key==='general'?' selected':'')+'>'+r.label+'</option>';}).join('')+'</select></label></div><p class="access-add-error" role="alert"></p><button class="btn" type="submit">Add account</button></form>':'';
+   return '<details class="access-panel" open><summary>Accounts and roles ('+a.users.length+')</summary><p class="small muted">Your role: <strong>'+roleLabel(roleOf(me))+'</strong>. Roles decide authoring and approvals. Operation buy-offs are separate and stay on stamp credentials.</p><div class="table-wrap"><table class="data-table access-table"><thead><tr><th scope="col">Account</th><th scope="col">Role</th></tr></thead><tbody>'+rows+'</tbody></table></div>'+legend+addForm+'</details>';}
  };
- document.addEventListener('change',function(ev){var cb=ev.target;if(!(cb.dataset&&cb.dataset.permUser))return;
-  var a=loadAuth(),me=currentUser(),u=a.users.find(function(x){return x.username===cb.dataset.permUser;});if(!u)return;
-  if(!(me&&PERMS.every(function(p){return me.perms&&me.perms[p.key];}))){cb.checked=!cb.checked;return;}
-  u.perms=u.perms||{};u.perms[cb.dataset.permKey]=cb.checked;saveAuth(a);
-  var me=currentUser();if(me&&me.username===u.username)applyPermClasses(u);});
+ document.addEventListener('change',function(ev){var sel=ev.target;if(!(sel.dataset&&sel.dataset.roleUser))return;
+  var a=loadAuth(),me=currentUser(),u=a.users.find(function(x){return x.username===sel.dataset.roleUser;});if(!u)return;
+  if(!(me&&roleOf(me)==='qm')){sel.value=roleOf(u);return;}
+  if(u.username===me.username&&sel.value!=='qm'&&a.users.filter(function(x){return roleOf(x)==='qm';}).length<2){sel.value='qm';var t=document.getElementById('toast');if(t){t.querySelector('p').textContent='Keep at least one QA Manager account.';t.hidden=false;setTimeout(function(){t.hidden=true;},5000);}return;}
+  u.role=sel.value;saveAuth(a);if(me.username===u.username)applyPermClasses(u);});
  document.addEventListener('submit',function(ev){var f=ev.target;if(!(f&&f.hasAttribute&&f.hasAttribute('data-access-add')))return;ev.preventDefault();ev.stopPropagation();
   var err=f.querySelector('.access-add-error');err.textContent='';var a=loadAuth(),me=currentUser();
-  if(!(me&&PERMS.every(function(p){return me.perms&&me.perms[p.key];}))){err.textContent='Only an administrator can add accounts.';return;}
-  var dn=f.elements.displayName.value.trim(),un=f.elements.username.value.trim().toLowerCase(),pw=f.elements.password.value;
+  if(!(me&&roleOf(me)==='qm')){err.textContent='Only a QA Manager can add accounts.';return;}
+  var dn=f.elements.displayName.value.trim(),un=f.elements.username.value.trim().toLowerCase(),pw=f.elements.password.value,role=f.elements.role.value;
   if(dn.length<2){err.textContent='Enter a name.';return;}
   if(!/^[a-z0-9._-]{3,40}$/.test(un)){err.textContent='Username: 3 to 40 characters, letters, numbers, dot, dash, underscore.';return;}
   if(a.users.some(function(u){return u.username===un;})){err.textContent='That username already exists.';return;}
   if(pw.length<8){err.textContent='Password must be at least 8 characters.';return;}
-  var salt=randomSalt();hashPassword(salt,pw).then(function(h){a.users.push({username:un,displayName:dn,salt:salt,hash:h,perms:{},createdAt:new Date().toISOString(),createdBy:me.username});saveAuth(a);
+  if(!ROLES.some(function(r){return r.key===role;}))role='general';
+  var salt=randomSalt();hashPassword(salt,pw).then(function(h){a.users.push({username:un,displayName:dn,salt:salt,hash:h,role:role,createdAt:new Date().toISOString(),createdBy:me.username});saveAuth(a);
    var panel=f.closest('.access-panel');if(panel){var wrap=document.createElement('div');wrap.innerHTML=window.skAuth.accessHtml();panel.replaceWith(wrap.firstElementChild);}
   }).catch(function(e){err.textContent=e.message;});},true);
- // Block gated actions even if a control is reachable. Client-side only: this is an
- // affordance layer, not enforcement. Real enforcement belongs on a server.
- document.addEventListener('click',function(ev){var b=ev.target.closest&&ev.target.closest('[data-action]');if(!b)return;
-  var need=ACTION_PERM[b.dataset.action];if(!need||window.skAuth.can(need))return;
-  ev.preventDefault();ev.stopPropagation();
-  var t=document.getElementById('toast');if(t){t.querySelector('p').textContent='Your account cannot do this: '+window.skAuth.label(need)+'.';t.hidden=false;setTimeout(function(){t.hidden=true;},5000);}},true);
- document.addEventListener('submit',function(ev){var need=FORM_PERM[ev.target&&ev.target.id];if(!need||window.skAuth.can(need))return;
-  ev.preventDefault();ev.stopPropagation();
-  var t=document.getElementById('toast');if(t){t.querySelector('p').textContent='Your account cannot do this: '+window.skAuth.label(need)+'.';t.hidden=false;setTimeout(function(){t.hidden=true;},5000);}},true);
- (function migratePerms(){var a=loadAuth();if(!a.users.length)return;
-  if(a.users.some(function(u){return u.perms;}))return;
-  a.users[0].perms=allPerms();a.users.slice(1).forEach(function(u){u.perms={};});saveAuth(a);})();
+ function refuse(ev,cap){ev.preventDefault();ev.stopPropagation();var t=document.getElementById('toast');if(t){t.querySelector('p').textContent='Your role cannot '+window.skAuth.label(cap)+'. Signed in as '+roleLabel(window.skAuth.role())+'.';t.hidden=false;setTimeout(function(){t.hidden=true;},5000);}}
+ // Client-side affordance layer, not enforcement. Real enforcement belongs on a server.
+ document.addEventListener('click',function(ev){var b=ev.target.closest&&ev.target.closest('[data-action]');if(!b)return;var need=ACTION_CAP[b.dataset.action];if(need&&!window.skAuth.can(need))refuse(ev,need);},true);
+ document.addEventListener('submit',function(ev){var need=FORM_CAP[ev.target&&ev.target.id];if(need&&!window.skAuth.can(need))refuse(ev,need);},true);
+ // Accounts created before roles existed: the first account becomes QA Manager, the rest General.
+ (function migrateRoles(){var a=loadAuth();if(!a.users.length)return;var changed=false;
+  a.users.forEach(function(u,i){if(!ROLES.some(function(r){return r.key===u.role;})){u.role=i===0?'qm':'general';delete u.perms;changed=true;}});
+  if(!a.users.some(function(u){return u.role==='qm';})){a.users[0].role='qm';changed=true;}
+  if(changed)saveAuth(a);})();
  var user=currentUser();
  if(user)applyPermClasses(user);
+
  var name=user?firstName(user.displayName):'';
  function firstName(full){full=String(full||'').trim();return /^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+$/.test(full)?full.split(/\s+/)[0]:full;}
  var REDUCE=matchMedia('(prefers-reduced-motion:reduce)').matches;
@@ -752,7 +767,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   if(firstRun){var dn=document.getElementById('sk-displayname').value.trim(),cf=document.getElementById('sk-confirm').value;
    if(dn.length<2){err.textContent='Enter your name.';btn.disabled=false;return;}
    if(cf!==pw){err.textContent='Passwords do not match.';btn.disabled=false;return;}
-   var salt=randomSalt();hashPassword(salt,pw).then(function(h){a.users.push({username:username,displayName:dn,salt:salt,hash:h,perms:allPerms(),createdAt:new Date().toISOString()});saveAuth(a);sessionStorage.setItem(SESSION_KEY,username);applyPermClasses(currentUser());startGreeting(dn);}).catch(function(e){err.textContent=e.message;btn.disabled=false;});return;}
+   var salt=randomSalt();hashPassword(salt,pw).then(function(h){a.users.push({username:username,displayName:dn,salt:salt,hash:h,role:'qm',createdAt:new Date().toISOString()});saveAuth(a);sessionStorage.setItem(SESSION_KEY,username);applyPermClasses(currentUser());startGreeting(dn);}).catch(function(e){err.textContent=e.message;btn.disabled=false;});return;}
   var u=a.users.find(function(x){return x.username===username;});
   if(!u){err.textContent='No account with that username on this device.';btn.disabled=false;return;}
   hashPassword(u.salt,pw).then(function(h){if(h!==u.hash){err.textContent='Incorrect password.';btn.disabled=false;document.getElementById('sk-password').select();return;}sessionStorage.setItem(SESSION_KEY,username);applyPermClasses(u);startGreeting(u.displayName);}).catch(function(e){err.textContent=e.message;btn.disabled=false;});});
@@ -930,7 +945,18 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   };
   const requiresReleaseQA = order => !(plain(order) && (order.pedigree === 'Development NFF' || (order.pedigree === 'Production' && order.subcategory === 'Mfg.')));
   const releaseApproval = order => plain(order) && plain(order.releaseApproval) ? order.releaseApproval: null;
-  const isEngineeringProfile = profile => profileValid(profile) && ['Manufacturing Engineer', 'Mfg. Engineering'].includes(profile.role);
+  const isEngineeringProfile = profile => profileValid(profile) && ['Manufacturing Engineer', 'Mfg. Engineering'].includes(profile.role)
+  // Approvals and authoring are attributed to the signed-in account, not the buy-off credential.
+  // Stamps apply to operations only. Outside a browser (tests) there is no account: fall back to the profile.
+  const accountActor = () => (typeof window !== 'undefined' && window.skAuth && typeof window.skAuth.actor === 'function') ? window.skAuth.actor() : null;
+  const actor = state => { const acct = accountActor(); return acct ? { name: acct.name, role: acct.role, credentialId: acct.credentialId } : profileSnapshot(state.profile); };
+  const accountRole = () => { const acct = accountActor(); return acct ? acct.accountRole : null; };
+  const can = cap => !(typeof window !== 'undefined' && window.skAuth) || window.skAuth.can(cap);
+  const denied = (cap, what) => can(cap) ? null : fail(`Your role cannot ${what}. Ask the QA Manager to change your role.`);
+  const snapshotValid = p => plain(p) && str(p.name, 80) && !!p.name.trim() && str(p.role, 80) && str(p.credentialId, 40) && !!p.credentialId.trim();
+  const DISPOSITIONS = Object.freeze(['Use as is', 'Rework', 'Repair', 'Scrap', 'Return to supplier']);
+  const dispoValid = d => plain(d) && DISPOSITIONS.includes(d.decision) && str(d.note, 500) && !!d.note.trim() && snapshotValid(d) && timestamp(d.at);
+  const pedigreeChangeValid = (c, order) => plain(c) && PEDIGREES.includes(c.from) && PEDIGREES.includes(c.to) && c.from !== c.to && c.from === order.pedigree && str(c.reason, 500) && !!c.reason.trim() && snapshotValid(c.requestedBy) && timestamp(c.requestedAt) && c.status === 'Awaiting approvals' && Array.isArray(c.approvals) && c.approvals.length <= 1 && c.approvals.every(a => snapshotValid(a) && timestamp(a.at) && str(a.discipline, 40));;
   const isQAProfile = profile => profileValid(profile) && ['Quality Manager', 'Quality Engineer', 'QA Reviewer'].includes(profile.role);
   const engineeringChange = order => Array.isArray(order?.engineeringChanges) ? order.engineeringChanges.find(change => change.status !== 'Applied') || null: null;
   const engineeringHoldMessage = 'An engineering change is pending. QA re-release is required before work can continue.';
@@ -1028,7 +1054,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   }
 
   function ticketValid(ticket, order) {
-    if (!plain(ticket) || !str(ticket.id, 24) || !/^(IDR|NC)-\d{4,8}$/.test(ticket.id) || !['IDR', 'NC'].includes(ticket.type) || !ticket.id.startsWith(`${ticket.type}-`) || !order.operations.some(operation => operation.id === ticket.operationId) || !str(ticket.title, 120) || !ticket.title.trim() || !str(ticket.description, 1000) || !ticket.description.trim() || !['Open', 'Resolved'].includes(ticket.status) || typeof ticket.hold !== 'boolean' || !timestamp(ticket.createdAt) || ticket.reportedBy !== 'Assembly operator' || !str(ticket.resolution, 500, 0)) return false;
+    if (!plain(ticket) || !str(ticket.id, 24) || !/^(IDR|NC)-\d{4,8}$/.test(ticket.id) || !['IDR', 'NC'].includes(ticket.type) || !ticket.id.startsWith(`${ticket.type}-`) || !order.operations.some(operation => operation.id === ticket.operationId) || !str(ticket.title, 120) || !ticket.title.trim() || !str(ticket.description, 1000) || !ticket.description.trim() || !['Open', 'Resolved'].includes(ticket.status) || typeof ticket.hold !== 'boolean' || !timestamp(ticket.createdAt) || ticket.reportedBy !== 'Assembly operator' || !str(ticket.resolution, 500, 0) || !(ticket.dispo === undefined || dispoValid(ticket.dispo)) || !(ticket.resolvedBy === undefined || snapshotValid(ticket.resolvedBy))) return false;
     return ticket.status === 'Open' ? ticket.resolution === '' && ticket.resolvedAt === null: !!ticket.resolution.trim() && timestamp(ticket.resolvedAt) && ticket.resolvedAt >= ticket.createdAt;
   }
 
@@ -1059,6 +1085,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
     if (!Array.isArray(order.reports) || order.reports.length > 20 || !unique(order.reports.map(report => report && report.id)) || !order.reports.every(report => reportValid(report, order))) return false;
     if (order.status === 'Closed' && blockingTickets(order).length) return false;
     if (version === 3 && (!([null, ...SUBCATEGORIES].includes(order.subcategory)) || !creationFieldsValid(order) || !order.operations.every(operationEvidenceValid) || !engineeringChangesValid(order))) return false;
+    if (Object.hasOwn(order, 'pedigreeChange') && order.pedigreeChange !== null && !pedigreeChangeValid(order.pedigreeChange, order)) return false;
     return true;
   }
 
@@ -1121,7 +1148,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   const stepLetter = index => { let n = index, label = ''; do { label = String.fromCharCode(65 + (n % 26)) + label; n = Math.floor(n / 26) - 1; } while (n >= 0); return label; };
   const stepValid = step => plain(step) && str(step.id, 40) && str(step.title, 120) && !!step.title.trim() && str(step.instruction, 1000) && !!step.instruction.trim() && (step.image === undefined || stepImageValid(step.image));
   const wiOperationValid = op => plain(op) && str(op.id, 40) && str(op.title, 120) && !!op.title.trim() && str(op.description, 400) && !!op.description.trim() && typeof op.requiresRecording === 'boolean' && BUYOFF_TYPES.includes(op.buyoffType) && typeof op.inspectionPoint === 'boolean' && (op.requiresTooling === undefined || typeof op.requiresTooling === 'boolean') && (!op.inspectionPoint || INSPECTION_BUYOFF_TYPES.includes(op.buyoffType)) && calloutsValid(op) && Array.isArray(op.steps) && op.steps.length >= 1 && op.steps.length <= 30 && unique(op.steps.map(step => step && step.id)) && op.steps.every(stepValid);
-  const masterWIValid = wi => plain(wi) && str(wi.id, 24) && /^MWI-\d{4}$/.test(wi.id) && str(wi.revision, 4) && WI_STATUSES.includes(wi.status) && !!partDefinition(wi.partNumber) && partDefinition(wi.partNumber).revisions.includes(wi.partRevision) && str(wi.title, 120) && Array.isArray(wi.operations) && wi.operations.length >= 1 && wi.operations.length <= 20 && unique(wi.operations.map(op => op && op.id)) && wi.operations.every(wiOperationValid) && Array.isArray(wi.history) && wi.history.length <= 200;
+  const masterWIValid = wi => plain(wi) && str(wi.id, 24) && /^MWI-\d{4}$/.test(wi.id) && str(wi.revision, 4) && WI_STATUSES.includes(wi.status) && !!partDefinition(wi.partNumber) && partDefinition(wi.partNumber).revisions.includes(wi.partRevision) && str(wi.title, 120) && Array.isArray(wi.operations) && wi.operations.length >= 1 && wi.operations.length <= 20 && unique(wi.operations.map(op => op && op.id)) && wi.operations.every(wiOperationValid) && Array.isArray(wi.history) && wi.history.length <= 200 && (wi.peerReview === undefined || (snapshotValid(wi.peerReview) && timestamp(wi.peerReview.at)));
   const masterWIsValid = list => Array.isArray(list) && list.length >= 1 && list.length <= 200 && unique(list.map(wi => wi && `${wi.id}/${wi.revision}`)) && list.every(masterWIValid);
   const wiKey = wi => `${wi.id} Rev ${wi.revision}`;
   const wiRef = wi => ({ id: wi.id, revision: wi.revision, title: wi.title });
@@ -1175,6 +1202,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   }
 
   function addMasterWI(state, input) {
+    { const d = denied('edit-wi', 'create a master WI'); if (d) return d; }
     const part = partDefinition(input?.partNumber);
     if (!part) return fail('Choose a part number.');
     if (!part.revisions.includes(input.partRevision)) return fail('Choose a part revision.');
@@ -1190,6 +1218,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   }
 
   function updateMasterWI(state, id, revision, input) {
+    { const d = denied('edit-wi', 'edit a master WI'); if (d) return d; }
     const { wi, error } = editableWI(state, id, revision);
     if (error) return fail(error);
     const title = String(input?.title ?? '').trim();
@@ -1200,6 +1229,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   }
 
   function saveWIOperations(state, id, revision, input) {
+    { const d = denied('edit-wi', 'edit master WI operations'); if (d) return d; }
     const { wi, error } = editableWI(state, id, revision);
     if (error) return fail(error);
     if (!Array.isArray(input) || !input.length || input.length > 20) return fail('A master WI needs 1 to 20 operations.');
@@ -1226,31 +1256,43 @@ main a{min-height:24px;display:inline-flex;align-items:center}
       result.push({ id: opId, title, description, requiresRecording: op.requiresRecording === true, buyoffType: op.buyoffType, inspectionPoint: op.inspectionPoint === true, requiresTooling: op.requiresTooling === true, callouts: calloutList(op.callouts), ...(calloutList(op.callouts).includes('ESD') ? { grounding: groundingFor(calloutList(op.callouts), op.grounding) } : {}), steps });
     }
     wi.operations = result;
+    if (plain(wi.peerReview)) { delete wi.peerReview; wiLog(state, wi, 'Operations changed after peer review; peer review cleared.'); }
     return { ok: true, message: `${wiKey(wi)} saved.` };
   }
 
   function releaseMasterWI(state, id, revision) {
     const { wi, error } = editableWI(state, id, revision);
     if (error) return fail(error);
-    if (!isQAProfile(state.profile)) return fail('QA must release a master WI. Switch to a Quality Manager, Quality Engineer, or QA Reviewer credential.');
-    // Two gates: the signed-in account must hold 'Approve WI releases', and the selected
-    // credential must be a QA role. The credential is what gets stamped onto the record.
-    if (typeof window !== 'undefined' && window.skAuth && !window.skAuth.can('wia')) return fail('Your account cannot approve WI releases. Ask an administrator to grant it in Your credentials.');
+    { const d = denied('approve-wi', 'release a master WI'); if (d) return d; }
+    if (!plain(wi.peerReview)) return fail('Manufacturing Engineering peer review must be recorded before QA release.');
+    if (wi.peerReview.credentialId === actor(state).credentialId) return fail('The peer reviewer cannot also release the WI.');
     if (!wi.operations.every(wiOperationValid)) return fail('Fix the operation and step errors before release.');
     const at = new Date().toISOString();
     state.masterWIs.filter(item => item.id === wi.id && item.status === 'Released').forEach(item => { item.status = 'Obsolete'; item.obsoletedAt = at; wiLog(state, item, `Superseded by Rev ${wi.revision}.`); });
-    wi.status = 'Released'; wi.releasedAt = at; wi.releasedBy = profileSnapshot(state.profile);
+    wi.status = 'Released'; wi.releasedAt = at; wi.releasedBy = actor(state);
     wiLog(state, wi, 'Released by QA.');
     return { ok: true, message: `${wiKey(wi)} released. New work orders will be cloned from this revision.` };
   }
 
+  function peerReviewMasterWI(state, id, revision) {
+    { const d = denied('peer-review-wi', 'peer-review a master WI'); if (d) return d; }
+    const { wi, error } = editableWI(state, id, revision);
+    if (error) return fail(error);
+    if (!wi.operations.every(wiOperationValid)) return fail('Fix the operation and step errors before peer review.');
+    if (plain(wi.peerReview)) return fail('Peer review is already recorded. Editing the WI clears it.');
+    wi.peerReview = { ...actor(state), at: new Date().toISOString(), virtual: true };
+    wiLog(state, wi, `Manufacturing Engineering peer review recorded by ${wi.peerReview.name}.`);
+    return { ok: true, message: `${wiKey(wi)} peer-reviewed. Quality Engineering can now release it.` };
+  }
+
   function reviseMasterWI(state, id, revision) {
+    { const d = denied('edit-wi', 'revise a master WI'); if (d) return d; }
     const wi = findWI(state, id, revision);
     if (!wi || wi.status !== 'Released') return fail('Only the released revision can be revised.');
     if (state.masterWIs.some(item => item.id === id && item.status === 'Draft')) return fail(`${id} already has a draft revision.`);
     const next = nextWIRevision(state, id);
     const draft = { ...JSON.parse(JSON.stringify(wi)), revision: next, status: 'Draft', history: [] };
-    delete draft.releasedAt; delete draft.releasedBy; delete draft.obsoletedAt;
+    delete draft.releasedAt; delete draft.releasedBy; delete draft.obsoletedAt; delete draft.peerReview;
     state.masterWIs.unshift(draft);
     wiLog(state, draft, `Revision ${next} started from Rev ${revision}.`);
     return { ok: true, message: `${id} Rev ${next} created as a draft.`, id, revision: next };
@@ -1258,12 +1300,13 @@ main a{min-height:24px;display:inline-flex;align-items:center}
 
   function queueSequenceChange(state, order, entry) {
     const now = new Date().toISOString();
-    const pending = pendingSequenceChange(order) || { status: 'Awaiting QA', entries: [], requestedBy: profileSnapshot(state.profile), requestedAt: now };
-    pending.entries = [...pending.entries, { ...entry, at: now, by: profileSnapshot(state.profile) }].slice(-40);
+    const pending = pendingSequenceChange(order) || { status: 'Awaiting QA', entries: [], requestedBy: actor(state), requestedAt: now };
+    pending.entries = [...pending.entries, { ...entry, at: now, by: actor(state) }].slice(-40);
     order.sequenceChange = pending;
   }
 
   function addOrderOperation(state, orderId, input) {
+    { const d = denied('adjust-wo', 'add an operation'); if (d) return d; }
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
     if (!['Draft', 'Kitting', 'Building'].includes(order.status)) return fail('Operations can only be added before the work order reaches Quality.');
@@ -1294,6 +1337,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   }
 
   function removeOrderOperation(state, orderId, opId, reason) {
+    { const d = denied('adjust-wo', 'remove an operation'); if (d) return d; }
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
     if (!['Draft', 'Kitting', 'Building'].includes(order.status)) return fail('Operations can only be removed before the work order reaches Quality.');
@@ -1317,6 +1361,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   }
 
   function editOrderOperation(state, orderId, opId, input) {
+    { const d = denied('adjust-wo', 'edit an operation'); if (d) return d; }
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
     if (!['Draft', 'Kitting', 'Building'].includes(order.status)) return fail('Operations can only be edited before the work order reaches Quality.');
@@ -1415,10 +1460,10 @@ main a{min-height:24px;display:inline-flex;align-items:center}
     if (error) return fail(error);
     const pending = pendingSequenceChange(order);
     if (!pending) return fail('There is no sequence change waiting for QA.');
-    if (!isQAProfile(state.profile)) return fail('QA release needs a Quality Manager, Quality Engineer, or QA Reviewer credential.');
-    if (pending.entries.some(entry => entry.by?.credentialId === state.profile.credentialId)) return fail('The person who changed the sequence can’t release it. Use a different QA credential.');
+    { const d = denied('approve-wo', 'release an operation change'); if (d) return d; }
+    if (pending.entries.some(entry => entry.by?.credentialId === actor(state).credentialId)) return fail('The person who changed the sequence can’t release it. A different Quality Engineering or QA Manager account must release it.');
     const at = new Date().toISOString();
-    order.sequenceChanges = [...(Array.isArray(order.sequenceChanges) ? order.sequenceChanges: []), { ...pending, status: 'Released', approvedBy: profileSnapshot(state.profile), approvedAt: at }].slice(-50);
+    order.sequenceChanges = [...(Array.isArray(order.sequenceChanges) ? order.sequenceChanges: []), { ...pending, status: 'Released', approvedBy: actor(state), approvedAt: at }].slice(-50);
     order.sequenceChange = null;
     const approver = profileSnapshot(state.profile);
     const entry = rollWorkOrderRevision(state, order, `Operation sequence changed (${pending.entries.length} change${pending.entries.length === 1 ? '' : 's'}).`,
@@ -1475,6 +1520,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   }
 
   function assignSerial(state, orderId, requested) {
+    { const d = denied('operate', 'assign serial numbers'); if (d) return d; }
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
     ensureInventory(state);
@@ -1538,6 +1584,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   }
 
   function moveToInventory(state, orderId, input) {
+    { const d = denied('operate', 'move units to inventory'); if (d) return d; }
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
     ensureInventory(state);
@@ -1627,6 +1674,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
 
 
   function setStepCheck(state, orderId, opId, stepId, checked, data) {
+    { const d = denied('operate', 'check off steps'); if (d) return d; }
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
     if (engineeringChange(order)) return fail(engineeringHoldMessage);
@@ -1745,7 +1793,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   }
 
   function record(state, order, action, actor = 'Assembly operator') {
-    const event = { id: `${order.id}-event-${order.history.length + 1}`, at: new Date().toISOString(), action, actor: state.profile ? `${state.profile.name} · ${state.profile.credentialId}` : actor };
+    const event = { id: `${order.id}-event-${order.history.length + 1}`, at: new Date().toISOString(), action, actor: (function () { const acct = accountActor(); return acct ? `${acct.name} · ${acct.credentialId}` : state.profile ? `${state.profile.name} · ${state.profile.credentialId}` : actor; })() };
     // bounded local history; production audit storage belongs on a controlled server.
     while (order.history.some(item => item.id === event.id)) event.id += '-new';
     order.history.push(event);
@@ -1754,6 +1802,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   }
 
   function advance(state, id) {
+    { const d = denied('operate', 'advance the work order'); if (d) return d; }
     const { order, error } = target(state, id);
     if (error) return fail(error);
     if (pendingSequenceChange(order)) return fail(sequenceHoldMessage);
@@ -1768,21 +1817,22 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   function approveRelease(state, id) {
     const { order, error } = target(state, id);
     if (error) return fail(error);
-    if (!isQAProfile(state.profile)) return fail('Select a Quality Manager, Quality Engineer, or QA Reviewer profile to approve release.');
+    { const d = denied('approve-wo', 'approve work-order release'); if (d) return d; }
     if (engineeringChange(order)) return fail(engineeringHoldMessage);
     if (order.status !== 'Draft') return fail('Pre-release QA approval can only be recorded on a draft work order.');
     if (!requiresReleaseQA(order)) return fail('This pedigree and subcategory do not require pre-release QA approval.');
     if (releaseApproval(order)) return fail('Pre-release QA approval is already recorded.');
     if (blockingTickets(order).length) return fail('Resolve every open hold before recording pre-release QA approval.');
-    order.releaseApproval = { ...profileSnapshot(state.profile), at: new Date().toISOString(), virtual: true, configuration: releaseConfiguration(order) };
-    record(state, order, ` pre-release QA approval by ${state.profile.name} (${state.profile.credentialId}) for revision ${order.revision}. Not an authenticated signature or production authorization.`, 'Quality reviewer');
+    const who = actor(state);
+    order.releaseApproval = { ...who, at: new Date().toISOString(), virtual: true, configuration: releaseConfiguration(order) };
+    record(state, order, `Pre-release QA approval by ${who.name} (${who.credentialId}) for revision ${order.revision}. Not an authenticated signature or production authorization.`, 'Quality reviewer');
     return { ok: true, message: 'QA approval recorded. This draft can now be released to kitting.' };
   }
 
   function submitEngineeringChange(state, id, input) {
     const { order, error } = target(state, id);
     if (error) return fail(error);
-    if (!isEngineeringProfile(state.profile)) return fail('Select a Manufacturing Engineer or Mfg. Engineering profile to request an edit.');
+    { const d = denied('submit-ecr', 'submit an ECR'); if (d) return d; }
     if (order.status === 'Closed') return fail('Closed records cannot be changed.');
     if (engineeringChange(order)) return fail('Review the pending engineering change before requesting another edit.');
     if ((order.engineeringChanges?.length || 0) >= 20) return fail('This work order has reached its 20-change limit.');
@@ -1805,7 +1855,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
     if (revision === order.revision && quantity === order.quantity && !after.instructions.length) return fail('Change the revision, planned quantity, or an eligible operation instruction before submitting.');
     const needsECR = order.pedigree === 'Production' && ['Mfg.', 'FAI'].includes(order.subcategory);
     const number = (order.engineeringChanges?.length || 0) + 1;
-    const change = { id: `${order.id}-EC-${number}`, before, after, reason: input.reason.trim(), requestedBy: profileSnapshot(state.profile), requestedAt: new Date(Math.max(Date.now(), Date.parse(order.engineeringChanges?.at(-1)?.qaApproval?.at || 0))).toISOString(), virtual: true, needsECR, ecrId: needsECR ? `ECR-${order.id.slice(3)}-${number}` : null, status: needsECR ? 'Awaiting ECR' : 'Awaiting QA', ecrApproval: null, qaApproval: null, priorReleaseApproval: releaseApproval(order) ? JSON.parse(JSON.stringify(releaseApproval(order))) : null };
+    const change = { id: `${order.id}-EC-${number}`, before, after, reason: input.reason.trim(), requestedBy: actor(state), requestedAt: new Date(Math.max(Date.now(), Date.parse(order.engineeringChanges?.at(-1)?.qaApproval?.at || 0))).toISOString(), virtual: true, needsECR, ecrId: needsECR ? `ECR-${order.id.slice(3)}-${number}` : null, status: needsECR ? 'Awaiting ECR' : 'Awaiting QA', ecrApproval: null, qaApproval: null, priorReleaseApproval: releaseApproval(order) ? JSON.parse(JSON.stringify(releaseApproval(order))) : null };
     order.engineeringChanges = [...(order.engineeringChanges || []), change];
     record(state, order, `Engineering edit requested by ${state.profile.name}. ${needsECR ? `${change.ecrId} submitted; ECR approval and QA re-release required.` : 'QA re-release required; no ECR required.'} Work paused; proposed edits have not been applied.`);
     return { ok: true, message: needsECR ? ' ECR submitted. ECR approval and QA re-release are required before edits apply.' : 'Engineering edit submitted for QA re-release. Work is paused until approval.', id: change.id };
@@ -1814,25 +1864,25 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   function approveECR(state, id) {
     const { order, error } = target(state, id);
     if (error) return fail(error);
-    if (!isQAProfile(state.profile)) return fail('Select a Quality Manager, Quality Engineer, or QA Reviewer profile to approve the ECR.');
+    { const d = denied('approve-wo', 'approve an ECR'); if (d) return d; }
     const change = engineeringChange(order);
     if (!change || !change.needsECR || change.status !== 'Awaiting ECR') return fail('There is no submitted ECR awaiting approval on this work order.');
-    if (change.requestedBy.credentialId === state.profile.credentialId) return fail(selfApprovalMessage);
-    change.ecrApproval = { ...profileSnapshot(state.profile), at: new Date(Math.max(Date.now(), Date.parse(change.requestedAt))).toISOString(), virtual: true };
+    if (change.requestedBy.credentialId === actor(state).credentialId) return fail(selfApprovalMessage);
+    change.ecrApproval = { ...actor(state), at: new Date(Math.max(Date.now(), Date.parse(change.requestedAt))).toISOString(), virtual: true };
     change.status = 'Awaiting QA';
-    record(state, order, `${change.ecrId} approved by ${state.profile.name}. Proposed edits still require QA re-release; no production authorization.`, 'Quality reviewer');
+    record(state, order, `${change.ecrId} approved by ${actor(state).name}. Proposed edits still require QA re-release; no production authorization.`, 'Quality reviewer');
     return { ok: true, message: ' ECR approved. QA re-release is still required before edits apply.' };
   }
 
   function approveEngineeringChange(state, id) {
     const { order, error } = target(state, id);
     if (error) return fail(error);
-    if (!isQAProfile(state.profile)) return fail('Select a Quality Manager, Quality Engineer, or QA Reviewer profile for QA re-release.');
+    { const d = denied('approve-wo', 'QA re-release an engineering change'); if (d) return d; }
     const change = engineeringChange(order);
     if (!change || change.status !== 'Awaiting QA') return fail('An engineering edit must finish its required ECR approval before QA re-release.');
-    if (change.requestedBy.credentialId === state.profile.credentialId) return fail(selfApprovalMessage);
+    if (change.requestedBy.credentialId === actor(state).credentialId) return fail(selfApprovalMessage);
     if (blockingTickets(order).length) return fail('Resolve every open hold before QA re-release.');
-    change.qaApproval = { ...profileSnapshot(state.profile), at: new Date(Math.max(Date.now(), Date.parse(change.ecrApproval?.at || change.requestedAt))).toISOString(), virtual: true };
+    change.qaApproval = { ...actor(state), at: new Date(Math.max(Date.now(), Date.parse(change.ecrApproval?.at || change.requestedAt))).toISOString(), virtual: true };
     order.revision = change.after.revision;
     order.quantity = change.after.quantity;
     for (const instruction of change.after.instructions) order.operations.find(operation => operation.id === instruction.operationId).description = instruction.description;
@@ -1854,6 +1904,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   }
 
   function setMaterial(state, id, key, ready) {
+    { const d = denied('operate', 'kit materials'); if (d) return d; }
     const { order, error } = target(state, id);
     if (error) return fail(error);
     if (engineeringChange(order)) return fail(engineeringHoldMessage);
@@ -1869,6 +1920,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   }
 
   function setMaterialLot(state, id, key, lot) {
+    { const d = denied('operate', 'record kit lots'); if (d) return d; }
     const { order, error } = target(state, id);
     if (error) return fail(error);
     if (engineeringChange(order)) return fail(engineeringHoldMessage);
@@ -1921,6 +1973,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
     return { ok: true, message: `AOG escalation ${order.aog.notified} added to ${AOG_THREAD.label}. Copy it into Slack; nothing was sent.`, notified: order.aog.notified, operationId: posted ? posted.operationId: null };
   }
   function resolveAog(state, id, priority, reason) {
+    { const d = denied('operate', 'clear AOG'); if (d) return d; }
     const { order, error } = target(state, id);
     if (error) return fail(error);
     if (!aogActive(order)) return fail('This work order is not AOG.');
@@ -1941,6 +1994,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   const scheduleDays = order => order.start ? Math.round((Date.parse(order.due) - Date.parse(order.start)) / 86400000) + 1 : null;
 
   function setSchedule(state, id, start, due) {
+    { const d = denied('operate', 'adjust the schedule'); if (d) return d; }
     const { order, error } = target(state, id);
     if (error) return fail(error);
     if (order.status === 'Closed') return fail('A closed work order can’t be rescheduled.');
@@ -1955,6 +2009,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
 
 
   function setPriority(state, id, priority) {
+    { const d = denied('operate', 'change priority or mark AOG'); if (d) return d; }
     const { order, error } = target(state, id);
     if (error) return fail(error);
     if (order.status === 'Closed') return fail('Closed records cannot be changed.');
@@ -1968,6 +2023,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   }
 
   function completeOperation(state, id, opId, note = '', execution = {}) {
+    { const d = denied('operate', 'buy off an operation'); if (d) return d; }
     const { order, error } = target(state, id);
     if (error) return fail(error);
     if (engineeringChange(order)) return fail(engineeringHoldMessage);
@@ -2013,7 +2069,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
     const { order, error } = target(state, id);
     if (error) return fail(error);
     if (engineeringChange(order)) return fail(engineeringHoldMessage);
-    if (!isQAProfile(state.profile)) return fail('Select a Quality Manager, Quality Engineer, or QA Reviewer profile to close the quality review.');
+    { const d = denied('approve-wo', 'complete the quality review'); if (d) return d; }
     if (order.status !== 'Quality') return fail('Only an order in Quality can complete the quality review.');
     if (blockingTickets(order).length) return fail('Resolve every open hold before completing the quality review.');
     if (order.materials.some(item => !item.ready) || order.operations.some(item => !item.done)) return fail('All materials and operations must be recorded before the quality review.');
@@ -2042,6 +2098,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   }
 
   function addAdhocOrder(state, input) {
+    { const d = denied('create-wo', 'create a work order'); if (d) return d; }
     if (!validate(state)) return fail('The saved data is invalid. Reset the workspace to continue.');
     if (state.orders.length >= MAX_ORDERS) return fail('A workspace holds up to 100 work orders. Reset the workspace to start again.');
     if (!plain(input) || !PEDIGREES.includes(input.pedigree) || !SUBCATEGORIES.includes(input.subcategory) || !count(input.quantity)) return fail('Choose a pedigree, subcategory, and a whole quantity from 1 to 1,000.');
@@ -2090,7 +2147,49 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   }
   // Split a quantity off a work order before build starts. The child keeps the
   // parent's number with a letter suffix (WO-10006-A, -B, ...) so the lot stays traceable.
+  // Pedigree change: requested by any working role, applied only after two approvals from
+  // two different disciplines. General User accounts cannot approve.
+  function requestPedigreeChange(state, orderId, input) {
+    { const d = denied('request-pedigree', 'request a pedigree change'); if (d) return d; }
+    const { order, error } = target(state, orderId);
+    if (error) return fail(error);
+    if (!['Draft', 'Kitting'].includes(order.status)) return fail('Pedigree can only change before the build starts (Draft or Kitting).');
+    if (engineeringChange(order)) return fail(engineeringHoldMessage);
+    if (plain(order.pedigreeChange)) return fail('A pedigree change is already awaiting approvals.');
+    const to = String(input?.pedigree ?? '').trim(), reason = String(input?.reason ?? '').trim();
+    if (!PEDIGREES.includes(to)) return fail('Choose Development, Development NFF, or Production.');
+    if (to === order.pedigree) return fail(`This order is already ${to}.`);
+    if (!str(reason, 500) || !reason) return fail('Enter the reason for the change (1 to 500 characters).');
+    order.pedigreeChange = { from: order.pedigree, to, reason, requestedBy: actor(state), requestedAt: new Date().toISOString(), approvals: [], status: 'Awaiting approvals' };
+    record(state, order, `Pedigree change requested: ${order.pedigree} → ${to}. Two approvals from different disciplines required. Reason: ${reason}`);
+    return { ok: true, message: `Pedigree change to ${to} requested. Two approvals from different disciplines are needed.` };
+  }
+  function approvePedigreeChange(state, orderId) {
+    { const d = denied('approve-pedigree', 'approve a pedigree change'); if (d) return d; }
+    const { order, error } = target(state, orderId);
+    if (error) return fail(error);
+    const change = order.pedigreeChange;
+    if (!plain(change)) return fail('There is no pedigree change awaiting approval.');
+    const who = actor(state), discipline = accountRole() || who.role;
+    if (discipline === 'general') return fail('General User accounts cannot approve a pedigree change.');
+    if (change.approvals.some(a => a.credentialId === who.credentialId)) return fail('You have already approved this change.');
+    if (change.approvals.some(a => a.discipline === discipline)) return fail('An approval from that discipline is already recorded. The second approval must come from a different discipline.');
+    change.approvals = [...change.approvals, { ...who, discipline, at: new Date().toISOString() }];
+    if (change.approvals.length < 2) {
+      record(state, order, `Pedigree change ${change.from} → ${change.to}: first approval by ${who.name}. One more approval from a different discipline required.`);
+      return { ok: true, message: 'First approval recorded. A second approval from a different discipline is needed.' };
+    }
+    const approvalReset = order.releaseApproval !== null && order.releaseApproval !== undefined;
+    order.pedigree = change.to;
+    if (approvalReset) order.releaseApproval = null;
+    order.pedigreeChanges = [...(Array.isArray(order.pedigreeChanges) ? order.pedigreeChanges : []), { ...change, status: 'Applied', appliedAt: new Date().toISOString() }].slice(-20);
+    order.pedigreeChange = null;
+    record(state, order, `Pedigree changed ${change.from} → ${change.to} after approvals by ${change.approvals.map(a => `${a.name} (${a.discipline})`).join(' and ')}.${approvalReset ? ' QA release approval reset because the covered pedigree changed.' : ''}`);
+    return { ok: true, message: `Pedigree is now ${change.to}.${approvalReset ? ' QA release approval must be recorded again.' : ''}` };
+  }
+
   function splitOrder(state, orderId, quantity) {
+    { const d = denied('split', 'split a work order'); if (d) return d; }
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
     if (!['Draft', 'Kitting'].includes(order.status)) return fail('A work order can only be split before the build starts (Draft or Kitting).');
@@ -2119,6 +2218,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
     return { ok: true, id, message: `${id} created with ${qty} units. ${order.quantity} remain on ${order.id}.` };
   }
   function addOrder(state, input) {
+    { const d = denied('create-wo', 'create a work order'); if (d) return d; }
     if (!validate(state)) return fail('The saved data is invalid. Reset the workspace to continue.');
     if (state.orders.length >= MAX_ORDERS) return fail('A workspace holds up to 100 work orders. Reset the workspace to start again.');
     if (!plain(input) || !PEDIGREES.includes(input.pedigree) || !SUBCATEGORIES.includes(input.subcategory) || !count(input.quantity)) return fail('Choose a master WI, pedigree, subcategory, and a whole quantity from 1 to 1,000.');
@@ -2261,6 +2361,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   }
 
   function createTicket(state, orderId, operationId, input) {
+    { const d = denied('raise-nc', 'raise an NC/IDR'); if (d) return d; }
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
     if (!['Kitting', 'Building', 'Quality'].includes(order.status)) return fail('Create tickets only on issued work orders in Kitting, Building, or Quality.');
@@ -2275,6 +2376,22 @@ main a{min-height:24px;display:inline-flex;align-items:center}
     return { ok: true, message: `${id} created locally as a  ${input.type} ticket.`, id };
   }
 
+  function dispositionTicket(state, orderId, ticketId, input) {
+    { const d = denied('dispo-nc', 'record the NC initial disposition'); if (d) return d; }
+    const { order, error } = target(state, orderId);
+    if (error) return fail(error);
+    const ticket = order.tickets.find(item => item.id === ticketId);
+    if (!ticket) return fail('Ticket not found.');
+    if (ticket.status !== 'Open') return fail('This ticket has already been resolved.');
+    if (plain(ticket.dispo)) return fail('An initial disposition is already recorded.');
+    const decision = String(input?.decision ?? '').trim(), note = String(input?.note ?? '').trim();
+    if (!DISPOSITIONS.includes(decision)) return fail(`Choose a disposition: ${DISPOSITIONS.join(', ')}.`);
+    if (!str(note, 500) || !note) return fail('Enter the engineering rationale (1 to 500 characters).');
+    ticket.dispo = { decision, note, ...actor(state), at: new Date(Math.max(Date.now(), Date.parse(ticket.createdAt))).toISOString() };
+    record(state, order, `${ticket.id} initial disposition: ${decision}. Recorded by Manufacturing Engineering; Quality approval still required.`);
+    return { ok: true, message: `${ticket.id} dispositioned as ${decision}. Quality can now approve it.` };
+  }
+
   function resolveTicket(state, orderId, ticketId, resolution) {
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
@@ -2283,8 +2400,11 @@ main a{min-height:24px;display:inline-flex;align-items:center}
     if (!ticket) return fail('Ticket not found.');
     if (ticket.status !== 'Open') return fail('This ticket has already been resolved.');
     if (!str(resolution, 500) || !resolution.trim()) return fail('Enter a resolution reason of 1 to 500 characters.');
+    { const d = denied('approve-nc', 'approve an NC'); if (d) return d; }
+    if (!plain(ticket.dispo)) return fail('Manufacturing Engineering must record the initial disposition before Quality approves this ticket.');
     ticket.status = 'Resolved';
     ticket.resolution = resolution.trim();
+    ticket.resolvedBy = actor(state);
     ticket.resolvedAt = new Date(Math.max(Date.now(), Date.parse(ticket.createdAt))).toISOString();
     record(state, order, `${ticket.id} from ${ticket.operationId} resolved. Reason recorded with the ticket.`, 'Quality reviewer');
     return { ok: true, message: `${ticket.id} resolved.` };
@@ -2294,7 +2414,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
     return { version: 3, profile: defaultProfile(), orders: [], activity: [] };
   }
 
-  const MES = { NETSUITE_STOCK, availableLots, lotInStock, woRevLabel, nextWoRev, ensureRevisions, revisionEntries, rollWorkOrderRevision, addSavedView, removeSavedView, ensureSavedViews, stepLetter, addAttachment, removeAttachment, aogActive, aogDue, aogMessage, logAogBroadcast, resolveAog, AOG_THREAD, setSchedule, scheduleDays, dateOnly, editOrderOperation, AIRCRAFT, stockedUnits, setWIStepImage, PROFILE_OPTIONS, profileOptionFor, selectProfile, TORQUE_UNITS, isTorqueTool, torqueValid, inventoryReadiness, assignSerial, voidSerial, nextSerial, orderSerials, moveToInventory, markNetSuitePosted, netsuiteCsv, ensureMasterWIs, findWI, wiKey, nextWIRevision, addMasterWI, updateMasterWI, saveWIOperations, releaseMasterWI, reviseMasterWI, setStepCheck, BUYOFF_TYPES, OP_CLASSIFICATIONS, pendingSequenceChange, inspectionGate, firstInsertIndex, addOrderOperation, removeOrderOperation, approveSequenceChange, toolCheck, stampCheck, stampCredential, stampHolderFor, CAL_TOOLS, CAL_SNAPSHOT, STAMP_HOLDERS, setMaterialLot, PEDIGREES, PRIORITIES, SUBCATEGORIES, PART_CATALOG, partDefinition, revisionLabel, requiresReleaseQA, releaseApproval, approveRelease, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, approveECR, approveEngineeringChange, SITES, orderSite, MESSAGE_TARGETS, seed, validate, upgrade, getOrder, summary, canAdvance, advance, setMaterial, setPriority, completeOperation, closeOrder, addOrder, addAdhocOrder, splitOrder, ADHOC_ONLY, CALLOUTS, GROUNDING, addNote, blockingTickets, createTicket, resolveTicket, updateProfile, attachEvidence, reviewEvidence, removeEvidence, addMessage, setSlackThread, slackThreadValid };
+  const MES = { NETSUITE_STOCK, availableLots, lotInStock, woRevLabel, nextWoRev, ensureRevisions, revisionEntries, rollWorkOrderRevision, addSavedView, removeSavedView, ensureSavedViews, stepLetter, addAttachment, removeAttachment, aogActive, aogDue, aogMessage, logAogBroadcast, resolveAog, AOG_THREAD, setSchedule, scheduleDays, dateOnly, editOrderOperation, AIRCRAFT, stockedUnits, setWIStepImage, PROFILE_OPTIONS, profileOptionFor, selectProfile, TORQUE_UNITS, isTorqueTool, torqueValid, inventoryReadiness, assignSerial, voidSerial, nextSerial, orderSerials, moveToInventory, markNetSuitePosted, netsuiteCsv, ensureMasterWIs, findWI, wiKey, nextWIRevision, addMasterWI, updateMasterWI, saveWIOperations, releaseMasterWI, reviseMasterWI, setStepCheck, BUYOFF_TYPES, OP_CLASSIFICATIONS, pendingSequenceChange, inspectionGate, firstInsertIndex, addOrderOperation, removeOrderOperation, approveSequenceChange, toolCheck, stampCheck, stampCredential, stampHolderFor, CAL_TOOLS, CAL_SNAPSHOT, STAMP_HOLDERS, setMaterialLot, PEDIGREES, PRIORITIES, SUBCATEGORIES, PART_CATALOG, partDefinition, revisionLabel, requiresReleaseQA, releaseApproval, approveRelease, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, approveECR, approveEngineeringChange, SITES, orderSite, MESSAGE_TARGETS, seed, validate, upgrade, getOrder, summary, canAdvance, advance, setMaterial, setPriority, completeOperation, closeOrder, addOrder, addAdhocOrder, splitOrder, requestPedigreeChange, approvePedigreeChange, peerReviewMasterWI, dispositionTicket, DISPOSITIONS, ADHOC_ONLY, CALLOUTS, GROUNDING, addNote, blockingTickets, createTicket, resolveTicket, updateProfile, attachEvidence, reviewEvidence, removeEvidence, addMessage, setSlackThread, slackThreadValid };
   if (typeof module !== 'undefined' && module.exports) module.exports = MES;
   if (root) root.MES = MES;
 })(typeof window !== 'undefined' ? window: null);
@@ -2507,18 +2627,18 @@ function renderWILibrary() {
 function renderWIDetail() {
   const wi = currentWI();
   if (!wi) { view = 'wis'; return renderWILibrary(); }
-  const draft = wi.status === 'Draft', qa = MES.isQAProfile(state.profile);
+  const draft = wi.status === 'Draft', qa = skCan('approve-wi');
   const revisions = state.masterWIs.filter(x => x.id === wi.id).sort((a, b) => b.revision.localeCompare(a.revision));
   const hasDraft = revisions.some(x => x.status === 'Draft'), derived = derivedOrders(wi);
   const steps = wi.operations.reduce((n, op) => n + op.steps.length, 0);
   return `<section aria-labelledby="wi-title"><div class="page-heading"><div><p class="wi-eyebrow mono">${esc(wi.partNumber)} · Part Rev ${esc(wi.partRevision)}</p><h1 id="wi-title" tabindex="-1">${esc(wi.id)} Rev ${esc(wi.revision)} ${badge(wi.status)}</h1><p>${esc(wi.title)}</p></div><div class="heading-actions">
     ${wi.status === 'Released' ? `<button class="btn primary" data-action="wi-create-order" data-wi="${esc(wi.id)}" data-rev="${esc(wi.revision)}">${icon('plus')} Create work order</button>${hasDraft ? '' : `<button class="btn" data-action="wi-revise">Revise to Rev ${esc(MES.nextWIRevision(state, wi.id))}</button>`}` : ''}
-    ${draft ? `<button class="btn primary" data-action="wi-release">QA release Rev ${esc(wi.revision)}</button>` : ''}
+    ${draft ? `${wi.peerReview ? `<span class="pill ready" title="${esc(wi.peerReview.name)} · ${esc(wi.peerReview.credentialId)}">Peer reviewed · ${esc(wi.peerReview.name)}</span>` : skCan('peer-review-wi') ? `<button class="btn" data-action="wi-peer-review">ME peer review Rev ${esc(wi.revision)}</button>` : '<span class="pill missing">Awaiting ME peer review</span>'}<button class="btn primary" data-action="wi-release" ${wi.peerReview ? '' : 'disabled'} title="${wi.peerReview ? 'Release this revision' : 'Peer review first'}">QE release Rev ${esc(wi.revision)}</button>` : ''}
     <button class="btn dark" data-action="nav" data-view="wis">Master WI library ${icon('arrow')}</button></div></div>
     <div class="wi-layout">
       <section class="panel" aria-labelledby="wi-release-heading"><div class="panel-head"><h2 id="wi-release-heading">Release</h2>${badge(wi.status)}</div><div class="panel-body">
         ${draft ? `<form id="wi-header-form" class="wi-title-form"><div class="field"><label for="wi-title-input">Title</label><input id="wi-title-input" name="title" maxlength="120" required value="${esc(wi.title)}"></div><button class="btn" type="submit">Save title</button><p id="wi-header-error" class="form-error" role="alert"></p></form>
-        <div class="inline-info ${qa ? 'success' : 'warning'}">${icon(qa ? 'shield' : 'lock')}<div><p>${qa ? `You’re signed in as ${esc(state.profile.role)}. QA can release this draft once the operations are final.` : 'QA must release this draft. Switch to a Quality Manager, Quality Engineer, or QA Reviewer credential to release.'}</p>${qa ? '' : '<button class="btn quiet" data-action="seq-qa-role">Use QA reviewer</button>'}</div></div>`
+        <div class="inline-info ${qa ? 'success' : 'warning'}">${icon(qa ? 'shield' : 'lock')}<div><p>${qa ? `Signed in as ${esc(skRoleLabel())}. Peer review by Manufacturing Engineering, then Quality Engineering releases the draft once the operations are final.` : 'Manufacturing Engineering peer-reviews this draft, then a Quality Engineering or QA Manager account releases it.'}</p></div></div>`
         : `<dl class="dialog-context"><div><dt>Released</dt><dd>${wi.releasedAt ? date(wi.releasedAt) : '—'}</dd></div><div><dt>Released by</dt><dd>${wi.releasedBy ? `${esc(wi.releasedBy.name)} · ${esc(wi.releasedBy.credentialId)}` : 'QA ()'}</dd></div><div><dt>Operations</dt><dd>${wi.operations.length} · ${steps} steps</dd></div><div><dt>Inspection points</dt><dd>${wi.operations.filter(op => op.inspectionPoint).length}</dd></div></dl>`}
       </div></section>
       <section class="panel" aria-labelledby="wi-derived-heading"><div class="panel-head"><h2 id="wi-derived-heading">Work orders cloned from this revision</h2><span class="mono">${wiOrderSummary(derived)}</span></div><div class="panel-body">
@@ -2585,9 +2705,9 @@ function renderSequenceTools(o) {
   const selected = o.operations.find(op => op.id === selectedOp);
   const editableOp = editable && selected && !selected.done && o.operations.indexOf(selected) >= MES.firstInsertIndex(o);
   const removable = editable && selected && !selected.done && o.operations.indexOf(selected) >= MES.firstInsertIndex(o) && o.operations.length > 1;
-  const canApprove = MES.isQAProfile(state.profile) && pending && !pending.entries.some(e => e.by?.credentialId === state.profile.credentialId);
+  const canApprove = skCan('approve-wo') && pending && !pending.entries.some(e => e.by?.credentialId === skActorId());
   return `<div class="sequence-tools">
-    ${pending ? `<div class="seq-pending" role="status"><div class="seq-pending-title">${icon('lock')}<strong>Sequence change awaiting QA release</strong></div><ul>${pending.entries.map(e => `<li><span class="seq-change ${e.type}">${e.type === 'add' ? 'Added' : e.type === 'edit' ? 'Edited' : 'Removed'}</span> Op ${esc(e.position)} · ${esc(e.title)}${e.classification ? ` <span class="op-class">${esc(e.classification)}</span>` : ''}${e.changes && e.changes.length ? `<small>Changed: ${esc(e.changes.join(', '))}</small>` : ''}${e.reason ? `<small>Reason: ${esc(e.reason)}</small>` : ''}</li>`).join('')}</ul><p class="small">Changed by ${esc(pending.requestedBy.name)}. Buy-offs and issue are held until QA releases the sequence.</p><div class="seq-actions"><button class="btn primary" data-action="seq-approve" ${canApprove ? '' : 'disabled'}>QA release sequence</button>${canApprove ? '' : '<button class="btn quiet" data-action="seq-qa-role">Use QA reviewer</button>'}</div></div>` : ''}
+    ${pending ? `<div class="seq-pending" role="status"><div class="seq-pending-title">${icon('lock')}<strong>Sequence change awaiting QA release</strong></div><ul>${pending.entries.map(e => `<li><span class="seq-change ${e.type}">${e.type === 'add' ? 'Added' : e.type === 'edit' ? 'Edited' : 'Removed'}</span> Op ${esc(e.position)} · ${esc(e.title)}${e.classification ? ` <span class="op-class">${esc(e.classification)}</span>` : ''}${e.changes && e.changes.length ? `<small>Changed: ${esc(e.changes.join(', '))}</small>` : ''}${e.reason ? `<small>Reason: ${esc(e.reason)}</small>` : ''}</li>`).join('')}</ul><p class="small">Changed by ${esc(pending.requestedBy.name)}. Buy-offs and issue are held until QA releases the sequence.</p><div class="seq-actions"><button class="btn primary" data-action="seq-approve" ${canApprove ? '' : 'disabled'}>QA release sequence</button></div></div>` : ''}
     ${editable ? `<div class="seq-edit"><button class="btn" data-action="seq-add">${icon('plus')} Add operation</button>${editableOp ? `<button class="btn" data-action="seq-edit" data-op="${esc(selected.id)}">Edit Op ${operationNumber(o, selected.id)}</button>` : ''}${removable ? `<button class="btn" data-action="seq-remove" data-op="${esc(selected.id)}">Remove Op ${operationNumber(o, selected.id)}</button>` : ''}<p class="small muted">Adding, removing, or editing operations needs QA release before work continues. Select an operation in the sequence to edit or remove it.</p></div>` : ''}
   </div>`;
 }
@@ -2693,6 +2813,7 @@ document.addEventListener('click', event => {
   if (a === 'wi-create') wiCreateDialog();
   if (a === 'wi-create-order') createDialog(`${button.dataset.wi}|${button.dataset.rev}`);
   if (a === 'wi-release') { const wi = currentWI(); if (wi && applyResult(MES.releaseMasterWI(state, wi.id, wi.revision))) $('#wi-title')?.focus(); }
+  if (a === 'wi-peer-review') { const wi = currentWI(); if (wi) applyResult(MES.peerReviewMasterWI(state, wi.id, wi.revision)); }
   if (a === 'wi-revise') { const wi = currentWI(); if (!wi) return; const result = MES.reviseMasterWI(state, wi.id, wi.revision); if (result.ok) selectedWI = { id: result.id, revision: result.revision }; applyResult(result); }
   if (a === 'wi-op-add') saveWIForm(ops => ops.push(blankOperation()), ops => `wi-op-${ops.length - 1}-title`);
   if (a === 'wi-op-remove') saveWIForm(ops => ops.splice(Number(button.dataset.op), 1));
@@ -3192,6 +3313,9 @@ document.addEventListener('submit', event => {
 // Outline primitives sharing one stroke-based icon vocabulary.
 const paths={esd:'<path d="M12 2.6 22 21.4H2L12 2.6Z"/><path d="M8.6 17.2v-3.6a.9.9 0 0 1 1.8 0v2.2M10.4 15.8V10.6a.9.9 0 0 1 1.8 0v4.6M12.2 15.2v-4.4a.9.9 0 0 1 1.8 0v4.4M14 15.6v-2.4a.9.9 0 0 1 1.8 0v3.2c0 1.9-1.5 3.3-3.4 3.3h-2.2c-1.1 0-2.1-.5-2.7-1.4L6 16.3"/><path d="M6.2 19.6 18.2 7.4"/>',fod:'<circle cx="12" cy="12" r="9.3"/><path d="M5.4 5.4l13.2 13.2"/><path d="M8.3 15.7l4.9-4.9M13.2 10.8a2.5 2.5 0 1 0 2.3-2.3l-1.5 1.5-1.4-1.4 1.5-1.5"/><path d="M8 8.1l1.3-.8 1.3.8v1.5l-1.3.8-1.3-.8z"/>',msds:'<path d="M12 2.4 21.6 12 12 21.6 2.4 12 12 2.4Z" stroke="#C8102E" stroke-width="1.7"/><path d="M12 7.4v5.8" stroke="#111" stroke-width="2.4"/><path d="M12 16.4h.01" stroke="#111" stroke-width="2.6"/>',video:'<rect x="3" y="5" width="13" height="14" rx="2"/><path d="m16 10 5-3v10l-5-3"/>',upload:'<path d="M12 16V3m-5 5 5-5 5 5M4 16v5h16v-5"/>',layers:'<path d="m12 3 9 5-9 5-9-5 9-5Zm-9 9 9 5 9-5M3 16l9 5 9-5"/>',list:'<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',shield:'<path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z"/><path d="m8 12 3 3 5-6"/>',clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',chevron:'<path d="m9 5 7 7-7 7"/>',arrow:'<path d="M5 12h14m-6-6 6 6-6 6"/>',lock:'<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/>',help:'<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 4 2c-1 .5-1.5 1-1.5 2m0 3h.01"/>',close:'<path d="m6 6 12 12M6 18 18 6"/>',check:'<path d="m5 12 4 4L19 6"/>',download:'<path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/>',plus:'<path d="M12 5v14M5 12h14"/>',file:'<path d="M14 3H5v18h14V8l-5-5Zm0 0v5h5M8 12h8M8 16h6"/>',external:'<path d="M14 3h7v7m0-7L10 14M10 5H3v16h16v-7"/>',search:'<circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/>',info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10h.01"/>',box:'<path d="m12 3 9 5v9l-9 5-9-5V8l9-5ZM3 8l9 5 9-5M12 13v9M7 5.5l9 5"/>',user:'<circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/>'};
 const icon=name=>`<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name]||paths.file}</svg>`;
+const skCan=cap=>!window.skAuth||window.skAuth.can(cap);
+const skActorId=()=>(window.skAuth&&window.skAuth.actor()&&window.skAuth.actor().credentialId)||state.profile.credentialId;
+const skRoleLabel=()=>{const r=window.skAuth&&window.skAuth.role();const R=window.skAuth&&window.skAuth.ROLES.find(x=>x.key===r);return R?R.label:'this account';};
 const CALLOUT_TEXT={ESD:'ESD sensitive · static control required',FOD:'FOD critical · foreign object control',MSDS:'MSDS · hazardous material, consult the safety data sheet'};
 const calloutBadges=op=>Array.isArray(op?.callouts)&&op.callouts.length?`<span class="callouts" role="list" aria-label="Operation callouts">${op.callouts.map(c=>`<span class="callout callout-${c.toLowerCase()}" role="listitem" title="${esc(CALLOUT_TEXT[c]||c)}">${icon(c.toLowerCase())}<span>${esc(c)}</span><span class="sr-only"> · ${esc(CALLOUT_TEXT[c]||c)}</span></span>`).join('')}</span>`:'';
 const GROUNDING_TEXT={wrist:'Wrist strap on and tested at a grounded ESD workstation before touching the part.',foot:'Heel grounders on both feet, tested, standing on the grounded ESD floor before touching the part.',both:'Wrist strap and heel grounders on and tested at a grounded ESD workstation before touching the part.'};
@@ -3258,7 +3382,7 @@ function revisionPanel(o){
 function renderNoOrders(){return `<section aria-labelledby="empty-heading"><div class="page-heading"><div><h1 id="empty-heading">Work orders</h1><p>No work orders have been created yet.</p></div></div>
   <div class="panel"><div class="empty"><h2>Create your first work order</h2><p>Clone one from a released master WI, so the operation sequence comes across with it, or start an ad hoc work order and build the operations yourself.</p><div class="empty-actions"><button class="btn primary" data-action="create">${icon('plus')} Create work order</button><button class="btn" data-action="nav" data-view="wis">${icon('file')} Work instruction library ${icon('arrow')}</button></div></div></div></section>`;}
 
-function renderOrder(){const o=order();const stages=['Draft','Kitting','Building','Quality','Closed'];const stage=stages.indexOf(o.status);return `<section class="${MES.aogActive(o)?'aog-order':''}" aria-labelledby="order-title">${aogBanner(o)}<div class="page-heading"><div><h1 id="order-title">${esc(o.id)} ${badge(o.status)} ${o.priority==='AOG'?badge('AOG'):''}</h1><p>${esc(o.title)}</p>${o.masterWI?`<button class="wi-ref" data-action="wi-open" data-wi="${esc(o.masterWI.id)}" data-rev="${esc(o.masterWI.revision)}">${icon('file')} Cloned from ${esc(o.masterWI.id)} Rev ${esc(o.masterWI.revision)}</button>`:''}${o.sourceBuild?`<button class="wi-ref" data-action="open-inventory" data-order="${esc(o.sourceBuild.orderId)}">${icon('box')} Rework of ${esc(o.sourceBuild.serial)} · lot ${esc(o.sourceBuild.lotNumber)} · built on ${esc(o.sourceBuild.orderId)}</button>`:''}${splitChips(o)}${revStrip(o)}</div><div class="heading-actions">${o.status!=='Closed'?'<button class="btn" data-action="engineering-change">Engineering change</button>':''}${['Draft','Kitting'].includes(o.status)&&o.quantity>1?'<button class="btn" data-action="split-order">Split quantity</button>':''}<details class="print-menu"><summary class="btn">Print work order</summary><div class="print-options"><button class="btn" data-action="print-order" data-mode="external">External · No messages</button><button class="btn" data-action="print-order" data-mode="internal">Internal · With messages</button><p class="small muted">All operations · Print or save PDF. External copies keep work notes and quality evidence.</p></div></details><button class="btn" data-action="export">${icon('download')} Export internal JSON</button><button class="btn dark" data-action="nav" data-view="orders">All work orders ${icon('arrow')}</button></div></div>
+function renderOrder(){const o=order();const stages=['Draft','Kitting','Building','Quality','Closed'];const stage=stages.indexOf(o.status);return `<section class="${MES.aogActive(o)?'aog-order':''}" aria-labelledby="order-title">${aogBanner(o)}<div class="page-heading"><div><h1 id="order-title">${esc(o.id)} ${badge(o.status)} ${o.priority==='AOG'?badge('AOG'):''}</h1><p>${esc(o.title)}</p>${o.masterWI?`<button class="wi-ref" data-action="wi-open" data-wi="${esc(o.masterWI.id)}" data-rev="${esc(o.masterWI.revision)}">${icon('file')} Cloned from ${esc(o.masterWI.id)} Rev ${esc(o.masterWI.revision)}</button>`:''}${o.sourceBuild?`<button class="wi-ref" data-action="open-inventory" data-order="${esc(o.sourceBuild.orderId)}">${icon('box')} Rework of ${esc(o.sourceBuild.serial)} · lot ${esc(o.sourceBuild.lotNumber)} · built on ${esc(o.sourceBuild.orderId)}</button>`:''}${splitChips(o)}${pedigreeChips(o)}${revStrip(o)}</div><div class="heading-actions">${o.status!=='Closed'?'<button class="btn" data-action="engineering-change">Engineering change</button>':''}${['Draft','Kitting'].includes(o.status)&&o.quantity>1?'<button class="btn" data-action="split-order">Split quantity</button>':''}${['Draft','Kitting'].includes(o.status)&&!o.pedigreeChange?'<button class="btn" data-action="pedigree-change">Change pedigree</button>':''}<details class="print-menu"><summary class="btn">Print work order</summary><div class="print-options"><button class="btn" data-action="print-order" data-mode="external">External · No messages</button><button class="btn" data-action="print-order" data-mode="internal">Internal · With messages</button><p class="small muted">All operations · Print or save PDF. External copies keep work notes and quality evidence.</p></div></details><button class="btn" data-action="export">${icon('download')} Export internal JSON</button><button class="btn dark" data-action="nav" data-view="orders">All work orders ${icon('arrow')}</button></div></div>
 ${qualityBanner(o)}
 <dl class="record-meta"><div class="meta"><dt>Part number</dt><dd class="mono">${esc(o.partNumber)}</dd></div><div class="meta"><dt>Serial number</dt><dd class="mono">${esc(o.serial)}</dd></div><div class="meta"><dt>Intended aircraft</dt><dd class="mono">${esc(o.aircraft||'Not assigned')}</dd></div><div class="meta"><dt>Planned dates</dt><dd class="mono">${esc(o.start||'—')} → ${esc(o.due)}</dd>${o.status!=='Closed'?`<button class="btn quiet meta-edit" data-action="schedule">Edit dates</button>`:''}</div><div class="meta"><dt>Revision</dt><dd class="mono">${esc(o.revision)}${o.creationVersion?'<small class="revision-state">'+esc(MES.revisionLabel(o))+'</small>':''}</dd></div><div class="meta"><dt>Quantity</dt><dd>${esc(o.quantity)} unit${o.quantity===1?'':'s'}</dd></div><div class="meta"><dt>Pedigree / subcategory</dt><dd>${esc(o.pedigree)}${o.subcategory?'<small class="subcategory">'+esc(o.subcategory)+'</small>':''}</dd></div><div class="meta"><dt>Site / assigned to</dt><dd>${esc(MES.orderSite(o))}<small class="subcategory">${esc(o.owner)} site</small></dd></div></dl>
 <div class="route-bar"><div class="route-stages" aria-label="Work order lifecycle">${stages.map((s,i)=>`<span class="route-stage ${i===stage?'current':i<stage?'finished':''}" ${i===stage?'aria-current="step"':''}><span class="dot">${i<stage?icon('check'):i+1}</span>${s==='Building'?'Build':s==='Quality'?'QA review':s}${i<4?icon('chevron'):''}</span>`).join('')}</div><span class="record-frozen">${icon('lock')} ${o.status==='Draft'?'Proposed revision · Not yet issued':'Issued revision retained'}</span></div>
@@ -3419,15 +3543,34 @@ document.addEventListener('keydown',event=>{if(event.target.id==='tool-tag'&&eve
 document.addEventListener('input',event=>{if(event.target.closest('#operation-form')){const form=$('#operation-form');drafts.set(`${form.dataset.order}/${form.dataset.op}`,draftFromForm(form));}if(event.target.id==='order-search'&&!event.isComposing){const position=event.target.selectionStart;search=event.target.value;render();$('#order-search').focus();$('#order-search').setSelectionRange(position,position);}});
 document.addEventListener('compositionend',event=>{if(event.target.id==='order-search')event.target.dispatchEvent(new Event('input',{bubbles:true}));});
 document.addEventListener('change',event=>{if(event.target.dataset.revSelect!==undefined){selectedRev=event.target.value;render();return;}if(event.target.id==='order-filter'){filter=event.target.value;render();}if(event.target.dataset.materialLot!==undefined){const r=MES.setMaterialLot(state,selectedId,event.target.dataset.materialLot,event.target.value);if(!r.ok)notify(r.message);else if(save()){if(r.unready)render();notify(r.message);}}if(event.target.dataset.material){const key=event.target.dataset.material,lotInput=document.getElementById('lot-'+key),current=MES.getOrder(state,selectedId)?.materials.find(m=>m.id===key);if(lotInput&&current&&lotInput.value.trim()!==(current.lot||'')){const r=MES.setMaterialLot(state,selectedId,key,lotInput.value);if(!r.ok){event.target.checked=!event.target.checked;notify(r.message);return;}}const result=MES.setMaterial(state,selectedId,key,event.target.checked);if(!result.ok){event.target.checked=!event.target.checked;if(lotInput&&!lotInput.value.trim())lotInput.focus();}applyResult(result);}if(event.target.name==='noTools'&&event.target.closest('#operation-form')){const form=event.target.form;drafts.set(`${form.dataset.order}/${form.dataset.op}`,draftFromForm(form));render();}if(event.target.id==='profile-choice')updateProfilePreview();});
-document.addEventListener('click',event=>{const button=event.target.closest('[data-action]');if(!button)return;const a=button.dataset.action;if(a==='nav'){view=button.dataset.view;search='';filter='All';siteFilter='All';render({focus:true});window.scrollTo(0,0);}if(a==='tab'){tab=button.dataset.tab;render();}if(a==='operation'){selectedOp=button.dataset.op;render();if(innerWidth<=700)$('#operation-detail').scrollIntoView({behavior:'auto'});}if(a==='add-tool')addTool();if(a==='remove-tool')removeTool(button.dataset.tag);if(a==='open-order')openOrder(button.dataset.order);if(a==='close-dialog')$('#dialog').close();if(a==='dismiss-toast')$('#toast').hidden=true;if(a==='advance'){try{const next=structuredClone(state),result=MES.advance(next,selectedId);if(!result.ok)throw Error(result.message);mediaCommit(next);selectedOp=null;render();notify(result.message);}catch(error){notify('Order was not advanced. '+(storageBlocked?'Reload your saved workspace before retrying.':error.message));}}if(a==='clear-filters'){search='';filter='All';siteFilter='All';render();}if(a==='export')exportRecord();if(a==='help')help();if(a==='create')createChoiceDialog();if(a==='split-order')splitDialog();if(a==='create-master')createDialog();if(a==='create-adhoc')adhocDialog();if(a==='instruction')instructionDialog(Number(button.dataset.index));if(a==='review')reviewDialog();if(a==='reset')resetDialog();if(a==='confirm-reset')resetWorkspace();});
-document.addEventListener('submit',async event=>{const form=event.target;if(form.id==='operation-form'){event.preventDefault();const draft=draftFromForm(form);if(!draft.instruction||!draft.evidence){$('#operation-error').textContent='Review both evidence checks.';return;}{const opx=MES.getOrder(state,form.dataset.order)?.operations.find(x=>x.id===form.dataset.op);const openCount=(opx?.steps||[]).filter(s=>!(opx.stepChecks||{})[s.id]).length;if(openCount){$('#operation-error').textContent=`Check off the remaining ${openCount} work instruction step${openCount===1?'':'s'} before buy-off.`;document.querySelector('.stepper')?.scrollIntoView({block:'center'});return;}}{const opt=MES.getOrder(state,form.dataset.order)?.operations.find(x=>x.id===form.dataset.op);if(opt?.requiresTooling&&!draft.tools.length){$('#operation-error').textContent='This operation requires calibrated tooling. Log each calibrated tool you used.';$('#tool-tag')?.focus();return;}if(opt&&!opt.requiresTooling)draft.tools=[];}{const missingTorque=draft.tools.map(tag=>MES.toolCheck(tag)).filter(check=>check.ok&&MES.isTorqueTool(check.tool)).find(check=>!MES.torqueValid((draft.torque||{})[check.tool.tag]));if(missingTorque){$('#operation-error').textContent=`Enter the torque value applied with ${missingTorque.tool.tag}.`;document.getElementById('torque-'+missingTorque.tool.tag)?.focus();return;}}const blockedTool=draft.tools.map(tag=>MES.toolCheck(tag)).find(check=>!check.ok);if(blockedTool){$('#operation-error').textContent=blockedTool.message;return;}const stampResult=MES.stampCheck(state.profile);if(!stampResult.ok){$('#operation-error').textContent=stampResult.message;return;}{const opy=MES.getOrder(state,form.dataset.order)?.operations.find(x=>x.id===form.dataset.op);const needType=opy?.buyoffType||'Technician';if(stampResult.holder.buyoffType!==needType){$('#operation-error').textContent=`This operation needs a ${needType} buy-off. ${stampResult.holder.name} holds a ${stampResult.holder.buyoffType} credential.`;return;}}if(draft.stampNumber.trim()!==stampResult.holder.number){$('#operation-error').textContent='The stamp number entered does not match the stamp issued to '+stampResult.holder.name+'.';$('#stamp-number')?.focus();return;}const op=mediaOperation(form.dataset.order,form.dataset.op);const submit=form.querySelector('[type=submit]');submit.disabled=true;try{await ensureMediaForBuyoff(MES.getOrder(state,form.dataset.order),op);}catch(error){if($('#operation-error'))$('#operation-error').textContent=error.message;submit.disabled=false;return;}if(!form.isConnected){submit.disabled=false;return;}const buyoffState=op.requiresRecording||op.evidence?.length?structuredClone(state):state;const result=MES.completeOperation(buyoffState,form.dataset.order,form.dataset.op,draft.note.trim(),{tools:draft.tools,noTools:draft.noTools,stampNumber:draft.stampNumber,torque:draft.torque});submit.disabled=false;if(result.ok&&buyoffState!==state){try{mediaCommit(buyoffState);}catch(error){$('#operation-error').textContent=error.message;return;}}if(applyResult(result)){drafts.delete(`${form.dataset.order}/${form.dataset.op}`);selectedOp=null;render();}}if(form.id==='record-note-form'){event.preventDefault();applyResult(MES.addNote(state,selectedId,form.elements.note.value.trim()));}if(form.id==='create-form'){event.preventDefault();const data=Object.fromEntries(new FormData(form));data.quantity=Number(data.quantity);try{const next=structuredClone(state),result=MES.addOrder(next,data);if(!result.ok)throw Error(result.message);mediaCommit(next);$('#dialog').close();openOrder(result.id);notify(result.message);}catch(error){$('#create-error').textContent='Order was not created. '+(storageBlocked?'Reload your saved workspace before retrying.':error.message);$('#create-error').focus();}}if(form.id==='split-form'){event.preventDefault();const result=MES.splitOrder(state,selectedId,form.elements.quantity.value);if(!result.ok){$('#split-error').textContent=result.message;$('#split-error').focus();return;}if(!save())return;$('#dialog').close();openOrder(result.id);notify(result.message);}if(form.id==='adhoc-form'){event.preventDefault();const pinned=[...form.querySelectorAll('#adhoc-part:disabled,#adhoc-revision:disabled')];pinned.forEach(el=>el.disabled=false);const data=Object.fromEntries(new FormData(form));pinned.forEach(el=>el.disabled=true);data.quantity=Number(data.quantity);if(data.partNumber==='__other'){data.partNumber=data.partNumberOther;data.revision=data.revisionOther;}delete data.partNumberOther;delete data.revisionOther;try{const next=structuredClone(state),result=MES.addAdhocOrder(next,data);if(!result.ok)throw Error(result.message);mediaCommit(next);$('#dialog').close();openOrder(result.id);notify(result.message);}catch(error){$('#adhoc-error').textContent='Order was not created. '+(storageBlocked?'Reload your saved workspace before retrying.':error.message);$('#adhoc-error').focus();}}if(form.id==='review-form'){event.preventDefault();if(!form.elements.acknowledge.checked)return;const result=MES.closeOrder(state,selectedId);if(result.ok)$('#dialog').close();applyResult(result);}});
+document.addEventListener('click',event=>{const button=event.target.closest('[data-action]');if(!button)return;const a=button.dataset.action;if(a==='nav'){view=button.dataset.view;search='';filter='All';siteFilter='All';render({focus:true});window.scrollTo(0,0);}if(a==='tab'){tab=button.dataset.tab;render();}if(a==='operation'){selectedOp=button.dataset.op;render();if(innerWidth<=700)$('#operation-detail').scrollIntoView({behavior:'auto'});}if(a==='add-tool')addTool();if(a==='remove-tool')removeTool(button.dataset.tag);if(a==='open-order')openOrder(button.dataset.order);if(a==='close-dialog')$('#dialog').close();if(a==='dismiss-toast')$('#toast').hidden=true;if(a==='advance'){try{const next=structuredClone(state),result=MES.advance(next,selectedId);if(!result.ok)throw Error(result.message);mediaCommit(next);selectedOp=null;render();notify(result.message);}catch(error){notify('Order was not advanced. '+(storageBlocked?'Reload your saved workspace before retrying.':error.message));}}if(a==='clear-filters'){search='';filter='All';siteFilter='All';render();}if(a==='export')exportRecord();if(a==='help')help();if(a==='create')createChoiceDialog();if(a==='split-order')splitDialog();if(a==='pedigree-change')pedigreeDialog();if(a==='pedigree-approve'){applyResult(MES.approvePedigreeChange(state,selectedId));}if(a==='create-master')createDialog();if(a==='create-adhoc')adhocDialog();if(a==='instruction')instructionDialog(Number(button.dataset.index));if(a==='review')reviewDialog();if(a==='reset')resetDialog();if(a==='confirm-reset')resetWorkspace();});
+document.addEventListener('submit',async event=>{const form=event.target;if(form.id==='operation-form'){event.preventDefault();const draft=draftFromForm(form);if(!draft.instruction||!draft.evidence){$('#operation-error').textContent='Review both evidence checks.';return;}{const opx=MES.getOrder(state,form.dataset.order)?.operations.find(x=>x.id===form.dataset.op);const openCount=(opx?.steps||[]).filter(s=>!(opx.stepChecks||{})[s.id]).length;if(openCount){$('#operation-error').textContent=`Check off the remaining ${openCount} work instruction step${openCount===1?'':'s'} before buy-off.`;document.querySelector('.stepper')?.scrollIntoView({block:'center'});return;}}{const opt=MES.getOrder(state,form.dataset.order)?.operations.find(x=>x.id===form.dataset.op);if(opt?.requiresTooling&&!draft.tools.length){$('#operation-error').textContent='This operation requires calibrated tooling. Log each calibrated tool you used.';$('#tool-tag')?.focus();return;}if(opt&&!opt.requiresTooling)draft.tools=[];}{const missingTorque=draft.tools.map(tag=>MES.toolCheck(tag)).filter(check=>check.ok&&MES.isTorqueTool(check.tool)).find(check=>!MES.torqueValid((draft.torque||{})[check.tool.tag]));if(missingTorque){$('#operation-error').textContent=`Enter the torque value applied with ${missingTorque.tool.tag}.`;document.getElementById('torque-'+missingTorque.tool.tag)?.focus();return;}}const blockedTool=draft.tools.map(tag=>MES.toolCheck(tag)).find(check=>!check.ok);if(blockedTool){$('#operation-error').textContent=blockedTool.message;return;}const stampResult=MES.stampCheck(state.profile);if(!stampResult.ok){$('#operation-error').textContent=stampResult.message;return;}{const opy=MES.getOrder(state,form.dataset.order)?.operations.find(x=>x.id===form.dataset.op);const needType=opy?.buyoffType||'Technician';if(stampResult.holder.buyoffType!==needType){$('#operation-error').textContent=`This operation needs a ${needType} buy-off. ${stampResult.holder.name} holds a ${stampResult.holder.buyoffType} credential.`;return;}}if(draft.stampNumber.trim()!==stampResult.holder.number){$('#operation-error').textContent='The stamp number entered does not match the stamp issued to '+stampResult.holder.name+'.';$('#stamp-number')?.focus();return;}const op=mediaOperation(form.dataset.order,form.dataset.op);const submit=form.querySelector('[type=submit]');submit.disabled=true;try{await ensureMediaForBuyoff(MES.getOrder(state,form.dataset.order),op);}catch(error){if($('#operation-error'))$('#operation-error').textContent=error.message;submit.disabled=false;return;}if(!form.isConnected){submit.disabled=false;return;}const buyoffState=op.requiresRecording||op.evidence?.length?structuredClone(state):state;const result=MES.completeOperation(buyoffState,form.dataset.order,form.dataset.op,draft.note.trim(),{tools:draft.tools,noTools:draft.noTools,stampNumber:draft.stampNumber,torque:draft.torque});submit.disabled=false;if(result.ok&&buyoffState!==state){try{mediaCommit(buyoffState);}catch(error){$('#operation-error').textContent=error.message;return;}}if(applyResult(result)){drafts.delete(`${form.dataset.order}/${form.dataset.op}`);selectedOp=null;render();}}if(form.id==='record-note-form'){event.preventDefault();applyResult(MES.addNote(state,selectedId,form.elements.note.value.trim()));}if(form.id==='create-form'){event.preventDefault();const data=Object.fromEntries(new FormData(form));data.quantity=Number(data.quantity);try{const next=structuredClone(state),result=MES.addOrder(next,data);if(!result.ok)throw Error(result.message);mediaCommit(next);$('#dialog').close();openOrder(result.id);notify(result.message);}catch(error){$('#create-error').textContent='Order was not created. '+(storageBlocked?'Reload your saved workspace before retrying.':error.message);$('#create-error').focus();}}if(form.id==='pedigree-form'){event.preventDefault();const result=MES.requestPedigreeChange(state,selectedId,{pedigree:form.elements.pedigree.value,reason:form.elements.reason.value.trim()});if(!result.ok){$('#pedigree-error').textContent=result.message;$('#pedigree-error').focus();return;}if(!save())return;$('#dialog').close();render();notify(result.message);}if(form.id==='split-form'){event.preventDefault();const result=MES.splitOrder(state,selectedId,form.elements.quantity.value);if(!result.ok){$('#split-error').textContent=result.message;$('#split-error').focus();return;}if(!save())return;$('#dialog').close();openOrder(result.id);notify(result.message);}if(form.id==='adhoc-form'){event.preventDefault();const pinned=[...form.querySelectorAll('#adhoc-part:disabled,#adhoc-revision:disabled')];pinned.forEach(el=>el.disabled=false);const data=Object.fromEntries(new FormData(form));pinned.forEach(el=>el.disabled=true);data.quantity=Number(data.quantity);if(data.partNumber==='__other'){data.partNumber=data.partNumberOther;data.revision=data.revisionOther;}delete data.partNumberOther;delete data.revisionOther;try{const next=structuredClone(state),result=MES.addAdhocOrder(next,data);if(!result.ok)throw Error(result.message);mediaCommit(next);$('#dialog').close();openOrder(result.id);notify(result.message);}catch(error){$('#adhoc-error').textContent='Order was not created. '+(storageBlocked?'Reload your saved workspace before retrying.':error.message);$('#adhoc-error').focus();}}if(form.id==='review-form'){event.preventDefault();if(!form.elements.acknowledge.checked)return;const result=MES.closeOrder(state,selectedId);if(result.ok)$('#dialog').close();applyResult(result);}});
 $('#dialog').addEventListener('click',event=>{if(event.target===$('#dialog')&&!mediaBusy){const rect=$('#dialog').getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)$('#dialog').close();}});
 function instructionDialog(index){const o=order(),op=o.operations[index],ref=o.masterWI,steps=op.steps||[],checks=op.stepChecks||{};openDialog(ref?'Work instruction':'Instruction',`<p class="mono">${ref?`${esc(ref.id)} Rev ${esc(ref.revision)} · Master WI`:`WI-${sequence(index)} · Revision ${esc(o.revision)}`}</p><h3 style="margin-bottom:8px">Op ${sequence(index)} · ${esc(op.title)}${calloutBadges(op)}</h3>${calloutReminders(op)}<p>${esc(op.description)}</p><p class="small muted">Buy-off type: ${esc(op.buyoffType||'Technician')}${op.inspectionPoint?' · Inspection point':''}${op.requiresTooling?' · Calibrated tooling required':''}${op.classification?` · ${esc(op.classification)}`:''}</p>${steps.length?`<ol class="wi-steps dialog-steps">${steps.map(s=>`<li class="${checks[s.id]?'checked':''}"><strong>${esc(s.title)}</strong><p>${esc(s.instruction)}</p>${s.image?`<img class="step-thumb" src="${esc(s.image.dataUrl)}" alt="${esc(s.image.caption||s.title)}" loading="lazy">${s.image.caption?`<small>${esc(s.image.caption)}</small>`:''}`:''}${checks[s.id]?`<small>Checked off by ${esc(checks[s.id].name)} · ${esc(buyoffDate(checks[s.id].at))}${checks[s.id].torque?` · ${esc(checks[s.id].torque.value)} ${esc(checks[s.id].torque.unit)} (${esc(checks[s.id].torque.tool)})`:''}</small>`:''}</li>`).join('')}</ol>`:''}<div class="dialog-actions"><button class="btn primary" data-action="close-dialog">Return to operation</button></div>`);}
 function help(){openDialog('Using Flight Control',`<p>Work orders are cloned from a released work instruction, then run operation by operation.</p><ol><li><strong>Create work order</strong> — choose the part revision, pedigree, subcategory, site, aircraft, and priority. The operation sequence comes across with the instruction.</li><li>Release the draft to kitting. Production / Mfg. and Development NFF skip pre-release QA; other combinations need a QA approval first.</li><li>In <strong>Material kit</strong>, choose each material's lot from NetSuite on-hand stock.</li><li>Work the operations in order. Check off every step, add a note, then choose <strong>Complete operation</strong>. Later operations can be previewed but cannot be completed out of sequence, and an inspection point blocks everything behind it.</li><li>Use <strong>Create IDR / NC</strong> inside an issued operation to raise a ticket, optionally holding the operation.</li><li>Send the order to QA and close it. Closure needs a Quality Manager, Quality Engineer, or QA Reviewer.</li></ol><p>Every work order is issued at <strong>Baseline</strong> and rolls to <strong>WO_Rev-A</strong> as QA releases each change. Open <strong>Record</strong> to see each revision, what changed, and who approved it.</p><p><strong>Team discussion</strong> posts messages against an operation and can link an existing Slack thread; messages are not sent to or synced from Slack. <strong>Print work order</strong> offers an internal edition with messages and an external edition without them.</p><p>Your credential is captured on each new buy-off. Select your initials in the top bar to change it; earlier stamps are unchanged.</p><p>Records are kept in this browser. Nothing connects to Jira, PDM, NetSuite, or another MES.</p><div class="dialog-actions"><button class="btn primary" data-action="close-dialog">Got it</button></div>`);}
-function reviewDialog(){const o=order();if(!MES.isQAProfile(state.profile)){openDialog('QA closure review',`<p>A QA profile is required to close a work order. Switching roles here is only a record, not real authentication.</p><div class="dialog-actions"><button class="btn" data-action="close-dialog">Cancel</button><button class="btn primary" data-action="engineering-qa-role" data-stage="review">Use QA reviewer</button></div>`);return;}openDialog('Quality review',`<p><strong>${esc(o.id)}</strong> has ${doneCount(o)} of ${o.operations.length} operations recorded.</p><div class="inline-info">${icon('shield')}<p>Real closure requires an authorized quality decision. This action only closes a browser record.</p></div><form id="review-form"><label class="check-label" style="margin-top:18px"><input name="acknowledge" type="checkbox" required><span>I have reviewed the record and understand this is not a real release or signature.</span></label><div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Cancel</button><button class="btn primary" type="submit">Close work order</button></div></form>`);}
+function reviewDialog(){const o=order();if(!skCan('approve-wo')){openDialog('QA closure review',`<p>Only a Quality Engineering or QA Manager account can close the quality review. You are signed in as ${esc(skRoleLabel())}.</p><div class="dialog-actions"><button class="btn primary" data-action="close-dialog">OK</button></div>`);return;}openDialog('Quality review',`<p><strong>${esc(o.id)}</strong> has ${doneCount(o)} of ${o.operations.length} operations recorded.</p><div class="inline-info">${icon('shield')}<p>Real closure requires an authorized quality decision. This action only closes a browser record.</p></div><form id="review-form"><label class="check-label" style="margin-top:18px"><input name="acknowledge" type="checkbox" required><span>I have reviewed the record and understand this is not a real release or signature.</span></label><div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Cancel</button><button class="btn primary" type="submit">Close work order</button></div></form>`);}
 function resetDialog(){if($('#dialog').open)$('#dialog').close();openDialog('Reset this application?',`<p>This replaces only this app’s saved work orders, operation notes, team messages, Slack thread links, history, and locally saved recordings. Other browser data is not affected.</p><p>Export any record you want to keep first.</p><div class="dialog-actions"><button class="btn" data-action="close-dialog">Keep my changes</button><button class="btn primary" data-action="confirm-reset">Reset data</button></div>`);}
 function resetWorkspace(){discussionDrafts.clear();slackDrafts.clear();messageTargetDrafts.clear();siteFilter='All';MESMedia.clear().catch(()=>notify('Records reset, but local recordings could not be erased.'));state=MES.ensureMasterWIs(MES.seed());storageBlocked=false;$('#storage-alert').hidden=true;drafts.clear();selectedOp=null;selectedId=null;view='order';tab='operations';lastSaved=structuredClone(state);save();$('#dialog').close();render();notify('Workspace reset.');}
 function syncGroundingBlocks(root=document){root.querySelectorAll('.callout-fieldset').forEach(fs=>{const g=fs.querySelector('[data-grounding]'),cb=fs.querySelector('input[type=checkbox][value=ESD]');if(g&&cb)g.hidden=!cb.checked;});}
+function pedigreeChips(o){
+  const c=o.pedigreeChange; if(!c) return '';
+  const mine=c.approvals.some(a=>a.credentialId===skActorId());
+  const myRole=window.skAuth?window.skAuth.role():null;
+  const roleTaken=c.approvals.some(a=>a.discipline===myRole);
+  const canApprove=skCan('approve-pedigree')&&!mine&&!roleTaken;
+  return `<div class="pedigree-pending inline-info" role="status">${icon('shield')}<p><strong>Pedigree change ${esc(c.from)} → ${esc(c.to)} · ${c.approvals.length} of 2 approvals</strong><br>${esc(c.reason)}<br><span class="small">Requested by ${esc(c.requestedBy.name)}. ${c.approvals.length?`Approved by ${c.approvals.map(a=>`${esc(a.name)} (${esc(a.discipline)})`).join(', ')}. `:''}Second approval must come from a different discipline; General User accounts cannot approve.</span></p>${canApprove?'<button class="btn primary" data-action="pedigree-approve">Approve pedigree change</button>':mine?'<span class="pill ready">You approved</span>':roleTaken?'<span class="pill missing">Needs another discipline</span>':''}</div>`;
+}
+function pedigreeDialog(){
+  const o=order(); if(!o) return;
+  openDialog(`Change pedigree on ${esc(o.id)}`,`<p>Pedigree drives which QA approvals a work order needs. A change takes effect only after two approvals from two different disciplines (Operator, Manufacturing Engineering, Quality Engineering, QA Manager). General User accounts cannot approve.</p>
+  <form id="pedigree-form"><div class="form-grid">
+    <div class="field"><label for="pedigree-from">Current</label><output id="pedigree-from">${esc(o.pedigree)}</output></div>
+    <div class="field"><label for="pedigree-to">Change to</label><select id="pedigree-to" name="pedigree" required>${MES.PEDIGREES.filter(p=>p!==o.pedigree).map(p=>`<option>${esc(p)}</option>`).join('')}</select></div>
+    <div class="field wide"><label for="pedigree-reason">Reason</label><textarea id="pedigree-reason" name="reason" rows="3" maxlength="500" required></textarea></div>
+  </div>${o.releaseApproval?'<div class="inline-info" role="status">'+icon('shield')+'<p><strong>QA release approval will be reset</strong><br>The approval covered the current pedigree.</p></div>':''}<div id="pedigree-error" class="form-error" role="alert" tabindex="-1"></div><div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Cancel</button><button class="btn primary" type="submit">Request change</button></div></form>`);
+  $('#pedigree-to').focus();
+}
+
 function splitChips(o){
   const parts=[];
   if(o.splitFrom)parts.push(`<button class="wi-ref" data-action="open-order" data-order="${esc(o.splitFrom)}">${icon('layers')} Split from ${esc(o.splitFrom)}</button>`);
@@ -3532,7 +3675,7 @@ function releaseSummary(o){
 }
 function releaseDialog(){
   const o=order();
-  if(!MES.isQAProfile(state.profile)){openDialog('QA release review',`<p>A QA profile is required to approve work-order release. Switching roles here is only a record, not real authentication.</p><div class="dialog-actions"><button class="btn" data-action="close-dialog">Cancel</button><button class="btn primary" data-action="engineering-qa-role" data-stage="release">Use QA reviewer</button></div>`);return;}
+  if(!skCan('approve-wo')){openDialog('QA release review',`<p>Only a Quality Engineering or QA Manager account can approve work-order release. You are signed in as ${esc(skRoleLabel())}.</p><div class="dialog-actions"><button class="btn primary" data-action="close-dialog">OK</button></div>`);return;}
   openDialog('Review work-order release',`<p>Review the proposed configuration before issuing <strong>${esc(o.id)}</strong> to kitting. This is a local record, not authenticated QA approval.</p><dl class="dialog-context"><div><dt>Part / revision</dt><dd>${esc(o.partNumber)} / Rev ${esc(o.revision)} · ${esc(MES.revisionLabel(o))}</dd></div><div><dt>Pedigree / subcategory</dt><dd>${esc(o.pedigree)} / ${esc(o.subcategory||'Not captured')}</dd></div><div><dt>Quantity / site</dt><dd>${o.quantity} / ${esc(MES.orderSite(o))}</dd></div><div><dt>Source IDR / NC</dt><dd>${esc(o.sourceTicket?.ticketId||'Not applicable')}</dd></div></dl><p>reviewer: ${esc(state.profile.name)} · ${esc(state.profile.credentialId)}</p><form id="release-form" data-order="${esc(o.id)}"><label class="check-label"><input name="acknowledge" type="checkbox" required><span>I have reviewed this configuration, including any superseded revision, and understand this is a approval.</span></label><div id="release-error" class="form-error" role="alert" tabindex="-1"></div><div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Cancel</button><button class="btn primary" type="submit">Approve release</button></div></form>`);
 }
 document.addEventListener('change',event=>{if(['new-part','new-wi','new-revision','new-pedigree','new-subcategory'].includes(event.target.id))updateCreationForm(['new-part','new-wi'].includes(event.target.id));});
@@ -3553,14 +3696,20 @@ function operationHold(o,op){return `<div class="inline-info warning">${icon('lo
 function buyoffStamp(op){const b=op.buyoff;if(!b)return `<div class="evidence-stamp">${icon('check')}<div><strong>Legacy operations recorded</strong><p>No credential snapshot was captured for this earlier completion.</p></div></div>`;return `<section class="buyoff-stamp" aria-label="Buy-off credentials"><div class="stamp-title">${icon('shield')}<strong>Buy-off recorded</strong><span class="pill closed"></span></div><dl class="stamp-grid"><div><dt>Name</dt><dd>${esc(b.name)}</dd></div><div><dt>Role</dt><dd>${esc(b.role)}</dd></div><div><dt>Credential ID</dt><dd class="mono">${esc(b.credentialId)}</dd></div><div><dt>Recorded at</dt><dd><time datetime="${esc(b.at)}">${esc(buyoffDate(b.at))}</time></dd></div></dl>${b.stamp?`<p><strong>Stamp:</strong> ${esc(b.stamp.type)} stamp ${esc(b.stamp.number)}${b.stamp.buyoffType?` · ${esc(b.stamp.buyoffType)} buy-off`:''} · verified against the credential list</p>`:''}${Array.isArray(b.tools)?(b.tools.length?`<div class="stamp-tools"><strong>Calibrated tools used</strong><ul>${b.tools.map(t=>`<li><span class="mono">${esc(t.tag)}</span> ${esc(t.description)}${t.torque?` · <strong>${esc(t.torque.value)} ${esc(t.torque.unit)}</strong>`:''} · S/N ${esc(t.serial)} · cal due ${esc(t.expires)}</li>`).join('')}</ul></div>`:'<p>No calibrated tools logged.</p>'):''}${b.evidenceIds?.length?'<p>Evidence included in this buy-off: '+b.evidenceIds.length+' reviewed recording(s).</p>':''}<p>Unverified identity. Not an authenticated electronic signature. Credential details are captured at buy-off.</p></section>`;}
 function renderQuality(o){return `<div class="quality-records"><section class="panel"><div class="panel-head"><h2>IDR / NC tickets</h2><span class="mono">${o.tickets.length} linked</span></div><div class="panel-body">${o.tickets.length?o.tickets.map(t=>ticketRow(o,t)).join(''):'<p class="muted small">No tickets linked. Select an operation and choose Create IDR / NC.</p>'}</div></section><section class="panel"><div class="panel-head"><h2>ATP test reports</h2><span class="mono">${o.reports.length} linked</span></div><div class="panel-body">${o.reports.length?o.reports.map(r=>reportRow(o,r)).join(''):'<p class="muted small">No ATP reports linked to this work order.</p>'}<p class="small muted" style="margin-top:16px">Reports are read-only examples. Pass or fail refers only to the test fixture, not product acceptance.</p></div></section></div>`;}
 function createTicketDialog(opId){const o=order(),op=o.operations.find(op=>op.id===opId);if(!op)return;openDialog('Create IDR / NC ticket',`<p>The work order, operation, and revision are linked automatically. No ticket is sent to an external system.</p><dl class="dialog-context"><div><dt>Work order</dt><dd class="mono">${esc(o.id)}</dd></div><div><dt>Operation</dt><dd>${operationNumber(o,op.id)} · ${esc(op.title)}</dd></div><div><dt>Issued revision</dt><dd class="mono">${esc(o.revision)}</dd></div></dl><form id="ticket-form" data-order="${esc(o.id)}" data-op="${esc(op.id)}"><div id="ticket-error" class="form-error" role="alert" tabindex="-1"></div><div class="field"><label for="ticket-type">Ticket type</label><select name="type" id="ticket-type"><option value="NC">NC</option><option value="IDR">IDR</option></select></div><div class="field"><label for="ticket-title">Summary</label><input name="title" id="ticket-title" maxlength="120" minlength="3" required placeholder="Example:  test result requires review"></div><div class="field"><label for="ticket-description">Observation / discrepancy</label><textarea name="description" id="ticket-description" maxlength="1000" minlength="5" required placeholder="Describe the observation and supporting evidence…"></textarea></div><label class="check-label" style="margin-top:16px"><input type="checkbox" name="hold" checked><span>Place this operation on hold<small class="muted" style="display:block">Also prevents QA handoff and closure until a disposition is recorded.</small></span></label><div class="dialog-actions"><button type="button" class="btn" data-action="close-dialog">Cancel</button><button type="submit" class="btn primary">Create tickets</button></div></form>`);}
-function ticketDialog(id){const o=order(),t=o.tickets.find(t=>t.id===id);if(!t)return;openDialog(t.id,`<div class="ticket-detail-heading"><h3>${esc(t.title)}</h3><span class="pill ${t.status==='Resolved'?'closed':t.hold?'high':'kitting'}">${esc(ticketLabel(t))}</span></div><dl class="dialog-context"><div><dt>Work order</dt><dd class="mono">${esc(o.id)}</dd></div><div><dt>Source operation</dt><dd>${operationNumber(o,t.operationId)} · ${esc(o.operations.find(op=>op.id===t.operationId).title)}</dd></div><div><dt>Reported by</dt><dd>${esc(t.reportedBy)}</dd></div><div><dt>Created</dt><dd>${date(t.createdAt)}</dd></div></dl><h3>Observation / discrepancy</h3><p class="record-note ticket-description">${esc(t.description)}</p><button class="btn" data-action="ticket-operation" data-op="${esc(t.operationId)}">Open source operation ${icon('arrow')}</button>${t.status==='Resolved'?`<div class="inline-info success">${icon('check')}<div><p><strong> disposition recorded</strong></p><p>${esc(t.resolution)}</p><p class="small">${date(t.resolvedAt)} reviewer</p></div></div>`:`<details class="resolve-details"><summary>Record quality disposition</summary><p class="small muted">This changes only the ticket. It does not revise an ATP report, approve repair, or release a real product.</p><form id="resolve-ticket-form" data-ticket="${esc(t.id)}"><div id="resolution-error" class="form-error" role="alert" tabindex="-1"></div><div class="field"><label for="resolution-note"> disposition / rationale</label><textarea name="resolution" id="resolution-note" maxlength="500" minlength="5" required placeholder="Describe the disposition and supporting rationale…"></textarea></div><label class="check-label"><input type="checkbox" name="acknowledge" required><span>I understand this is a quality decision.</span></label><div class="dialog-actions"><button class="btn primary" type="submit">Resolve ticket</button></div></form></details>`}<p class="source-note small muted">Local ticket only. No Jira, QMS, or production record was created.</p>`);}
+function ticketDispoBlock(o,t){
+  if(t.dispo) return `<div class="inline-info success" role="status">${icon('check')}<div><p><strong>ME initial disposition: ${esc(t.dispo.decision)}</strong></p><p>${esc(t.dispo.note)}</p><p class="small">${esc(t.dispo.name)} · ${esc(t.dispo.credentialId)} · ${date(t.dispo.at)}</p></div></div>`;
+  if(skCan('dispo-nc')) return `<details class="resolve-details" open><summary>Record ME initial disposition</summary><p class="small muted">Manufacturing Engineering records the initial disposition first. Quality approves the ticket after.</p><form id="ticket-dispo-form" data-ticket="${esc(t.id)}"><div id="dispo-error" class="form-error" role="alert" tabindex="-1"></div><div class="field"><label for="dispo-decision">Disposition</label><select id="dispo-decision" name="decision" required>${MES.DISPOSITIONS.map(d=>`<option>${esc(d)}</option>`).join('')}</select></div><div class="field"><label for="dispo-note">Engineering rationale</label><textarea id="dispo-note" name="note" maxlength="500" minlength="5" required placeholder="Why this disposition is acceptable…"></textarea></div><div class="dialog-actions"><button class="btn primary" type="submit">Record initial disposition</button></div></form></details>`;
+  return `<div class="inline-info" role="status">${icon('shield')}<p><strong>Awaiting ME initial disposition</strong><br>A Manufacturing Engineering account must record the initial disposition before Quality can approve this ticket.</p></div>`;
+}
+
+function ticketDialog(id){const o=order(),t=o.tickets.find(t=>t.id===id);if(!t)return;openDialog(t.id,`<div class="ticket-detail-heading"><h3>${esc(t.title)}</h3><span class="pill ${t.status==='Resolved'?'closed':t.hold?'high':'kitting'}">${esc(ticketLabel(t))}</span></div><dl class="dialog-context"><div><dt>Work order</dt><dd class="mono">${esc(o.id)}</dd></div><div><dt>Source operation</dt><dd>${operationNumber(o,t.operationId)} · ${esc(o.operations.find(op=>op.id===t.operationId).title)}</dd></div><div><dt>Reported by</dt><dd>${esc(t.reportedBy)}</dd></div><div><dt>Created</dt><dd>${date(t.createdAt)}</dd></div></dl><h3>Observation / discrepancy</h3><p class="record-note ticket-description">${esc(t.description)}</p><button class="btn" data-action="ticket-operation" data-op="${esc(t.operationId)}">Open source operation ${icon('arrow')}</button>${t.status==='Resolved'?`<div class="inline-info success">${icon('check')}<div><p><strong> disposition recorded</strong></p><p>${esc(t.resolution)}</p><p class="small">${date(t.resolvedAt)} reviewer</p></div></div>`:`${ticketDispoBlock(o,t)}<details class="resolve-details"><summary>Record quality disposition</summary><p class="small muted">This changes only the ticket. It does not revise an ATP report, approve repair, or release a real product.</p><form id="resolve-ticket-form" data-ticket="${esc(t.id)}"><div id="resolution-error" class="form-error" role="alert" tabindex="-1"></div><div class="field"><label for="resolution-note"> disposition / rationale</label><textarea name="resolution" id="resolution-note" maxlength="500" minlength="5" required placeholder="Describe the disposition and supporting rationale…"></textarea></div><label class="check-label"><input type="checkbox" name="acknowledge" required><span>I understand this is a quality decision.</span></label><div class="dialog-actions"><button class="btn primary" type="submit">Resolve ticket</button></div></form></details>`}<p class="source-note small muted">Local ticket only. No Jira, QMS, or production record was created.</p>`);}
 function reportContent(o,r){return `<div class="report-title"><h3>${esc(r.title)}</h3><span class="report-result ${r.result==='Pass'?'pass':r.result==='Fail'?'fail':''}">${esc(r.result)}</span></div><dl class="dialog-context"><div><dt>Report ID</dt><dd class="mono">${esc(r.id)}</dd></div><div><dt>Work order / operation</dt><dd class="mono">${esc(o.id)} / ${operationNumber(o,r.operationId)}</dd></div><div><dt>Serial number</dt><dd class="mono">${esc(o.serial)}</dd></div><div><dt>Revision</dt><dd class="mono">${esc(r.revision)}</dd></div><div><dt>Performed</dt><dd>${date(r.performedAt)}</dd></div></dl><p class="report-summary">${esc(r.summary)}</p><div class="table-wrap" tabindex="0" role="region" aria-label="ATP results"><table class="data-table atp-table"><thead><tr><th scope="col">Check</th><th scope="col">Expected</th><th scope="col">Observed</th><th scope="col">Result</th></tr></thead><tbody>${r.checks.map(c=>`<tr><td>${esc(c.name)}</td><td>${esc(c.expected)}</td><td>${esc(c.observed)}</td><td><span class="report-result ${c.result==='Pass'?'pass':'fail'}">${esc(c.result)}</span></td></tr>`).join('')}</tbody></table></div><div class="inline-info warning">${icon('info')}<p>Categorical checks only. Values are recorded labels, not engineering acceptance criteria.</p></div>`;}
 function reportDialog(id){const o=order(),r=o.reports.find(r=>r.id===id);if(!r)return;$('#dialog').classList.add('report-dialog');openDialog('ATP report',`${reportContent(o,r)}<div class="dialog-actions"><button class="btn" data-action="ticket-operation" data-op="${esc(r.operationId)}">Open linked operation</button><button class="btn primary" data-action="download-report" data-report="${esc(r.id)}">${icon('download')} Download report</button></div>`);}
 function downloadReport(id){const o=order(),r=o.reports.find(r=>r.id===id);if(!r)return;const html='<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>'+esc(r.id)+'</title><style>body{font:16px/1.5 sans-serif;color:#0a1217;max-width:1000px;margin:36px auto;padding:0 24px}h1{font-size:28px}h3{font-size:22px}dt{color:#536670;font-size:13px}dd{margin:0 0 16px}table{border-collapse:collapse;width:100%;font-size:14px}th,td{padding:12px;text-align:left;border:1px solid #ccd7dd}.report-result{font-weight:bold}.fail{color:#a63724}.pass{color:#24634e}.inline-info{background:#fff4df;padding:16px;margin-top:24px}.dialog-context{display:grid;grid-template-columns:1fr 1fr;gap:12px}.table-wrap{overflow:auto}svg{display:none}@media print{body{margin:12mm}}</style><body><h1>ATP report</h1>'+reportContent(o,r)+'<p>Linked report in the Flight Control record.</p></body></html>';saveFile(new Blob([html],{type:'text/html'}),r.id+'-report.html');notify(`Downloaded ${r.id}.`);}
 function profileDialog(){const current=MES.profileOptionFor(state.profile)||MES.PROFILE_OPTIONS[0];const groups=[...new Set(MES.PROFILE_OPTIONS.map(option=>option.group))];openDialog('Your credentials',`<p class="sk-session-line">${(()=>{try{const u=sessionStorage.getItem('skyryse-mes-session-v1');return u?`Signed in as <strong>${esc(u)}</strong> on this device. <button type="button" class="btn quiet" onclick="skSignOut()">Sign out</button>${(window.skAuth&&window.skAuth.accessHtml())||''}`:'';}catch(_){return ''}})()}</p><p>Pick the credential you are working under. Credentials are selected here for buy-offs; the sign-in above is your account. New buy-offs capture a snapshot of the credential; earlier stamps do not change.</p><form id="profile-form"><div id="profile-error" class="form-error" role="alert" tabindex="-1"></div><div class="field"><label for="profile-choice">Signed in as</label><select id="profile-choice" name="profileId" required>${groups.map(group=>`<optgroup label="${esc(group)}">${MES.PROFILE_OPTIONS.filter(option=>option.group===group).map(option=>`<option value="${esc(option.id)}" ${current.id===option.id?'selected':''}>${esc(option.label)}</option>`).join('')}</optgroup>`).join('')}</select><small>Stamp Control Log holders (Quality → Quality, Production → Technician), -only A&P, Engineering, and 8130-9 Authorized Inspector credentials, and roles that hold no stamp. Each operation’s buy-off type must match.</small></div><dl class="dialog-context profile-preview" id="profile-preview">${profilePreview(current)}</dl><p class="small muted">Names, roles, and credential IDs come from the credential list and can’t be edited here.</p><div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Cancel</button><button class="btn primary" type="submit">Use these credentials</button></div></form>`);}
 
 document.addEventListener('click',event=>{const b=event.target.closest('[data-action]');if(!b)return;if(b.dataset.action==='create-ticket')createTicketDialog(b.dataset.op);if(b.dataset.action==='ticket')ticketDialog(b.dataset.ticket);if(b.dataset.action==='atp-report')reportDialog(b.dataset.report);if(b.dataset.action==='download-report')downloadReport(b.dataset.report);if(b.dataset.action==='profile')profileDialog();if(b.dataset.action==='ticket-operation'){if($('#dialog').open)$('#dialog').close();selectedOp=b.dataset.op;tab='operations';view='order';render();$('#operation-detail').scrollIntoView({behavior:'auto'});}});
-document.addEventListener('submit',event=>{const f=event.target;if(f.id==='ticket-form'){event.preventDefault();const data=Object.fromEntries(new FormData(f));data.hold=f.elements.hold.checked;const result=MES.createTicket(state,f.dataset.order,f.dataset.op,data);if(!result.ok){$('#ticket-error').textContent=result.message;$('#ticket-error').focus();return;}if(!save())return;$('#dialog').close();render();notify(result.message);ticketDialog(result.id);}if(f.id==='resolve-ticket-form'){event.preventDefault();if(!f.elements.acknowledge.checked)return;const result=MES.resolveTicket(state,selectedId,f.dataset.ticket,f.elements.resolution.value.trim());if(!result.ok){$('#resolution-error').textContent=result.message;$('#resolution-error').focus();return;}const ticketId=f.dataset.ticket;if(!save())return;$('#dialog').close();render();notify(result.message);ticketDialog(ticketId);}if(f.id==='profile-form'){event.preventDefault();const result=MES.selectProfile(state,f.elements.profileId.value);if(!result.ok){$('#profile-error').textContent=result.message;$('#profile-error').focus();return;}if(!save())return;$('#dialog').close();render();notify(result.message);}});
+document.addEventListener('submit',event=>{const f=event.target;if(f.id==='ticket-form'){event.preventDefault();const data=Object.fromEntries(new FormData(f));data.hold=f.elements.hold.checked;const result=MES.createTicket(state,f.dataset.order,f.dataset.op,data);if(!result.ok){$('#ticket-error').textContent=result.message;$('#ticket-error').focus();return;}if(!save())return;$('#dialog').close();render();notify(result.message);ticketDialog(result.id);}if(f.id==='ticket-dispo-form'){event.preventDefault();const result=MES.dispositionTicket(state,selectedId,f.dataset.ticket,{decision:f.elements.decision.value,note:f.elements.note.value.trim()});if(!result.ok){$('#dispo-error').textContent=result.message;$('#dispo-error').focus();return;}const tid=f.dataset.ticket;if(!save())return;render();notify(result.message);ticketDialog(tid);}if(f.id==='resolve-ticket-form'){event.preventDefault();if(!f.elements.acknowledge.checked)return;const result=MES.resolveTicket(state,selectedId,f.dataset.ticket,f.elements.resolution.value.trim());if(!result.ok){$('#resolution-error').textContent=result.message;$('#resolution-error').focus();return;}const ticketId=f.dataset.ticket;if(!save())return;$('#dialog').close();render();notify(result.message);ticketDialog(ticketId);}if(f.id==='profile-form'){event.preventDefault();const result=MES.selectProfile(state,f.elements.profileId.value);if(!result.ok){$('#profile-error').textContent=result.message;$('#profile-error').focus();return;}if(!save())return;$('#dialog').close();render();notify(result.message);}});
 $('#dialog').addEventListener('close',()=>$('#dialog').classList.remove('report-dialog'));
 // browser-only evidence, up to 3 clips per operation and 100 MiB per clip.
 // A controlled shared evidence repository is needed for production use.
@@ -3940,8 +4089,8 @@ function engineeringDialog() {
   const o=order();
   if(o.status==='Closed'){notify('Closed work orders and their evidence are read-only.');return;}
   if(MES.engineeringChange(o)){notify('Review the pending engineering change before creating another.');return;}
-  if(!MES.isEngineeringProfile(state.profile)){
-    openDialog('Manufacturing Engineering access',`<p>Work-order changes are made from a Manufacturing Engineering profile. Switching roles here selects a credential; it is not authentication.</p><p>Current role: <strong>${esc(state.profile.role)}</strong></p><div class="dialog-actions"><button class="btn" data-action="close-dialog">Cancel</button><button class="btn primary" data-action="engineering--role">Use Manufacturing Engineering</button></div>`);return;
+  if(!skCan('submit-ecr')){
+    openDialog('Engineering change',`<p>Your account cannot submit an ECR.</p><div class="dialog-actions"><button class="btn primary" data-action="close-dialog">OK</button></div>`);return;
   }
   const part=MES.partDefinition(o.partNumber),revisions=part?.revisions||[o.revision];
   const revisionLocked=o.operations.some(op=>op.done||op.evidence.length)||o.reports.length>0;
@@ -3958,7 +4107,7 @@ function engineeringReviewDialog(stage) {
   const o=order(),change=MES.engineeringChange(o);if(!change)return;
   const ecr=stage==='ecr';
   openDialog(ecr?'Review submitted ECR':'Review engineering change',`<p><strong>${esc(o.id)} · ${esc(change.id)}</strong></p><div class="inline-info warning">${icon('shield')}<p>${ecr?'ECR approval does not yet apply the edit. QA re-release follows.':'Approval applies the proposed edit and removes the engineering hold. Resolve existing quality holds first. The lifecycle stage stays unchanged.'} , not an authenticated approval.</p></div><p>${esc(change.reason)}</p><dl class="dialog-context"><div><dt>Revision</dt><dd>${esc(change.before.revision)} → ${esc(change.after.revision)}</dd></div><div><dt>Quantity</dt><dd>${change.before.quantity} → ${change.after.quantity}</dd></div><div><dt>Requested by</dt><dd>${esc(change.requestedBy.name)} · ${esc(change.requestedBy.credentialId)}</dd></div><div><dt>Requested</dt><dd>${date(change.requestedAt)}</dd></div></dl>${change.after.instructions.map(item=>{const before=change.before.instructions.find(x=>x.operationId===item.operationId);return `<details class="change-comparison"><summary>Op ${operationNumber(o,item.operationId)} · Proposed instruction</summary><p><strong>Before</strong><br>${esc(before?.description)}</p><p><strong>After</strong><br>${esc(item.description)}</p></details>`;}).join('')}
-    ${MES.isQAProfile(state.profile)?`<form id="engineering-approval-form" data-order="${esc(o.id)}" data-stage="${ecr?'ecr':'qa'}"><p class="small muted">reviewer: ${esc(state.profile.name)} · ${esc(state.profile.credentialId)}</p><label class="check-label"><input name="acknowledge" type="checkbox" required><span>I reviewed the proposed change and understand this is a  ${ecr?'ECR':'QA re-release'} approval.</span></label><div id="engineering-approval-error" class="form-error" role="alert" tabindex="-1"></div><div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Cancel</button><button class="btn primary" type="submit">${ecr?'ECR approval':'Approve and re-release'}</button></div></form>`:`<p>QA review requires a Quality Manager, Quality Engineer, or QA Reviewer profile.</p><div class="dialog-actions"><button class="btn" data-action="close-dialog">Cancel</button><button class="btn primary" data-action="engineering-qa-role" data-stage="${ecr?'ecr':'qa'}">Use QA reviewer</button></div>`}`);
+    ${skCan('approve-wo')?`<form id="engineering-approval-form" data-order="${esc(o.id)}" data-stage="${ecr?'ecr':'qa'}"><p class="small muted">reviewer: ${esc(state.profile.name)} · ${esc(state.profile.credentialId)}</p><label class="check-label"><input name="acknowledge" type="checkbox" required><span>I reviewed the proposed change and understand this is a  ${ecr?'ECR':'QA re-release'} approval.</span></label><div id="engineering-approval-error" class="form-error" role="alert" tabindex="-1"></div><div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Cancel</button><button class="btn primary" type="submit">${ecr?'ECR approval':'Approve and re-release'}</button></div></form>`:`<p>QA review requires a Quality Manager, Quality Engineer, or QA Reviewer profile.</p><div class="dialog-actions"><button class="btn" data-action="close-dialog">Cancel</button><button class="btn primary" data-action="engineering-qa-role" data-stage="${ecr?'ecr':'qa'}">Use QA reviewer</button></div>`}`);
 }
 document.addEventListener('click',event=>{
   const b=event.target.closest('[data-action]');if(!b)return;
