@@ -528,14 +528,22 @@ small,.rev-chip small,.meta dt,.meta .mono{font-size:11px!important}
 (function(){
  var el=document.getElementById('sk-boot');if(!el)return;
  var name='Jose';try{var raw=localStorage.getItem('skyryse-mes-work-order-v1');if(raw){var p=JSON.parse(raw).profile;if(p&&p.name)name=p.name.trim().split(/\s+/)[0];}}catch(e){}
- var TYPE_AT=matchMedia('(prefers-reduced-motion:reduce)').matches?0:900;
+ var REDUCE=matchMedia('(prefers-reduced-motion:reduce)').matches;
+ var TYPE_AT=REDUCE?0:900;
+ var PHRASE_MS=4000,NAME_MS=3000,SPLIT=22,TAIL_MS=900;
  var hc=document.getElementById('sk-hud-clock');function hud(){if(hc)hc.textContent=new Date().toLocaleTimeString('en-US',{timeZone:'America/Los_Angeles',hour12:false})+' PT';}hud();var hi=setInterval(hud,1000);
  var typed=document.getElementById('sk-typed');var caret=document.createElement('i');caret.className='sk-caret';typed.after(caret);var full='Ready to take flight, '+name+'.';var ci=0;
- setTimeout(function type(){ci++;typed.innerHTML=full.slice(0,Math.min(ci,22))+(ci>22?'<span class="sk-who">'+full.slice(22,ci)+'</span>':'');if(ci<full.length)setTimeout(type,ci<22?42:95);else setTimeout(function(){caret.remove();},900);},TYPE_AT);
+ // "Ready to take flight," types over PHRASE_MS; the name + period over NAME_MS.
+ // Per-character steps are derived from the durations so the two spans keep their
+ // timing whatever the profile name is.
+ var paint=function(n){typed.innerHTML=full.slice(0,Math.min(n,SPLIT))+(n>SPLIT?'<span class="sk-who">'+full.slice(SPLIT,n)+'</span>':'');};
+ var phraseStep=PHRASE_MS/(SPLIT-1),nameStep=NAME_MS/Math.max(full.length-SPLIT,1);
+ if(REDUCE){paint(full.length);caret.remove();}
+ else setTimeout(function type(){ci++;paint(ci);if(ci<full.length)setTimeout(type,ci<SPLIT?phraseStep:nameStep);else setTimeout(function(){caret.remove();},TAIL_MS);},TYPE_AT);
  var gone=false,t;
  function dismiss(){if(gone)return;gone=true;clearTimeout(t);clearInterval(hi);el.remove();}
  document.getElementById('sk-skip').addEventListener('click',dismiss);
- t=setTimeout(dismiss,TYPE_AT+22*42+(name.length+1)*95+600);
+ t=setTimeout(dismiss,REDUCE?1200:(TYPE_AT+PHRASE_MS+NAME_MS+TAIL_MS));
  function deco(){var ph=document.querySelector('.page-heading');if(!ph||ph.querySelector('.sk-ticker'))return;var t=document.createElement('div');t.className='sk-ticker';t.innerHTML='<i>Live</i><span>El Segundo <b>Floor</b></span><span id="sk-clock"></span>';ph.appendChild(t);}
  function tick(){var c=document.getElementById('sk-clock');if(c)c.textContent=new Date().toLocaleTimeString('en-US',{timeZone:'America/Los_Angeles',hour12:false})+' PT';}
  setInterval(function(){deco();tick();var hd=document.querySelector('.page-heading h1');if(hd){var isWO=/^\s*(WO|MWO|WI)-/.test(hd.textContent);var v=isWO?'order':'other';if(document.body.getAttribute('data-view')!==v)document.body.setAttribute('data-view',v);}},1000);
