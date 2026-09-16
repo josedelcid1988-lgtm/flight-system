@@ -559,7 +559,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
 <script>
 (function(){
  var el=document.getElementById('sk-boot');if(!el)return;
- var name='Jose';try{var raw=localStorage.getItem('skyryse-mes-work-order-v1');if(raw){var p=JSON.parse(raw).profile;if(p&&p.name)name=p.name.trim().split(/\s+/)[0];}}catch(e){}
+ var name='Jose';try{var raw=localStorage.getItem('skyryse-mes-work-order-v1');if(raw){var p=JSON.parse(raw).profile;if(p&&p.name){var full=p.name.trim();name=/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+$/.test(full)?full.split(/\s+/)[0]:full;}}}catch(e){}
  var REDUCE=matchMedia('(prefers-reduced-motion:reduce)').matches;
  var TYPE_AT=0;
  var TYPE_MS=3000,SPLIT=22,TAIL_MS=900;
