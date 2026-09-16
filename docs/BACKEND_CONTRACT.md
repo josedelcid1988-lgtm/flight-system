@@ -86,3 +86,12 @@ SSO, audit export, multi-site tenancy. Keep the surface small enough to stand up
 `save()` and `mediaCommit()` → `PUT /workspace` (or action calls); boot-script auth → `/auth`;
 `skAuth.can` → reads role from the session; `record()` attribution stays but is overwritten by
 the server. Everything else is untouched.
+
+## ATP software pushes (added 2026-09-16)
+
+ATP operations carry `atp: { repo, baseline: { sha, version }, pushes[] }`. In the browser build a push is recorded by hand. With a backend:
+
+- `POST /webhooks/github` (GitHub push event, HMAC-verified with the webhook secret). For every open ATP operation whose `atp.repo` matches the repository, append a push `{ id, sha, version (tag or package version), message, by: { name: pusher, credentialId: 'GITHUB-<login>' }, at, status: 'Pending' }`. Ignore pushes whose sha equals the baseline.
+- `POST /workspace/actions/reviewATPPush` `{ orderId, opId, pushId, decision: Accepted|Rejected, note }`. Requires capability `accept-software` (Software Engineering, QA Manager). The reviewing account must differ from the pusher.
+- Buy-off (`completeOperation`) is refused while any push on the operation is Pending. With no pushes, no Software Engineering sign-off is required.
+- Capabilities: `push-software` (Software Engineering, Manufacturing Engineering, QA Manager), `accept-software` (Software Engineering, QA Manager).
