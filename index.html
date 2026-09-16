@@ -200,7 +200,14 @@ button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,
 /* intro */
 #sk-boot{position:fixed;inset:0;z-index:1000;animation:sk-zoom 3.2s cubic-bezier(.2,.7,.2,1) both;background:#0B0B0C url('assets/hero-cockpit.jpg') 62% 55%/cover no-repeat;color:#fff;display:grid;place-items:center;font-family:var(--sans);transition:opacity .7s ease,visibility .7s}
 #sk-boot[data-gone]{opacity:0;visibility:hidden;pointer-events:none}
-.sk-login{margin:18px 0 0;max-width:380px;text-align:left}
+.sk-login{margin:18px 0 0;max-width:380px;width:100%;text-align:left;pointer-events:auto}
+/* While signing in: let the block scroll, start from the top, and shrink the headline
+   so the whole form fits. .sk-mission is pointer-events:none for the animation, so
+   the form re-enables it above. */
+#sk-boot:has(#sk-login:not([hidden])) .sk-mission{justify-content:flex-start;overflow-y:auto;padding-top:clamp(84px,12vh,120px);padding-bottom:40px;pointer-events:auto}
+#sk-boot:has(#sk-login:not([hidden])) .sk-mission h1{font-size:clamp(30px,5vw,54px);line-height:.95}
+#sk-boot:has(#sk-login:not([hidden])) .sk-eyebrow{margin-bottom:10px}
+@media(max-height:720px){#sk-boot:has(#sk-login:not([hidden])) .sk-mission h1{font-size:clamp(28px,5vw,44px)}}
 .sk-login-title{margin:0 0 12px;font:600 15px/1.3 var(--sans,sans-serif);color:#fff;letter-spacing:.02em}
 .sk-login-fields{display:grid;gap:10px}
 .sk-login label{display:grid;gap:5px;font:500 12px/1.2 var(--sans,sans-serif);color:#B8C4CC;letter-spacing:.06em;text-transform:uppercase}
@@ -220,7 +227,7 @@ body:has(#sk-boot)>*:not(#sk-boot){visibility:hidden}
 #sk-boot h1 .sk-caret{display:inline-block;width:3px;height:.85em;background:#8E8E93;margin-left:4px;vertical-align:-.08em;animation:sk-caret 1s steps(1) infinite}
 @keyframes sk-caret{0%,49%{opacity:1}50%,100%{opacity:0}}
 @keyframes sk-rise{from{opacity:0;transform:translateY(14px);filter:blur(6px)}to{opacity:1;transform:none;filter:blur(0)}}
-#sk-boot button{position:absolute;top:22px;right:22px;background:#1C1C1E;border:0;color:#fff;border-radius:999px;padding:9px 16px;font:500 13px/1 var(--sans);cursor:pointer;opacity:.8}#sk-boot button:hover{opacity:1}
+#sk-boot #sk-skip{position:absolute;top:22px;right:22px;background:#1C1C1E;border:0;color:#fff;border-radius:999px;padding:9px 16px;font:500 13px/1 var(--sans);cursor:pointer;opacity:.8}#sk-boot #sk-skip:hover{opacity:1}
 @media(max-width:900px){.content{padding:24px}.meta{padding:0 16px}.page-heading h1{font-size:34px}.route-stage{font-size:12px}.task-heading{padding:24px 22px 16px}.task-content{padding:0 22px 24px}.tabs{display:flex;overflow:auto}}
 @media(max-width:700px){dialog header{padding:20px 22px 14px}.dialog-body{padding:18px 22px 24px}dialog header h2{font-size:22px}.execution-layout{grid-template-columns:1fr}}
 @media(prefers-reduced-motion:reduce){#sk-boot *,.content>*,.execution-layout>*,.route-stage.current{animation:none!important}}
@@ -537,6 +544,29 @@ small,.rev-chip small,.meta dt,.meta .mono{font-size:11px!important}
 .callout-check{align-items:center;min-height:40px}
 .callout-check .callout{margin-left:0}
 .callout-desc{font-size:13px;color:var(--muted);flex:1}
+/* Account permissions. Signing in gives view and execution; these hide the
+   authoring and approval affordances an account does not hold. Operation
+   buy-offs are stamp-gated elsewhere and are never hidden here. */
+body[data-perm-wi="no"] [data-action="wi-create"],body[data-perm-wi="no"] [data-action="wi-revise"],body[data-perm-wi="no"] [data-action="wi-op-add"],body[data-perm-wi="no"] [data-action="wi-op-move"],body[data-perm-wi="no"] [data-action="wi-op-remove"],body[data-perm-wi="no"] [data-action="wi-step-add"],body[data-perm-wi="no"] [data-action="wi-step-move"],body[data-perm-wi="no"] [data-action="wi-step-remove"],
+body[data-perm-wo="no"] [data-action="create"],body[data-perm-wo="no"] [data-action="wi-create-order"],
+body[data-perm-adj="no"] [data-action="seq-add"],body[data-perm-adj="no"] [data-action="seq-edit"],body[data-perm-adj="no"] [data-action="seq-remove"],body[data-perm-adj="no"] [data-action="engineering-change"],body[data-perm-adj="no"] [data-action="split-order"],body[data-perm-adj="no"] [data-action="schedule"],
+body[data-perm-apr="no"] [data-action="review-release"],body[data-perm-apr="no"] [data-action="seq-approve"],body[data-perm-apr="no"] [data-action="review"],
+body[data-perm-wia="no"] [data-action="wi-release"],
+body[data-perm-ncr="no"] [data-action="create-ticket"]{display:none!important}
+.access-panel{margin:14px 0 0;border:1px solid var(--line);border-radius:9px;padding:10px 14px}
+.access-panel summary{cursor:pointer;font-weight:600;font-size:14px;min-height:32px;display:flex;align-items:center}
+.access-table th[scope=col]{font-size:11px;line-height:1.25;text-align:center;vertical-align:bottom;font-weight:500}
+.access-table th[scope=row]{font-weight:600;white-space:nowrap}
+.access-table th[scope=row] small{display:block;font-weight:400;color:var(--muted);font-family:var(--mono)}
+.access-table td{text-align:center}
+.perm-cell{display:inline-flex;min-width:44px;min-height:44px;align-items:center;justify-content:center;cursor:pointer}
+.perm-cell input{width:18px;height:18px;accent-color:var(--blue)}
+.access-add{margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.access-add-title{font-weight:600;font-size:14px;margin:0 0 8px}
+.access-add-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
+.access-add-grid label{display:grid;gap:4px;font-size:12px;color:var(--muted)}
+.access-add-grid input{height:40px;border:1px solid var(--line);border-radius:8px;padding:0 10px;font-size:15px;color:var(--ink)}
+.access-add-error{min-height:16px;margin:8px 0;color:var(--red);font-size:13px}
 /* callout reminders */
 .callout-reminder{margin-bottom:12px}
 .callout-reminder svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
@@ -603,10 +633,10 @@ main a{min-height:24px;display:inline-flex;align-items:center}
  <form id="sk-login" class="sk-login" autocomplete="on" hidden>
   <p class="sk-login-title" id="sk-login-title">Sign in</p>
   <div class="sk-login-fields">
-   <label id="sk-name-field" hidden><span>Your name</span><input id="sk-displayname" name="displayName" maxlength="60" autocomplete="name" placeholder="First Last"></label>
-   <label><span>Username</span><input id="sk-username" name="username" maxlength="40" autocomplete="username" required autocapitalize="none" spellcheck="false"></label>
-   <label><span>Password</span><input id="sk-password" name="password" type="password" minlength="8" maxlength="128" autocomplete="current-password" required></label>
-   <label id="sk-confirm-field" hidden><span>Confirm password</span><input id="sk-confirm" name="confirm" type="password" maxlength="128" autocomplete="new-password"></label>
+   <label id="sk-name-field" hidden><span id="sk-displayname-label">Your name</span><input id="sk-displayname" aria-labelledby="sk-displayname-label" name="displayName" maxlength="60" autocomplete="name" placeholder="First Last"></label>
+   <label><span id="sk-username-label">Username</span><input id="sk-username" aria-labelledby="sk-username-label" name="username" maxlength="40" autocomplete="username" required autocapitalize="none" spellcheck="false"></label>
+   <label><span id="sk-password-label">Password</span><input id="sk-password" aria-labelledby="sk-password-label" name="password" type="password" minlength="8" maxlength="128" autocomplete="current-password" required></label>
+   <label id="sk-confirm-field" hidden><span id="sk-confirm-label">Confirm password</span><input id="sk-confirm" aria-labelledby="sk-confirm-label" name="confirm" type="password" maxlength="128" autocomplete="new-password"></label>
   </div>
   <p id="sk-login-error" class="sk-login-error" role="alert"></p>
   <button type="submit" id="sk-login-submit">Sign in</button>
@@ -626,7 +656,77 @@ main a{min-height:24px;display:inline-flex;align-items:center}
  function hashPassword(salt,password){if(!(window.crypto&&crypto.subtle))return Promise.reject(new Error('Secure hashing is not available in this browser context.'));return crypto.subtle.digest('SHA-256',new TextEncoder().encode(salt+':'+password)).then(toHex);}
  function currentUser(){try{var u=sessionStorage.getItem(SESSION_KEY);if(!u)return null;var a=loadAuth();return a.users.find(function(x){return x.username===u;})||null;}catch(e){return null;}}
  window.skSignOut=function(){try{sessionStorage.removeItem(SESSION_KEY);}catch(e){}location.reload();};
+ // ---- account permissions ----------------------------------------------
+ // Signing in grants view and shop-floor execution. These six gate authoring and
+ // approval. Operation buy-offs are NOT here: those stay on stamp credentials.
+ var PERMS=[
+  {key:'wi', label:'Create and edit work instructions', hint:'Author, revise, and release master WIs.'},
+  {key:'wia', label:'Approve WI releases', hint:'Release a master WI. A QA stamp credential is still required at release.'},
+  {key:'wo', label:'Create work orders', hint:'Clone from a master WI or start an ad hoc order.'},
+  {key:'adj', label:'Adjust work orders', hint:'Add, edit, or remove operations; engineering change; split quantity; reschedule.'},
+  {key:'apr', label:'Approve work orders', hint:'QA release, sequence-change release, and final quality review.'},
+  {key:'ncr', label:'Raise and resolve NCR / IDR', hint:'Create and close nonconformance records.'},
+  {key:'ecr', label:'Approve ECR / ECO', hint:'Authorise engineering change requests and orders.'}
+ ];
+ var ACTION_PERM={
+  'wi-create':'wi','wi-revise':'wi','wi-op-add':'wi','wi-op-move':'wi','wi-op-remove':'wi','wi-step-add':'wi','wi-step-move':'wi','wi-step-remove':'wi','wi-step-image-remove':'wi',
+  'create':'wo','create-master':'wo','create-adhoc':'wo','wi-create-order':'wo',
+  'seq-add':'adj','seq-edit':'adj','seq-remove':'adj','engineering-change':'adj','split-order':'adj','schedule':'adj',
+  'review-release':'apr','seq-approve':'apr','review':'apr','wi-release':'wia',
+  'create-ticket':'ncr'
+ };
+ var FORM_PERM={'wi-create-form':'wi','wi-header-form':'wi','wi-ops-form':'wi',
+  'create-form':'wo','adhoc-form':'wo',
+  'seq-add-form':'adj','seq-edit-form':'adj','seq-remove-form':'adj','split-form':'adj','schedule-form':'adj',
+  'release-form':'apr','review-form':'apr',
+  'ticket-form':'ncr','resolve-ticket-form':'ncr',
+  'engineering-form':'ecr','engineering-approval-form':'ecr'};
+ function permsOf(u){var out={};PERMS.forEach(function(p){out[p.key]=!!(u&&u.perms&&u.perms[p.key]);});return out;}
+ function allPerms(){var out={};PERMS.forEach(function(p){out[p.key]=true;});return out;}
+ function applyPermClasses(u){var g=permsOf(u);PERMS.forEach(function(p){document.body.setAttribute('data-perm-'+p.key,g[p.key]?'yes':'no');});}
+ window.skAuth={
+  PERMS:PERMS,
+  can:function(k){var u=currentUser();return !!(u&&u.perms&&u.perms[k]);},
+  user:currentUser,
+  label:function(k){var p=PERMS.find(function(x){return x.key===k;});return p?p.label:k;},
+  accessHtml:function(){var a=loadAuth(),me=currentUser();if(!me)return '';
+   var rows=a.users.map(function(u){var g=permsOf(u);
+    return '<tr><th scope="row">'+u.displayName.replace(/[<&]/g,'')+'<small>'+u.username+'</small></th>'+PERMS.map(function(p){
+     return '<td><label class="perm-cell"><input type="checkbox" data-perm-user="'+u.username+'" data-perm-key="'+p.key+'"'+(g[p.key]?' checked':'')+(u.username===me.username&&p.key==='wi'?'':'')+'><span class="sr-only">'+p.label+' for '+u.username+'</span></label></td>';}).join('')+'</tr>';}).join('');
+   var isAdmin=PERMS.every(function(p){return me.perms&&me.perms[p.key];});
+   var addForm=isAdmin?'<form class="access-add" data-access-add><p class="access-add-title">Add an account</p><div class="access-add-grid"><label>Name<input name="displayName" required maxlength="60" autocomplete="off"></label><label>Username<input name="username" required maxlength="40" autocomplete="off" autocapitalize="none" spellcheck="false"></label><label>Temporary password<input name="password" type="password" required minlength="8" maxlength="128" autocomplete="new-password"></label></div><p class="access-add-error" role="alert"></p><button class="btn" type="submit">Add account</button><p class="small muted">New accounts can view and run operations. Grant authoring and approval above.</p></form>':'';
+   return '<details class="access-panel" open><summary>Account access ('+a.users.length+')</summary><p class="small muted">Signing in gives view and shop-floor execution. These six gate authoring and approval. Operation buy-offs are separate and stay on stamp credentials.</p><div class="table-wrap"><table class="data-table access-table"><thead><tr><th scope="col">Account</th>'+PERMS.map(function(p){return '<th scope="col" title="'+p.hint+'">'+p.label.replace(/ /g,'<br>')+'</th>';}).join('')+'</tr></thead><tbody>'+rows+'</tbody></table></div>'+addForm+'</details>';}
+ };
+ document.addEventListener('change',function(ev){var cb=ev.target;if(!(cb.dataset&&cb.dataset.permUser))return;
+  var a=loadAuth(),me=currentUser(),u=a.users.find(function(x){return x.username===cb.dataset.permUser;});if(!u)return;
+  if(!(me&&PERMS.every(function(p){return me.perms&&me.perms[p.key];}))){cb.checked=!cb.checked;return;}
+  u.perms=u.perms||{};u.perms[cb.dataset.permKey]=cb.checked;saveAuth(a);
+  var me=currentUser();if(me&&me.username===u.username)applyPermClasses(u);});
+ document.addEventListener('submit',function(ev){var f=ev.target;if(!(f&&f.hasAttribute&&f.hasAttribute('data-access-add')))return;ev.preventDefault();ev.stopPropagation();
+  var err=f.querySelector('.access-add-error');err.textContent='';var a=loadAuth(),me=currentUser();
+  if(!(me&&PERMS.every(function(p){return me.perms&&me.perms[p.key];}))){err.textContent='Only an administrator can add accounts.';return;}
+  var dn=f.elements.displayName.value.trim(),un=f.elements.username.value.trim().toLowerCase(),pw=f.elements.password.value;
+  if(dn.length<2){err.textContent='Enter a name.';return;}
+  if(!/^[a-z0-9._-]{3,40}$/.test(un)){err.textContent='Username: 3 to 40 characters, letters, numbers, dot, dash, underscore.';return;}
+  if(a.users.some(function(u){return u.username===un;})){err.textContent='That username already exists.';return;}
+  if(pw.length<8){err.textContent='Password must be at least 8 characters.';return;}
+  var salt=randomSalt();hashPassword(salt,pw).then(function(h){a.users.push({username:un,displayName:dn,salt:salt,hash:h,perms:{},createdAt:new Date().toISOString(),createdBy:me.username});saveAuth(a);
+   var panel=f.closest('.access-panel');if(panel){var wrap=document.createElement('div');wrap.innerHTML=window.skAuth.accessHtml();panel.replaceWith(wrap.firstElementChild);}
+  }).catch(function(e){err.textContent=e.message;});},true);
+ // Block gated actions even if a control is reachable. Client-side only: this is an
+ // affordance layer, not enforcement. Real enforcement belongs on a server.
+ document.addEventListener('click',function(ev){var b=ev.target.closest&&ev.target.closest('[data-action]');if(!b)return;
+  var need=ACTION_PERM[b.dataset.action];if(!need||window.skAuth.can(need))return;
+  ev.preventDefault();ev.stopPropagation();
+  var t=document.getElementById('toast');if(t){t.querySelector('p').textContent='Your account cannot do this: '+window.skAuth.label(need)+'.';t.hidden=false;setTimeout(function(){t.hidden=true;},5000);}},true);
+ document.addEventListener('submit',function(ev){var need=FORM_PERM[ev.target&&ev.target.id];if(!need||window.skAuth.can(need))return;
+  ev.preventDefault();ev.stopPropagation();
+  var t=document.getElementById('toast');if(t){t.querySelector('p').textContent='Your account cannot do this: '+window.skAuth.label(need)+'.';t.hidden=false;setTimeout(function(){t.hidden=true;},5000);}},true);
+ (function migratePerms(){var a=loadAuth();if(!a.users.length)return;
+  if(a.users.some(function(u){return u.perms;}))return;
+  a.users[0].perms=allPerms();a.users.slice(1).forEach(function(u){u.perms={};});saveAuth(a);})();
  var user=currentUser();
+ if(user)applyPermClasses(user);
  var name=user?firstName(user.displayName):'';
  function firstName(full){full=String(full||'').trim();return /^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+$/.test(full)?full.split(/\s+/)[0]:full;}
  var REDUCE=matchMedia('(prefers-reduced-motion:reduce)').matches;
@@ -652,10 +752,10 @@ main a{min-height:24px;display:inline-flex;align-items:center}
   if(firstRun){var dn=document.getElementById('sk-displayname').value.trim(),cf=document.getElementById('sk-confirm').value;
    if(dn.length<2){err.textContent='Enter your name.';btn.disabled=false;return;}
    if(cf!==pw){err.textContent='Passwords do not match.';btn.disabled=false;return;}
-   var salt=randomSalt();hashPassword(salt,pw).then(function(h){a.users.push({username:username,displayName:dn,salt:salt,hash:h,createdAt:new Date().toISOString()});saveAuth(a);sessionStorage.setItem(SESSION_KEY,username);startGreeting(dn);}).catch(function(e){err.textContent=e.message;btn.disabled=false;});return;}
+   var salt=randomSalt();hashPassword(salt,pw).then(function(h){a.users.push({username:username,displayName:dn,salt:salt,hash:h,perms:allPerms(),createdAt:new Date().toISOString()});saveAuth(a);sessionStorage.setItem(SESSION_KEY,username);applyPermClasses(currentUser());startGreeting(dn);}).catch(function(e){err.textContent=e.message;btn.disabled=false;});return;}
   var u=a.users.find(function(x){return x.username===username;});
   if(!u){err.textContent='No account with that username on this device.';btn.disabled=false;return;}
-  hashPassword(u.salt,pw).then(function(h){if(h!==u.hash){err.textContent='Incorrect password.';btn.disabled=false;document.getElementById('sk-password').select();return;}sessionStorage.setItem(SESSION_KEY,username);startGreeting(u.displayName);}).catch(function(e){err.textContent=e.message;btn.disabled=false;});});
+  hashPassword(u.salt,pw).then(function(h){if(h!==u.hash){err.textContent='Incorrect password.';btn.disabled=false;document.getElementById('sk-password').select();return;}sessionStorage.setItem(SESSION_KEY,username);applyPermClasses(u);startGreeting(u.displayName);}).catch(function(e){err.textContent=e.message;btn.disabled=false;});});
  function runTyping(){
  // One continuous run at a single cadence from the "R" of Ready to the final period.
  // Every character is laid out up front (visibility:hidden) so the line never reflows,
@@ -1133,6 +1233,9 @@ main a{min-height:24px;display:inline-flex;align-items:center}
     const { wi, error } = editableWI(state, id, revision);
     if (error) return fail(error);
     if (!isQAProfile(state.profile)) return fail('QA must release a master WI. Switch to a Quality Manager, Quality Engineer, or QA Reviewer credential.');
+    // Two gates: the signed-in account must hold 'Approve WI releases', and the selected
+    // credential must be a QA role. The credential is what gets stamped onto the record.
+    if (typeof window !== 'undefined' && window.skAuth && !window.skAuth.can('wia')) return fail('Your account cannot approve WI releases. Ask an administrator to grant it in Your credentials.');
     if (!wi.operations.every(wiOperationValid)) return fail('Fix the operation and step errors before release.');
     const at = new Date().toISOString();
     state.masterWIs.filter(item => item.id === wi.id && item.status === 'Released').forEach(item => { item.status = 'Obsolete'; item.obsoletedAt = at; wiLog(state, item, `Superseded by Rev ${wi.revision}.`); });
@@ -3454,7 +3557,7 @@ function ticketDialog(id){const o=order(),t=o.tickets.find(t=>t.id===id);if(!t)r
 function reportContent(o,r){return `<div class="report-title"><h3>${esc(r.title)}</h3><span class="report-result ${r.result==='Pass'?'pass':r.result==='Fail'?'fail':''}">${esc(r.result)}</span></div><dl class="dialog-context"><div><dt>Report ID</dt><dd class="mono">${esc(r.id)}</dd></div><div><dt>Work order / operation</dt><dd class="mono">${esc(o.id)} / ${operationNumber(o,r.operationId)}</dd></div><div><dt>Serial number</dt><dd class="mono">${esc(o.serial)}</dd></div><div><dt>Revision</dt><dd class="mono">${esc(r.revision)}</dd></div><div><dt>Performed</dt><dd>${date(r.performedAt)}</dd></div></dl><p class="report-summary">${esc(r.summary)}</p><div class="table-wrap" tabindex="0" role="region" aria-label="ATP results"><table class="data-table atp-table"><thead><tr><th scope="col">Check</th><th scope="col">Expected</th><th scope="col">Observed</th><th scope="col">Result</th></tr></thead><tbody>${r.checks.map(c=>`<tr><td>${esc(c.name)}</td><td>${esc(c.expected)}</td><td>${esc(c.observed)}</td><td><span class="report-result ${c.result==='Pass'?'pass':'fail'}">${esc(c.result)}</span></td></tr>`).join('')}</tbody></table></div><div class="inline-info warning">${icon('info')}<p>Categorical checks only. Values are recorded labels, not engineering acceptance criteria.</p></div>`;}
 function reportDialog(id){const o=order(),r=o.reports.find(r=>r.id===id);if(!r)return;$('#dialog').classList.add('report-dialog');openDialog('ATP report',`${reportContent(o,r)}<div class="dialog-actions"><button class="btn" data-action="ticket-operation" data-op="${esc(r.operationId)}">Open linked operation</button><button class="btn primary" data-action="download-report" data-report="${esc(r.id)}">${icon('download')} Download report</button></div>`);}
 function downloadReport(id){const o=order(),r=o.reports.find(r=>r.id===id);if(!r)return;const html='<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>'+esc(r.id)+'</title><style>body{font:16px/1.5 sans-serif;color:#0a1217;max-width:1000px;margin:36px auto;padding:0 24px}h1{font-size:28px}h3{font-size:22px}dt{color:#536670;font-size:13px}dd{margin:0 0 16px}table{border-collapse:collapse;width:100%;font-size:14px}th,td{padding:12px;text-align:left;border:1px solid #ccd7dd}.report-result{font-weight:bold}.fail{color:#a63724}.pass{color:#24634e}.inline-info{background:#fff4df;padding:16px;margin-top:24px}.dialog-context{display:grid;grid-template-columns:1fr 1fr;gap:12px}.table-wrap{overflow:auto}svg{display:none}@media print{body{margin:12mm}}</style><body><h1>ATP report</h1>'+reportContent(o,r)+'<p>Linked report in the Flight Control record.</p></body></html>';saveFile(new Blob([html],{type:'text/html'}),r.id+'-report.html');notify(`Downloaded ${r.id}.`);}
-function profileDialog(){const current=MES.profileOptionFor(state.profile)||MES.PROFILE_OPTIONS[0];const groups=[...new Set(MES.PROFILE_OPTIONS.map(option=>option.group))];openDialog('Your credentials',`<p class="sk-session-line">${(()=>{try{const u=sessionStorage.getItem('skyryse-mes-session-v1');return u?`Signed in as <strong>${esc(u)}</strong> on this device. <button type="button" class="btn quiet" onclick="skSignOut()">Sign out</button>`:'';}catch(_){return ''}})()}</p><p>Pick the credential you are working under. Credentials are selected here for buy-offs; the sign-in above is your account. New buy-offs capture a snapshot of the credential; earlier stamps do not change.</p><form id="profile-form"><div id="profile-error" class="form-error" role="alert" tabindex="-1"></div><div class="field"><label for="profile-choice">Signed in as</label><select id="profile-choice" name="profileId" required>${groups.map(group=>`<optgroup label="${esc(group)}">${MES.PROFILE_OPTIONS.filter(option=>option.group===group).map(option=>`<option value="${esc(option.id)}" ${current.id===option.id?'selected':''}>${esc(option.label)}</option>`).join('')}</optgroup>`).join('')}</select><small>Stamp Control Log holders (Quality → Quality, Production → Technician), -only A&P, Engineering, and 8130-9 Authorized Inspector credentials, and roles that hold no stamp. Each operation’s buy-off type must match.</small></div><dl class="dialog-context profile-preview" id="profile-preview">${profilePreview(current)}</dl><p class="small muted">Names, roles, and credential IDs come from the credential list and can’t be edited here.</p><div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Cancel</button><button class="btn primary" type="submit">Use these credentials</button></div></form>`);}
+function profileDialog(){const current=MES.profileOptionFor(state.profile)||MES.PROFILE_OPTIONS[0];const groups=[...new Set(MES.PROFILE_OPTIONS.map(option=>option.group))];openDialog('Your credentials',`<p class="sk-session-line">${(()=>{try{const u=sessionStorage.getItem('skyryse-mes-session-v1');return u?`Signed in as <strong>${esc(u)}</strong> on this device. <button type="button" class="btn quiet" onclick="skSignOut()">Sign out</button>${(window.skAuth&&window.skAuth.accessHtml())||''}`:'';}catch(_){return ''}})()}</p><p>Pick the credential you are working under. Credentials are selected here for buy-offs; the sign-in above is your account. New buy-offs capture a snapshot of the credential; earlier stamps do not change.</p><form id="profile-form"><div id="profile-error" class="form-error" role="alert" tabindex="-1"></div><div class="field"><label for="profile-choice">Signed in as</label><select id="profile-choice" name="profileId" required>${groups.map(group=>`<optgroup label="${esc(group)}">${MES.PROFILE_OPTIONS.filter(option=>option.group===group).map(option=>`<option value="${esc(option.id)}" ${current.id===option.id?'selected':''}>${esc(option.label)}</option>`).join('')}</optgroup>`).join('')}</select><small>Stamp Control Log holders (Quality → Quality, Production → Technician), -only A&P, Engineering, and 8130-9 Authorized Inspector credentials, and roles that hold no stamp. Each operation’s buy-off type must match.</small></div><dl class="dialog-context profile-preview" id="profile-preview">${profilePreview(current)}</dl><p class="small muted">Names, roles, and credential IDs come from the credential list and can’t be edited here.</p><div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Cancel</button><button class="btn primary" type="submit">Use these credentials</button></div></form>`);}
 
 document.addEventListener('click',event=>{const b=event.target.closest('[data-action]');if(!b)return;if(b.dataset.action==='create-ticket')createTicketDialog(b.dataset.op);if(b.dataset.action==='ticket')ticketDialog(b.dataset.ticket);if(b.dataset.action==='atp-report')reportDialog(b.dataset.report);if(b.dataset.action==='download-report')downloadReport(b.dataset.report);if(b.dataset.action==='profile')profileDialog();if(b.dataset.action==='ticket-operation'){if($('#dialog').open)$('#dialog').close();selectedOp=b.dataset.op;tab='operations';view='order';render();$('#operation-detail').scrollIntoView({behavior:'auto'});}});
 document.addEventListener('submit',event=>{const f=event.target;if(f.id==='ticket-form'){event.preventDefault();const data=Object.fromEntries(new FormData(f));data.hold=f.elements.hold.checked;const result=MES.createTicket(state,f.dataset.order,f.dataset.op,data);if(!result.ok){$('#ticket-error').textContent=result.message;$('#ticket-error').focus();return;}if(!save())return;$('#dialog').close();render();notify(result.message);ticketDialog(result.id);}if(f.id==='resolve-ticket-form'){event.preventDefault();if(!f.elements.acknowledge.checked)return;const result=MES.resolveTicket(state,selectedId,f.dataset.ticket,f.elements.resolution.value.trim());if(!result.ok){$('#resolution-error').textContent=result.message;$('#resolution-error').focus();return;}const ticketId=f.dataset.ticket;if(!save())return;$('#dialog').close();render();notify(result.message);ticketDialog(ticketId);}if(f.id==='profile-form'){event.preventDefault();const result=MES.selectProfile(state,f.elements.profileId.value);if(!result.ok){$('#profile-error').textContent=result.message;$('#profile-error').focus();return;}if(!save())return;$('#dialog').close();render();notify(result.message);}});
