@@ -498,6 +498,21 @@ body[data-view="order"] .page-heading .btn.primary{animation:none}
 </style>
 
 <style id="skyryse-qa-fixes">
+.global-search{position:relative;flex:1 1 420px;max-width:520px;margin:0 auto;display:flex;align-items:center}
+.global-search>svg{position:absolute;left:14px;width:16px;height:16px;color:#8E8E93;pointer-events:none}
+.global-search input{width:100%;height:42px;padding:0 40px 0 40px;border:1px solid #DCDCE1;border-radius:12px;background:#F5F5F7;font-size:15px}
+.global-search input:focus{background:#fff;border-color:#0A6CFF;outline:none;box-shadow:0 0 0 3px #0A6CFF26}
+.global-search kbd{position:absolute;right:12px;padding:1px 7px;border:1px solid #DCDCE1;border-radius:6px;font:500 12px/18px var(--mono);color:#8E8E93;background:#fff;pointer-events:none}
+.global-search input:focus~kbd,.global-search input:not(:placeholder-shown)~kbd{display:none}
+.global-results{position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:80;max-height:420px;overflow:auto;padding:6px;border:1px solid #DCDCE1;border-radius:14px;background:#fff;box-shadow:0 18px 40px -20px #0000004D}
+.global-results[hidden]{display:none}
+.gs-hit{width:100%;display:grid;grid-template-columns:96px minmax(0,1fr);gap:10px;align-items:center;padding:10px;border:0;border-radius:10px;background:transparent;text-align:left;cursor:pointer;color:#0B0B0C}
+.gs-hit:hover,.gs-hit.active{background:#F2F7FF}
+.gs-kind{font:500 10px/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:#6E6E73}
+.gs-main strong{display:block;font-size:14px}
+.gs-main small{display:block;font-size:12px;color:#6E6E73;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gs-empty{margin:0;padding:12px;font-size:14px;color:#6E6E73}
+@media (max-width:700px){.global-search{order:3;flex-basis:100%;max-width:none;margin:8px 0 0}.topbar{flex-wrap:wrap;height:auto!important;padding-block:10px}.global-search kbd{display:none}}
 .sidebar .nav [data-view="order"],.sidebar .nav [data-view="wis"]{display:none!important}
 body[data-module="wi"] .sidebar .nav>*{display:none!important}
 .ecr-choices{margin-top:8px}.ecr-edit-link{margin-top:14px;display:flex;flex-wrap:wrap;align-items:center;gap:6px}.ecr-list{list-style:none;margin:0 0 12px;padding:0;display:grid;gap:6px}.ecr-list li{padding:8px 12px;border:1px solid #E5E5EA;border-radius:10px}.ecr-list small{display:block;color:#6E6E73;font-size:13px}.ecr-banner{margin:0 0 18px}#ecr-jira-text{font-family:var(--mono);font-size:13px}
@@ -1060,7 +1075,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
  <div class="sidebar-bottom"><button data-action="reset">Reset workspace</button></div>
 </aside>
 <div class="app">
- <header class="topbar"><div class="breadcrumbs"><button class="icon-btn back-btn" data-action="nav" data-view="orders" aria-label="Back to all work orders" title="All work orders"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg></button><span class="product-name">Flight Control</span><span data-icon="chevron"></span><strong id="breadcrumb">Work order</strong></div><div class="top-tools"><button class="icon-btn" data-action="help" aria-label="Help"><span data-icon="help"></span></button><button class="avatar" id="profile-button" data-action="profile" aria-label="Your credentials">JD</button></div></header>
+ <header class="topbar"><div class="breadcrumbs"><button class="icon-btn back-btn" data-action="nav" data-view="orders" aria-label="Back to all work orders" title="All work orders"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg></button><span class="product-name">Flight Control</span><span data-icon="chevron"></span><strong id="breadcrumb">Work order</strong></div><div class="global-search" role="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="m20 20-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><input id="global-search" type="search" autocomplete="off" spellcheck="false" placeholder="Search WO, part number or serial" aria-label="Search work order, part number or serial number" aria-controls="global-results" aria-expanded="false"><kbd aria-hidden="true">/</kbd><div id="global-results" class="global-results" role="listbox" hidden></div></div><div class="top-tools"><button class="icon-btn" data-action="help" aria-label="Help"><span data-icon="help"></span></button><button class="avatar" id="profile-button" data-action="profile" aria-label="Your credentials">JD</button></div></header>
  <div class="storage-alert" id="storage-alert" role="status" hidden></div>
  <main class="content" id="main" tabindex="-1"><noscript><p>This interactive work-order requires JavaScript. It contains data only.</p></noscript></main>
 </div>
@@ -3752,6 +3767,41 @@ document.addEventListener('submit',e=>{
   if(f.id==='ecr-jira-form'){e.preventDefault();const r=MES.linkECRJira(state,f.dataset.id,f.elements.key.value,f.elements.url.value);if(!r.ok){$('#ecr-jira-error').textContent=r.message;return;}if(!save())return;$('#dialog').close();render();notify(r.message);}
   if(f.id==='wi-revise-form'){e.preventDefault();const wi=currentWI();if(!wi)return;const ids=[...f.querySelectorAll('[name=incorporate]:checked')].map(x=>x.value);const result=MES.reviseMasterWI(state,wi.id,wi.revision);if(result.ok){MES.incorporateECRs(state,wi.id,result.revision,ids);selectedWI={id:result.id,revision:result.revision};$('#dialog').close();}applyResult(result);}
 });
+function globalSearch(q){
+  q=String(q||'').trim().toUpperCase();if(q.length<2)return [];
+  const out=[],seen=new Set();
+  (state.serialLog||[]).filter(e=>e.serial.toUpperCase().includes(q)).slice(0,6).forEach(e=>{const o=MES.getOrder(state,e.orderId);out.push({kind:'Serial',label:e.serial,meta:`${e.partNumber} · ${e.orderId}${o?` · ${o.status}`:''} · unit ${e.unit}${e.status==='Voided'?' · voided':''}${e.lotNumber?` · lot ${e.lotNumber}`:''}`,order:e.orderId,tab:'inventory',exact:e.serial.toUpperCase()===q});});
+  state.orders.forEach(o=>{
+    const idHit=o.id.toUpperCase().includes(q),pnHit=o.partNumber.toUpperCase().includes(q);
+    if(!(idHit||pnHit)||seen.has(o.id))return;seen.add(o.id);
+    out.push({kind:idHit?'Work order':'Part number',label:o.id,meta:`${o.partNumber} Rev ${o.revision} · ${o.status}${o.closedAs?` (${o.closedAs})`:''} · ${o.title}`,order:o.id,tab:null,exact:o.id.toUpperCase()===q});
+  });
+  return out.sort((a,b)=>(b.exact?1:0)-(a.exact?1:0)).slice(0,10);
+}
+let searchIndex=-1;
+function paintSearch(){
+  const input=$('#global-search'),box=$('#global-results');if(!input||!box)return;
+  const hits=globalSearch(input.value);
+  if(input.value.trim().length<2){box.hidden=true;input.setAttribute('aria-expanded','false');return;}
+  box.innerHTML=hits.length?hits.map((h,i)=>`<button type="button" role="option" class="gs-hit ${i===searchIndex?'active':''}" aria-selected="${i===searchIndex}" data-action="gs-open" data-order="${esc(h.order)}" data-tab="${esc(h.tab||'')}"><span class="gs-kind">${esc(h.kind)}</span><span class="gs-main"><strong class="mono">${esc(h.label)}</strong><small>${esc(h.meta)}</small></span></button>`).join(''):`<p class="gs-empty">No work order, part number or serial matches “${esc(input.value.trim())}”.</p>`;
+  box.hidden=false;input.setAttribute('aria-expanded','true');
+}
+function openSearchHit(b){
+  const o=MES.getOrder(state,b.dataset.order);if(!o)return;
+  openOrder(o.id);if(b.dataset.tab){tab=b.dataset.tab;render();}
+  const input=$('#global-search');input.value='';searchIndex=-1;paintSearch();input.blur();
+}
+document.addEventListener('input',e=>{if(e.target.id==='global-search'){searchIndex=-1;paintSearch();}});
+document.addEventListener('keydown',e=>{
+  const input=$('#global-search');if(!input)return;
+  if(e.key==='/'&&!e.target.closest('input,textarea,select,[contenteditable]')&&!document.querySelector('dialog[open]')){e.preventDefault();input.focus();return;}
+  if(e.target!==input)return;
+  const hits=[...document.querySelectorAll('#global-results .gs-hit')];
+  if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();if(!hits.length)return;searchIndex=(searchIndex+(e.key==='ArrowDown'?1:-1)+hits.length)%hits.length;paintSearch();}
+  if(e.key==='Enter'){e.preventDefault();const h=hits[Math.max(0,searchIndex)];if(h)openSearchHit(h);}
+  if(e.key==='Escape'){input.value='';paintSearch();input.blur();}
+});
+document.addEventListener('click',e=>{const b=e.target.closest('[data-action="gs-open"]');if(b){openSearchHit(b);return;}if(!e.target.closest('.global-search')){const box=$('#global-results');if(box&&!box.hidden){box.hidden=true;$('#global-search')?.setAttribute('aria-expanded','false');}}});
 function renderDashboard(){
   const me=window.skAuth?.actor?.()||{name:state.profile.name};
   const first=String(me.name||'').trim().split(/\s+/)[0]||'there';
