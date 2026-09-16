@@ -498,6 +498,7 @@ body[data-view="order"] .page-heading .btn.primary{animation:none}
 </style>
 
 <style id="skyryse-qa-fixes">
+.qq-empty{padding:12px 20px}
 .notice-feed .panel-head .btn{min-height:36px}
 .notice-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;padding:12px 16px 16px}
 .notice{display:flex;flex-direction:column;gap:6px;padding:16px;border:1px solid #E5E5EA;border-radius:14px;background:#fff;border-top:4px solid #0A6CFF}
@@ -4044,6 +4045,20 @@ document.addEventListener('submit',e=>{
   if(!r.ok){$('#notice-error').textContent=r.message;return;}
   if(!save())return;$('#dialog').close();render();notify(r.message);
 });
+function qualityQueueSection(){
+  if(!['qe','qm'].includes(window.skAuth?.role?.()))return '';
+  const rows=state.orders.filter(o=>o.status!=='Closed'&&flaggedOrder(o)).map(o=>{
+    const why=[];
+    if(MES.aogActive(o))why.push('AOG');
+    if(o.status==='Quality')why.push('Awaiting quality review');
+    if(openTickets(o).length)why.push(`${openTickets(o).length} open NC/IDR`);
+    if(MES.engineeringChange(o))why.push('Engineering change');
+    if(o.status==='Draft'&&MES.requiresReleaseQA(o)&&!MES.releaseApproval(o))why.push('Release approval');
+    if(MES.pendingSequenceChange(o))why.push('Sequence change');
+    return {o,why,aog:MES.aogActive(o)};
+  }).sort((a,b)=>(b.aog?1:0)-(a.aog?1:0));
+  return `<section class="panel dash-group dash-quality-queue" aria-labelledby="dash-qq-h"><div class="panel-head"><h2 id="dash-qq-h">Quality queue</h2><span class="mono">${rows.length}</span></div>${rows.length?`<ol class="task-list">${rows.map(({o,why,aog})=>`<li><button class="task-row ${aog?'task-aog':''}" data-action="task-open" data-order="${esc(o.id)}" data-tab="${o.status==='Quality'||openTickets(o).length?'quality':stageTab(o)}"><span class="task-main"><strong class="mono">${esc(o.id)}</strong><small>${esc(o.partNumber)} · ${esc(why.join(' · '))}</small></span>${aog?'<span class="pill aog">AOG</span>':''}${badge(o.status)}<span class="task-go" aria-hidden="true">${icon('arrow')}</span></button></li>`).join('')}</ol>`:'<p class="small muted qq-empty">Nothing is waiting on Quality.</p>'}</section>`;
+}
 function renderDashboard(){
   const me=window.skAuth?.actor?.()||{name:state.profile.name};
   const first=String(me.name||'').trim().split(/\s+/)[0]||'there';
@@ -4051,8 +4066,9 @@ function renderDashboard(){
   const groups=['Approvals','Quality','Engineering','Software','Planning','Floor','Master WI'].map(g=>[g,tasks.filter(t=>t.group===g)]).filter(([,l])=>l.length);
   const hour=new Date().getHours(),greet=hour<12?'Good morning':hour<18?'Good afternoon':'Good evening';
   const row=t=>t.wor?`<li><button class="task-row" data-action="wo-request-open" data-id="${esc(t.wor.id)}"><span class="task-main"><strong>${esc(t.title)}</strong><small>${esc(t.why)}</small></span><span class="pill kitting">Request</span><span class="task-go" aria-hidden="true">${icon('arrow')}</span></button></li>`:t.ecr?`<li><button class="task-row" data-action="ecr-jira" data-id="${esc(t.ecr.id)}"><span class="task-main"><strong>${esc(t.title)}</strong><small>${esc(t.why)}</small></span><span class="pill kitting">Design ECR</span><span class="task-go" aria-hidden="true">${icon('arrow')}</span></button></li>`:`<li><button class="task-row ${t.aog?'task-aog':''}" data-action="task-open" ${t.wi?`data-wi="${esc(t.wi.id)}" data-rev="${esc(t.wi.revision)}"`:`data-order="${esc(t.o.id)}" data-tab="${esc(t.tab)}" ${t.op?`data-op="${esc(t.op.id)}"`:''}`}><span class="task-main"><strong>${esc(t.title)}</strong><small>${t.wi?`Master WI · ${esc(t.wi.partNumber)}`:`<span class="mono">${esc(t.o.id)}</span> · ${esc(t.o.partNumber)} · ${esc(MES.orderSite?MES.orderSite(t.o):t.o.site||'')}`}${t.why?` · ${esc(t.why)}`:''}</small></span>${t.aog?'<span class="pill aog">AOG</span>':''}${t.o?badge(t.o.status):''}<span class="task-go" aria-hidden="true">${icon('arrow')}</span></button></li>`;
-  return `<section aria-labelledby="dash-heading"><div class="page-heading dash-heading"><div><p class="hero-eyebrow">My dashboard · ${esc(skRoleLabel())}</p><h1 id="dash-heading">My Path toward Certification</h1><p>${greet}, ${esc(first)}. ${(tasks.length+mine.length)?`${tasks.length+mine.length} open item${tasks.length+mine.length===1?'':'s'} need${tasks.length+mine.length===1?'s':''} you.`:'You’re all caught up. Nothing is waiting on you.'}</p><div class="dash-actions">${skCan('create-wo')?'':createWOButton()}</div>${(()=>{const me=window.skAuth?.actor?.();const mineReq=(state.woRequests||[]).filter(r=>me&&r.requestedBy?.credentialId===me.credentialId&&(r.status==='Open'||Date.now()-Date.parse(r.decidedAt||0)<7*864e5));return mineReq.length?`<p class="dash-requests">${mineReq.map(r=>`${esc(r.id)} · ${esc(r.partNumber)} × ${r.quantity} · ${r.status==='Fulfilled'?`fulfilled by ${esc(r.orderId)}`:r.status==='Declined'?`declined: ${esc(r.note)}`:'waiting for Manufacturing Engineering'}`).join('<br>')}</p>`:'';})()}</div></div>
+  return `<section aria-labelledby="dash-heading"><div class="page-heading dash-heading"><div><p class="hero-eyebrow">My Path to Certification</p><h1 id="dash-heading">${greet}, ${esc(first)}</h1><p>${(tasks.length+mine.length)?`${tasks.length+mine.length} open item${tasks.length+mine.length===1?'':'s'} need${tasks.length+mine.length===1?'s':''} you.`:'You’re all caught up. Nothing is waiting on you.'}</p><div class="dash-actions">${skCan('create-wo')?'':createWOButton()}</div>${(()=>{const me=window.skAuth?.actor?.();const mineReq=(state.woRequests||[]).filter(r=>me&&r.requestedBy?.credentialId===me.credentialId&&(r.status==='Open'||Date.now()-Date.parse(r.decidedAt||0)<7*864e5));return mineReq.length?`<p class="dash-requests">${mineReq.map(r=>`${esc(r.id)} · ${esc(r.partNumber)} × ${r.quantity} · ${r.status==='Fulfilled'?`fulfilled by ${esc(r.orderId)}`:r.status==='Declined'?`declined: ${esc(r.note)}`:'waiting for Manufacturing Engineering'}`).join('<br>')}</p>`:'';})()}</div></div>
   ${noticeFeed()}
+  ${qualityQueueSection()}
   ${mine.length?`<section class="panel dash-group dash-mine" aria-labelledby="dash-mine-h"><div class="panel-head"><h2 id="dash-mine-h">Assigned to me</h2><span class="mono">${mine.length}</span></div><ol class="task-list">${mine.map(a=>assignmentRow(a,true)).join('')}</ol></section>`:''}
   ${groups.length?`<div class="dash-summary">${groups.map(([g,l])=>`<a class="dash-card" href="#dash-${esc(g.replace(/\s+/g,'-').toLowerCase())}"><span class="dash-count">${l.length}</span><span>${esc(g)}</span></a>`).join('')}</div>
   ${groups.map(([g,l])=>`<section class="panel dash-group" id="dash-${esc(g.replace(/\s+/g,'-').toLowerCase())}" aria-labelledby="dash-${esc(g.replace(/\s+/g,'-').toLowerCase())}-h"><div class="panel-head"><h2 id="dash-${esc(g.replace(/\s+/g,'-').toLowerCase())}-h">${esc(g)}</h2><span class="mono">${l.length}</span></div><ol class="task-list">${l.map(row).join('')}</ol></section>`).join('')}`
@@ -4628,7 +4644,8 @@ function viewMatchCount(item) {
 function renderSavedViews() {
   const box = document.getElementById('saved-views');
   if (!box) return;
-  box.innerHTML = savedViews().map(item => `<button data-action="view-apply" data-view-id="${esc(item.id)}" ${view === 'orders' && activeViewId === item.id ? 'aria-current="page"' : ''} title="${esc(item.name)}"><span data-icon="${item.filters.flagged ? 'shield' : 'list'}"></span><span>${esc(item.name)}</span><span class="count">${viewMatchCount(item)}</span></button>`).join('') + `<button class="nav-manage" data-action="view-manage"><span data-icon="plus"></span><span>Saved views</span></button>`;
+  const qualityRole = ['qe', 'qm'].includes(window.skAuth?.role?.());
+  box.innerHTML = savedViews().filter(item => !(qualityRole && item.id === 'view-flagged')).map(item => `<button data-action="view-apply" data-view-id="${esc(item.id)}" ${view === 'orders' && activeViewId === item.id ? 'aria-current="page"' : ''} title="${esc(item.name)}"><span data-icon="${item.filters.flagged ? 'shield' : 'list'}"></span><span>${esc(item.name)}</span><span class="count">${viewMatchCount(item)}</span></button>`).join('') + `<button class="nav-manage" data-action="view-manage"><span data-icon="plus"></span><span>Saved views</span></button>`;
   paintIcons(box);
 }
 function applySavedView(id) {
