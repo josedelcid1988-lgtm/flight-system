@@ -82,3 +82,14 @@ Static: side-tab on hold rows (legitimate status border), grid-line background (
 ## Fixes applied after scoring (v15)
 
 Pedigree block wraps and excludes itself from the chip rule; `overflow-x:clip` guard on html and body; step card side padding restored; mobile operation grid uses `minmax(0,1fr)` with wrapping callouts; revision strip becomes a 3-column grid at phone width; Previous/Next buttons share one row on phone; header back button on order and WI views; selected operation persisted in the URL hash; buy-off form drafts persisted locally (stamp number excluded); `null` no longer written into the route. Verified at 375 and 1280: document width equals viewport, zero elements past the right edge, zero console errors, resume of op 030 plus draft note after reload.
+
+## Fix-all pass (v16, after run 2)
+
+All open priority findings from run 2 were addressed in the same build:
+
+- **P0 blocked bar.** The next-action bar no longer clones a disabled button. When buy-off is blocked it shows the reason (for example "Buy-off blocked: no valid stamp") and the unblocking action ("Switch credentials") becomes the primary. Without a named fix it offers "Show what is blocking", which scrolls to and focuses the blocker. The bar is a `nav` landmark with a polite live region.
+- **P1 traveler position.** Hero collapses on the order view (no photo, smaller title, tighter padding); the metadata grid stays behind the Record details disclosure by default; release and engineering-change cards moved to the Record tab (the release gate stays inline only while the order is a Draft); the pseudo sixth tab label removed. First operation moved from y=1654 to y=1351 on phone; the phone sidebar collapsed from 270 px to 167 px as a horizontal scroll row.
+- **P1 bar clicks.** A bar-driven tab switch scrolls the target panel into view and focuses it after the re-render; a failed buy-off submit from the bar scrolls to the error.
+- **P2 vocabulary.** Status reads the same everywhere: pill, rail, bar and the default saved view all say "Building" and "Quality". Existing workspaces keep their saved-view names.
+- **P2 phone targets and type.** 44 px minimum on buttons, tabs, chips, icon buttons and the avatar; 13 px floor on labels, badges and monospace details; duplicate "All work orders" hidden on phone in favor of the header back button; hero revision strip hidden on phone (the values remain in Record details).
+- **P3 identity.** The buy-off line reads "Signed in as X · stamping as Y" when they differ, the avatar shows the signed-in initials, and an amber dot marks acting-as.
