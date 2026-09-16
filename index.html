@@ -498,6 +498,9 @@ body[data-view="order"] .page-heading .btn.primary{animation:none}
 </style>
 
 <style id="skyryse-qa-fixes">
+.form-grid{align-items:start}
+.form-grid .field select,.form-grid .field input:not([type=checkbox]):not([type=radio]){height:auto;min-height:48px}
+.pedigree-hint{font-size:12px!important;color:#8E8E93!important;margin-top:6px}
 .fod-options{display:grid!important;gap:8px;padding:6px 0 10px 36px}
 .fod-options .grounding-title{width:auto}
 .fod-opt{display:grid;grid-template-columns:20px minmax(0,1fr);gap:10px;align-items:start;padding:10px 12px;border:1px solid #DCDCE1;border-radius:12px;background:#fff;cursor:pointer}
@@ -3117,7 +3120,7 @@ document.addEventListener('change', async event => {
 });
 
 const PEDIGREE_INFO={'Production':'Fully conforming part build','Development':'For flight hardware, cannot be used for credit','Development NFF':'Prototype, cannot be used for flight or for credit'};
-function pedigreeOptions(list,selected){return list.map(p=>`<option value="${esc(p)}" ${p===selected?'selected':''}>${esc(p)} · ${esc(PEDIGREE_INFO[p]||'')}</option>`).join('');}
+function pedigreeOptions(list,selected){return list.map(p=>`<option value="${esc(p)}" ${p===selected?'selected':''}>${esc(p)}</option>`).join('');}
 function pedigreeHint(id,value){return `<small class="pedigree-hint" id="${id}-hint" aria-live="polite">${esc(PEDIGREE_INFO[value]||'')}</small>`;}
 document.addEventListener('change',e=>{const t=e.target;if(t.matches&&t.matches('#new-pedigree,#adhoc-pedigree,#pedigree-to')){const h=document.getElementById(t.id+'-hint');if(h)h.textContent=PEDIGREE_INFO[t.value]||'';}});
 
