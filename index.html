@@ -498,7 +498,7 @@ body[data-view="order"] .page-heading .btn.primary{animation:none}
 </style>
 
 <style id="skyryse-qa-fixes">
-.assignee-search{width:100%;min-height:40px;margin:0 0 6px;padding:0 12px;border:1px solid #DCDCE1;border-radius:10px;background:#F5F5F7;font-size:14px}.assignee-search:focus{background:#fff;border-color:#0A6CFF;outline:none}
+.assignee-combo{width:100%}.assignee-native[hidden]{display:none!important}.wi-assign .field{margin:0}
 .closure-ticket[hidden],.closure-nff[hidden]{display:none}.closure-ticket{margin-top:12px}
 .asg-actions{display:flex;gap:4px}
 .link-btn{border:0;background:none;padding:0;color:#0A6CFF;font:inherit;cursor:pointer;text-decoration:underline;text-underline-offset:2px}.op-assignee-empty{background:transparent;padding-left:0}.wi-assign{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;margin:0 0 14px}@media (max-width:900px){.wi-assign{grid-template-columns:1fr}}
@@ -3322,7 +3322,7 @@ function renderWIDetail() {
     <div class="wi-layout">
       <section class="panel" aria-labelledby="wi-release-heading"><div class="panel-head"><h2 id="wi-release-heading">Release</h2>${badge(wi.status)}</div><div class="panel-body">
         ${draft ? `<form id="wi-header-form" class="wi-title-form"><div class="field"><label for="wi-title-input">Title</label><input id="wi-title-input" name="title" maxlength="120" required value="${esc(wi.title)}"></div><button class="btn" type="submit">Save title</button><p id="wi-header-error" class="form-error" role="alert"></p></form>
-        ${(skCan('edit-wi')||skCan('assign-work')) ? (() => { const find = t => (state.assignments || []).find(a => a.status === 'Open' && a.type === t && a.wiId === wi.id && a.wiRevision === wi.revision)?.assignee; const peer = find('peer-review-wi'), qaR = find('qa-review-wi'); return `<form id="wi-assign-form" class="wi-assign"><div class="field"><label for="wi-assign-peer">Peer reviewer · Manufacturing Engineering</label><select id="wi-assign-peer" name="peer" data-current="${esc(peer?.username || '')}" ${wi.peerReview ? 'disabled' : ''}>${assigneeOptions('peer-review-wi', peer?.username || '')}</select></div><div class="field"><label for="wi-assign-qa">QA reviewer · Quality Engineering</label><select id="wi-assign-qa" name="qa" data-current="${esc(qaR?.username || '')}">${assigneeOptions('approve-wi', qaR?.username || '')}</select></div><button class="btn" type="submit">Assign reviewers</button></form>`; })() : ''}
+        ${(skCan('edit-wi')||skCan('assign-work')) ? (() => { const find = t => (state.assignments || []).find(a => a.status === 'Open' && a.type === t && a.wiId === wi.id && a.wiRevision === wi.revision)?.assignee; const peer = find('peer-review-wi'), qaR = find('qa-review-wi'); return `<form id="wi-assign-form" class="wi-assign"><div class="field"><label for="wi-assign-peer">Peer review</label><select id="wi-assign-peer" name="peer" data-current="${esc(peer?.username || '')}" ${wi.peerReview ? 'disabled' : ''}>${assigneeOptions('peer-review-wi', peer?.username || '')}</select></div><div class="field"><label for="wi-assign-qa">QA review</label><select id="wi-assign-qa" name="qa" data-current="${esc(qaR?.username || '')}">${assigneeOptions('approve-wi', qaR?.username || '')}</select></div><button class="btn" type="submit">Assign reviewers</button></form>`; })() : ''}
         <div class="inline-info ${qa ? 'success' : 'warning'}">${icon(qa ? 'shield' : 'lock')}<div><p>${qa ? `Signed in as ${esc(skRoleLabel())}. Peer review by Manufacturing Engineering, then Quality Engineering releases the draft once the operations are final.` : 'Manufacturing Engineering peer-reviews this draft, then a Quality Engineering or QA Manager account releases it.'}</p></div></div>`
         : `<dl class="dialog-context"><div><dt>Released</dt><dd>${wi.releasedAt ? date(wi.releasedAt) : '—'}</dd></div><div><dt>Released by</dt><dd>${wi.releasedBy ? `${esc(wi.releasedBy.name)} · ${esc(wi.releasedBy.credentialId)}` : 'QA ()'}</dd></div><div><dt>Operations</dt><dd>${wi.operations.length} · ${steps} steps</dd></div><div><dt>Inspection points</dt><dd>${wi.operations.filter(op => op.inspectionPoint).length}</dd></div></dl>`}
       </div></section>
@@ -3900,7 +3900,7 @@ function assigneeOptions(cap,selected=''){const users=(window.skAuth?.users?.()|
 function assignFromSelect(sel,input){if(!sel||!sel.value)return null;const r=MES.assignWork(state,{...input,assigneeUsername:sel.value,assigneeName:sel.selectedOptions[0]?.dataset.name||sel.value});if(r.ok)save();return r;}
 function opAssignDialog(opId){
   const o=order(),op=o.operations.find(x=>x.id===opId);if(!op)return;const cur=MES.opAssignee(state,o.id,op.id);
-  openDialog(`Assign Op ${operationNumber(o,op.id)}`,`<p>${esc(op.title)}. The assignee shows in the app and on the internal print only, never on the external print.</p><form id="op-assign-form" data-op="${esc(op.id)}"><div class="field"><label for="op-assign-user">Assign to</label><select id="op-assign-user" required>${assigneeOptions('operate',cur?.username||'')}</select></div><p id="op-assign-error" class="form-error" role="alert"></p><div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Cancel</button><button class="btn primary" type="submit">Assign</button></div></form>`);
+  openDialog(`Assign Op ${operationNumber(o,op.id)}`,`<p>${esc(op.title)}. The assignee shows in the app and on the internal print only, never on the external print.</p><form id="op-assign-form" data-op="${esc(op.id)}"><div class="field"><label for="op-assign-user">Assign to</label><select id="op-assign-user">${assigneeOptions('operate',cur?.username||'')}</select></div><p id="op-assign-error" class="form-error" role="alert"></p><div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Cancel</button><button class="btn primary" type="submit">Assign</button></div></form>`);
 }
 document.addEventListener('click',e=>{const b=e.target.closest('[data-action="op-assign"]');if(b)opAssignDialog(b.dataset.op);});
 document.addEventListener('submit',e=>{
@@ -3911,7 +3911,7 @@ document.addEventListener('submit',e=>{
 const ASSIGN_CAP={op:'operate',ticket:'dispo-nc',ecr:'edit-wi','wo-request':'create-wo','peer-review-wi':'peer-review-wi','qa-review-wi':'approve-wi','review-wi':'peer-review-wi','review-push':'accept-software','approve-ecr':'approve-wo',split:'split','add-op':'adjust-wo','create-wo':'create-wo'};
 function reassignDialog(id){
   const a=(state.assignments||[]).find(x=>x.id===id&&x.status==='Open');if(!a)return;
-  openDialog('Reassign',`<p><strong>${esc(assignmentLabel(a))}</strong><br><span class="small muted">Currently assigned to ${esc(a.assignee.name)}${a.due?` · due ${esc(a.due)}`:''}</span></p><form id="reassign-form" data-id="${esc(a.id)}"><div class="form-grid"><div class="field"><label for="reassign-user">Assign to</label><select id="reassign-user" required>${assigneeOptions(ASSIGN_CAP[a.type]||'view')}</select></div><div class="field"><label for="reassign-due">Due <span class="muted">(optional)</span></label><input id="reassign-due" type="date" value="${esc(a.due||'')}"></div><div class="field wide"><label for="reassign-note">Note <span class="muted">(optional)</span></label><input id="reassign-note" maxlength="300" value="${esc(a.note||'')}"></div></div><p id="reassign-error" class="form-error" role="alert"></p><div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Cancel</button><button class="btn primary" type="submit">Reassign</button></div></form>`);
+  openDialog('Reassign',`<p><strong>${esc(assignmentLabel(a))}</strong><br><span class="small muted">Currently assigned to ${esc(a.assignee.name)}${a.due?` · due ${esc(a.due)}`:''}</span></p><form id="reassign-form" data-id="${esc(a.id)}"><div class="form-grid"><div class="field"><label for="reassign-user">Assign to</label><select id="reassign-user">${assigneeOptions(ASSIGN_CAP[a.type]||'view')}</select></div><div class="field"><label for="reassign-due">Due <span class="muted">(optional)</span></label><input id="reassign-due" type="date" value="${esc(a.due||'')}"></div><div class="field wide"><label for="reassign-note">Note <span class="muted">(optional)</span></label><input id="reassign-note" maxlength="300" value="${esc(a.note||'')}"></div></div><p id="reassign-error" class="form-error" role="alert"></p><div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Cancel</button><button class="btn primary" type="submit">Reassign</button></div></form>`);
 }
 document.addEventListener('click',e=>{const b=e.target.closest('[data-action="assignment-reassign"]');if(b)reassignDialog(b.dataset.id);});
 document.addEventListener('submit',e=>{
@@ -3923,19 +3923,25 @@ document.addEventListener('submit',e=>{
   if(!r.ok){$('#reassign-error').textContent=r.message;return;}
   if(!save())return;$('#dialog').close();render();notify(r.message.replace(' assigned to ',' reassigned to '));
 });
+let comboSeq=0;
 function enhanceAssigneeSelects(root=document){
   root.querySelectorAll('select').forEach(sel=>{
     if(sel.dataset.searchable||!sel.querySelector('option[data-name]'))return;
     sel.dataset.searchable='1';
-    const box=document.createElement('input');
-    box.type='search';box.className='assignee-search';box.placeholder='Search name…';box.autocomplete='off';box.setAttribute('aria-label','Search people');
-    sel.parentNode.insertBefore(box,sel);
-    box.addEventListener('input',()=>{
-      const q=box.value.trim().toLowerCase();let first=null;
-      [...sel.options].forEach(o=>{const hit=!q||!o.value||o.textContent.toLowerCase().includes(q);o.hidden=!hit;o.disabled=!hit&&!!o.value;if(hit&&o.value&&!first)first=o;});
-      if(q&&first){sel.value=first.value;sel.dispatchEvent(new Event('change',{bubbles:true}));}
-    });
-    box.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();sel.focus();}});
+    const listId=`assignee-list-${++comboSeq}`;
+    const input=document.createElement('input');
+    input.type='text';input.className='assignee-combo';input.autocomplete='off';input.spellcheck=false;input.setAttribute('list',listId);
+    input.placeholder='Unassigned · type a name';input.disabled=sel.disabled;
+    if(sel.id){input.id=sel.id+'-combo';const lab=document.querySelector(`label[for="${sel.id}"]`);if(lab)lab.htmlFor=input.id;}
+    const dl=document.createElement('datalist');dl.id=listId;
+    dl.innerHTML=[...sel.options].filter(o=>o.value).map(o=>`<option value="${esc(o.textContent)}"></option>`).join('');
+    const sync=()=>{input.value=sel.value?sel.selectedOptions[0].textContent:'';};
+    sync();
+    sel.hidden=true;sel.classList.add('assignee-native');
+    sel.parentNode.insertBefore(input,sel);sel.parentNode.insertBefore(dl,sel);
+    const pick=()=>{const q=input.value.trim().toLowerCase();if(!q){sel.value='';return;}const opts=[...sel.options].filter(o=>o.value);const hit=opts.find(o=>o.textContent.toLowerCase()===q)||opts.find(o=>o.textContent.toLowerCase().includes(q));sel.value=hit?hit.value:'';};
+    input.addEventListener('input',pick);
+    input.addEventListener('change',()=>{pick();sync();sel.dispatchEvent(new Event('change',{bubbles:true}));});
   });
 }
 new MutationObserver(()=>enhanceAssigneeSelects()).observe(document.body,{childList:true,subtree:true});
