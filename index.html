@@ -498,6 +498,8 @@ body[data-view="order"] .page-heading .btn.primary{animation:none}
 </style>
 
 <style id="skyryse-qa-fixes">
+.page-heading .print-options{left:0;right:auto;max-width:min(360px,calc(100vw - 48px))}
+@media (max-width:700px){.page-heading .print-options{position:static;max-width:none;margin-top:8px}}
 .page-heading .pedigree-pending>svg{grid-row:1;grid-column:1;margin-top:3px}.page-heading .pedigree-pending>p{grid-row:1;grid-column:2}.page-heading .pedigree-pending>.btn,.page-heading .pedigree-pending>.pill{grid-row:2;grid-column:1/-1}
 @media (max-width:700px){.sidebar{padding:10px 16px 10px}.sidebar .brand{margin-bottom:6px}.sidebar .nav{display:flex;flex-wrap:nowrap;overflow-x:auto;gap:6px;padding-bottom:4px;scrollbar-width:none;-webkit-overflow-scrolling:touch}.sidebar .nav::-webkit-scrollbar{display:none}.sidebar .nav>button{flex:0 0 auto;white-space:nowrap}.sidebar .nav-views{display:contents}.sidebar .nav-views>button{flex:0 0 auto;white-space:nowrap}.module-switch{margin:6px 0 0}}
 .page-heading .pedigree-pending{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start}
@@ -1782,6 +1784,12 @@ main a{min-height:24px;display:inline-flex;align-items:center}
 
   // Workspaces saved while splits were numbered WO-nnnnn-A carry ids the current
   // scheme rejects. Rewrite them, and every reference to them, before validating.
+  function renameKitOp(state) {
+    const fix = op => { if (op && op.title === 'Verify issued kit') { op.title = 'Verify kit at bench'; if (op.description === 'Match the issued kit against the work package and confirm every line is present.') op.description = 'Build step: match the kit issued by stores against the work package and confirm every line is present before starting assembly.'; } };
+    (Array.isArray(state?.orders) ? state.orders : []).forEach(o => (o.operations || []).forEach(fix));
+    (Array.isArray(state?.masterWIs) ? state.masterWIs : []).forEach(wi => (wi.operations || []).forEach(fix));
+    return state;
+  }
   function migrateSplitIds(state) {
     if (!plain(state) || !Array.isArray(state.orders)) return state;
     const legacy = state.orders.filter(o => plain(o) && typeof o.id === 'string' && /^WO-\d{5,8}-[A-Z]$/.test(o.id));
@@ -1826,7 +1834,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
 
   function upgrade(state) {
     try {
-      state = migrateEngineeringChanges(migrateSplitIds(state));
+      state = renameKitOp(migrateEngineeringChanges(migrateSplitIds(state)));
       if (validate(state)) return JSON.parse(JSON.stringify(state));
       if (!validateVersion(state, 1) && !validateVersion(state, 2)) return null;
       const upgraded = JSON.parse(JSON.stringify(state));
@@ -2171,7 +2179,7 @@ main a{min-height:24px;display:inline-flex;align-items:center}
 
   function operations(doneCount = 0) {
     return [
-      { id: 'op-010', title: 'Verify issued kit', description: 'Match the issued kit against the work package and confirm every line is present.' },
+      { id: 'op-010', title: 'Verify kit at bench', description: 'Build step: match the kit issued by stores against the work package and confirm every line is present before starting assembly.' },
       { id: 'op-020', title: 'Confirm configuration', description: 'Confirm the work package is at the revision this work order was released to.' },
       { id: 'op-030', title: 'Record assembly completion', description: 'Record the build-completion note for this operation.' },
       { id: 'op-040', title: 'Record inspection result', description: 'Document the inspection result against the acceptance criteria for this operation.' },
