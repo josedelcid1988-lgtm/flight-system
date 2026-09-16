@@ -1918,7 +1918,13 @@ main a{min-height:24px;display:inline-flex;align-items:center}
     const who = actor(state);
     order.releaseApproval = { ...who, at: new Date().toISOString(), virtual: true, configuration: releaseConfiguration(order) };
     record(state, order, `Pre-release QA approval by ${who.name} (${who.credentialId}) for revision ${order.revision}. Not an authenticated signature or production authorization.`, 'Quality reviewer');
-    return { ok: true, message: 'QA approval recorded. This draft can now be released to kitting.' };
+    const gate = canAdvance(order);
+    if (gate.allowed && gate.next === 'Kitting' && !pendingSequenceChange(order)) {
+      order.status = 'Kitting';
+      record(state, order, `Stage changed: Draft → Kitting. Issued to kitting on QA release approval. Revision ${order.revision} retained.`);
+      return { ok: true, message: `QA release approved. ${order.id} issued to kitting.` };
+    }
+    return { ok: true, message: `QA approval recorded. ${gate.allowed ? 'This draft can now be released to kitting.' : gate.reason}` };
   }
 
   function submitEngineeringChange(state, id, input) {
