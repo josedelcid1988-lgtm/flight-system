@@ -498,6 +498,7 @@ body[data-view="order"] .page-heading .btn.primary{animation:none}
 </style>
 
 <style id="skyryse-qa-fixes">
+.assignee-search{width:100%;min-height:40px;margin:0 0 6px;padding:0 12px;border:1px solid #DCDCE1;border-radius:10px;background:#F5F5F7;font-size:14px}.assignee-search:focus{background:#fff;border-color:#0A6CFF;outline:none}
 .closure-ticket[hidden],.closure-nff[hidden]{display:none}.closure-ticket{margin-top:12px}
 .asg-actions{display:flex;gap:4px}
 .link-btn{border:0;background:none;padding:0;color:#0A6CFF;font:inherit;cursor:pointer;text-decoration:underline;text-underline-offset:2px}.op-assignee-empty{background:transparent;padding-left:0}.wi-assign{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;margin:0 0 14px}@media (max-width:900px){.wi-assign{grid-template-columns:1fr}}
@@ -3922,10 +3923,27 @@ document.addEventListener('submit',e=>{
   if(!r.ok){$('#reassign-error').textContent=r.message;return;}
   if(!save())return;$('#dialog').close();render();notify(r.message.replace(' assigned to ',' reassigned to '));
 });
+function enhanceAssigneeSelects(root=document){
+  root.querySelectorAll('select').forEach(sel=>{
+    if(sel.dataset.searchable||!sel.querySelector('option[data-name]'))return;
+    sel.dataset.searchable='1';
+    const box=document.createElement('input');
+    box.type='search';box.className='assignee-search';box.placeholder='Search name…';box.autocomplete='off';box.setAttribute('aria-label','Search people');
+    sel.parentNode.insertBefore(box,sel);
+    box.addEventListener('input',()=>{
+      const q=box.value.trim().toLowerCase();let first=null;
+      [...sel.options].forEach(o=>{const hit=!q||!o.value||o.textContent.toLowerCase().includes(q);o.hidden=!hit;o.disabled=!hit&&!!o.value;if(hit&&o.value&&!first)first=o;});
+      if(q&&first){sel.value=first.value;sel.dispatchEvent(new Event('change',{bubbles:true}));}
+    });
+    box.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();sel.focus();}});
+  });
+}
+new MutationObserver(()=>enhanceAssigneeSelects()).observe(document.body,{childList:true,subtree:true});
+function teamAssignments(){MES.syncAssignments(state);const me=window.skAuth?.actor?.();return skCan('assign-work')?state.assignments.filter(a=>a.status==='Open'&&a.assignee.username!==myAccount()&&a.by?.credentialId!==me?.credentialId):[];}
 function renderDashboard(){
   const me=window.skAuth?.actor?.()||{name:state.profile.name};
   const first=String(me.name||'').trim().split(/\s+/)[0]||'there';
-  const tasks=dashboardTasks(),mine=myAssignments(),byMe=assignedByMe();
+  const tasks=dashboardTasks(),mine=myAssignments(),byMe=assignedByMe(),team=teamAssignments();
   const groups=['Approvals','Quality','Engineering','Software','Planning','Floor','Master WI'].map(g=>[g,tasks.filter(t=>t.group===g)]).filter(([,l])=>l.length);
   const hour=new Date().getHours(),greet=hour<12?'Good morning':hour<18?'Good afternoon':'Good evening';
   const row=t=>t.wor?`<li><button class="task-row" data-action="wo-request-open" data-id="${esc(t.wor.id)}"><span class="task-main"><strong>${esc(t.title)}</strong><small>${esc(t.why)}</small></span><span class="pill kitting">Request</span><span class="task-go" aria-hidden="true">${icon('arrow')}</span></button></li>`:t.ecr?`<li><button class="task-row" data-action="ecr-jira" data-id="${esc(t.ecr.id)}"><span class="task-main"><strong>${esc(t.title)}</strong><small>${esc(t.why)}</small></span><span class="pill kitting">Design ECR</span><span class="task-go" aria-hidden="true">${icon('arrow')}</span></button></li>`:`<li><button class="task-row ${t.aog?'task-aog':''}" data-action="task-open" ${t.wi?`data-wi="${esc(t.wi.id)}" data-rev="${esc(t.wi.revision)}"`:`data-order="${esc(t.o.id)}" data-tab="${esc(t.tab)}" ${t.op?`data-op="${esc(t.op.id)}"`:''}`}><span class="task-main"><strong>${esc(t.title)}</strong><small>${t.wi?`Master WI · ${esc(t.wi.partNumber)}`:`<span class="mono">${esc(t.o.id)}</span> · ${esc(t.o.partNumber)} · ${esc(MES.orderSite?MES.orderSite(t.o):t.o.site||'')}`}${t.why?` · ${esc(t.why)}`:''}</small></span>${t.aog?'<span class="pill aog">AOG</span>':''}${t.o?badge(t.o.status):''}<span class="task-go" aria-hidden="true">${icon('arrow')}</span></button></li>`;
@@ -3935,6 +3953,7 @@ function renderDashboard(){
   ${groups.map(([g,l])=>`<section class="panel dash-group" id="dash-${esc(g.replace(/\s+/g,'-').toLowerCase())}" aria-labelledby="dash-${esc(g.replace(/\s+/g,'-').toLowerCase())}-h"><div class="panel-head"><h2 id="dash-${esc(g.replace(/\s+/g,'-').toLowerCase())}-h">${esc(g)}</h2><span class="mono">${l.length}</span></div><ol class="task-list">${l.map(row).join('')}</ol></section>`).join('')}`
   :mine.length?'':`<div class="panel empty dash-empty">${icon('check')}<p>No approvals, reviews or floor work are assigned to your role right now.</p><button class="btn" data-action="nav" data-view="orders">All work orders ${icon('arrow')}</button></div>`}
   ${byMe.length?`<section class="panel dash-group dash-byme" aria-labelledby="dash-byme-h"><div class="panel-head"><h2 id="dash-byme-h">Assigned by me</h2><span class="mono">${byMe.length}</span></div><ol class="task-list">${byMe.map(a=>assignmentRow(a,false)).join('')}</ol></section>`:''}
+  ${team.length?`<section class="panel dash-group dash-team" aria-labelledby="dash-team-h"><div class="panel-head"><h2 id="dash-team-h">Team assignments</h2><span class="mono">${team.length}</span></div><ol class="task-list">${team.map(a=>assignmentRow(a,false)).join('')}</ol></section>`:''}
   </section>`;
 }
 document.addEventListener('click',event=>{
