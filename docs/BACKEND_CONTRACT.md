@@ -95,3 +95,13 @@ ATP operations carry `atp: { repo, baseline: { sha, version }, pushes[] }`. In t
 - `POST /workspace/actions/reviewATPPush` `{ orderId, opId, pushId, decision: Accepted|Rejected, note }`. Requires capability `accept-software` (Software Engineering, QA Manager). The reviewing account must differ from the pusher.
 - Buy-off (`completeOperation`) is refused while any push on the operation is Pending. With no pushes, no Software Engineering sign-off is required.
 - Capabilities: `push-software` (Software Engineering, Manufacturing Engineering, QA Manager), `accept-software` (Software Engineering, QA Manager).
+
+## Known temporary overrides (remove before production)
+
+- **ATP software link deferral** (added 2026-09-16). ATP operations may be saved with `atpLinkDeferred: true` and no `atp` block. The operation shows "ATP software not linked" with a Link software action. Remove the "Link software later" option and the `atpDeferred` branch in `atpFor` (marked TEMPORARY OVERRIDE).
+
+## External sub-processing purchase orders (added 2026-09-16)
+
+- An External Sub-Processing operation carries either `externalPO { number, url? }` or `poRequest { vendor, process, needBy?, notes?, requestedBy, requestedAt, fulfilledAt? }`.
+- With a backend, creating a PO request should create a NetSuite purchase requisition and store its internal ID; a NetSuite PO approval webhook fills `externalPO` and sets `fulfilledAt`.
+- Buy-off is refused until `externalPO` exists.
