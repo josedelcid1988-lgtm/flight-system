@@ -1,4 +1,9 @@
-# Build v80 (20 Sep 2026)
+# Build v81 (20 Sep 2026)
+
+The product is named **Flight System**. It carries three modules: Flight Control
+(work order execution and quality records), Flight Plan (planning) and Flight
+Maneuver (corrective action). Module names are unchanged; only the product name
+changed, and storage keys and record numbers were left alone.
 
 `index.html` is the production build. `demo.html` is the demo build: every
 account has full access, the sample data set loads once, and the separation of

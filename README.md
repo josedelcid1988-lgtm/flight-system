@@ -1,4 +1,10 @@
-# Flight Control MES — visual refresh (QA-patched)
+# Flight System
+
+Skyryse in-house MES. Modules: Flight Control (work order execution and quality
+records), Flight Plan (planning), Flight Maneuver (corrective action).
+See VERSION.md for what is in this build and TESTING.md for the test suites.
+
+## Original notes
 
 Single-file manufacturing execution system prototype. Open `index.html` in a
 browser; keep `assets/` beside it.

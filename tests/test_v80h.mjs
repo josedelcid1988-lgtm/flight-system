@@ -1,0 +1,13 @@
+import {chromium} from 'playwright';
+const b=await chromium.launch({executablePath:'/opt/pw-browsers/chromium'});const p=await (await b.newContext({viewport:{width:1440,height:1000}})).newPage();const errs=[];p.on('pageerror',e=>errs.push(e.message));const fails=[];const ok=(w,c,m)=>{console.log((c?'  ok   ':'  FAIL ')+w+(c?'':' -> '+m));if(!c)fails.push(w);};
+await p.goto('file:///home/claude/fc/demo_qa150_publish.html');await p.waitForTimeout(900);
+await p.evaluate(()=>{const un=document.querySelector('#sk-boot input[name=username]');const pw=document.querySelector('#sk-boot input[type=password]');un.value='demo';un.dispatchEvent(new Event('input',{bubbles:true}));pw.value='demo1234';pw.dispatchEvent(new Event('input',{bubbles:true}));un.closest('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));});await p.waitForTimeout(3000);
+const fx=await p.evaluate(()=>{MES.reworkLibrary(state).filter(t=>t.status!=='Approved').forEach(t=>MES.approveReworkTemplate(state,t.id));const o=state.orders.find(o=>o.status==='Building'&&!MES.blockingTickets(o).length&&!MES.engineeringChange(o)&&!MES.pendingSequenceChange(o)&&o.operations.length<=14);const op=o.operations.find(x=>!x.done);const t=MES.createTicket(state,o.id,op.id,{type:'NC',title:'Loose fastener',description:'Fastener loose at J2.',hold:true});MES.dispositionTicket(state,o.id,t.id,{decision:'Rework',note:'Re-torque.'});const c=MES.DEFECT_CODES[0];MES.resolveTicket(state,o.id,t.id,'Rework approved.',{defectCode:c.code,subCode:c.subs[0].code,quantity:1,serials:[]});save();selectedId=o.id;view='order';tab='quality';render();ticketDialog(t.id);return {o:o.id,t:t.id};});
+await p.waitForTimeout(300);
+ok('NC dialog shows Add rework operation',!!(await p.$('#dialog [data-action="rework-add"]')),'missing');
+await p.screenshot({path:'/home/claude/shots/v80h_nc.png'});
+await p.click('#dialog [data-action="rework-add"]');await p.waitForTimeout(500);
+const st=await p.evaluate(()=>({cls:document.getElementById('seq-class').value,nc:document.getElementById('seq-nc-select').value,pickerShown:!document.getElementById('seq-std-rw').hidden,opts:[...document.querySelectorAll('#seq-std-rw-select option')].filter(o=>o.value&&!o.hidden).length}));
+ok('Add operation opens with Rework, NC linked, approved pairs listed',st.cls==='Rework'&&st.nc===fx.t&&st.pickerShown&&st.opts>0,JSON.stringify(st));
+await p.screenshot({path:'/home/claude/shots/v80h_add.png'});
+console.log('errors',errs,'FAILS',JSON.stringify(fails));await b.close();
