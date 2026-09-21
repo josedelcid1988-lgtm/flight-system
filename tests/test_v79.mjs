@@ -1,12 +1,12 @@
 import {chromium} from 'playwright';
-const b=await chromium.launch({executablePath:'/opt/pw-browsers/chromium'});const p=await (await b.newContext({viewport:{width:1440,height:1000}})).newPage();
+const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{});const p=await (await b.newContext({viewport:{width:1440,height:1000}})).newPage();
 const errs=[];p.on('pageerror',e=>errs.push(e.message));const fails=[];const ok=(w,c,m)=>{console.log((c?'  ok   ':'  FAIL ')+w+(c?'':' -> '+m));if(!c)fails.push(w);};
-await p.goto('file:///home/claude/fc/demo_qa150_publish.html');await p.waitForTimeout(900);
+await p.goto('file:///Users/josedelcid/projects/flight-system/tests/fixtures/demo_qa150_publish.html');await p.waitForTimeout(900);
 await p.evaluate(()=>{const un=document.querySelector('#sk-boot input[name=username]');const pw=document.querySelector('#sk-boot input[type=password]');un.value='demo';un.dispatchEvent(new Event('input',{bubbles:true}));pw.value='demo1234';pw.dispatchEvent(new Event('input',{bubbles:true}));un.closest('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));});await p.waitForTimeout(2800);
 const fx=await p.evaluate(()=>{const o=state.orders.find(o=>o.status==='Building'&&o.quantity===1&&!MES.blockingTickets(o).length&&!MES.engineeringChange(o));const op=o.operations.find(x=>!x.done);const t=MES.createTicket(state,o.id,op.id,{type:'NC',title:'Cracked housing',description:'Crack at boss 3.',hold:true});MES.dispositionTicket(state,o.id,t.id,{decision:'Scrap',note:'Beyond repair.'});save();return {o:o.id,t:t.id};});
 await p.evaluate(a=>{selectedId=a.o;view='order';tab='quality';render();ticketDialog(a.t);},fx);await p.waitForTimeout(400);
 ok('Scrap approval shows close-as-Scrap option',!!(await p.$('#resolve-ticket-form input[name=closeOrder]')),'missing');
-await p.screenshot({path:'/home/claude/shots/v79_scrap_close.png'});
+await p.screenshot({path:'/Users/josedelcid/projects/flight-system/tests/shots/v79_scrap_close.png'});
 await p.evaluate(()=>{const f=document.getElementById('resolve-ticket-form');f.elements.resolution.value='Housing cracked beyond repair; scrap approved.';const dc=f.elements.defectCode;if(dc){dc.value=MES.DEFECT_CODES[0].code;dc.dispatchEvent(new Event('change',{bubbles:true}));}});await p.waitForTimeout(150);
 await p.evaluate(()=>{const f=document.getElementById('resolve-ticket-form');const sc=f.elements.subCode;if(sc&&!sc.value){sc.value=MES.DEFECT_CODES[0].subs[0].code;}f.elements.closeOrder.checked=true;f.elements.acknowledge.checked=true;f.requestSubmit();});await p.waitForTimeout(500);
 const st=await p.evaluate(a=>{const o=MES.getOrder(state,a.o);return {s:o.status,as:o.closedAs,t:o.tickets.find(t=>t.id===a.t).status,err:(document.getElementById('resolution-error')||{}).textContent};},fx);

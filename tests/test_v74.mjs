@@ -1,11 +1,11 @@
 import {chromium} from 'playwright';
-const b=await chromium.launch({executablePath:'/opt/pw-browsers/chromium'});
+const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{});
 const ctx=await b.newContext({viewport:{width:1440,height:1000},acceptDownloads:true}); const p=await ctx.newPage();
 const errs=[]; p.on('pageerror',e=>errs.push(e.message));
 const fails=[]; const step=(w,r)=>{const ok=r&&r.ok!==false;console.log((ok?'  ok   ':'  FAIL ')+w+(ok?'':' -> '+(r&&r.message)));if(!ok)fails.push(w);return r;};
 const no=(w,r)=>step(w,{ok:!(r&&r.ok),message:r&&r.message||'was allowed'});
 async function signIn(u){ await p.evaluate(()=>{try{sessionStorage.removeItem('skyryse-mes-session-v1');}catch(e){}}).catch(()=>{});
-  await p.goto('file:///home/claude/fc/demo_qa150_publish.html'); await p.waitForTimeout(900);
+  await p.goto('file:///Users/josedelcid/projects/flight-system/tests/fixtures/demo_qa150_publish.html'); await p.waitForTimeout(900);
   await p.evaluate(x=>{const un=document.querySelector('#sk-boot input[name=username]');if(!un)return;const pw=document.querySelector('#sk-boot input[type=password]');un.value=x;un.dispatchEvent(new Event('input',{bubbles:true}));pw.value='demo1234';pw.dispatchEvent(new Event('input',{bubbles:true}));un.closest('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));},u);
   await p.waitForTimeout(2600); await p.evaluate(()=>{document.body.click();document.querySelectorAll('.mnv-landing').forEach(e=>e.remove());}); }
 const run=(fn,a)=>p.evaluate(fn,a);
@@ -49,7 +49,7 @@ step('order sorted by balloon',{ok:await run(o=>MES.getOrder(state,o).fair.chars
 step('review clean',{ok:await run(o=>MES.fairReview(state,MES.getOrder(state,o)).length===0,O),message:JSON.stringify(await run(o=>MES.fairReview(state,MES.getOrder(state,o)),O))});
 await valid('fair data');
 await run(o=>{render();},O); await p.waitForTimeout(300);
-await p.screenshot({path:'/home/claude/shots/v74_fair.png',fullPage:true});
+await p.screenshot({path:'/Users/josedelcid/projects/flight-system/tests/shots/v74_fair.png',fullPage:true});
 await signIn('quality');
 step('verify (quality stamp)',await S(o=>MES.verifyFair(state,o,{pin:''}),O));
 no('edit after verify refused',await run(o=>MES.addFairChar(structuredClone(state),o,{no:'9',ref:'x',requirement:'x'}),O));
@@ -57,7 +57,7 @@ step('approve (Skyryse QA)',await S(o=>MES.approveFair(state,o,{pin:''}),O));
 await valid('fair approved');
 await run(o=>{selectedId=o;view='order';tab='quality';render();},O); await p.waitForTimeout(300);
 const [dl]=await Promise.all([p.waitForEvent('download',{timeout:5000}).catch(()=>null),p.click('[data-action="fair-download"]')]);
-if(dl){const fs=await import('fs');const path=await dl.path();const h=fs.readFileSync(path,'utf8');step('FAIR download has Forms 1 to 3 blocks',{ok:/Form 1/.test(h)&&/Form 2/.test(h)&&/Form 3/.test(h)&&/25\. Date/.test(h)&&/3A\. Sample size/.test(h)&&/AMS-QQ-A-250\/11/.test(h),message:'content'});fs.copyFileSync(path,'/home/claude/shots/v74_fair_download.html');}else step('FAIR download',{ok:false,message:'none'});
+if(dl){const fs=await import('fs');const path=await dl.path();const h=fs.readFileSync(path,'utf8');step('FAIR download has Forms 1 to 3 blocks',{ok:/Form 1/.test(h)&&/Form 2/.test(h)&&/Form 3/.test(h)&&/25\. Date/.test(h)&&/3A\. Sample size/.test(h)&&/AMS-QQ-A-250\/11/.test(h),message:'content'});fs.copyFileSync(path,'/Users/josedelcid/projects/flight-system/tests/shots/v74_fair_download.html');}else step('FAIR download',{ok:false,message:'none'});
 step('FAI pill shows approved',{ok:await run(()=>/FAIR approved/.test(document.querySelector('#order-title').textContent)),message:'pill'});
 step('close order with approved FAIR',await S(o=>MES.closeOrder(state,o),O));
 // ---- Conformity package ----
@@ -76,7 +76,7 @@ step('No blocks the package',{ok:await run(([o,s])=>MES.confGaps(state,MES.getOr
 step('re-record 4.1b Yes',await S(([o,s])=>MES.checkConformity(state,o,s,'4.1b',{value:'Yes'}),[O,sn]));
 await run(([o,s])=>{openConfWizard(o,s,4);},[O,sn]); await p.waitForTimeout(300);
 step('wizard: 8 pages, Yes/No/N/A on each step',{ok:await run(()=>document.querySelectorAll('.conf-wiz-step').length===8&&document.querySelectorAll('.conf-wiz .conf-acc [name=value]').length>=15),message:'wizard'});
-await p.screenshot({path:'/home/claude/shots/v74_wizard.png'});
+await p.screenshot({path:'/Users/josedelcid/projects/flight-system/tests/shots/v74_wizard.png'});
 await p.click('.conf-wiz [data-action="conf-page"][data-page="0"]'); await p.waitForTimeout(300);
 await p.fill('.conf-wiz [name=staging]','Cage C, shelf 1'); await p.click('.conf-wiz [data-action="conf-save-progress"]'); await p.waitForTimeout(300);
 step('save progress writes typed field',{ok:await run(([o])=>MES.getOrder(state,o).conformity[0].staging==='Cage C, shelf 1'&&/Saved/.test(document.querySelector('.conf-saved').textContent),[O]),message:'not saved'});
@@ -111,9 +111,9 @@ for(const k of ['7.6','7.7']) step('step '+k,await S(([o,s,k])=>MES.checkConform
 step('close package',await S(([o,s])=>MES.closeConformity(state,o,s),[O,sn]));
 await valid('package closed');
 await run(o=>{selectedId=o;view='order';tab='quality';render();document.querySelectorAll('.conf-phase').forEach(d=>d.open=true);},O); await p.waitForTimeout(300);
-await p.screenshot({path:'/home/claude/shots/v74_conf.png',fullPage:true});
+await p.screenshot({path:'/Users/josedelcid/projects/flight-system/tests/shots/v74_conf.png',fullPage:true});
 const [d2]=await Promise.all([p.waitForEvent('download',{timeout:5000}).catch(()=>null),p.click('[data-action="conf-8130"]')]);
-if(d2){const fs=await import('fs');const h=fs.readFileSync(await d2.path(),'utf8');fs.writeFileSync('/home/claude/shots/v74_8130.html',h);step('8130-9 download: sections, AQI, DAR',{ok:/Section IV/.test(h)&&/Authorized Quality Inspector/.test(h)&&/J\. Rivera/.test(h)&&/21\.33\(a\)/.test(h),message:'content'});}else step('8130-9 download',{ok:false,message:'none'});
+if(d2){const fs=await import('fs');const h=fs.readFileSync(await d2.path(),'utf8');fs.writeFileSync('/Users/josedelcid/projects/flight-system/tests/shots/v74_8130.html',h);step('8130-9 download: sections, AQI, DAR',{ok:/Section IV/.test(h)&&/Authorized Quality Inspector/.test(h)&&/J\. Rivera/.test(h)&&/21\.33\(a\)/.test(h),message:'content'});}else step('8130-9 download',{ok:false,message:'none'});
 const tr=await run(sn=>{const r=MES.traceReport(state,sn);return r.ok?JSON.stringify(r.build).slice(0,4000):r.message;},sn);
 step('trace shows conformity',{ok:/CONFORMED/.test(tr)&&/FAIR/.test(tr),message:tr.slice(0,300)});
 // ---- ATP assets ----
@@ -146,7 +146,7 @@ step('op gate refuses before Phase 6',{ok:!(await run(a=>MES.confOpGate(state,ME
 await run(a=>{selectedId=a.o;view='order';tab='operations';render();},pc); await p.waitForTimeout(300);
 console.log('   exec text:',(await run(()=>document.querySelector('#main').textContent.replace(/\s+/g,' ').slice(0,1500))));
 step('op card shows checklist launcher',{ok:await run(()=>!!document.querySelector('.conf-op [data-action="conf-wizard"]')),message:'no launcher'});
-await p.screenshot({path:'/home/claude/shots/v74_conf_op.png'});
+await p.screenshot({path:'/Users/josedelcid/projects/flight-system/tests/shots/v74_conf_op.png'});
 await valid('end');
 console.log('page errors',errs); console.log('FAILS',JSON.stringify(fails));
 await b.close();

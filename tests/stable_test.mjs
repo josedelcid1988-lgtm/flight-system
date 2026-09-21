@@ -1,12 +1,12 @@
 import {chromium} from 'playwright'; import fs from 'fs';
 const auth=fs.readFileSync('/tmp/auth.json','utf8');
-const b=await chromium.launch({executablePath:'/opt/pw-browsers/chromium'});
+const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{});
 let bad=0,ok=0;
 for(const file of ['publish.html','demo_publish.html']){
 for(const w of [1200,1440,1706,1920]){
   const ctx=await b.newContext({viewport:{width:w,height:900}});
   await ctx.addInitScript(a=>{try{localStorage.setItem('skyryse-mes-auth-v1',a);sessionStorage.setItem('skyryse-mes-session-v1','qa');sessionStorage.setItem('sk-boot-seen','1');sessionStorage.setItem('sk-mnv-landing-seen','1');}catch(e){}},auth);
-  const p=await ctx.newPage(); await p.goto('file:///home/claude/fc/'+file);
+  const p=await ctx.newPage(); await p.goto('file:///Users/josedelcid/projects/flight-system/tests/'+file);
   await p.waitForFunction(()=>window.__ready===true,null,{timeout:60000});
   if(file==='publish.html')await p.evaluate(()=>{const wi=state.masterWIs.find(x=>x.status==='Released');for(let i=0;i<25;i++)MES.addOrder(state,{masterWI:wi.id+'|'+wi.revision,pedigree:'Production',subcategory:'Mfg.',quantity:1,aircraft:MES.AIRCRAFT[0],site:MES.SITES[0]});save();});
   for(const v of ['orders','quality','activity','serials','wis','plan','mnv-cars','mnv-mrb']){
