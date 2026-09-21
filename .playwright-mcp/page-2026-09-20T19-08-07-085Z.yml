@@ -1,0 +1,149 @@
+- generic [active] [ref=f9e1]:
+  - link "Skip to work order" [ref=f9e2] [cursor=pointer]:
+    - /url: "#main"
+  - generic [ref=f9e3]:
+    - banner [ref=f9e4]:
+      - button "Open navigation" [ref=f9e5] [cursor=pointer]
+      - combobox "Switch workspace" [ref=f9e10] [cursor=pointer]:
+        - option "Flight Control" [selected]
+        - option "Flight Plan"
+        - option "Flight Maneuver"
+      - generic [ref=f9e11]:
+        - button "Search records" [ref=f9e12] [cursor=pointer]
+        - button "Your credentials" [ref=f9e16] [cursor=pointer]: DU
+    - main [ref=f9e17]:
+      - region [ref=f9e18]:
+        - generic [ref=f9e19]:
+          - generic [ref=f9e20]:
+            - heading "Good afternoon, Demo" [level=1] [ref=f9e21]
+            - paragraph [ref=f9e22]: 9 open items need you.
+          - figure "Aircraft photographs" [ref=f9e23]:
+            - img "Skyryse helicopter in a hangar" [ref=f9e24]
+            - generic [ref=f9e25]:
+              - generic [ref=f9e26]: Skyryse One / Hangar
+              - generic [ref=f9e27]:
+                - button "Previous aircraft photograph" [ref=f9e28] [cursor=pointer]
+                - button "Next aircraft photograph" [ref=f9e31] [cursor=pointer]
+        - group [ref=f9e34]:
+          - generic "Explore the demo" [ref=f9e35] [cursor=pointer]
+        - generic [ref=f9e36]:
+          - group "My tasks by area" [ref=f9e37]:
+            - button "3 Quality" [expanded] [ref=f9e38] [cursor=pointer]:
+              - generic [ref=f9e39]: "3"
+              - generic [ref=f9e40]: Quality
+            - button "1 Engineering" [ref=f9e42] [cursor=pointer]:
+              - generic [ref=f9e43]: "1"
+              - generic [ref=f9e44]: Engineering
+            - button "4 Production floor" [ref=f9e46] [cursor=pointer]:
+              - generic [ref=f9e47]: "4"
+              - generic [ref=f9e48]: Production floor
+            - button "1 Master WI" [ref=f9e50] [cursor=pointer]:
+              - generic [ref=f9e51]: "1"
+              - generic [ref=f9e52]: Master WI
+          - region [ref=f9e54]:
+            - generic [ref=f9e55]:
+              - heading "Quality" [level=2] [ref=f9e56]
+              - generic [ref=f9e57]:
+                - generic [ref=f9e58]: Task
+                - combobox "Filter tasks by type" [ref=f9e59]:
+                  - option "All" [selected]
+                  - option "Release approvals (1)"
+                  - option "Sequence releases (1)"
+                  - option "FAIR (1)"
+              - generic [ref=f9e60]: "3"
+            - list [ref=f9e61]:
+              - listitem [ref=f9e62]:
+                - generic [ref=f9e63]: Release approvals
+                - generic [ref=f9e64]: "1"
+              - listitem [ref=f9e65]:
+                - button "Approve work order release WO-10009 · SR-IN-030 · HHR · QA release to kitting" [ref=f9e66] [cursor=pointer]:
+                  - generic [ref=f9e67]:
+                    - strong [ref=f9e68]: Approve work order release
+                    - generic [ref=f9e69]:
+                      - generic [ref=f9e70]: WO-10009
+                      - text: · SR-IN-030 · HHR · QA release to kitting
+              - listitem [ref=f9e71]:
+                - generic [ref=f9e72]: Sequence releases
+                - generic [ref=f9e73]: "1"
+              - listitem [ref=f9e74]:
+                - button "Release sequence change WO-10005 · SR-CT-220 · HHR · 2 changes by Master Access" [ref=f9e75] [cursor=pointer]:
+                  - generic [ref=f9e76]:
+                    - strong [ref=f9e77]: Release sequence change
+                    - generic [ref=f9e78]:
+                      - generic [ref=f9e79]: WO-10005
+                      - text: · SR-CT-220 · HHR · 2 changes by Master Access
+              - listitem [ref=f9e80]:
+                - generic [ref=f9e81]: FAIR
+                - generic [ref=f9e82]: "1"
+              - listitem [ref=f9e83]:
+                - button "Complete the FAIR WO-10004 · SR-BE-030 · HHR · FAIR open · 1 item to finish before verify" [ref=f9e84] [cursor=pointer]:
+                  - generic [ref=f9e85]:
+                    - strong [ref=f9e86]: Complete the FAIR
+                    - generic [ref=f9e87]:
+                      - generic [ref=f9e88]: WO-10004
+                      - text: · SR-BE-030 · HHR · FAIR open · 1 item to finish before verify
+          - text: · · · · · ·
+        - region [ref=f9e89]:
+          - generic [ref=f9e90]:
+            - heading "Quality queue" [level=2] [ref=f9e91]
+            - generic [ref=f9e92]:
+              - generic [ref=f9e93]: Task
+              - combobox "Filter the quality queue by task" [ref=f9e94]:
+                - option "All" [selected]
+                - option "AOG"
+                - option "Quality review"
+                - option "FAIR"
+                - option "NC/IDR"
+                - option "Engineering change"
+                - option "Release approval"
+                - option "Sequence change"
+            - generic [ref=f9e95]: "5"
+          - list [ref=f9e96]:
+            - listitem [ref=f9e97]:
+              - generic [ref=f9e98]: Quality review
+              - generic [ref=f9e99]: "1"
+            - listitem [ref=f9e100]:
+              - button "WO-10004 SR-BE-030 · Awaiting quality review" [ref=f9e101] [cursor=pointer]:
+                - generic [ref=f9e102]:
+                  - strong [ref=f9e103]: WO-10004
+                  - generic [ref=f9e104]: SR-BE-030 · Awaiting quality review
+            - listitem [ref=f9e105]:
+              - generic [ref=f9e106]: FAIR
+              - generic [ref=f9e107]: "1"
+            - listitem [ref=f9e108]:
+              - button "WO-10004 SR-BE-030 · Complete FAIR" [ref=f9e109] [cursor=pointer]:
+                - generic [ref=f9e110]:
+                  - strong [ref=f9e111]: WO-10004
+                  - generic [ref=f9e112]: SR-BE-030 · Complete FAIR
+            - listitem [ref=f9e113]:
+              - generic [ref=f9e114]: NC/IDR
+              - generic [ref=f9e115]: "1"
+            - listitem [ref=f9e116]:
+              - button "WO-10005 SR-CT-220 · 1 open NC/IDR" [ref=f9e117] [cursor=pointer]:
+                - generic [ref=f9e118]:
+                  - strong [ref=f9e119]: WO-10005
+                  - generic [ref=f9e120]: SR-CT-220 · 1 open NC/IDR
+            - listitem [ref=f9e121]:
+              - generic [ref=f9e122]: Release approval
+              - generic [ref=f9e123]: "1"
+            - listitem [ref=f9e124]:
+              - button "WO-10009 SR-IN-030 · Release approval" [ref=f9e125] [cursor=pointer]:
+                - generic [ref=f9e126]:
+                  - strong [ref=f9e127]: WO-10009
+                  - generic [ref=f9e128]: SR-IN-030 · Release approval
+            - listitem [ref=f9e129]:
+              - generic [ref=f9e130]: Sequence change
+              - generic [ref=f9e131]: "1"
+            - listitem [ref=f9e132]:
+              - button "WO-10005 SR-CT-220 · Sequence change" [ref=f9e133] [cursor=pointer]:
+                - generic [ref=f9e134]:
+                  - strong [ref=f9e135]: WO-10005
+                  - generic [ref=f9e136]: SR-CT-220 · Sequence change
+        - generic [ref=f9e137]:
+          - generic [ref=f9e138]: No announcements
+          - button "Post announcement" [ref=f9e139] [cursor=pointer]
+      - group [ref=f9e142]:
+        - generic "Terms and acronyms" [ref=f9e143] [cursor=pointer]
+      - generic [ref=f9e144]:
+        - generic [ref=f9e145]: Flight System · Planning, execution and quality records.
+        - button "Help" [ref=f9e146] [cursor=pointer]

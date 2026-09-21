@@ -1,0 +1,39 @@
+- generic [ref=f2e1]:
+  - status [ref=f2e2]:
+    - generic:
+      - generic: FLIGHT CONTROL MES
+      - generic: REV B · EL SEGUNDO
+    - generic:
+      - generic: SYS NOMINAL
+      - generic: 11:49:55 PT
+    - generic: 33.9425° N · 118.4081° W
+    - generic: OPERATOR AUTH PENDING
+    - generic [ref=f2e4]:
+      - paragraph [ref=f2e5]: PRIME DIRECTIVE · 001
+      - heading "SAFETY SAFETY IS THE IS THE MISSION. MISSION." [level=1] [ref=f2e7]:
+        - generic [ref=f2e8]: SAFETY SAFETY
+        - generic [ref=f2e9]: IS THE IS THE
+        - generic [ref=f2e10]: MISSION. MISSION.
+      - generic [ref=f2e11]:
+        - paragraph [ref=f2e12]: Create your account
+        - generic [ref=f2e13]:
+          - generic [ref=f2e14]:
+            - generic [ref=f2e15]: Your name
+            - textbox "Your name" [active] [ref=f2e16]:
+              - /placeholder: First Last
+          - generic [ref=f2e17]:
+            - generic [ref=f2e18]: Username
+            - textbox "Username" [ref=f2e19]
+          - generic [ref=f2e20]:
+            - generic [ref=f2e21]: Password
+            - textbox "Password" [ref=f2e22]
+          - generic [ref=f2e23]:
+            - generic [ref=f2e24]: Confirm password
+            - textbox "Confirm password" [ref=f2e25]
+        - alert [ref=f2e26]
+        - button "Create account and sign in" [ref=f2e27] [cursor=pointer]
+        - paragraph [ref=f2e28]: First run on this device. This creates the local account the greeting and sign-in use. Passwords are salted and hashed in the browser; nothing is sent anywhere.
+      - paragraph [ref=f2e29]: El Segundo · Flight System
+  - option "Flight Control" [selected]
+  - option "Flight Plan"
+  - option "Flight Maneuver"

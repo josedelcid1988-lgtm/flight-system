@@ -1,0 +1,83 @@
+- generic [active] [ref=f4e1]:
+  - link "Skip to work order" [ref=f4e2] [cursor=pointer]:
+    - /url: "#main"
+  - complementary "Flight Control workspace" [ref=f4e3]:
+    - button "Go to my dashboard" [ref=f4e4] [cursor=pointer]:
+      - generic "open tasks": "1"
+      - img "Skyryse" [ref=f4e5]
+    - group "Module" [ref=f4e10]:
+      - button "Work orders" [pressed] [ref=f4e11] [cursor=pointer]
+      - button "Master WI" [ref=f4e12] [cursor=pointer]
+    - navigation "Workspace navigation" [ref=f4e13]:
+      - button "My work" [ref=f4e14] [cursor=pointer]
+      - button "All work orders" [ref=f4e18] [cursor=pointer]:
+        - generic [ref=f4e24]: "0"
+      - generic [ref=f4e25]:
+        - button "Quality queue 0" [ref=f4e26] [cursor=pointer]:
+          - generic [ref=f4e31]: Quality queue
+          - generic [ref=f4e32]: "0"
+        - button "Building 0" [ref=f4e33] [cursor=pointer]:
+          - generic [ref=f4e38]: Building
+          - generic [ref=f4e39]: "0"
+        - button "Saved views" [ref=f4e40] [cursor=pointer]
+      - button "Activity record" [ref=f4e45] [cursor=pointer]
+      - button "Serial number database" [ref=f4e51] [cursor=pointer]:
+        - generic [ref=f4e56]: Serial numbers
+      - button "Traceability search" [ref=f4e57] [cursor=pointer]:
+        - generic [ref=f4e62]: Traceability
+    - group [ref=f4e64]:
+      - generic "Workspace tools" [ref=f4e65] [cursor=pointer]
+  - generic [ref=f4e66]:
+    - banner [ref=f4e67]:
+      - generic [ref=f4e68]:
+        - combobox "Switch workspace" [ref=f4e69] [cursor=pointer]:
+          - option "Flight Control" [selected]
+          - option "Flight Plan"
+          - option "Flight Maneuver"
+        - strong [ref=f4e73]:
+          - generic [ref=f4e74]: My dashboard
+      - search [ref=f4e75]:
+        - searchbox "Search work order, part number or serial number" [ref=f4e76]
+        - generic [aria-hidden]: /
+      - generic [ref=f4e77]:
+        - button "Help" [ref=f4e78] [cursor=pointer]
+        - button "Your credentials" [ref=f4e83] [cursor=pointer]: UR
+    - main [ref=f4e84]:
+      - region [ref=f4e85]:
+        - generic [ref=f4e86]:
+          - generic [ref=f4e87]:
+            - heading "Good afternoon, UX" [level=1] [ref=f4e88]
+            - paragraph [ref=f4e89]: 1 open item needs you.
+          - figure "Aircraft photographs" [ref=f4e90]:
+            - img "Skyryse helicopter in a hangar" [ref=f4e91]
+            - generic [ref=f4e92]:
+              - generic [ref=f4e93]: Skyryse One / Hangar
+              - generic [ref=f4e94]:
+                - button "Previous aircraft photograph" [ref=f4e95] [cursor=pointer]
+                - button "Next aircraft photograph" [ref=f4e98] [cursor=pointer]
+        - group "My tasks by area" [ref=f4e102]:
+          - button "1 Master WI" [ref=f4e103] [cursor=pointer]:
+            - generic [ref=f4e104]: "1"
+            - generic [ref=f4e105]: Master WI
+        - region [ref=f4e107]:
+          - generic [ref=f4e108]:
+            - heading "Quality queue" [level=2] [ref=f4e109]
+            - generic [ref=f4e110]:
+              - generic [ref=f4e111]: Task
+              - combobox "Filter the quality queue by task" [ref=f4e112]:
+                - option "All" [selected]
+                - option "AOG"
+                - option "Quality review"
+                - option "FAIR"
+                - option "NC/IDR"
+                - option "Engineering change"
+                - option "Release approval"
+                - option "Sequence change"
+            - generic [ref=f4e113]: "0"
+          - paragraph [ref=f4e114]: Nothing is waiting on Quality.
+        - generic [ref=f4e115]:
+          - generic [ref=f4e116]: No announcements
+          - button "Post announcement" [ref=f4e117] [cursor=pointer]
+      - generic [ref=f4e120]:
+        - generic [ref=f4e121]: Flight System · Flight Control · work order execution and quality records.
+        - button "Help" [ref=f4e122] [cursor=pointer]

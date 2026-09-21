@@ -1,0 +1,143 @@
+// Fresh browser contexts only: no access to the user's account or saved workspace.
+import assert from 'node:assert/strict';
+import { mkdir } from 'node:fs/promises';
+const { chromium } = await import(process.env.FLIGHT_PLAYWRIGHT || 'playwright');
+const browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
+try {
+  const demo = await browser.newPage();
+  await demo.goto(new URL('./fixtures/demo_publish.html', import.meta.url).href,{waitUntil:'domcontentloaded'});
+  await demo.locator('#sk-username').fill('demo');
+  await demo.locator('#sk-password').fill('demo1234');
+  await demo.locator('#sk-login-submit').click();
+  await demo.waitForFunction(() => !document.getElementById('sk-boot'));
+  const fixture = await demo.evaluate(() => structuredClone(state));
+  await demo.close();
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const errors = []; page.on('pageerror', e => errors.push(e.message));
+  await page.goto(process.env.FLIGHT_UI_URL || new URL('../index.html', import.meta.url).href,{waitUntil:'domcontentloaded'});
+  const password = 'Test-' + crypto.randomUUID();
+  for (const [id, value] of Object.entries({ 'sk-displayname': 'Master Test', 'sk-username': 'master-test', 'sk-password': password, 'sk-confirm': password })) await page.locator('#' + id).fill(value);
+  await page.locator('#sk-login-submit').click();
+  await page.waitForFunction(() => !document.getElementById('sk-boot'));
+  const result = await page.evaluate(fixture => {
+    const assert = (condition, message) => { if (!condition) throw Error(message); };
+    const check = r => { assert(r.ok, r.message); return r; };
+    const setRole = role => { const k='skyryse-mes-auth-v1', a=JSON.parse(localStorage.getItem(k));a.users.find(u=>u.username==='master-test').role=role;localStorage.setItem(k,JSON.stringify(a)); };
+    const caps=['view','raise-nc','submit-ecr','operate','operate-steps','split','request-pedigree','approve-pedigree','edit-wi','peer-review-wi','create-wo','adjust-wo','dispo-nc','push-software','assign-work','accept-software','safety-buyoff','mrb-cert','approve-wo','approve-wi','approve-nc','post-notice','manage-access'];
+    for (const cap of caps) assert(skAuth.can(cap), 'Missing Master capability: '+cap);
+    assert(FlightManeuver.seatsForRole('admin').length===4,'All MRB role choices');
+    const base=structuredClone(fixture);
+    // Exercise the production engine with a saved sample, not the demo engine.
+    base.profile={name:'Unassigned Test',role:'System Administrator',credentialId:'ACCT-unassigned'};
+    MES.stampRegister(base);
+    assert(MES.validate(base),'Initial sample is valid');
+    const template=base.orders.find(o=>o.status==='Building'&&!MES.engineeringChange(o)&&!MES.pendingSequenceChange(o)&&!MES.blockingTickets(o).length&&o.operations.some(x=>!x.done));
+    assert(template,'Building fixture');
+    const opId=template.operations.find(x=>!x.done).id;
+    function setup(type='Technician') {
+      const s=structuredClone(base),o=MES.getOrder(s,template.id),op=o.operations.find(x=>x.id===opId);
+      op.buyoffType=type;op.requiresTooling=false;op.requiresRecording=false;op.evidence=[];op.callouts=[];delete op.fodLevel;delete op.grounding;op.classification='Manufacturing';op.steps=[{id:'step-master',title:'Review work',instruction:'Review the work before buy-off.'}];op.stepChecks={};
+      assert(MES.validate(s),'Fixture for '+type+' is valid: '+JSON.stringify(MES.diagnose(s)));
+      return {s,o,op};
+    }
+    const beforeStamps=JSON.stringify(base.stamps);
+    for (const type of MES.BUYOFF_TYPES) {
+      const {s,o,op}=setup(type);
+      check(MES.setStepCheck(s,o.id,op.id,op.steps[0].id,true));
+      assert(op.stepChecks[op.steps[0].id].credentialId==='ACCT-master-test','Step attributed to account');
+      check(MES.completeOperation(s,o.id,op.id,'Isolated Master regression',{standardInspection:true}));
+      assert(op.buyoff.stamp===null,'Override is not a fabricated issued stamp');
+      assert(op.buyoff.credentialId==='ACCT-master-test','Buy-off attributed to account');
+      assert(op.buyoff.override.requiredTypes[0]===type,'Required buy-off type captured');
+      assert(op.buyoff.manifest.override.kind==='Master Access override','Manifest identifies override');
+      assert(/^[a-f0-9]{64}$/.test(op.buyoff.manifest.hash),'SHA-256 recorded');
+      const subject={orderId:o.id,operationId:op.id,title:op.title,note:'Isolated Master regression',stepChecks:op.stepChecks,evidenceIds:[],stamp:null,override:op.buyoff.override,tools:[]};
+      assert(MES.signManifest(s,'test',subject,op.buyoff.at).hash===op.buyoff.manifest.hash,'Override included in hash');
+      assert(MES.validate(s),'Valid after '+type+' buy-off');
+      assert(JSON.stringify(s.stamps)===beforeStamps,'Stamp register unchanged');
+    }
+    for (const role of ['general','technician','operator','me','swe','qe','qm','safety','cert']) {
+      setRole(role);const {s,o,op}=setup();
+      assert(!MES.masterAccess(),'Non-admin cannot get Master privileges');
+      assert(!MES.buyoffCredential(s.profile,'Technician').ok,'Chosen admin profile cannot grant a stamp');
+      op.steps=[];
+      assert(!MES.completeOperation(s,o.id,op.id,'Refused',{}).ok,'Non-admin without stamp refused: '+role);
+    }
+    setRole('admin');
+    {const {s,o,op}=setup();const later=o.operations[o.operations.indexOf(op)+1];
+      if(later) assert(!MES.completeOperation(s,o.id,later.id,'Out of sequence',{standardInspection:true}).ok,'Sequence still enforced');}
+    {const s=structuredClone(base),o=s.orders.find(o=>o.fair?.verified);
+      assert(o,'FAIR signature fixture');o.fair.status='Verified';o.fair.approved=null;
+      check(MES.approveFair(s,o.id,{}));
+      assert(o.fair.approved.by.override.kind==='Master Access override','FAIR bypass is explicit');
+      assert(o.fair.approved.manifest.override.account==='master-test','FAIR override signed');
+      assert(MES.validate(s),'Valid after FAIR approval');}
+    {const s=structuredClone(base),o=s.orders.find(o=>o.conformity?.some(p=>p.form));
+      assert(o,'8130-9 signature fixture');const p=o.conformity.find(p=>p.form);
+      p.status='8130-9 completed';p.aqi=null;p.mdlReceived=new Date().toISOString().slice(0,10);
+      p.form.prepared.by.credentialId='ACCT-master-test';
+      const self=MES.aqiSign8130_9(s,o.id,p.serial,{});
+      assert(!self.ok&&/independent/.test(self.message),'Independent 8130-9 signature enforced: '+self.message);
+      p.form.prepared.by.credentialId='ACCT-other-inspector';
+      check(MES.aqiSign8130_9(s,o.id,p.serial,{}));
+      assert(p.aqi.by.override.kind==='Master Access override','AQI override explicit');
+      assert(p.aqi.manifest.override.account==='master-test','AQI override signed');
+      assert(MES.validate(s),'Valid after Master AQI signature');}
+    {const {s,o,op}=setup();const t=check(MES.createTicket(s,o.id,op.id,{type:'NC',title:'Development use test',description:'Check role inheritance without losing independent approval.',hold:true}));
+      check(MES.dispositionTicket(s,o.id,t.id,{decision:'Use for Dev',note:'Development only.'}));
+      const c=MES.DEFECT_CODES[0],input={defectCode:c.code,subCode:c.subs[0].code};
+      assert(!MES.resolveTicket(s,o.id,t.id,'Independent approval needed.',input).ok,'Master cannot approve own disposition');
+      o.tickets.find(x=>x.id===t.id).dispo.credentialId='ACCT-other-engineer';
+      check(MES.resolveTicket(s,o.id,t.id,'Reviewed by Master.',input));
+      assert(MES.validate(s),'Valid after Master QA Manager approval');}
+    {const {s,o,op}=setup();assert(!MES.completeOperation(s,o.id,op.id,'Missing steps',{}).ok,'Incomplete work refused');
+      check(MES.createTicket(s,o.id,op.id,{type:'NC',title:'Test hold',description:'Hold must still block Master.',hold:true}));
+      assert(!MES.setStepCheck(s,o.id,op.id,op.steps[0].id,true).ok,'Hold blocks Master');}
+    const {s,o,op}=setup();check(MES.setStepCheck(s,o.id,op.id,op.steps[0].id,true));
+    state=s;lastSaved=structuredClone(s);view='order';selectedId=o.id;selectedOp=op.id;tab='operations';render();
+    return {types:MES.BUYOFF_TYPES,order:o.id,op:op.id};
+  },fixture);
+  assert.match(await page.locator('.steps-complete').innerText(),/Master Access override/);
+  // Role changes must refresh the open dialog and underlying buy-off without reload.
+  await page.getByRole('button',{name:'Your credentials',exact:true}).click();
+  const role=page.locator('[data-role-user="master-test"]');
+  await role.selectOption('qm');
+  assert.equal(await page.evaluate(()=>skAuth.role()),'qm');
+  assert.match(await page.locator('#profile-preview').innerText(),/Quality Manager/);
+  assert.match(await page.locator('.steps-complete').innerText(),/Buy-off blocked/);
+  await role.selectOption('general');
+  assert.equal(await role.inputValue(),'qm','Last access manager cannot be removed');
+  for(const width of [1440,390]) {
+    await page.setViewportSize({width,height:1000});
+    await role.selectOption('admin');
+    assert.equal(await page.evaluate(()=>skAuth.role()),'admin');
+    assert.equal(await page.evaluate(()=>state.profile.role),'System Administrator');
+    assert.match(await page.locator('#profile-preview').innerText(),/Master Access override/);
+    assert.match(await page.locator('.steps-complete').innerText(),/Master Access override/);
+    assert.match(await page.locator('.access-panel [role=status]').innerText(),/Saved: master-test now has Master Access/);
+    if(process.env.FLIGHT_QA_SCREENSHOTS){await mkdir(process.env.FLIGHT_QA_SCREENSHOTS,{recursive:true});await page.screenshot({path:process.env.FLIGHT_QA_SCREENSHOTS+'/role-switch-'+width+'.png',animations:'disabled'});}
+    await role.selectOption('qm');
+  }
+  // A stale control cannot grant access after the signed-in account loses authority.
+  await page.evaluate(()=>{const k='skyryse-mes-auth-v1',a=JSON.parse(localStorage.getItem(k));a.users[0].role='general';localStorage.setItem(k,JSON.stringify(a));});
+  await role.selectOption('admin');
+  assert.equal(await page.evaluate(()=>skAuth.role()),'general');
+  await page.evaluate(()=>{const k='skyryse-mes-auth-v1',a=JSON.parse(localStorage.getItem(k));a.users[0].role='qm';localStorage.setItem(k,JSON.stringify(a));});
+  await role.selectOption('admin');
+  await page.locator('#profile-form button[type=submit]').click();
+  assert.equal(await page.locator('#operation-form input[name=stampNumber]').count(),0);
+  if(await page.locator('#operation-form input[name=stdInspection]').count()) await page.locator('#operation-form input[name=stdInspection]').check();
+  await page.locator('.steps-complete [data-action=buyoff-now]').click();
+  assert.equal(await page.locator('#step-stamp-form input[name=pin]').count(),0);
+  if(process.env.FLIGHT_QA_SCREENSHOTS) {
+    await mkdir(process.env.FLIGHT_QA_SCREENSHOTS,{recursive:true});
+    for (const width of [1440,390]) {await page.setViewportSize({width,height:1000});await page.screenshot({path:process.env.FLIGHT_QA_SCREENSHOTS+'/master-buyoff-'+width+'.png',animations:'disabled'});}
+  }
+  await page.locator('#step-stamp-form button[type=submit]').click();
+  try { await page.waitForFunction(({order,op})=>MES.getOrder(state,order).operations.find(x=>x.id===op).done,result,{timeout:5000}); }
+  catch(error) { console.log(await page.evaluate(()=>({toast:document.querySelector('#toast')?.textContent,error:document.querySelector('#operation-error')?.textContent,dialog:document.querySelector('#dialog')?.textContent,valid:MES.validate(state),blocked:storageBlocked})),errors);throw error; }
+  await page.reload();await page.waitForFunction(()=>!document.getElementById('sk-boot'));
+  assert.equal(await page.evaluate(({order,op})=>MES.getOrder(state,order).operations.find(x=>x.id===op).buyoff.override.account,result),'master-test');
+  assert.deepEqual(errors,[]);
+  console.log('PASS: all '+result.types.length+' buy-off types, all roles, FAIR and AQI signatures, account attribution, signed override payload, ordinary-role refusal, independent approvals, holds, required steps, UI completion and persistence.');
+} finally { await browser.close(); }
