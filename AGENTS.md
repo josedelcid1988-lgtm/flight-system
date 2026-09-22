@@ -20,7 +20,7 @@ One product, three modules, all in the same file:
 - `demo.html`: demo build. Same app with the separation-of-duties, PIN and stamp
   gates relaxed and a sample data set loaded. Sign in demo / demo1234.
 - `tests/`: Playwright harnesses and their fixtures. See `TESTING.md`.
-- `VERSION.md`: what the current build contains. `ACCESS.md`: how the machines
+- `VERSION.md`: the only place the product build id is written. `ACCESS.md`: how the machines
   and Claude sessions share this repo.
 
 `demo.html` is generated from `index.html` by a build chain that does not live

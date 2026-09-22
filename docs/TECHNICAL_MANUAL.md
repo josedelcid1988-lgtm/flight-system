@@ -1,6 +1,6 @@
 # Flight Control MES · Technical Manual
 
-Version: build v47 (commit `37519f2`), 16 Sep 2026
+Build: the product build id is only in [VERSION.md](../VERSION.md). This manual does not carry its own build number.
 Scope: architecture, data model, access control, every workflow and its rules, printing, storage, integrations, known limits, operations and testing.
 Audience: developers, the backend engineer who will host it, QA/QMS owners validating it.
 

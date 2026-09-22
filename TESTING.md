@@ -1,5 +1,8 @@
 # Testing Flight System
 
+The product build id is written only in `VERSION.md`. Suite names such as
+`test_v80.mjs` record when that suite was added. They are not the build id.
+
 The app is a single HTML file with no backend. Every harness drives a real
 browser against a built copy, so a test failure is a real user-visible failure.
 

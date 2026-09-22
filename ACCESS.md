@@ -51,5 +51,5 @@ Both builds are single HTML files and run by opening them in a browser.
 - Commit and push before you leave a machine. An unpushed change is invisible
   to the other one.
 - `git log --oneline -5` shows what the last session did.
-- `VERSION.md` says what the current build contains; `TESTING.md` says how to
+- The product build id is written only in `VERSION.md`. `TESTING.md` says how to
   test it.

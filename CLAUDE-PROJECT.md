@@ -49,7 +49,7 @@ was just unclear.
 | File | Why |
 | --- | --- |
 | `AGENTS.md` | The rules and the shape of the codebase. |
-| `VERSION.md` | What the current build contains. |
+| `VERSION.md` | The only place the product build id is written, and what that build contains. |
 | `TESTING.md` | The suites, what passing looks like, the demo accounts. |
 | `ACCESS.md` | How the machines and Claude sessions share the repo. |
 

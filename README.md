@@ -2,7 +2,7 @@
 
 Skyryse in-house MES. Modules: Flight Control (work order execution and quality
 records), Flight Plan (planning), Flight Maneuver (corrective action).
-See VERSION.md for what is in this build and TESTING.md for the test suites.
+The product build id is written only in VERSION.md. See TESTING.md for the test suites.
 
 ## Original notes
 

@@ -1,4 +1,14 @@
-# Build v81 (20 Sep 2026)
+# Flight System build
+
+build: v81
+released: 2026-09-20
+
+This file is the only place the product build id is written. Do not copy it into
+other docs or into `index.html`. Point there instead.
+
+The build id is not the workspace schema (`state.version` in `index.html`) and
+not the suffix on the `skyryse-mes-*` storage keys. Those stay fixed so saved
+workspaces still open.
 
 The product is named **Flight System**. It carries three modules: Flight Control
 (work order execution and quality records), Flight Plan (planning) and Flight
@@ -9,7 +19,7 @@ changed, and storage keys and record numbers were left alone.
 account has full access, the sample data set loads once, and the separation of
 duties and PIN gates are relaxed. Sign in with demo / demo1234.
 
-## In this build since v47
+## In this build
 
 - Flight Maneuver: NC/IDR intake, MRB (Quality, Manufacturing Engineering,
   Engineering, and Certification on Production FAI and Mfg. orders), CAR with
