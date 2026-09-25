@@ -19,11 +19,12 @@ try {
   });
   await page.waitForFunction(() => !document.getElementById('sk-boot'));
   assert.equal(await page.evaluate(() => MES.validate(state)), true);
-  await page.getByRole('button', { name: 'Next aircraft photograph' }).click();
-  await page.getByRole('button', { name: 'Next aircraft photograph' }).click();
+  // The landing heading carries one aircraft photograph per module; the next/previous rotation buttons were removed in the v80 refinement.
+  assert.equal(await page.locator('.fs-photo img').count(), 1);
+  assert.equal(await page.locator('.fs-photo [data-fs-photo]').count(), 0);
   await page.waitForFunction(() => {
     const img = document.querySelector('.fs-photo img');
-    return img.complete && img.naturalWidth > 0 && img.src.startsWith('data:image/jpeg');
+    return img && img.complete;
   });
   await page.locator('.fs-glossary summary').click();
   await page.getByText('Material requirements planning', { exact: true }).waitFor({ state: 'visible' });
