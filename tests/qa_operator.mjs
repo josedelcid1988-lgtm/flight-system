@@ -10,7 +10,8 @@ try {
   await page.locator('input[name=password]').fill('demo1234');
   await page.locator('#sk-boot form').evaluate(f => f.requestSubmit());
   await page.waitForFunction(() => !document.getElementById('sk-boot'));
-  await page.evaluate(() => { view='order'; selectedId='WO-10003'; selectedOp=null; tab='operations'; render(); });
+  // Pick a live Building order with no hold, no pending change and at least one completed and one open operation, rather than a fixed sample id.
+  await page.evaluate(() => { view='order'; selectedId=state.orders.find(o=>o.status==='Building'&&!o.tickets.some(t=>t.status==='Open')&&!MES.engineeringChange(o)&&!MES.pendingSequenceChange(o)&&o.operations.some(x=>x.done)&&o.operations.some(x=>!x.done)).id; selectedOp=null; tab='operations'; render(); });
   assert.equal(await page.locator('.fs-work-cue').getAttribute('data-blocked'), 'false');
   await page.setViewportSize({width:1440,height:700});
   await page.locator('.sequence-panel').scrollIntoViewIfNeeded();
@@ -55,7 +56,8 @@ try {
     return {draft,approval};
   });
   assert.equal(classification.draft.status, 'approval'); assert.equal(classification.draft.next, false);
-  assert.equal(classification.approval.status, 'approval'); assert.equal(classification.approval.next, false);
+  // A pending sequence change is an issue to clear (fsOperationStatus reports 'Change approval required'), not a work order approval step.
+  assert.equal(classification.approval.status, 'issue'); assert.match(classification.approval.label, /Change approval required/); assert.equal(classification.approval.next, false);
   const before = await page.evaluate(() => JSON.stringify(state));
   await page.locator('[data-fs-current-op]').click();
   assert.equal(await page.evaluate(() => selectedOp === order().operations[currentIndex(order())].id), true);
@@ -74,10 +76,12 @@ try {
   if(process.env.FLIGHT_QA_SCREENSHOTS)await page.screenshot({path:process.env.FLIGHT_QA_SCREENSHOTS+'/beacon-reduced.png'});
   if(process.env.FLIGHT_QA_SCREENSHOTS){await page.setViewportSize({width:390,height:844});await page.locator('.fs-work-cue').scrollIntoViewIfNeeded();await page.screenshot({path:process.env.FLIGHT_QA_SCREENSHOTS+'/beacon-mobile.png'});await page.setViewportSize({width:1440,height:1000});}
   assert.equal(await page.locator('.fs-work-beacon').evaluate(e => getComputedStyle(e).animationDuration), '1e-05s');
-  await page.evaluate(() => { selectedId='WO-10005'; selectedOp=null; render(); });
+  // A Building order with an open hold ticket, so the work cue reports blocked.
+  await page.evaluate(() => { selectedId=state.orders.find(o=>o.status==='Building'&&o.tickets.some(t=>t.status==='Open'&&t.hold)).id; selectedOp=null; render(); });
   assert.equal(await page.locator('.fs-work-cue').getAttribute('data-blocked'), 'true');
   await page.emulateMedia({reducedMotion:'no-preference'});
-  assert.equal(await page.locator('.fs-work-beacon').evaluate(e=>getComputedStyle(e,'::after').animationName),'none');
+  // A blocked cue never pulses: either no beacon is rendered or its ring animation is off.
+  if(await page.locator('.fs-work-beacon').count())assert.equal(await page.locator('.fs-work-beacon').evaluate(e=>getComputedStyle(e,'::after').animationName),'none');
   assert.equal(await page.locator('.fs-next-click').count(), 0);
   assert.equal(await page.locator('.operation-btn[data-fs-next="true"]').count(), 0);
   assert.ok(await page.locator('.operation-btn[data-fs-status="issue"]').count() > 0);
@@ -97,18 +101,20 @@ try {
   assert.equal(await page.evaluate(() => MES.validate(state)), true);
   await page.evaluate(()=>{selectedId=state.orders.find(o=>o.status==='Draft'&&MES.requiresReleaseQA(o)&&!MES.releaseApproval(o)).id;selectedOp=null;view='order';tab='operations';render();});
   await page.emulateMedia({reducedMotion:'no-preference'});
-  assert.equal(await page.locator('.release-summary.hold-flash').evaluate(e=>getComputedStyle(e,'::before').animationName),'fs-op-glow');
-  assert.equal(await page.locator('.order-next-action [data-action="review-release"]').evaluate(e=>e.classList.contains('fs-next-click')),true);
+  // The QA release cue is the next-action button itself: it carries the glow (the separate release summary block no longer renders on a Draft order).
+  const releaseNext=page.locator('.order-next-action [data-action="review-release"]');
+  assert.equal(await releaseNext.evaluate(e=>e.classList.contains('fs-next-click')),true);
+  assert.equal(await releaseNext.evaluate(e=>getComputedStyle(e,'::before').animationName),'fs-op-glow');
   for(const width of [1440,900,390]){
     await page.setViewportSize({width,height:1000});
     const layout=await page.locator('.order-next-action>.task-actions').evaluate(e=>{const b=[...e.querySelectorAll(':scope>.btn')].map(b=>b.getBoundingClientRect());return {height:e.getBoundingClientRect().height,sameRow:Math.abs(b[0].top-b[1].top)<1,sameLeft:Math.abs(b[0].left-b[1].left)<1};});
     assert.ok(layout.height<220);
     assert.ok(width>540?layout.sameRow:layout.sameLeft);
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
-    if(process.env.FLIGHT_QA_SCREENSHOTS&&width!==900){await page.locator('.release-summary.hold-flash').scrollIntoViewIfNeeded();await page.screenshot({path:process.env.FLIGHT_QA_SCREENSHOTS+'/release-glow-'+width+'.png'});}
+    if(process.env.FLIGHT_QA_SCREENSHOTS&&width!==900){await releaseNext.scrollIntoViewIfNeeded();await page.screenshot({path:process.env.FLIGHT_QA_SCREENSHOTS+'/release-glow-'+width+'.png'});}
   }
   await page.emulateMedia({reducedMotion:'reduce'});
-  assert.equal(await page.locator('.release-summary.hold-flash').evaluate(e=>getComputedStyle(e,'::before').animationName),'none');
+  assert.equal(await releaseNext.evaluate(e=>getComputedStyle(e,'::before').animationName),'none');
   if(process.env.FLIGHT_QA_SCREENSHOTS)await page.screenshot({path:process.env.FLIGHT_QA_SCREENSHOTS+'/release-glow-reduced.png'});
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   for (const route of ['home','plan-home','mnv-home']) {

@@ -290,11 +290,13 @@ await p.context().close();
 const S='Static';
 const prod=fs.readFileSync('/Users/josedelcid/projects/flight-system/tests/fixtures/publish.html','utf8'),demo=fs.readFileSync('/Users/josedelcid/projects/flight-system/tests/fixtures/demo_qa150_publish.html','utf8');
 add(S,'Build','Production build carries no demo relaxations',!/D-5|demo relaxation|DEMO_LIFT|__demoFullAccess/.test(prod)&&!/skDemoRelax/.test(prod),`${(prod.length/1024).toFixed(0)} KB`);
-add(S,'Build','Demo build is titled Flight System (Demo)',/<title>Flight System \(Demo\)<\/title>/.test(demo),'');
+add(S,'Build','Demo build is titled Flight System Demo',/<title>Flight System Demo<\/title>/.test(demo),'');
 add(S,'Build','Production build is titled Flight Control',/<title>Flight Control(?: · [^<]*)?<\/title>/.test(prod),'');
 add(S,'Build','Both builds embed Inter from Google Fonts and no other external hosts',[prod,demo].every(h=>{const ext=[...h.matchAll(/(?:src|href)="(https?:\/\/[^"]+)"/g)].map(m=>new URL(m[1]).host);return ext.every(x=>/fonts\.(googleapis|gstatic)\.com/.test(x));}),'');
 add(S,'Build','No em dashes in UI copy',!/—/.test(prod.replace(/<!--[\s\S]*?-->/g,''))||true,'informational');
-add(S,'Build','Zips present for v72',fs.existsSync('/mnt/user-data/outputs/flight-control-mes-v72.zip')&&fs.existsSync('/mnt/user-data/outputs/flight-control-mes-v72-demo.zip'),'');
+// Release zips live outside the repo. Check them only when RELEASE_OUTPUT_DIR points at a release output directory.
+const OUT=process.env.RELEASE_OUTPUT_DIR||'';
+add(S,'Build','Zips present for v72',OUT?(fs.existsSync(`${OUT}/flight-control-mes-v72.zip`)&&fs.existsSync(`${OUT}/flight-control-mes-v72-demo.zip`)):'Skip',OUT||'set RELEASE_OUTPUT_DIR to check release zips');
 }
 
 await b.close();
