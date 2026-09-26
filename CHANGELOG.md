@@ -35,6 +35,12 @@ nothing in them is rewritten.
   order (as a sub-assembly or a rework source), cannot have a conformity package, 8130-9 or 8130-3, is never
   an FAI order or FAIR, and its pedigree never changes. NFF orders no longer use up a WI revision's
   first-article slot. Enforced in the engine; no role or override lifts it.
+- **FAIR as AS9102 Rev C forms.** On screen, Form 1, Form 2, Form 3 and Review and sign are separate pages.
+  The print and download follow the Rev C boxes: Form 2 box 8 is the special process supplier code, and
+  Form 3 is the Rev C grid (5 to 12, box 10 designed / qualified tooling) with Skyryse's revision, sample
+  size, quantity, inspector, date and M&TE in a marked supplemental section. Box 22 (FAI reviewer /
+  approval) is an optional second signature by someone other than the verifier; unsigned, boxes 22 and 23
+  carry the verifier as before.
 - **AQI self-signature with a warning.** The person who completed an 8130-9 may give the AQI signature after
   acknowledging a warning; the signature and its manifest record the self-signature.
 - New suite `test_authority`; `tests/lib/grants.mjs` grants authorities in suites that exercise other rules.
