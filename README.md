@@ -32,7 +32,7 @@ At 67 megapixels it was the dominant cause of slow and failed loads on mobile.
 
 ### Correctness
 
-- Tab title read `Flight Control · null` on an empty workspace — `selectedId`
+- Tab title read `Flight Control · null` on an empty workspace: `selectedId`
   was interpolated while null.
 - `.sequence-panel` had `overflow:hidden`, clipping 77 px of operation labels
   on iPhone with no way to scroll to them.
@@ -55,5 +55,5 @@ block so they can be reviewed or reverted independently of the theme layer.
 ## Not done
 
 No AWS, NetSuite, or Jira integration layer. The seam for one, whenever it is
-built, is the pair of functions `save()` and `mediaCommit()` — every state
+built, is the pair of functions `save()` and `mediaCommit()`; every state
 mutation funnels through them to that one `localStorage` key.

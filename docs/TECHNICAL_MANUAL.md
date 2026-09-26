@@ -340,13 +340,13 @@ Per-operation local messages with Slack thread references. Not synchronized with
 | Content | Internal | External |
 |---|:-:|:-:|
 | Metadata (part, serial, revisions, pedigree, status, closed-as) | ✔ | ✔ |
-| Pre-release QA record | ✔ | — |
+| Pre-release QA record | ✔ | No |
 | Engineering change control | ✔ | ✔ |
 | Operation sequence with steps as rows under each operation (checks, torque, consumable lots) | ✔ | ✔ |
 | Callout notes (ESD, FOD level, tool control, MSDS) | ✔ | ✔ |
-| Operation assignee | ✔ | — |
+| Operation assignee | ✔ | No |
 | Linked records (tickets, ATP reports, evidence metadata) | ✔ | ✔ |
-| Team discussions | ✔ | — |
+| Team discussions | ✔ | No |
 
 Record tab: **Export internal JSON** of the work order.
 
