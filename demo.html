@@ -1,4 +1,4 @@
-<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v81"><meta name="fs-build-sha256" content="50c57c34df6589d7354070e90024b81546f9d7a74a90808ffc6339151d5158ee"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v81"><meta name="fs-build-sha256" content="457883805723baee50ae7a8494edd63b3dc47ddbeb1e1c59c6b5c17fc99f5413"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
 <script>window.skTable=window.skTable||{state:function(){return {sort:{col:null,dir:'asc'},filters:{}};},selected:function(){return [];},active:function(){return false;},match:function(){return true;},matchAny:function(){return true;},sort:function(){return {col:null,dir:'asc'};},reset:function(){},save:function(){},views:function(){return [];}};</script>
 
 <html lang="en">
@@ -4421,7 +4421,7 @@ const OP_BOM_MAX = 12;
     const at = new Date().toISOString();
     fair.reviewed = { by, at, manifest: signManifest(state, 'AS9102 FAIR reviewed and approved (blocks 22 and 23)', { fair: fairId(order), verified: fair.verified.manifest.hash, ...(v.override ? { override: v.override } : {}) }, at) };
     record(state, order, `AS9102 FAIR ${fairId(order)} reviewed and approved in box 22 by ${by.name}.`);
-    return { ok: true, message: 'Box 22 signed. Skyryse QA approval (blocks 24 and 25) is next.' };
+    return { ok: true, message: 'Box 22 signed. The Skyryse QA approval is next.' };
   }
   function approveFair(state, id, execution) {
     { const d = denied('approve-wo', 'give the Skyryse QA approval'); if (d) return d; }
@@ -4430,9 +4430,9 @@ const OP_BOM_MAX = 12;
     if (!plain(fair.reviewed)) return fail('Box 22 is not signed. A second person reviews and approves the FAIR in box 22 before the Skyryse QA approval.');
     const v = inspectorSign(state, ['Quality', '8130-9 Authorized Inspector'], execution); if (!v.ok) return v;
     const at = new Date().toISOString();
-    fair.approved = { by: signerOf(state, v), at, manifest: signManifest(state, 'AS9102 FAIR Skyryse QA approval (blocks 24 and 25)', { fair: fairId(order), verified: fair.verified.manifest.hash, ...(v.override ? { override: v.override } : {}) }, at) };
+    fair.approved = { by: signerOf(state, v), at, manifest: signManifest(state, 'AS9102 FAIR Skyryse QA approval', { fair: fairId(order), verified: fair.verified.manifest.hash, ...(v.override ? { override: v.override } : {}) }, at) };
     fair.status = 'Approved';
-    record(state, order, `AS9102 FAIR ${fairId(order)} approved by Skyryse QA (blocks 24 and 25).`);
+    record(state, order, `AS9102 FAIR ${fairId(order)} approved by Skyryse QA.`);
     return { ok: true, message: `FAIR ${fairId(order)} approved.` };
   }
   function reopenFair(state, id, reason) {
@@ -10208,7 +10208,7 @@ function fairPanel(o){
   const review=`<h3>Review IAW TR-850-001</h3>${gaps.length?`<ul class="conf-gaps">${gaps.map(g=>`<li>${esc(g)}</li>`).join('')}</ul>`:`<p class="conf-ok">${icon('check')} Every block is filled, all ${f.chars.length} characteristics are accounted for, and no NC is open.</p>`}`;
   const sigs=`<h3>Signatures</h3><div class="fair-sigs"><div><p class="small muted">Blocks 20 and 21 · FAIR verified by</p>${f.verified?`<p><strong>${esc(f.verified.by.name)}</strong>${f.verified.by.override?' · Master Access override':''}${f.verified.by.stamp?` · stamp ${esc(f.verified.by.stamp.number)}`:''}<br><span class="mono">${esc(f.verified.at.slice(0,10))}</span></p>`:edit?`<form data-form="fair-verify" data-order="${oid}">${fairPin('Your stamp PIN')}<p class="form-error" role="alert"></p><div class="fair-btns"><button class="btn primary" type="submit" ${gaps.length?'disabled title="Clear the review items first"':''}>Verify FAIR</button></div></form>`:'<p class="muted">Not verified</p>'}</div>
     <div><p class="small muted">Blocks 22 and 23 · FAIR reviewed / approved by (a second person)</p>${f.reviewed?`<p><strong>${esc(f.reviewed.by.name)}</strong>${f.reviewed.by.override?' · Master Access override':''}${f.reviewed.by.stamp?` · stamp ${esc(f.reviewed.by.stamp.number)}`:''}<br><span class="mono">${esc(f.reviewed.at.slice(0,10))}</span></p>`:f.status==='Verified'&&qa?`<form data-form="fair-review" data-order="${oid}"><p class="small muted">AS9102 Rev C: someone other than the verifier reviews and approves the FAIR here. The Skyryse QA approval waits for it.</p>${fairPin('Your stamp PIN')}<p class="form-error" role="alert"></p><div class="fair-btns"><button class="btn" type="submit">Sign box 22</button></div></form>`:`<p class="muted">${f.status==='Open'?'After verification':f.status==='Approved'?'Approved before box 22 was required; the verifier covers boxes 22 and 23':'Waiting for a second person'}</p>`}</div>
-    <div><p class="small muted">Blocks 24 and 25 · Skyryse QA approval</p>${f.approved?`<p><strong>${esc(f.approved.by.name)}</strong>${f.approved.by.override?' · Master Access override':''}${f.approved.by.stamp?` · stamp ${esc(f.approved.by.stamp.number)}`:''}<br><span class="mono">${esc(f.approved.at.slice(0,10))}</span></p>`:f.status==='Verified'&&f.reviewed&&qa?`<form data-form="fair-approve" data-order="${oid}">${fairPin('Your stamp PIN')}<p class="form-error" role="alert"></p><div class="fair-btns"><button class="btn primary" type="submit">Approve FAIR</button></div></form>`:`<p class="muted">${f.status==='Verified'?'Waiting for box 22':'Waiting for verification'}</p>`}</div></div>
+    <div><p class="small muted">Skyryse QA approval (supplemental; boxes 24 and 25 are left for a customer)</p>${f.approved?`<p><strong>${esc(f.approved.by.name)}</strong>${f.approved.by.override?' · Master Access override':''}${f.approved.by.stamp?` · stamp ${esc(f.approved.by.stamp.number)}`:''}<br><span class="mono">${esc(f.approved.at.slice(0,10))}</span></p>`:f.status==='Verified'&&f.reviewed&&qa?`<form data-form="fair-approve" data-order="${oid}">${fairPin('Your stamp PIN')}<p class="form-error" role="alert"></p><div class="fair-btns"><button class="btn primary" type="submit">Approve FAIR</button></div></form>`:`<p class="muted">${f.status==='Verified'?'Waiting for box 22':'Waiting for verification'}</p>`}</div></div>
 `;
   const actions=`<div class="fair-btns"><button class="btn" data-action="fair-print" data-order="${oid}">Print FAIR</button><button class="btn" data-action="fair-download" data-order="${oid}">Download FAIR (Forms 1, 2, 3)</button>${qa&&f.status!=='Open'&&o.status!=='Closed'?`<button class="btn quiet" data-action="fair-reopen" data-order="${oid}">Reopen</button>`:''}</div>`;
   const pages=[['1','Form 1',f1],['2','Form 2',f2],['3','Form 3',f3],['sign','Review and sign',review+sigs]],cur=pages.some(x=>x[0]===fairPage)?fairPage:'1';
@@ -10228,7 +10228,7 @@ function fairHtml(o){const f=o.fair,box22=f.reviewed||(f.status==='Approved'?f.v
   <tr>${box(13,'Detail FAI / Assembly FAI',F1.detailOrAssembly)}${box(14,'Full FAI / Partial FAI · reason',`${F1.type} FAI · ${F1.reasons.join(', ')}${F1.type==='Partial'?` · Baseline ${F1.baselinePart}, FAIR ${F1.baselineFair} · ${F1.reason}`:''}`,3)}</tr></table>
   <p><strong>Index of part numbers or sub-assembly numbers required to make the assembly noted above</strong></p>${tbl(['15. Part number','16. Part name','17. Part type','18. FAIR identifier'],F1.index.map(x=>[x.pn,x.name,x.type,x.fairId]))}
   <table><tr>${box(19,'Does the FAIR contain a documented nonconformance(s)?',`${F1.nonconformance}${F1.ncNumbers.length?` · ${F1.ncNumbers.join(', ')}`:''}`,2)}${box(20,'FAIR verified by',sig(f.verified))}${box(21,'Date',day(f.verified))}</tr>
-  <tr>${box(22,'FAIR reviewed / approved by',sig(box22))}${box(23,'Date',day(box22))}${box(24,'Customer approval (Skyryse QA)',sig(f.approved))}${box(25,'Date',day(f.approved))}</tr>
+  <tr>${box(22,'FAIR reviewed / approved by',sig(box22))}${box(23,'Date',day(box22))}${box(24,'Customer approval','')}${box(25,'Date','')}</tr>
   <tr>${box(26,'Comments',F1.comments,4)}</tr></table></div>
   <div class="page"><h1>AS9102 Form 2: Product Accountability: Materials, Special Processes, and Functional Testing</h1>
   <table><tr>${box(1,'Part number',F1.partNumber)}${box(2,'Part name',F1.partName)}${box(3,'Serial number',F1.serials.join(', '))}${box(4,'FAIR identifier',F1.fairId)}</tr></table>
@@ -10240,7 +10240,7 @@ function fairHtml(o){const f=o.fair,box22=f.reviewed||(f.status==='Approved'?f.v
   ${tbl(['5. Char no.','6. Reference location','7. Characteristic designator','8. Requirement','9. Results','10. Designed / qualified tooling','11. Nonconformance number','12. Additional data / comments'],snap.chars.map(c=>[c.id.slice(2),c.ref,c.designator,c.requirement,c.result,c.designedTooling||'',c.nc,c.comments]))}
   <table><tr>${box('','Prepared by (signature indicates all characteristics are accounted for and meet the drawing or are dispositioned)',f.verified?`${f.verified.by.name}${f.verified.by.stamp?` · stamp ${f.verified.by.stamp.number}`:''}`:'',2)}${box('','Date',day(f.verified))}</tr></table>
   <h2>Supplemental data (Skyryse Work Order Inspection Report V.1, not an AS9102 field)</h2>
-  <table><tr>${box('1A','Revision',F1.partRevision)}${box('3A','Sample size',f.sampleSize??'')}${box('3B','Quantity',o.quantity)}</tr></table>
+  <table><tr>${box('1A','Revision',F1.partRevision)}${box('3A','Sample size',f.sampleSize??'')}${box('3B','Quantity',o.quantity)}</tr><tr>${box('','Skyryse QA approval',sig(f.approved),2)}${box('','Date',day(f.approved))}</tr></table>
   ${tbl(['5. Char no.','9A. Inspector','9B. Date','M&TE name and tool number'],snap.chars.map(c=>[c.id.slice(2),c.inspector,c.date,c.tool]))}
   ${f.verified?`<p class="note">Record hash SHA-256 ${e((f.verified.manifest||{}).hash)}${f.approved?` · QA approval ${e((f.approved.manifest||{}).hash)}`:''}</p>`:''}</div></body></html>`;}
 // ---------- LRU conformity package (SOP-860-002) and FAA Form 8130-9 ----------
