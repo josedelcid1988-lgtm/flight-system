@@ -41,9 +41,10 @@ below exist for AS9100 and 14 CFR reasons; do not "simplify" them away.
 
 1. Separation of duties. The person who does a thing cannot approve it: the
    author of a WI cannot release it, the peer reviewer cannot release it, the
-   requester of a closure cannot approve it, one person holds one MRB seat, and
-   the person who prepares an 8130-9 cannot sign it as the authorized inspector.
-   The demo build lifts these; the production build must not.
+   requester of a closure cannot approve it, one person holds one MRB seat, the
+   person who prepares an 8130-9 cannot sign it as the authorized inspector, and
+   nobody inspects their own work. The demo build lifts these; the production
+   build must not. `tests/test_frozen_contract.mjs` fails if one changes.
 2. Every approval and buy-off writes a record with the person, their credential,
    the time and a SHA-256 signature manifest. Never drop those fields.
 3. State is re-validated on every write and rolled back if it would leave the

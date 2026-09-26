@@ -384,7 +384,7 @@ See `docs/BACKEND_CONTRACT.md` for endpoints. Summary:
 
 ### 15.1 Deploy
 
-Static hosting of `index.html` plus `assets/` (hero images). Published today as a private Claude artifact and in the private GitHub repo `josedelcid1988-lgtm/flight-control-mes` (`main`).
+Static hosting of `index.html` plus `assets/` (hero images). The code of record is this repository (`main`); CI builds nothing, so the file on `main` is the file to host. The optional persistence mirror runs beside it (`server/README.md`).
 
 ### 15.2 Backup and reset
 

@@ -11,6 +11,9 @@ open as they are.
 
 ### Controls
 
+- **The author of a WI cannot release it.** Every edit to a draft revision records its author, and QA
+  release, release against the drawing ECO and the Safety Team buy-off release refuse an author. Only
+  the peer reviewer was refused before (`KNOWN-ISSUES.md` issue 7).
 - **Nobody inspects their own work.** An inspection buy-off, and a step check on an inspection
   operation, are refused when the person did any build operation the inspection covers. (Rejecting an
   inspection is not restricted: it only ever raises an NC.) No role is exempt, including Master Access and Support Access. Quality holds the
@@ -45,9 +48,13 @@ open as they are.
 ### Demo build
 
 - `demo.html` and the demo fixtures are generated from `index.html` by `tools/build-demo.mjs`, which
-  applies 29 numbered deviations, each marked `DEMO D-n` in the output and listed in
+  applies 30 numbered deviations, each marked `DEMO D-n` in the output and listed in
   `docs/DEMO_DEVIATIONS.md`. `--check` fails on any drift.
 - Pilot seats (tech, quality, mfgeng, operations, engineering) keep their real role in the demo.
+- The demo writes its sample workspace before the app reads storage, so it opens populated without a
+  reload (this removed a race in `qa_multi` on a busy machine, `KNOWN-ISSUES.md` issue 11).
+- The demo writes its sample workspace before the app reads storage, so it opens populated without a
+  reload (this removed a race in `qa_multi` on a busy machine, `KNOWN-ISSUES.md` issue 11).
 - Every demo page, print and download says DEMO, NOT FOR ACCEPTANCE.
 
 ### Tests and CI
@@ -66,6 +73,8 @@ open as they are.
 ### Text
 
 - No em dashes in the product, the docs or the code comments.
+- Real people's names in the reference data and samples are replaced with fictional ones.
+- `docs/HANDOVER.md` for the in-house developer and IT.
 
 ## Build v81, 20 September 2026
 

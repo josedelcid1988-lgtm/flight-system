@@ -1,6 +1,7 @@
 # Working on Flight System from more than one place
 
-GitHub is the single copy of record: `josedelcid1988-lgtm/flight-system` (private).
+GitHub is the single copy of record: `<owner>/flight-system` (private), where
+`<owner>` is the GitHub account or organization that holds the repository.
 Everything else (a laptop, a Claude session, a published artifact) is a working
 copy of what is on `main`.
 
@@ -18,7 +19,7 @@ git add -A && git commit -m "what changed" && git push
 ## Work computer, first time
 
 1. Install the GitHub CLI, then `gh auth login` and pick HTTPS.
-2. `gh repo clone josedelcid1988-lgtm/flight-system` into a working folder.
+2. `gh repo clone <owner>/flight-system` into a working folder.
 
 Every time after that: `git pull` before editing, `git push` when done. Pull
 first, always: the app is one large HTML document, so two machines editing it
@@ -42,7 +43,7 @@ in a chat window.
 - Open the repo on github.com and download `index.html` (production) or
   `demo.html` (demo) from the file view.
 - Or from any machine with the CLI:
-  `gh repo clone josedelcid1988-lgtm/flight-system -- --depth 1`
+  `gh repo clone <owner>/flight-system -- --depth 1`
 
 Both builds are single HTML files and run by opening them in a browser.
 

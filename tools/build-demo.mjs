@@ -53,6 +53,7 @@ export function buildDemo(production, dataset) {
   const ctx = {
     seed: JSON.stringify(JSON.parse(read(`tools/demo/seed-${dataset}.json`))),
     accounts: JSON.stringify(JSON.parse(read('tools/demo/accounts.json'))),
+    seedMark,
     overlay: read('tools/demo/overlay.js').replace('__SEED_MARK__', seedMark),
   };
   if (ctx.seed.includes('</script')) throw new Error(`tools/demo/seed-${dataset}.json contains "</script" and would break the page.`);

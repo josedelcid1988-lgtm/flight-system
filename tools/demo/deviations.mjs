@@ -23,9 +23,9 @@ const LIST = [
     find: 'document.title=`Flight System · ', count: 1,
     replace: (ctx, m, id) => `/* DEMO ${id} */document.title=\`Flight System Demo · ` },
   { area: 'Data', title: 'Sample workspace loaded on first open',
-    why: 'The demo opens on a populated workspace (the curated set for demo.html, 150 work orders for the regression fixtures) instead of an empty one.',
+    why: 'The demo opens on a populated workspace (the curated set for demo.html, 150 work orders for the regression fixtures) instead of an empty one. The workspace is written in the head, before the app reads storage, so the first open needs no reload.',
     find: '<title>Flight System Demo</title>', count: 1,
-    replace: (ctx, m, id) => `<title>Flight System Demo</title>\n<!-- DEMO ${id} --><script>window.__DEMO_SEED=${ctx.seed};</script>` },
+    replace: (ctx, m, id) => `<title>Flight System Demo</title>\n<!-- DEMO ${id} --><script>window.__DEMO_SEED=${ctx.seed};(function(){try{if(!localStorage.getItem(${JSON.stringify(ctx.seedMark)})){localStorage.setItem('skyryse-mes-work-order-qa100-v1',JSON.stringify(window.__DEMO_SEED));localStorage.setItem(${JSON.stringify(ctx.seedMark)},new Date().toISOString());}}catch(e){}})();</script>` },
   { area: 'Accounts', title: 'Demo accounts preloaded; pilot seats named',
     why: 'Sign in without setting up accounts (password demo1234). The same script names the pilot seats that keep their real role and defines window.__demoFull() for every other account.',
     find: '<script>\nfunction skBoot(){', count: 1,
@@ -130,6 +130,11 @@ const LIST = [
     why: 'Loads the sample workspace once, issues stamps to the pilot accounts, seeds a PFMEA example, activates the generic role stamps and shows DEMO, NOT FOR ACCEPTANCE on every page. Source: tools/demo/overlay.js.',
     find: /<\/body><\/html>\n?$/, count: 1,
     replace: (ctx, m, id) => `<script>\n${ctx.overlay.replace('DEMO OVERLAY', `DEMO ${id}`)}</script>\n</body></html>\n` },
+  // Appended after the overlay so the ids above stay stable (ids come from list position).
+  { area: 'Separation of duties', title: 'The author of a master WI may release it',
+    why: 'One person can write a WI and release it, so a demo can be walked alone. Production refuses this to every role, Master Access and Support Access included.',
+    find: '  const wiAuthorRefusal = (state, wi) => wiAuthors(wi).has(actor(state).credentialId) ?', count: 1,
+    replace: (ctx, m, id) => `  const wiAuthorRefusal = (state, wi) => false /* DEMO ${id} */ && wiAuthors(wi).has(actor(state).credentialId) ?` },
 ];
 
 export const DEVIATIONS = LIST.map((d, i) => Object.freeze({ ...d, id: `D-${i + 1}` }));

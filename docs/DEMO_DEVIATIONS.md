@@ -19,7 +19,7 @@ The accounts `tech`, `quality`, `mfgeng`, `operations`, `engineering` are pilot 
 their real role (Technician, Quality, Manufacturing Engineering, Operations, Engineering) so a pilot
 can rehearse the real hand-offs. Every other demo account (`demo`, `master`, `safety`,
 `certification` and any account a person creates) has full access (D-6 to D-10). The stamp,
-PIN and separation-of-duties relaxations (D-13 to D-19; D-20 to D-27) apply to every
+PIN and separation-of-duties relaxations (D-13 to D-19; D-20 to D-30) apply to every
 demo account so no scenario stalls. Sign in with any account and the password `demo1234`.
 
 Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-28 to D-29).
@@ -40,7 +40,7 @@ Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-2
 | --- | --- | --- | --- | --- |
 | D-1 | Identity | Page title reads Flight System Demo | Anyone looking at a tab or a bookmark can tell the demo from the production build. | 1 |
 | D-2 | Identity | Tab title reads Flight System Demo on every view | The title the app sets on each render keeps the word Demo. | 1 |
-| D-3 | Data | Sample workspace loaded on first open | The demo opens on a populated workspace (the curated set for demo.html, 150 work orders for the regression fixtures) instead of an empty one. | 1 |
+| D-3 | Data | Sample workspace loaded on first open | The demo opens on a populated workspace (the curated set for demo.html, 150 work orders for the regression fixtures) instead of an empty one. The workspace is written in the head, before the app reads storage, so the first open needs no reload. | 1 |
 | D-4 | Accounts | Demo accounts preloaded; pilot seats named | Sign in without setting up accounts (password demo1234). The same script names the pilot seats that keep their real role and defines window.__demoFull() for every other account. | 1 |
 | D-5 | Data | Separate workspace storage key | The demo never reads or overwrites a production workspace kept in the same browser. The production key stays frozen. | 1 |
 | D-6 | Roles | Full capabilities for accounts that are not pilot seats | A solo walk-through can run every workflow. Pilot seats keep their real role. | 1 |
@@ -67,3 +67,4 @@ Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-2
 | D-27 | Separation of duties | Any valid credential counts as a QA credential for release records | Release approvals recorded by any demo account validate. | 1 |
 | D-28 | Marking | DEMO, NOT FOR ACCEPTANCE on every print and download | A printed or downloaded demo record cannot be mistaken for a production record. | 1 |
 | D-29 | Marking | Demo overlay appended | Loads the sample workspace once, issues stamps to the pilot accounts, seeds a PFMEA example, activates the generic role stamps and shows DEMO, NOT FOR ACCEPTANCE on every page. Source: tools/demo/overlay.js. | 1 |
+| D-30 | Separation of duties | The author of a master WI may release it | One person can write a WI and release it, so a demo can be walked alone. Production refuses this to every role, Master Access and Support Access included. | 1 |

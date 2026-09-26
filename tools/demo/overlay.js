@@ -9,6 +9,7 @@
   var WORKSPACE = 'skyryse-mes-work-order-qa100-v1';
 
   // ---- preload the sample workspace once per browser ------------------------------------------
+  // The head script (D-3) normally writes it before the app reads storage; this is the fallback.
   try {
     if (!localStorage.getItem(SEED_MARK)) {
       localStorage.setItem(SEED_MARK, new Date().toISOString());

@@ -4,13 +4,17 @@ Skyryse in-house MES. Modules: Flight Control (work order execution and quality
 records), Flight Plan (planning), Flight Maneuver (corrective action).
 The product build id is set in VERSION.md and stamped into index.html by tools/stamp-build.mjs. See TESTING.md for the test suites.
 
+Start with `docs/HANDOVER.md`: what the system does, the rules and why they exist, a map of
+`index.html`, the integration seams, the persistence mirror in `server/`, tests and the release process.
+
 ## Original notes
 
 Single-file manufacturing execution system prototype. Open `index.html` in a
 browser; keep `assets/` beside it.
 
-Fully client-side: no network calls, no backend. All state persists to
-`localStorage` under the key `skyryse-mes-work-order-v1`.
+Client-side: all state persists to `localStorage` under the key
+`skyryse-mes-work-order-v1`. No network calls unless the optional persistence
+mirror in `server/` is configured.
 
 ## QA pass
 

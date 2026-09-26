@@ -89,7 +89,11 @@ async function main() {
       const j = judge(file.replace(/\.mjs$/, ''), r.code, r.out);
       results.push(j);
       console.log(`${j.status === 'pass' ? 'PASS' : 'FAIL'}  ${j.name}${j.checks ? ` (${j.checks} checks)` : ''}${j.skips.length ? `, ${j.skips.length} explained skip${j.skips.length > 1 ? 's' : ''}` : ''}${j.problems.length ? `: ${j.problems.join('; ')}` : ''}`);
-      if (j.status !== 'pass') fs.writeFileSync(path.join(TESTS, `suite_${j.name}.log`), r.out);
+      if (j.status !== 'pass') {
+        fs.writeFileSync(path.join(TESTS, `suite_${j.name}.log`), r.out);
+        // The failing lines go to the console too, so a CI log says what failed without the artifact.
+        for (const line of r.out.split('\n').filter(l => /^\s*FAIL\b|Error|errors \["/.test(l)).slice(0, 20)) console.log(`      ${j.name}: ${line.trim().slice(0, 400)}`);
+      }
     }
   }));
   let mirrorSummary = null;

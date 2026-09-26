@@ -56,7 +56,7 @@ Two things in that table deserve attention:
 
 First run, before any change: every fixture-based suite died in under two
 seconds. The harnesses had the original author's absolute path
-(`/Users/josedelcid/projects/flight-system`) baked in and `tests/setpaths.sh`
+(`/Users/<user>/projects/flight-system`) baked in and `tests/setpaths.sh`
 only rewrote the older `/home/claude/fc` layout; Playwright also expected a
 different Chromium build. Neither is a product failure. After fixing the
 script and setting `CHROME_PATH`:

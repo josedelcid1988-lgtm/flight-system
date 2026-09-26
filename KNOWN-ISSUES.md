@@ -103,3 +103,82 @@ every assertion failed. The prints themselves were correct.
 assertion is unchanged (SKYRYSE header, sections, no SPR/SCAR print) and all
 pass. The same capture is used by `test_demo_build` to check that every demo
 print carries DEMO, NOT FOR ACCEPTANCE.
+
+## 7. The author of a WI could release it (closed)
+
+**Cause.** The engine refused a release by the peer reviewer but never looked
+at who wrote the revision, and a draft does not record its authors. An account
+holding both the edit and the release capabilities (Master Access) could write
+a WI and release it, which breaks the "author cannot release" rule.
+
+**Fix.** Every edit to a draft revision records the editor's credential in
+`wi.authors`; for a revision edited before that, the edit entries in its
+history name them. QA release, release against the drawing ECO and release by
+the Safety Team buy-off all refuse an author, with no role or override exempt.
+The check sits after the existing preconditions, so every earlier refusal keeps
+its message. `tests/test_frozen_contract.mjs` covers the rule and its refusal
+paths; the demo lifts it as D-30.
+
+## 8. The author of a WI can record its peer review (open)
+
+**What.** Nothing stops the person who wrote a revision from also recording
+the Manufacturing Engineering peer review. The release rules still hold (the
+peer reviewer and every author are refused at release), so a WI always passes
+through at least one person who did not write it, but the peer review itself
+may not be independent.
+
+**Recommendation.** Refuse peer review by an author with the same
+`wiAuthorRefusal` check. Left open because it changes who can complete a
+peer review on the floor and needs the QA Manager's agreement first.
+
+## 9. Real names in the reference data and samples (closed)
+
+**Cause.** The built-in stamp snapshot, the default profile, the sample
+corrective actions and the demo data carried the names of real people.
+
+**Fix.** Every one is replaced with a fictional name; stamp numbers and dates
+are unchanged. A saved workspace keeps its own stamp register, so nothing in
+an existing workspace changes. The demo sample buy-offs were signed over the
+old names, so their manifests were re-signed with the engine's own subject
+builder and `MES.verifyManifests` passes on every demo fixture. The real
+register is entered by the QA Manager (`docs/HANDOVER.md`, open items).
+
+## 10. Rejecting an inspection is not restricted to an independent inspector (by design)
+
+Nobody may accept an inspection of their own work (`CHANGELOG.md`,
+Controls). Rejecting one is allowed to anyone who may inspect, because a rejection
+only raises an NC against the source operation and cannot release product.
+
+## 11. `qa_multi` failed six 1440 px render checks on a loaded machine (closed)
+
+**Cause.** The first CI run failed `qa_multi` with the order, mnv-board and
+trace views unable to find their records; it passed locally and in the
+mirror-on run on the same machine. Running three copies at once alongside
+`qa_full` reproduced it locally. The demo overlay wrote the sample workspace
+at the end of the page and then reloaded, but the app had already set
+`window.__ready` on the first, empty load. On a busy machine the harness saw
+`__ready`, waited its fixed 1.2 s, and ran while the reload was still under
+way, against an empty workspace.
+
+**Fix.** The demo head script (D-3) writes the sample workspace before the app
+reads storage, so the first open is already populated and never reloads; the
+overlay's reload stays only as a fallback. No test was changed. Under the same
+load `qa_multi` passes six runs out of six. `tools/run-suites.mjs` now prints a
+failing suite's FAIL lines to the console, so a CI log says what failed.
+
+## 11. `qa_multi` failed six 1440 px render checks on a loaded machine (closed)
+
+**Cause.** The first CI run failed `qa_multi` with the order, mnv-board and
+trace views unable to find their records; it passed locally and in the
+mirror-on run on the same machine. Running three copies at once alongside
+`qa_full` reproduced it locally. The demo overlay wrote the sample workspace
+at the end of the page and then reloaded, but the app had already set
+`window.__ready` on the first, empty load. On a busy machine the harness saw
+`__ready`, waited its fixed 1.2 s, and ran while the reload was still under
+way, against an empty workspace.
+
+**Fix.** The demo head script (D-3) writes the sample workspace before the app
+reads storage, so the first open is already populated and never reloads; the
+overlay's reload stays only as a fallback. No test was changed. Under the same
+load `qa_multi` passes six runs out of six. `tools/run-suites.mjs` now prints a
+failing suite's FAIL lines to the console, so a CI log says what failed.
