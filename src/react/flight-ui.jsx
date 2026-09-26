@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { flushSync } from 'react-dom';
 import { ArrowUpRight, Boxes, CalendarClock, Check, ChevronRight, CircleAlert, FileText, Search, SlidersHorizontal, X } from 'lucide-react';
 
 const densityKey = 'flight-system-density-v1';
@@ -94,7 +95,15 @@ function Hangar({ state, MES, onOpen }) {
 }
 
 let root = null;
+let rootElement = null;
 window.FlightReact = {
-  renderHangar(element, state, MES, onOpen) { if (!root) root = createRoot(element); root.render(<Hangar state={state} MES={MES} onOpen={onOpen}/>); },
-  unmount() { if (root) { root.unmount(); root = null; } }
+  renderHangar(element, state, MES, onOpen) {
+    if (!root || rootElement !== element) {
+      if (root) root.unmount();
+      root = createRoot(element);
+      rootElement = element;
+    }
+    flushSync(() => root.render(<Hangar state={state} MES={MES} onOpen={onOpen}/>));
+  },
+  unmount() { if (root) { root.unmount(); root = null; rootElement = null; } }
 };

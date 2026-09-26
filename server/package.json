@@ -1,0 +1,19 @@
+{
+  "name": "flight-system-server",
+  "version": "1.0.0",
+  "description": "Flight System server and optional append-only SQLite persistence mirror. Node built-ins only.",
+  "private": true,
+  "type": "module",
+  "main": "server.mjs",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "mirror": "node mirror/server.mjs",
+    "backup": "node mirror/server.mjs --backup-now",
+    "restore-test": "node mirror/restore-test.mjs",
+    "test": "node ../tests/test_mirror.mjs"
+  },
+  "dependencies": {}
+}

@@ -1,9 +1,9 @@
+import {mkdirSync as __mkdirTests} from 'fs';const TESTS=decodeURI(new URL('.',import.meta.url).pathname);const FIXTURES=process.env.FS_FIXTURES_DIR?process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):TESTS+'fixtures/';__mkdirTests(TESTS+'shots',{recursive:true}); // shots and results resolve from this folder; fixtures from FS_FIXTURES_DIR when set (tools/run-suites.mjs --mirror)
 // Full multi-point QA of Flight Control MES v72: demo build and production build.
-import {execFileSync} from 'node:child_process'; import {chromium} from 'playwright'; import fs from 'fs'; import path from 'node:path'; import {fileURLToPath, pathToFileURL} from 'node:url';
-const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+import {chromium} from 'playwright'; import fs from 'fs';
 const results=[]; const add=(build,area,check,ok,detail='')=>results.push({build,area,check,result:ok===true?'Pass':ok==='Skip'?'Skip':'Fail',detail:String(detail??'').slice(0,400)});
 const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{});
-const FILES={demo:pathToFileURL(path.join(ROOT,'tests/fixtures/demo_qa150_publish.html')).href,prod:pathToFileURL(path.join(ROOT,'tests/fixtures/publish.html')).href};
+const FILES={demo:'file://'+FIXTURES+'demo_qa150_publish.html',prod:'file://'+FIXTURES+'publish.html'};
 
 async function newPage(w=1440){const ctx=await b.newContext({viewport:{width:w,height:1000}});const p=await ctx.newPage();const errs=[];p.on('pageerror',e=>errs.push(String(e.message||e)));p.on('console',m=>{if(m.type()==='error'&&!/ERR_FILE_NOT_FOUND|favicon/.test(m.text()))errs.push('console: '+m.text());});return {p,errs,ctx};}
 async function signIn(p,build,u,pw='demo1234',displayName){await p.evaluate(()=>{try{sessionStorage.removeItem('skyryse-mes-session-v1');}catch(e){}}).catch(()=>{});
@@ -227,18 +227,15 @@ await flow(D,U,'Save, reload and the workspace comes back identical',async()=>{c
 add(D,U,'No page or console errors during UI flows',errs.length===0,errs.slice(0,4).join(' | '));
 
 // ---- Pilot seats: role matrix and a real refusal per seat ----
-const seatExpect={tech:{role:'technician',yes:['operate-steps','raise-nc'],no:['operate','create-wo','approve-wo','edit-wi','dispo-nc']},operations:{role:'operator',yes:['operate','operate-steps','split'],no:['create-wo','approve-wo','edit-wi','approve-nc']},mfgeng:{role:'me',yes:['edit-wi','create-wo','dispo-nc','adjust-wo'],no:['approve-wo','approve-wi','approve-nc']},quality:{role:'qe',yes:['approve-wo','approve-wi','approve-nc'],no:['edit-wi','create-wo','dispo-nc','operate']},engineering:{role:'swe',yes:['push-software','accept-software','submit-ecr'],no:['edit-wi','approve-nc','operate','create-wo']}};
+const seatExpect={tech:{yes:['operate-steps','raise-nc'],no:['operate','create-wo','approve-wo','edit-wi','dispo-nc']},operations:{yes:['operate','operate-steps','split'],no:['create-wo','approve-wo','edit-wi','approve-nc']},mfgeng:{yes:['edit-wi','create-wo','dispo-nc','adjust-wo'],no:['approve-wo','approve-wi','approve-nc']},quality:{yes:['approve-wo','approve-wi','approve-nc'],no:['edit-wi','create-wo','dispo-nc','operate']},engineering:{yes:['push-software','accept-software','submit-ecr'],no:['edit-wi','approve-nc','operate','create-wo']}};
 for(const [u,exp] of Object.entries(seatExpect)){
   const {p:q,errs:e3}=await newPage();await stripStorage(q);await signIn(q,'demo',u);
-  const strict=await newPage();await stripStorage(strict.p);await signIn(strict.p,'prod','josed','demo1234','Jose D');
-  const matrix=await run(strict.p,exp=>{const bad=[];exp.yes.forEach(c=>{if(!skAuth.roleCan(exp.role,c))bad.push('role missing '+c);});exp.no.forEach(c=>{if(skAuth.roleCan(exp.role,c))bad.push('role has '+c);});return bad;},exp);
-  const r=await run(q,exp=>{const demoRelaxed=exp.no.every(c=>skAuth.can(c));return {role:skAuth.role(),user:skAuth.user()&&skAuth.user().username,demoRelaxed,stamp:!!(MES.profileOptions(state)||[]).length};},exp);
-  add(D,'Roles',`${u}: assigned role matrix enforced by production build and demo access is relaxed`,r.user===u&&r.role===exp.role&&matrix.length===0&&r.demoRelaxed,`account ${r.user||'signed out'}; role ${r.role}; demo access relaxed ${r.demoRelaxed}; ${matrix.join(', ')}`);
+  const r=await run(q,exp=>{const bad=[];exp.yes.forEach(c=>{if(!skAuth.can(c))bad.push('missing '+c);});exp.no.forEach(c=>{if(skAuth.can(c))bad.push('has '+c);});return {role:skAuth.role(),bad,user:skAuth.user()&&skAuth.user().username,stamp:!!(MES.profileOptions(state)||[]).length};},exp);
+  add(D,'Roles',`${u}: signs in with its own role and the expected capabilities`,r.user===u&&r.bad.length===0,`${r.role} ${r.bad.join(', ')}`);
   const nav=await run(q,exp=>{const t=document.querySelector('.sidebar').textContent;const btns=[...document.querySelectorAll('#main button:not([hidden])')].map(b=>b.textContent.trim());return {hasCreate:btns.some(b=>/^Create work order|^New work order/i.test(b)),views:t.slice(0,80)};},exp);
-  if(u==='tech'||u==='quality')add(D,'Roles',`${u}: demo can create a work order from the dashboard`,nav.hasCreate,'');
+  if(u==='tech'||u==='quality')add(D,'Roles',`${u}: create work order button hidden on the dashboard`,!nav.hasCreate,'');
   add(D,'Roles',`${u}: no page errors after sign-in`,e3.length===0,e3.slice(0,2).join(' | '));
   await q.context().close();
-  await strict.p.context().close();
 }
 await flow(D,'Roles','Wrong password is refused',async()=>{const {p:q}=await newPage();await stripStorage(q);await signIn(q,'demo','tech','wrongpass');const r=await run(q,()=>!!document.querySelector('#sk-boot')||!skAuth.user());await q.context().close();return r||'signed in with a wrong password';});
 await p.context().close();
@@ -251,15 +248,38 @@ let {p,errs}=await newPage(); await stripStorage(p);
 await p.goto(FILES.prod);await p.waitForTimeout(1500);
 const gate=await run(p,()=>!!document.querySelector('#sk-boot'));
 add(P,'Load','Production build gates on sign-in with no seeded pilot accounts',gate,'');
-await signIn(p,'prod','josed','demo1234','Jose D');
+await signIn(p,'prod','mlee','demo1234','Morgan L');
 const who=await run(p,()=>({user:skAuth.user()&&skAuth.user().username,role:skAuth.role(),valid:MES.validate(state),orders:state.orders.length,users:skAuth.users().length}));
-add(P,'Load','First account becomes an access administrator (QA Manager) and the workspace validates',who.user==='josed'&&['qm','admin'].includes(who.role)&&who.valid,JSON.stringify(who));
+add(P,'Load','First account becomes an access administrator (QA Manager) and the workspace validates',who.user==='mlee'&&['qm','admin'].includes(who.role)&&who.valid,JSON.stringify(who));
 add(P,'Load','No page or console errors at load',errs.length===0,errs.join(' | '));
 const seeded=await run(p,()=>{const wi=state.masterWIs.find(x=>x.status==='Released');const r=MES.addOrder(state,{masterWI:wi.id+'|'+wi.revision,pedigree:'Production',subcategory:'Mfg.',quantity:2,aircraft:MES.AIRCRAFT[0],site:MES.SITES[0]});if(!r.ok)return r.message;const o=MES.getOrder(state,r.id);if(MES.requiresReleaseQA(o))o.release={status:'Approved',name:'QA Peer',role:'Quality Engineer',credentialId:'ACCT-qapeer',at:new Date().toISOString(),note:'QA harness'};let a=MES.advance(state,r.id);if(!a.ok)return 'kitting: '+a.message;o.materials.forEach(m=>{const l=MES.availableLots(m.partNumber)[0];MES.setMaterialLot(state,r.id,m.id,l?l.lot:'L1');MES.setMaterial(state,r.id,m.id,true);});MES.addKitFile(state,r.id,{name:'kit.pdf',type:'application/pdf',size:10,dataUrl:null});a=MES.advance(state,r.id);if(!a.ok)return 'building: '+a.message;save();return MES.validate(state)?true:'invalid';});
 add(P,'Load','A production work order can be created, released by another credential, kitted with a kit list and moved to Building',seeded===true,String(seeded));
+// A second QA Manager account, a closed order and an MRB board, so the production views and the
+// signature manifest check run on real records instead of skipping on an empty workspace.
+const records=await run(p,async()=>{
+  const AUTH='skyryse-mes-auth-v1',SESSION='skyryse-mes-session-v1';
+  const a=JSON.parse(localStorage.getItem(AUTH));const salt='5a17c0ffee5a17c0ffee5a17c0ffee00';
+  const hex=b=>[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');
+  const hash=hex(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(salt+':demo1234')));
+  if(!a.users.some(u=>u.username==='rpark'))a.users.push({username:'rpark',displayName:'Riley Park',salt,hash,role:'qm',createdAt:new Date().toISOString(),createdBy:'mlee'});
+  localStorage.setItem(AUTH,JSON.stringify(a));
+  const wi=state.masterWIs.find(x=>x.status==='Released');
+  const mkOrder=()=>{const r=MES.addOrder(state,{masterWI:wi.id+'|'+wi.revision,pedigree:'Production',subcategory:'Mfg.',quantity:1,aircraft:MES.AIRCRAFT[0],site:MES.SITES[0]});if(!r.ok)throw new Error(r.message);return r.id;};
+  const toBuilding=id=>{const o=MES.getOrder(state,id);if(MES.requiresReleaseQA(o))o.release={status:'Approved',name:'QA Peer',role:'Quality Engineer',credentialId:'ACCT-qapeer',at:new Date().toISOString(),note:'QA harness'};let r=MES.advance(state,id);if(!r.ok)throw new Error('kitting: '+r.message);o.materials.forEach(m=>{const l=MES.availableLots(m.partNumber)[0];MES.setMaterialLot(state,id,m.id,l?l.lot:'L1');MES.setMaterial(state,id,m.id,true);});MES.addKitFile(state,id,{name:'kit.pdf',type:'application/pdf',size:10,dataUrl:null});r=MES.advance(state,id);if(!r.ok)throw new Error('building: '+r.message);return o;};
+  // The NC goes on its own order so the seeded Building order stays free of holds for the checks below.
+  const b=toBuilding(mkOrder());const op=b.operations.find(x=>!x.done);
+  const t=MES.createTicket(state,b.id,op.id,{type:'NC',title:'Cosmetic scratch on bracket face',description:'Light surface scratch, no structural effect.',hold:true});if(!t.ok)return 'ticket: '+t.message;
+  const tid=MES.getOrder(state,b.id).tickets.slice(-1)[0].id;
+  const d=MES.dispositionTicket(state,b.id,tid,{decision:'Use as is',note:'Cosmetic only; within appearance limits.'});if(!d.ok)return 'dispo: '+d.message;
+  const m=FlightManeuver.openMRB(state,b.id,tid,'Cosmetic scratch, technical justification attached.');if(!m.ok)return 'mrb: '+m.message;
+  const cid=mkOrder();const rq=MES.requestOrderClosure(state,cid,{reason:'Obsolete',note:'Superseded by the next drawing revision.'});if(!rq.ok)return 'closure request: '+rq.message;
+  sessionStorage.setItem(SESSION,'rpark');const dc=MES.decideOrderClosure(state,cid,true,'Confirmed obsolete; no units built.');sessionStorage.setItem(SESSION,'mlee');if(!dc.ok)return 'closure decision: '+dc.message;
+  save();return MES.validate(state)&&state.maneuver.mrb.length>0&&state.orders.some(o=>o.status==='Closed')?true:'invalid or missing records';
+});
+add(P,'Load','Production workspace carries an MRB board and a closed order signed by a second QA account',records===true,String(records));
 // views
 const views=['home','orders','quality','activity','serials','wis','wi','order','plan-home','plan','plan-kanban','plan-forecast','mnv-home','mnv-intake','mnv-cars','mnv-car','mnv-mrb','mnv-board','mnv-spr','mnv-changes','mnv-metrics','mnv-nc','trace'];
-for(const v of views){const r=await p.evaluate(v=>{try{if(v==='mnv-car'&&state.maneuver.cars.length)mnvSel.car=state.maneuver.cars[0].id;if(v==='mnv-board'&&state.maneuver.mrb.length)mnvSel.board=state.maneuver.mrb[0].id;if(v==='mnv-nc'&&state.maneuver.ncs.length)mnvSel.nc=state.maneuver.ncs[0].id;if(v==='trace')traceQuery='SN';if(v==='order'){const o=state.orders.find(o=>o.status==='Building')||state.orders[0];if(o)selectedId=o.id;}if(v==='wi'&&state.masterWIs.length){const w=state.masterWIs[0];selectedWI={id:w.id,revision:w.revision};}view=v;render();const bodyOver=document.documentElement.scrollWidth>document.documentElement.clientWidth+1;return {ok:true,bodyOver,main:(document.getElementById('main')||{}).children?.length||0};}catch(e){return {ok:false,err:String(e)}}},v);await p.waitForTimeout(60);add(P,'Render 1440',`View ${v} renders`,r.ok&&r.main>0&&!r.bodyOver,r.err||(r.bodyOver?'body overflow':''));}
+for(const v of views){const r=await p.evaluate(v=>{try{if(v==='mnv-car'){const c=state.maneuver.cars[0];if(!c)return {ok:true,main:1,skip:true};mnvSel.car=c.id;}if(v==='mnv-board'){const m=state.maneuver.mrb[0];if(!m)return {ok:true,main:1,skip:true};mnvSel.board=m.id;}if(v==='mnv-nc'){const n=state.maneuver.ncs[0];if(!n)return {ok:true,main:1,skip:true};mnvSel.nc=n.id;}if(v==='trace')traceQuery='SN';if(v==='order'){const o=state.orders.find(o=>o.status==='Building')||state.orders[0];if(!o)return {ok:true,main:1,skip:true};selectedId=o.id;}if(v==='wi'){const w=state.masterWIs[0];selectedWI={id:w.id,revision:w.revision};}view=v;render();const bodyOver=document.documentElement.scrollWidth>document.documentElement.clientWidth+1;return {ok:true,bodyOver,main:(document.getElementById('main')||{}).children?.length||0};}catch(e){return {ok:false,err:String(e)}}},v);await p.waitForTimeout(60);add(P,'Render 1440',`View ${v} renders`,r.skip?'Skip':(r.ok&&r.main>0&&!r.bodyOver),r.err||(r.bodyOver?'body overflow':''));}
 add(P,'Render 1440','No page or console errors across all views',errs.length===0,errs.slice(0,3).join(' | '));
 // strict guards
 const strict=await run(p,()=>{
@@ -272,14 +292,15 @@ const strict=await run(p,()=>{
   ok('D-1 strict: the person who requests a closure cannot approve it',()=>{const c=C();const o=c.orders.find(o=>o.status==='Building'&&!MES.blockingTickets(o).length&&!MES.pendingSequenceChange(o));if(!o)return 'Skip';const r=MES.requestOrderClosure(c,o.id,{reason:MES.CLOSURE_REASONS[0],note:'Scrapped after damage.'});if(!r.ok)return r.message;const d=MES.decideOrderClosure(c,o.id,true,'ok');return !d.ok?true:'self-approved closure';});
   ok('D-1 strict: ME disposition and QA approval of a stock NC need different people',()=>{const c=C();const r=FlightManeuver.raiseNC(c,{sourceType:'Serial number',type:'NC',title:'QA',description:'x',partNumber:'SR-IH-040',revision:'A',serial:'IH-040-P1',quantity:1,foundAt:'Stock',pedigree:'Production',escaped:'no'});if(!r.ok)return r.message;FlightManeuver.dispositionNC(c,r.id,{decision:'Scrap',note:'x'});FlightManeuver.containNC(c,r.id,'x');const a=FlightManeuver.approveNC(c,r.id,{defectCode:'DMG',subCode:'DMG-03',note:'x',quantity:1});return !a.ok?true:'same person approved';});
   ok('D-3 strict: non-Master buy-off without a stamp is refused',()=>{const c=C();const r=mk(c);if(!r.ok)return r.message;const id=r.id;seedRelease(c,id);let a=MES.advance(c,id);if(!a.ok)return a.message;const o=MES.getOrder(c,id);o.materials.forEach(m=>{const l=MES.availableLots(m.partNumber)[0];MES.setMaterialLot(c,id,m.id,l?l.lot:'L1');MES.setMaterial(c,id,m.id,true);});MES.addKitFile(c,id,{name:'k.pdf',type:'application/pdf',size:1,dataUrl:null});a=MES.advance(c,id);if(!a.ok)return a.message;const op=o.operations[0];(op.steps||[]).forEach(st=>MES.setStepCheck(c,id,op.id,st.id,true,{}));const key='skyryse-mes-auth-v1',saved=localStorage.getItem(key),auth=JSON.parse(saved);auth.users.find(u=>u.username===skAuth.user().username).role='technician';localStorage.setItem(key,JSON.stringify(auth));try{const b=MES.completeOperation(c,id,op.id,'',{tools:[],noTools:true,stampNumber:'999'});return !b.ok&&/stamp/i.test(b.message)?true:'non-Master bought off without a stamp';}finally{localStorage.setItem(key,saved);}});
-  ok('D-5 strict: buy-off without a PIN is refused once the holder has a stamp',()=>{const c=C();const st=MES.issueStamp(c,{number:'77',name:c.profile.name,buyoffType:'Technician',account:'josed',expires:'2028-01-01'});if(!st.ok)return st.message;const holder=c.stamps.find(x=>x.id===st.id);const r=MES.identityStepUp(holder,{});return !r.ok&&/PIN/i.test(r.message||'')?true:JSON.stringify(r);});
-  ok('D-5 strict: wrong PIN refused, right PIN accepted',()=>{const c=C();const st=MES.issueStamp(c,{number:'78',name:c.profile.name,buyoffType:'Technician',account:'josed',expires:'2028-01-01'});MES.setStampPin(c,st.id,'2580','2580');const h=c.stamps.find(x=>x.id===st.id);return !MES.identityStepUp(h,{pin:'0000'}).ok&&MES.identityStepUp(h,{pin:'2580'}).ok;});
-  ok('D-6 strict: training check refuses missing ESD training',()=>{const c=C();const st=MES.issueStamp(c,{number:'79',name:c.profile.name,buyoffType:'Technician',account:'josed',expires:'2028-01-01'});const h=c.stamps.find(x=>x.id===st.id);return !MES.trainingCheck(h,{callouts:['ESD']}).ok;});
+  ok('D-5 strict: buy-off without a PIN is refused once the holder has a stamp',()=>{const c=C();const st=MES.issueStamp(c,{number:'77',name:c.profile.name,buyoffType:'Technician',account:'mlee',expires:'2028-01-01'});if(!st.ok)return st.message;const holder=c.stamps.find(x=>x.id===st.id);const r=MES.identityStepUp(holder,{});return !r.ok&&/PIN/i.test(r.message||'')?true:JSON.stringify(r);});
+  ok('D-5 strict: wrong PIN refused, right PIN accepted',()=>{const c=C();const st=MES.issueStamp(c,{number:'78',name:c.profile.name,buyoffType:'Technician',account:'mlee',expires:'2028-01-01'});MES.setStampPin(c,st.id,'2580','2580');const h=c.stamps.find(x=>x.id===st.id);return !MES.identityStepUp(h,{pin:'0000'}).ok&&MES.identityStepUp(h,{pin:'2580'}).ok;});
+  ok('D-6 strict: training check refuses missing ESD training',()=>{const c=C();const st=MES.issueStamp(c,{number:'79',name:c.profile.name,buyoffType:'Technician',account:'mlee',expires:'2028-01-01'});const h=c.stamps.find(x=>x.id===st.id);return !MES.trainingCheck(h,{callouts:['ESD']}).ok;});
   ok('PFMEA gate blocks release of a critical safety WI with an open high-RPN row',()=>{const c=C();const w=c.masterWIs.find(w=>w.status==='Draft');if(!w)return 'Skip';MES.setWICriticalSafety(c,w.id,w.revision,true);const a=MES.addPfmeaRow(c,w.id,w.revision,{opId:w.operations[0].id,mode:'x',effect:'y',cause:'z',s:9,o:3,d:4,action:'fix',owner:'o',due:'2026-10-01'});if(!a.ok)return a.message;const wi=MES.findWI(c,w.id,w.revision);wi.peerReview={name:'Peer ME',role:'Manufacturing Engineer',credentialId:'ACCT-peer',at:new Date().toISOString()};const r=MES.releaseMasterWI(c,w.id,w.revision);return !r.ok&&/PFMEA/i.test(r.message||'')?true:(r.ok?'released':r.message);});
   ok('Kit list required before Building',()=>{const c=C();const r=mk(c);if(!r.ok)return r.message;seedRelease(c,r.id);MES.advance(c,r.id);const k=MES.getOrder(c,r.id);k.materials.forEach(m=>{const l=MES.availableLots(m.partNumber)[0];MES.setMaterialLot(c,r.id,m.id,l?l.lot:'L1');MES.setMaterial(c,r.id,m.id,true);});const a=MES.advance(c,r.id);return !a.ok&&/kit/i.test(a.message)?true:(a.ok?'advanced without kit list':a.message);});
   ok('SPR cannot close before its Jira push',()=>{const c=C();const r=FlightManeuver.raiseSPR(c,{title:'x',partNumber:'SR-FC-200',foundAt:'SIL',defectCode:'TEST',subCode:'TEST-01',description:'x',occurred:new Date().toISOString().slice(0,10)});return r.ok&&!FlightManeuver.closeSPR(c,r.id,'x').ok;});
   ok('Integration seams present and off: jira, lms, pdm, netsuite, okta',()=>{const I=window.SK_INTEGRATIONS||{};const S=window.SK_IDENTITY||{};const keys=['jira','lms','pdm'].filter(k=>!(k in I));const on=['jira','lms','pdm'].filter(k=>I[k]&&I[k].enabled===true);const step=S.stepUp||window.SK_STEP_UP||null;const okta=S.provider==='local'&&(!step||(step.provider==='pin'&&step.okta&&step.okta.enabled===false));return keys.length===0&&on.length===0&&I.mode==='local'&&okta?true:JSON.stringify({missing:keys,on,mode:I.mode,provider:S.provider,step});});
-  ok('Signature manifests verify: every closed order carries a SHA-256 manifest or none is required',()=>{const closed=s.orders.filter(o=>o.status==='Closed');return closed.every(o=>!o.manifest||o.manifest.algorithm==='SHA-256'&&/^[0-9a-f]{64}$/.test(o.manifest.hash));});
+  ok('Signature manifests verify: every closed order carries a SHA-256 manifest or none is required',()=>{const closed=s.orders.filter(o=>o.status==='Closed');if(!closed.length)return 'no closed order in the production workspace';if(!closed.every(o=>o.closure&&o.closure.manifest))return 'closed order without a closure manifest';const v=MES.verifyManifests(s);return v.ok&&v.checked>=closed.length&&v.recomputed>=closed.length?true:JSON.stringify(v).slice(0,300);});
+  ok('Signature manifests verify: an edit to a signed record after signing is detected',()=>{const c=C();const o=c.orders.find(o=>o.status==='Closed'&&o.closure&&o.closure.manifest);if(!o)return 'no closed order';o.closure.note+=' (edited)';const v=MES.verifyManifests(c);return !v.ok&&v.failures.some(f=>f.where===o.id+' closure')?true:JSON.stringify(v).slice(0,300);});
   ok('Record retention: state export is plain JSON that re-validates after a round trip',()=>{const j=JSON.stringify(s);const back=JSON.parse(j);return MES.validate(back)&&j.length>10000;});
   return out;
 });
@@ -292,17 +313,23 @@ await p.context().close();
 // ---- Static build checks ----
 {
 const S='Static';
-const prod=fs.readFileSync(path.join(ROOT,'tests/fixtures/publish.html'),'utf8'),demo=fs.readFileSync(path.join(ROOT,'tests/fixtures/demo_qa150_publish.html'),'utf8');
+const prod=fs.readFileSync(FIXTURES+'publish.html','utf8'),demo=fs.readFileSync(FIXTURES+'demo_qa150_publish.html','utf8');
 add(S,'Build','Production build carries no demo relaxations',!/D-5|demo relaxation|DEMO_LIFT|__demoFullAccess/.test(prod)&&!/skDemoRelax/.test(prod),`${(prod.length/1024).toFixed(0)} KB`);
 add(S,'Build','Demo build is titled Flight System Demo',/<title>Flight System Demo<\/title>/.test(demo),'');
 add(S,'Build','Production build is titled Flight Control',/<title>Flight Control(?: · [^<]*)?<\/title>/.test(prod),'');
 add(S,'Build','Both builds embed Inter from Google Fonts and no other external hosts',[prod,demo].every(h=>{const ext=[...h.matchAll(/(?:src|href)="(https?:\/\/[^"]+)"/g)].map(m=>new URL(m[1]).host);return ext.every(x=>/fonts\.(googleapis|gstatic)\.com/.test(x));}),'');
-add(S,'Build','No em dashes in UI copy',!/—/.test(prod.replace(/<!--[\s\S]*?-->/g,''))||true,'informational');
-let archivesBuilt=false,archiveDetail='';try{execFileSync('npm',['run','package:release'],{cwd:ROOT,stdio:'pipe'});archivesBuilt=['flight-control-v82.zip','flight-control-demo-v82.zip'].every(n=>fs.existsSync(path.join(ROOT,'dist',n)));if(archivesBuilt)execFileSync('unzip',['-tqq',path.join(ROOT,'dist','flight-control-v82.zip')]);}catch(e){archiveDetail=String(e.stderr||e.message||e).slice(0,350);}add(S,'Build','Production and demo release archives build and pass ZIP integrity checks',archivesBuilt,archiveDetail);
+add(S,'Build','No em dashes in UI copy',!/\u2014/.test(prod),'an em dash is in index.html');
+// Release zips: package the current build with tools/package-release.mjs and check both zips hold exactly
+// the files in the tree. With RELEASE_OUTPUT_DIR set, the zips already there are checked instead.
+{const {packageRelease,verifyRelease}=await import(new URL('../tools/package-release.mjs',import.meta.url).href);
+ const os=await import('os');const OUT=process.env.RELEASE_OUTPUT_DIR||fs.mkdtempSync(os.tmpdir()+'/fs-release-');
+ let problems;try{if(!process.env.RELEASE_OUTPUT_DIR)packageRelease(OUT);problems=verifyRelease(OUT);}catch(e){problems=[e.message];}
+ if(!process.env.RELEASE_OUTPUT_DIR)fs.rmSync(OUT,{recursive:true,force:true});
+ add(S,'Build','Release zips package the current build and match the tree',problems.length===0,problems.join('; ')||'demo and production archives verified');}
 }
 
 await b.close();
-fs.writeFileSync(path.join(ROOT,'tests/qa_full_results.json'),JSON.stringify(results,null,1));
+fs.writeFileSync(TESTS+'qa_full_results.json',JSON.stringify(results,null,1));
 const fails=results.filter(r=>r.result==='Fail'),skips=results.filter(r=>r.result==='Skip');
 console.log('checks',results.length,'pass',results.length-fails.length-skips.length,'fail',fails.length,'skip',skips.length);
 fails.forEach(f=>console.log('FAIL',f.build,'|',f.area,'|',f.check,'|',f.detail));

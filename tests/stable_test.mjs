@@ -1,12 +1,14 @@
-import { testPath, testUrl } from './paths.mjs';
-import {chromium} from 'playwright'; import fs from 'fs';
+import {chromium} from 'playwright';
+// A Master Access account seeded into a throwaway browser context, so both builds open signed in without a file on disk.
+const auth=JSON.stringify({users:[{username:'qa',displayName:'QA Admin',salt:'',hash:'unused',role:'admin',createdAt:new Date().toISOString()}]});
+const fixtures=((process.env.FS_FIXTURES_DIR?'file://'+process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):null)||new URL('./fixtures/',import.meta.url).href);
 const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{});
 let bad=0,ok=0;
 for(const file of ['publish.html','demo_publish.html']){
 for(const w of [1200,1440,1706,1920]){
   const ctx=await b.newContext({viewport:{width:w,height:900}});
-  await ctx.addInitScript(()=>{try{sessionStorage.setItem('skyryse-mes-session-v1','demo');sessionStorage.setItem('sk-boot-seen','1');sessionStorage.setItem('sk-mnv-landing-seen','1');}catch(e){}});
-  const p=await ctx.newPage(); await p.goto(testUrl(file));
+  await ctx.addInitScript(a=>{try{localStorage.setItem('skyryse-mes-auth-v1',a);sessionStorage.setItem('skyryse-mes-session-v1','qa');sessionStorage.setItem('sk-boot-seen','1');sessionStorage.setItem('sk-mnv-landing-seen','1');}catch(e){}},auth);
+  const p=await ctx.newPage(); await p.goto(fixtures+file);
   await p.waitForFunction(()=>window.__ready===true,null,{timeout:60000});
   if(file==='publish.html')await p.evaluate(()=>{const wi=state.masterWIs.find(x=>x.status==='Released');for(let i=0;i<25;i++)MES.addOrder(state,{masterWI:wi.id+'|'+wi.revision,pedigree:'Production',subcategory:'Mfg.',quantity:1,aircraft:MES.AIRCRAFT[0],site:MES.SITES[0]});save();});
   for(const v of ['orders','quality','activity','serials','wis','plan','mnv-cars','mnv-mrb']){

@@ -5,7 +5,7 @@ const browser=await chromium.launch(process.env.CHROME_PATH?{executablePath:proc
 try {
   const page=await browser.newPage();
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
-  await page.goto(process.env.FLIGHT_UI_URL||new URL('../index.html',import.meta.url).href);
+  await page.goto(process.env.FLIGHT_UI_URL||new URL((process.env.FS_FIXTURES_DIR?'file://'+process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):null)?(process.env.FS_FIXTURES_DIR?'file://'+process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):null)+'publish.html':new URL('../index.html',import.meta.url).href).href);
   const password='Test-'+crypto.randomUUID();
   await page.locator('#sk-displayname').fill('Access Test');
   await page.locator('#sk-username').fill('access-test');
@@ -17,8 +17,11 @@ try {
   await page.reload();
   await page.waitForFunction(()=>!document.getElementById('sk-boot'));
   assert.equal(await page.evaluate(()=>skAuth.role()),'admin');
-  for(const cap of ['manage-access','safety-buyoff','mrb-cert','approve-wi','approve-wo','approve-nc','operate-steps'])
+  for(const cap of ['manage-access','safety-buyoff','approve-wi','approve-wo','approve-nc','operate-steps'])
     assert.equal(await page.evaluate(cap=>skAuth.can(cap),cap),true);
+  // Granted authorities are not part of Master Access: none until a QA Manager grants them.
+  for(const cap of ['mrb-cert','inspect-steps','conformity','aqi-sign'])
+    assert.equal(await page.evaluate(cap=>skAuth.can(cap),cap),false);
   assert.equal(await page.evaluate(()=>MES.stampCheck({name:'Unregistered Test',credentialId:'invalid'}).ok),false);
   await page.getByRole('button',{name:'Your credentials',exact:true}).click();
   await page.getByRole('button',{name:'Create Master Access account',exact:true}).click();

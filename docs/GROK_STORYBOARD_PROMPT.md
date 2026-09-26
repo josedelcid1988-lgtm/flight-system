@@ -35,7 +35,7 @@ Work orders move through **Draft → Kitting → Building → Quality → Closed
 
 **Chapter 1 · Sign in and dashboard**
 1. Sign-in screen with the Y logo and "Safety is the mission."
-2. Dashboard: label "My Path to Certification", greeting "Good morning, Jose", announcement cards (Great work, Shout-out, QMS change with an Acknowledge button), Quality queue, "Assigned to me", task groups. The Y logo has a small blue badge with the open-task count at its bottom right.
+2. Dashboard: label "My Path to Certification", greeting "Good morning, Morgan", announcement cards (Great work, Shout-out, QMS change with an Acknowledge button), Quality queue, "Assigned to me", task groups. The Y logo has a small blue badge with the open-task count at its bottom right.
 3. Top-bar search: typing "FC-200-00004" finds the serial and opens its work order on the Stock tab.
 
 **Chapter 2 · Create the work order**
@@ -82,7 +82,7 @@ Work orders move through **Draft → Kitting → Building → Quality → Closed
 - Master WI: MWI-0002 Rev B (Draft).
 - Tickets: NC-0002 "Scratch on bracket". ECR-0001 Design ECR linked to Jira ECR-123.
 - Tools: CAL-022 digital caliper, torque wrench in calibration. Stamp: Technician stamp TE-01.
-- People (example roles): Jose Del Cid (QA Manager), Mia Engineer (Manufacturing Engineering), Quinn Quality (Quality Engineering), Omar Operator (Operator).
+- People (example roles): Morgan Lee (QA Manager), Mia Engineer (Manufacturing Engineering), Quinn Quality (Quality Engineering), Omar Operator (Operator).
 
 ## Closing frame
 

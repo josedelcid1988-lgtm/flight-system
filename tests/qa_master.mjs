@@ -5,7 +5,7 @@ const { chromium } = await import(process.env.FLIGHT_PLAYWRIGHT || 'playwright')
 const browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
 try {
   const demo = await browser.newPage();
-  await demo.goto(new URL('./fixtures/demo_publish.html', import.meta.url).href,{waitUntil:'domcontentloaded'});
+  await demo.goto(new URL((process.env.FS_FIXTURES_DIR?'file://'+process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):null)?(process.env.FS_FIXTURES_DIR?'file://'+process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):null)+'demo_publish.html':new URL('./fixtures/demo_publish.html', import.meta.url).href).href,{waitUntil:'domcontentloaded'});
   await demo.locator('#sk-username').fill('demo');
   await demo.locator('#sk-password').fill('demo1234');
   await demo.locator('#sk-login-submit').click();
@@ -14,7 +14,7 @@ try {
   await demo.close();
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const errors = []; page.on('pageerror', e => errors.push(e.message));
-  await page.goto(process.env.FLIGHT_UI_URL || new URL('../index.html', import.meta.url).href,{waitUntil:'domcontentloaded'});
+  await page.goto(process.env.FLIGHT_UI_URL || new URL((process.env.FS_FIXTURES_DIR?'file://'+process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):null)?(process.env.FS_FIXTURES_DIR?'file://'+process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):null)+'publish.html':new URL('../index.html', import.meta.url).href).href,{waitUntil:'domcontentloaded'});
   const password = 'Test-' + crypto.randomUUID();
   for (const [id, value] of Object.entries({ 'sk-displayname': 'Master Test', 'sk-username': 'master-test', 'sk-password': password, 'sk-confirm': password })) await page.locator('#' + id).fill(value);
   await page.locator('#sk-login-submit').click();
@@ -24,7 +24,16 @@ try {
     const check = r => { assert(r.ok, r.message); return r; };
     const setRole = role => { const k='skyryse-mes-auth-v1', a=JSON.parse(localStorage.getItem(k));a.users.find(u=>u.username==='master-test').role=role;localStorage.setItem(k,JSON.stringify(a)); };
     const caps=['view','raise-nc','submit-ecr','operate','operate-steps','split','request-pedigree','approve-pedigree','edit-wi','peer-review-wi','create-wo','adjust-wo','dispo-nc','push-software','assign-work','accept-software','safety-buyoff','mrb-cert','approve-wo','approve-wi','approve-nc','post-notice','manage-access'];
-    for (const cap of caps) assert(skAuth.can(cap), 'Missing Master capability: '+cap);
+    // Inspection, the MRB seats, conformity work and the AQI signature are granted to a person, never part of a
+    // role: Master Access holds none of them until a QA Manager grants them against a current training record.
+    const granted=skAuth.GRANTED;
+    for (const cap of caps.filter(c=>!granted.includes(c))) assert(skAuth.can(cap), 'Missing Master capability: '+cap);
+    for (const cap of granted) assert(!skAuth.can(cap), 'Master Access holds '+cap+' without a grant');
+    { const r=MES.recordTraining(state,{account:'master-test',code:'ESD',expires:'2031-12-31',note:'test setup'}); assert(r.ok,r.message); assert(save(),'training record saved');
+      const k='skyryse-mes-auth-v1',a=JSON.parse(localStorage.getItem(k)),u=a.users.find(x=>x.username==='master-test');u.grants={};
+      for (const cap of granted) u.grants[cap]={by:{name:'Second QA Manager',credentialId:'ACCT-qm2',account:'qm2'},at:new Date().toISOString(),reason:'Test setup grant',trainingCode:'ESD',hash:''};
+      localStorage.setItem(k,JSON.stringify(a)); }
+    for (const cap of caps) assert(skAuth.can(cap), 'Missing Master capability after grants: '+cap);
     assert(FlightManeuver.seatsForRole('admin').length===4,'All MRB role choices');
     const base=structuredClone(fixture);
     // Exercise the production engine with a saved sample, not the demo engine.
@@ -67,7 +76,9 @@ try {
     {const {s,o,op}=setup();const later=o.operations[o.operations.indexOf(op)+1];
       if(later) assert(!MES.completeOperation(s,o.id,later.id,'Out of sequence',{standardInspection:true}).ok,'Sequence still enforced');}
     {const s=structuredClone(base),o=s.orders.find(o=>o.fair?.verified);
-      assert(o,'FAIR signature fixture');o.fair.status='Verified';o.fair.approved=null;
+      assert(o,'FAIR signature fixture');o.fair.status='Verified';o.fair.approved=null;delete o.fair.reviewed;
+      assert(!MES.approveFair(structuredClone(s),o.id,{}).ok,'FAIR approval waits for box 22, even for Master Access');
+      check(MES.reviewFair(s,o.id,{}));
       check(MES.approveFair(s,o.id,{}));
       assert(o.fair.approved.by.override.kind==='Master Access override','FAIR bypass is explicit');
       assert(o.fair.approved.manifest.override.account==='master-test','FAIR override signed');
@@ -76,8 +87,11 @@ try {
       assert(o,'8130-9 signature fixture');const p=o.conformity.find(p=>p.form);
       p.status='8130-9 completed';p.aqi=null;p.mdlReceived=new Date().toISOString().slice(0,10);
       p.form.prepared.by.credentialId='ACCT-master-test';
-      const self=MES.aqiSign8130_9(s,o.id,p.serial,{});
-      assert(!self.ok&&/independent/.test(self.message),'Independent 8130-9 signature enforced: '+self.message);
+      // The person who completed the 8130-9 may sign as AQI only after acknowledging the warning; it is recorded.
+      const self=MES.aqiSign8130_9(structuredClone(s),o.id,p.serial,{});
+      assert(!self.ok&&self.warning==='aqi-self-sign'&&/you completed this 8130-9/.test(self.message),'Self-signature needs the warning acknowledged: '+self.message);
+      { const s2=structuredClone(s),o2=MES.getOrder(s2,o.id),p2=o2.conformity.find(x=>x.serial===p.serial);const ack=MES.aqiSign8130_9(s2,o2.id,p2.serial,{selfSignAck:true});
+        assert(ack.ok&&p2.aqi.selfSigned===true&&MES.validate(s2),'Acknowledged self-signature recorded: '+JSON.stringify(ack)); }
       p.form.prepared.by.credentialId='ACCT-other-inspector';
       check(MES.aqiSign8130_9(s,o.id,p.serial,{}));
       assert(p.aqi.by.override.kind==='Master Access override','AQI override explicit');
@@ -94,6 +108,7 @@ try {
       check(MES.createTicket(s,o.id,op.id,{type:'NC',title:'Test hold',description:'Hold must still block Master.',hold:true}));
       assert(!MES.setStepCheck(s,o.id,op.id,op.steps[0].id,true).ok,'Hold blocks Master');}
     const {s,o,op}=setup();check(MES.setStepCheck(s,o.id,op.id,op.steps[0].id,true));
+    s.trainingRecords=structuredClone(state.trainingRecords||[]);
     state=s;lastSaved=structuredClone(s);view='order';selectedId=o.id;selectedOp=op.id;tab='operations';render();
     return {types:MES.BUYOFF_TYPES,order:o.id,op:op.id};
   },fixture);

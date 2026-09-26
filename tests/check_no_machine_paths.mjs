@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT } from './paths.mjs';
-const forbidden = new RegExp(`(?:file:\\/\\/)?\\/(?:${['Users','home','private/var','tmp'].join('|')})\\/[^\\s"'<>]*`, '');
+const forbidden = new RegExp(`(?:file:\\/\\/)?\\/(?:${['Users','home','private','tmp','var','mnt','Volumes','Applications','Library','opt'].join('|')})\\/[^\\s"'<>]*`, '');
 const ignored = new Set(['.git','node_modules']);
 const matches=[];
 function visit(dir){

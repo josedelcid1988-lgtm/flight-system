@@ -2,34 +2,19 @@
 
 Skyryse in-house MES. Modules: Flight Control (work order execution and quality
 records), Flight Plan (planning), Flight Maneuver (corrective action).
-The product build id is written only in VERSION.md. See TESTING.md for the test suites.
+The product build id is set in VERSION.md and stamped into index.html by tools/stamp-build.mjs. See TESTING.md for the test suites.
 
-## Run locally
+Start with `docs/HANDOVER.md`: what the system does, the rules and why they exist, a map of
+`index.html`, the integration seams, the persistence mirror in `server/`, tests and the release process.
 
-The product remains usable offline. React, its icon package, styles, and the
-approved typefaces are bundled locally. The checked-in bundle lets the
-application start without contacting a package registry. To rebuild the
-Flight Control Hangar or refresh its embedded demo copy, install locked
-development dependencies and run the build:
+## Original notes
 
-```sh
-npm ci
-npm run build:react
-```
+Single-file manufacturing execution system prototype. Open `index.html` in a
+browser; keep `assets/` beside it.
 
-Open `index.html` directly in a browser and keep `assets/` beside it. Other
-Flight System pages continue to use the existing renderer while the controlled
-React migration advances page by page.
-
-The `flight-v82-datum-port` branch also contains a server mode under
-development. Run it with Node.js 22.13 or later:
-
-```sh
-node server/server.mjs --host 127.0.0.1 --port 8080 --db data/flight.sqlite
-```
-
-Then open `http://127.0.0.1:8080`. Read [the backend contract](docs/BACKEND_CONTRACT.md)
-before deploying this unfinished server work.
+Client-side: all state persists to `localStorage` under the key
+`skyryse-mes-work-order-v1`. No network calls unless the optional persistence
+mirror in `server/` is configured.
 
 ## QA pass
 
@@ -74,5 +59,5 @@ block so they can be reviewed or reverted independently of the theme layer.
 ## Not done
 
 No AWS, NetSuite, or Jira integration layer. The seam for one, whenever it is
-built, is the pair of functions `save()` and `mediaCommit()`. Every state
+built, is the pair of functions `save()` and `mediaCommit()`; every state
 mutation funnels through them to that one `localStorage` key.

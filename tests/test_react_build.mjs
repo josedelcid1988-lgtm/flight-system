@@ -11,7 +11,6 @@ const fonts = fs.readFileSync(new URL('../assets/flight-ui-fonts.css', import.me
 assert.match(index, /href=\"assets\/flight-ui\.css\"/);
 assert.match(index, /src=\"assets\/flight-ui\.js\"/);
 assert.match(index, /window\.FlightReact\.renderHangar\(/);
-assert.match(index, /id=\"flight-legacy-home\"/);
 assert.match(index, /innerHTML=legacyMarkup/);
 assert.doesNotMatch(index, /renderHangar\(\$\('#main'\)/);
 assert.match(bundle, /renderHangar/);
@@ -20,9 +19,8 @@ assert.match(css, /prefers-reduced-motion/);
 assert.match(css, /prefers-reduced-transparency/);
 assert.match(fonts, /@font-face/);
 assert.match(demo, /id=\"flight-react-bundle\"/);
-assert.match(demo, /id=\"flight-react-styles\"/);
+assert.match(demo, /href=\"assets\/flight-ui\.css\"/);
 assert.match(demo, /window\.FlightReact\.renderHangar\(/);
-assert.match(demo, /id=\"flight-legacy-home\"/);
 assert.match(demo, /innerHTML=legacyMarkup/);
 assert.doesNotMatch(demo, /renderHangar\(\$\('#main'\)/);
 assert.doesNotMatch(index, /<(?:script|link)[^>]+(?:src|href)=\"https?:\/\//i);

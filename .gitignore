@@ -1,8 +1,22 @@
-.DS_Store
-node_modules/
-data/
-build/
+# Playwright installed per TESTING.md; not part of the app (AGENTS.md: no build tooling).
+node_modules
+/node_modules
+/package.json
+/package-lock.json
+
+# Mirror server data written by local runs and tests (the server itself is in server/).
+server/data/
+server/backups/
+
+# Harness outputs
+tests/qa_e2e_results.json
+tests/qa_full_results.json
+tests/qa_results.json
 tests/shots/
-tests/*_results.json
-.pw-browsers/
-dist/
+
+tests/suite_results.json
+tests/suite_results_mirror.json
+tests/suite_*.log
+
+# Release zips from tools/package-release.mjs
+/release/
