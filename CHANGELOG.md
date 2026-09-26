@@ -9,12 +9,14 @@ numbers and record number formats have not changed in any entry below.
 Checked against AS9102 Rev C in the QMS standards library. Saved FAIRs open as they are.
 
 - **Box 22 is required.** After the FAIR is verified (boxes 20 and 21), a second person reviews and approves
-  it in box 22; the Skyryse QA approval (boxes 24 and 25) is refused until box 22 is signed, for every role
+  it in box 22; the Skyryse QA approval is refused until box 22 is signed, for every role
   including Master Access. The verifier still cannot sign box 22. An unsigned box 22 prints blank. FAIRs
   approved before this change keep the verifier in boxes 22 and 23, which is what the verifier signed then.
 - **Box 10 (designed / qualified tooling)** has its own field on each characteristic (tool ID, or the gauge
   value or range for qualified tooling) and prints in the Form 3 grid. M&TE stays in the supplemental data.
 - Form 2 title and box 8 (supplier name, address, code) and the box 20 and 22 labels follow Rev C.
+- **Boxes 24 and 25 (customer approval) print blank.** They are for a customer, not Skyryse. The Skyryse QA
+  approval is unchanged in the app and prints in the supplemental section.
 - Demo D-33 lets the verifier sign box 22 so an FAI order can be walked alone; production refuses it and
   `test_frozen_contract` pins it. `test_v74`, `qa_master` and the `qa_e2e` FAI flows sign box 22 before the
   approval.
