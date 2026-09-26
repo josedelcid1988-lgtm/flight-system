@@ -4,13 +4,32 @@ Skyryse in-house MES. Modules: Flight Control (work order execution and quality
 records), Flight Plan (planning), Flight Maneuver (corrective action).
 The product build id is written only in VERSION.md. See TESTING.md for the test suites.
 
-## Original notes
+## Run locally
 
-Single-file manufacturing execution system prototype. Open `index.html` in a
-browser; keep `assets/` beside it.
+The product remains usable offline. React, its icon package, styles, and the
+approved typefaces are bundled locally. The checked-in bundle lets the
+application start without contacting a package registry. To rebuild the
+Flight Control Hangar or refresh its embedded demo copy, install locked
+development dependencies and run the build:
 
-Fully client-side: no network calls, no backend. All state persists to
-`localStorage` under the key `skyryse-mes-work-order-v1`.
+```sh
+npm ci
+npm run build:react
+```
+
+Open `index.html` directly in a browser and keep `assets/` beside it. Other
+Flight System pages continue to use the existing renderer while the controlled
+React migration advances page by page.
+
+The `flight-v82-datum-port` branch also contains a server mode under
+development. Run it with Node.js 22.13 or later:
+
+```sh
+node server/server.mjs --host 127.0.0.1 --port 8080 --db data/flight.sqlite
+```
+
+Then open `http://127.0.0.1:8080`. Read [the backend contract](docs/BACKEND_CONTRACT.md)
+before deploying this unfinished server work.
 
 ## QA pass
 
@@ -32,7 +51,7 @@ At 67 megapixels it was the dominant cause of slow and failed loads on mobile.
 
 ### Correctness
 
-- Tab title read `Flight Control · null` on an empty workspace — `selectedId`
+- Tab title read `Flight Control · null` on an empty workspace: `selectedId`
   was interpolated while null.
 - `.sequence-panel` had `overflow:hidden`, clipping 77 px of operation labels
   on iPhone with no way to scroll to them.
@@ -55,5 +74,5 @@ block so they can be reviewed or reverted independently of the theme layer.
 ## Not done
 
 No AWS, NetSuite, or Jira integration layer. The seam for one, whenever it is
-built, is the pair of functions `save()` and `mediaCommit()` — every state
+built, is the pair of functions `save()` and `mediaCommit()`. Every state
 mutation funnels through them to that one `localStorage` key.

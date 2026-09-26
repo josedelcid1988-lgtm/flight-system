@@ -1,3 +1,4 @@
+import { testPath, testUrl } from './paths.mjs';
 import {chromium} from 'playwright';
 const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{});
 const ctx=await b.newContext({viewport:{width:1600,height:1000}});
@@ -7,7 +8,7 @@ const step=(who,what,r)=>{const ok=r&&r.ok!==false;console.log((ok?'  ok   ':'  
 async function signIn(u){
   // Each person signs in on their own machine; here one browser plays every seat, so sign out first.
   await p.evaluate(()=>{try{sessionStorage.removeItem('skyryse-mes-session-v1');}catch(e){}}).catch(()=>{});
-  await p.goto('file:///Users/josedelcid/projects/flight-system/tests/fixtures/demo_qa150_publish.html'); await p.waitForTimeout(900);
+  await p.goto(testUrl('fixtures/demo_qa150_publish.html')); await p.waitForTimeout(900);
   const gate=await p.evaluate(()=>!!document.querySelector('#sk-boot input[name=username]'));
   if(gate) await p.evaluate(x=>{const un=document.querySelector('#sk-boot input[name=username]');const pw=document.querySelector('#sk-boot input[type=password]');
     un.value=x;un.dispatchEvent(new Event('input',{bubbles:true}));pw.value='demo1234';pw.dispatchEvent(new Event('input',{bubbles:true}));

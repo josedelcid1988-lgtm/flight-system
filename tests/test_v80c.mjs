@@ -1,12 +1,13 @@
+import { testPath, testUrl } from './paths.mjs';
 import {chromium} from 'playwright';
 const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{});const p=await (await b.newContext({viewport:{width:1440,height:1000}})).newPage();const errs=[];p.on('pageerror',e=>errs.push(e.message));const fails=[];const ok=(w,c,m)=>{console.log((c?'  ok   ':'  FAIL ')+w+(c?'':' -> '+m));if(!c)fails.push(w);};
-await p.goto('file:///Users/josedelcid/projects/flight-system/tests/fixtures/demo_publish.html');await p.waitForTimeout(900);
+await p.goto(testUrl('fixtures/demo_publish.html'));await p.waitForTimeout(900);
 await p.evaluate(()=>{const un=document.querySelector('#sk-boot input[name=username]');const pw=document.querySelector('#sk-boot input[type=password]');un.value='demo';un.dispatchEvent(new Event('input',{bubbles:true}));pw.value='demo1234';pw.dispatchEvent(new Event('input',{bubbles:true}));un.closest('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));});await p.waitForTimeout(3500);
 const id=await p.evaluate(()=>{const o=state.orders.find(o=>o.status==='Quality'&&o.fai&&o.fai.required&&!(o.fair&&o.fair.status==='Approved'));selectedId=o.id;view='order';tab='quality';render();return o.id;});
 const m=await p.evaluate(id=>MES.closeOrder(structuredClone(state),id).message,id);ok('close refusal says where to go',/Quality tab/.test(m)&&/Verify and Approve/.test(m),m);
 await p.evaluate(()=>reviewDialog());await p.waitForTimeout(300);
 ok('review dialog explains and disables close',await p.evaluate(()=>!!document.querySelector('#dialog [data-action="goto-fair"]')&&document.querySelector('#review-form button[type=submit]').disabled),'no');
-await p.screenshot({path:'/Users/josedelcid/projects/flight-system/tests/shots/v80c_review.png'});
+await p.screenshot({path:testPath('shots/v80c_review.png')});
 await p.click('#dialog [data-action="goto-fair"]');await p.waitForTimeout(900);
 ok('Go to the FAIR lands on the FAIR panel',await p.evaluate(()=>{const el=document.getElementById('fair-panel');if(!el)return false;const r=el.getBoundingClientRect();return r.top<600&&r.bottom>0;}),'not in view');
 console.log('errors',errs,'FAILS',JSON.stringify(fails));await b.close();

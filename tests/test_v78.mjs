@@ -1,8 +1,9 @@
+import { testPath, testUrl } from './paths.mjs';
 import {chromium} from 'playwright';
 const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{});
 const ctx=await b.newContext({viewport:{width:1440,height:1000}});const p=await ctx.newPage();
 const errs=[];p.on('pageerror',e=>errs.push(e.message));const fails=[];const ok=(w,c,m)=>{console.log((c?'  ok   ':'  FAIL ')+w+(c?'':' -> '+m));if(!c)fails.push(w);};
-await p.goto('file:///Users/josedelcid/projects/flight-system/tests/fixtures/demo_qa150_publish.html');await p.waitForTimeout(900);
+await p.goto(testUrl('fixtures/demo_qa150_publish.html'));await p.waitForTimeout(900);
 await p.evaluate(()=>{const un=document.querySelector('#sk-boot input[name=username]');const pw=document.querySelector('#sk-boot input[type=password]');un.value='demo';un.dispatchEvent(new Event('input',{bubbles:true}));pw.value='demo1234';pw.dispatchEvent(new Event('input',{bubbles:true}));un.closest('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));});await p.waitForTimeout(2800);
 // make sure a stock NC exists
 await p.evaluate(()=>{if(!state.maneuver.ncs.length){FlightManeuver.raiseNC(state,{type:'NC',title:'Print test NC',description:'Bent pin.',partNumber:'SR-IH-040',revision:'A',quantity:1,foundAt:'Receiving inspection',pedigree:'Production',escaped:'no',sourceType:'PO line',sourcePo:'PO4411',sourceLine:'3'});save();}});
@@ -19,7 +20,7 @@ for(const [kind,act,attr,idf,must] of cases){
   const html=await p.evaluate(()=>{const d=window.__printed.pop();return d?d.html:'';});
   ok(kind+' print has SKYRYSE header',html.includes('SKYRYSE')&&html.includes(id),'missing');
   must.forEach(m=>ok(kind+' print has '+m,html.includes(m),'missing'));
-  const q=await b.newPage();await q.setContent(html);await q.screenshot({path:`/Users/josedelcid/projects/flight-system/tests/shots/v78_print_${kind}.png`,fullPage:true});await q.close();
+  const q=await b.newPage();await q.setContent(html);await q.screenshot({path:testPath(`shots/v78_print_${kind}.png`),fullPage:true});await q.close();
 }
 // WO view must not gain a print for tickets
 const woTicketPrint=await p.evaluate(()=>document.querySelectorAll('[data-action="mnv-print"][data-kind="spr"],[data-action="mnv-print"][data-kind="scar"]').length);ok('no SPR/SCAR print',woTicketPrint===0,'found');

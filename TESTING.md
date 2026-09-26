@@ -3,14 +3,19 @@
 The product build id is written only in `VERSION.md`. Suite names such as
 `test_v80.mjs` record when that suite was added. They are not the build id.
 
-The app is a single HTML file with no backend. Every harness drives a real
-browser against a built copy, so a test failure is a real user-visible failure.
+When production is served through `server/server.mjs`, the server is the source
+of record. Static production fixtures and the standalone demo retain browser
+storage for offline and regression testing. Browser suites exercise generated
+production and demo fixtures. Node suites cover build output, migration logic,
+and server routes.
 
 ## Setup
 
 ```bash
-npm i -D playwright && npx playwright install chromium
-bash tests/setpaths.sh     # points the harnesses at tests/fixtures in this checkout
+npm ci
+npm run build:react
+npx playwright install chromium
+Harnesses resolve fixtures and outputs relative to their own files; no path setup is required.
 ```
 
 ## Fixtures in tests/fixtures
@@ -28,9 +33,20 @@ binding so one person can walk a whole flow; the production build enforces them.
 
 ## Suites
 
+The server route tests invoke the HTTP request handler in-process, so they do
+not open a TCP port. Migration and React packaging checks also run with Node:
+
+```sh
+node tests/test_server.mjs
+node tests/test_migration.mjs
+npm run test:react
+npm run build:react -- --check
+```
+
 | Command | What it covers |
 | --- | --- |
-| `node tests/qa_full.mjs` | 306 checks: engine rules, guards, UI flows, rendering at 1440 and 375 px. Expect 304 pass, 2 skip, 0 fail. |
+| `npm run test:react` | React bundle, local assets, reduced-motion styling, app integration, and deterministic demo packaging. |
+| `node tests/qa_full.mjs` | 307 checks: engine rules, guards, UI flows, rendering at 1440 and 375 px. Target: 304 pass, 3 skip, 0 fail. The QA-only demo uses its documented all-access relaxation; role capability maps and strict production guards are checked separately. |
 | `node tests/qa_e2e.mjs` | 30 end-to-end flows: every order type and every ticket type driven to closure, with actions, typed fields, role handoffs and gates counted per flow. Writes `qa_e2e_results.json`. |
 | `node tests/qa_multi.mjs` | 161 checks across modules (Flight Control, Flight Plan, Flight Maneuver). |
 | `node tests/pilot_rehearsal.mjs` | Three scenarios run through the real pilot accounts. |
