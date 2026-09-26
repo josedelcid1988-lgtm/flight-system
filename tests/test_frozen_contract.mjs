@@ -42,6 +42,10 @@ const SOD=[
   // QA Manager decision (2026-09-26): the person who completed the 8130-9 may sign as AQI only after an acknowledged warning, and it is recorded.
   ['the 8130-9 preparer signs as AQI only after acknowledging a warning',"if (selfSigned && !(execution && (execution.selfSignAck === true || execution.selfSignAck === 'on'))) return { ok: false, warning: 'aqi-self-sign',",1],
   ['an AQI self-signature is recorded on the signature and in the manifest',"...(selfSigned ? { selfSigned: true } : {}), manifest: signManifest(state, 'FAA Form 8130-9 Signature of Certifier",1],
+  ['Development NFF never gets a conformity package, 8130-9 or 8130-3',"if (o && o.pedigree === NFF) return nffBlock('it cannot have an LRU conformity package, an 8130-9 statement of conformity or an 8130-3');",1],
+  ['Development NFF never goes into a Production or Development order',"if (child && child.pedigree === NFF && parent.pedigree !== NFF) return nffBlock(",1],
+  ['Development NFF is never an FAI order and never carries a FAIR',"if (order.pedigree === NFF) return { error: nffBlock('it cannot be an FAI order or carry a FAIR').message };",1],
+  ['Development NFF pedigree is one way',"if (order.pedigree === NFF) return nffBlock('its pedigree cannot be changed; build a new order at the pedigree you need');",1],
   ['the own-work exception is Development NFF only',"const OWN_WORK_EXEMPT_PEDIGREES = Object.freeze(['Development NFF']);",1],
   ['inspection needs the inspection grant on every inspection operation',"const stepsDenied = (operation, what) => isInspectionOp(operation) ? (can('inspect-steps') ? null :",1],
   ['nobody grants their own authority',"if(u.username===me.username)return {ok:false,message:'Nobody grants or revokes their own authority.",1],

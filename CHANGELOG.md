@@ -31,6 +31,10 @@ nothing in them is rewritten.
   Inspection now needs the inspection grant on every inspection operation.
 - **Development NFF own-work exception.** On a Development NFF order the builder may inspect their own work;
   the order history records it. Every other separation-of-duties rule still applies.
+- **Development NFF never reaches a flight path.** An NFF unit cannot go into a Production or Development
+  order (as a sub-assembly or a rework source), cannot have a conformity package, 8130-9 or 8130-3, is never
+  an FAI order or FAIR, and its pedigree never changes. NFF orders no longer use up a WI revision's
+  first-article slot. Enforced in the engine; no role or override lifts it.
 - **AQI self-signature with a warning.** The person who completed an 8130-9 may give the AQI signature after
   acknowledging a warning; the signature and its manifest record the self-signature.
 - New suite `test_authority`; `tests/lib/grants.mjs` grants authorities in suites that exercise other rules.

@@ -1,4 +1,4 @@
-<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v81"><meta name="fs-build-sha256" content="34b8ffcc92f1ca57c3b742d94ec81d9c248cf48452e4f3c5dc90cc3b5e0ae423"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v81"><meta name="fs-build-sha256" content="1973f4a01b2bc91487d21297f7fe8cc6d0f92edb0bbf4ed6e8bf7ba068091207"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
 <script>window.skTable=window.skTable||{state:function(){return {sort:{col:null,dir:'asc'},filters:{}};},selected:function(){return [];},active:function(){return false;},match:function(){return true;},matchAny:function(){return true;},sort:function(){return {col:null,dir:'asc'};},reset:function(){},save:function(){},views:function(){return [];}};</script>
 
 <html lang="en">
@@ -1940,6 +1940,12 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   'use strict';
   const STATUSES = ['Draft', 'Kitting', 'Building', 'Quality', 'Closed'];
   const PEDIGREES = Object.freeze(['Production', 'Development', 'Development NFF']);
+  // Development NFF: not for flight and not for credit. A unit built on an NFF order never reaches a
+  // production or flight path: it cannot go into a Production or Development order (as a sub-assembly or as
+  // the unit being reworked), cannot have an LRU conformity package, an 8130-9 or an 8130-3, cannot be an FAI
+  // or carry a FAIR, and its pedigree never changes away from NFF. No role or override lifts this.
+  const NFF = 'Development NFF';
+  const nffBlock = what => fail(`Development NFF is not for flight and not for credit, so ${what}. No role or override lifts this.`);
   const PRIORITIES = Object.freeze(['AOG', 'High', 'Normal']);
   const AIRCRAFT = Object.freeze(['C2', 'C3', 'C4', 'C5']);
   const SUBCATEGORIES = Object.freeze(['Rework', 'Software load', 'Repair', 'Upgrade', 'Inspection', 'FAI', 'Mfg.', 'Installation', 'Maintenance']);
@@ -4220,7 +4226,7 @@ const OP_BOM_MAX = 12;
     return { query: q, kind, tool, orders: hits.sort((a, b) => a.id.localeCompare(b.id)), tickets, sprs, mrb, cars, changes, serials, wis };
   }
   // True when no work order has been cloned from this WI revision yet.
-  const faiFirstFor = (state, wiId, revision) => !state.orders.some(o => o.masterWI && o.masterWI.id === wiId && o.masterWI.revision === revision);
+  const faiFirstFor = (state, wiId, revision) => !state.orders.some(o => o.masterWI && o.masterWI.id === wiId && o.masterWI.revision === revision && o.pedigree !== NFF);
   // ---- Inspector identity for FAIR and 8130-9 signatures ----
   // The signer must hold an active stamp of an allowed type on their own account and pass the PIN step-up.
   function inspectorSign(state, types, execution) {
@@ -4263,6 +4269,7 @@ const OP_BOM_MAX = 12;
   }
   function fairOpen(state, id, allowVerified) {
     const { order, error } = target(state, id); if (error) return { error };
+    if (order.pedigree === NFF) return { error: nffBlock('it cannot be an FAI order or carry a FAIR').message };
     if (!(order.fai && order.fai.required)) return { error: `${order.id} is not an FAI order.` };
     if (!plain(order.fair)) order.fair = fairSeed(state, order);
     if (order.fair.status === 'Approved' || (order.fair.status === 'Verified' && !allowVerified)) return { error: 'The FAIR is signed. Reopen it to change it.' };
@@ -4530,10 +4537,12 @@ const OP_BOM_MAX = 12;
   function confGet(state, id, serial, perm, what) {
     { const d = denied(perm || 'conformity', what || 'work the conformity package (the QA Manager grants conformity work to a person)'); if (d) return { error: d.message }; }
     const { order, error } = target(state, id); if (error) return { error };
+    if (order.pedigree === NFF) return { error: nffBlock('it cannot have an LRU conformity package, an 8130-9 statement of conformity or an 8130-3').message };
     const p = confFind(order, serial); if (!p) return { error: `No conformity package for ${serial} on ${order.id}.` };
     return { order, p };
   }
   function startConformity(state, id, input) {
+    { const o = Array.isArray(state?.orders) ? state.orders.find(x => x.id === id) : null; if (o && o.pedigree === NFF) return nffBlock('it cannot have an LRU conformity package, an 8130-9 statement of conformity or an 8130-3'); }
     { const d = denied('approve-wo', 'start a conformity package') || denied('conformity', 'start a conformity package (the QA Manager grants conformity work to a person)'); if (d) return d; }
     const { order, error } = target(state, id); if (error) return fail(error);
     const nextOp = order.operations.find(op => !op.done);
@@ -4737,15 +4746,16 @@ const OP_BOM_MAX = 12;
   }
   function issuableOrders(state, parentId) {
     const parent = state.orders.find(o => o.id === parentId); if (!parent) return [];
-    return state.orders.filter(o => o.id !== parentId && o.inventory && o.inventory.lotNumber && !subTree(state, o.id).has(parentId))
+    return state.orders.filter(o => o.id !== parentId && o.inventory && o.inventory.lotNumber && !subTree(state, o.id).has(parentId) && !(o.pedigree === NFF && parent.pedigree !== NFF))
       .map(o => { const used = issuedFrom(state, o.id); const usedSerials = new Set(used.flatMap(u => u.serials)); const serials = (o.inventory.serials || []).filter(sn => !usedSerials.has(sn)); return { id: o.id, partNumber: o.partNumber, revision: o.revision, title: o.title, lotNumber: o.inventory.lotNumber, pedigree: o.pedigree, remaining: Math.max(0, (o.inventory.quantity || o.quantity) - issuedQty(state, o.id)), serials }; })
       .filter(x => x.remaining > 0);
   }
   function issueFromOrder(state, parentId, childId, input) {
     { const d = denied('operate', 'issue a sub-assembly from another work order'); if (d) return d; }
     const { order: parent, error } = target(state, parentId); if (error) return fail(error);
-    if (!['Kitting', 'Building'].includes(parent.status)) return fail('Sub-assemblies are issued while the parent order is in Kitting or Building.');
     const child = state.orders.find(o => o.id === String(childId ?? ''));
+    if (child && child.pedigree === NFF && parent.pedigree !== NFF) return nffBlock(`the ${child.partNumber} built on ${child.id} cannot go into ${parent.pedigree} order ${parent.id}`);
+    if (!['Kitting', 'Building'].includes(parent.status)) return fail('Sub-assemblies are issued while the parent order is in Kitting or Building.');
     if (!child) return fail('Choose the work order that built the sub-assembly.');
     if (child.id === parent.id) return fail('A work order cannot be issued into itself.');
     if (!child.inventory || !child.inventory.lotNumber) return fail(`${child.id} is not stocked yet. Move it to inventory first so its lot exists.`);
@@ -5604,6 +5614,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (state.orders.length >= MAX_ORDERS) return fail('A workspace holds up to 100 work orders. Reset the workspace to start again.');
     if (!plain(input) || !PEDIGREES.includes(input.pedigree) || !SUBCATEGORIES.includes(input.subcategory) || !count(input.quantity)) return fail('Choose a pedigree, subcategory, and a whole quantity from 1 to 1,000.');
     if (!AIRCRAFT.includes(input.aircraft)) return fail('Choose the intended aircraft.');
+    if (input.pedigree === NFF && input.subcategory === 'FAI') return nffBlock('it cannot be an FAI order or carry a FAIR');
     const partNumber = String(input.partNumber ?? '').trim().toUpperCase(), title = String(input.title ?? '').trim();
     const revision = String(input.revision ?? '').trim() || 'A';
     if (!str(partNumber, 50) || !partNumber) return fail('Enter a part number of 1 to 50 characters.');
@@ -5632,6 +5643,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
       sourceUnit = stockedUnits(state).find(entry => entry.serial === unitKey);
       if (!sourceUnit) return fail('Choose a stocked serial number from the list. Move the unit to inventory first if it is not listed.');
       if (sourceUnit.partNumber !== partNumber) return fail(`${unitKey} is a ${sourceUnit.partNumber} unit. The part number must match the unit being worked.`);
+      { const built = state.orders.find(o => o.id === sourceUnit.orderId); if (built && built.pedigree === NFF && input.pedigree !== NFF) return nffBlock(`${unitKey}, built on ${built.id}, can be worked only on another Development NFF order`); }
       { const openOn = (Array.isArray(sourceUnit.reworkOrders) ? sourceUnit.reworkOrders : []).map(id => state.orders.find(o => o.id === id)).find(o => o && o.status !== 'Closed'); if (openOn) return fail(`${unitKey} already has an open work order (${openOn.id}). Close it before opening another on the same unit.`); }
     } else if (unitKey) return fail('A source unit is recorded only for Rework, Repair, or Upgrade.');
     const ticketId = String(input.sourceTicketId ?? '').trim();
@@ -5668,6 +5680,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (!['Draft', 'Kitting'].includes(order.status)) return fail('Pedigree can only change before the build starts (Draft or Kitting).');
     if (engineeringChange(order)) return fail(engineeringHoldMessage);
     if (plain(order.pedigreeChange)) return fail('A pedigree change is already awaiting approvals.');
+    if (order.pedigree === NFF) return nffBlock('its pedigree cannot be changed; build a new order at the pedigree you need');
     const to = String(input?.pedigree ?? '').trim(), reason = String(input?.reason ?? '').trim();
     if (!PEDIGREES.includes(to)) return fail('Choose Development, Development NFF, or Production.');
     if (to === order.pedigree) return fail(`This order is already ${to}.`);
@@ -5682,6 +5695,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (error) return fail(error);
     const change = order.pedigreeChange;
     if (!plain(change)) return fail('There is no pedigree change awaiting approval.');
+    if (change.from === NFF) return nffBlock('its pedigree cannot be changed; build a new order at the pedigree you need');
     if (!['Draft', 'Kitting'].includes(order.status)) return fail('A pedigree change can only be approved before the build starts. Reject or withdraw it instead.');
     const who = actor(state), discipline = accountRole() || who.role;
     if (discipline === 'general') return fail('General User accounts cannot approve a pedigree change.');
@@ -5814,8 +5828,9 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (!part) return fail('The master WI part number is not in the part catalog.');
     const revision = wi.partRevision;
     // FAI: the first order from this released WI revision is a first article. Pre-selected; clearing it needs a reason.
-    const faiFirst = !state.orders.some(o => o.masterWI && o.masterWI.id === wi.id && o.masterWI.revision === wi.revision);
-    const faiWant = input.fai === undefined ? faiFirst : (input.fai === true || input.fai === 'on' || input.fai === 'yes');
+    if (input.pedigree === NFF && (input.subcategory === 'FAI' || input.fai === true || input.fai === 'on' || input.fai === 'yes')) return nffBlock('it cannot be an FAI order or carry a FAIR');
+    const faiFirst = input.pedigree !== NFF && !state.orders.some(o => o.masterWI && o.masterWI.id === wi.id && o.masterWI.revision === wi.revision && o.pedigree !== NFF);
+    const faiWant = input.pedigree === NFF ? false : input.fai === undefined ? faiFirst : (input.fai === true || input.fai === 'on' || input.fai === 'yes');
     const faiWaiver = String(input.faiWaiver ?? '').trim();
     if (faiFirst && !faiWant && !str(faiWaiver, 300)) return fail(`This is the first work order from ${wiKey(wi)}, so it is flagged as an FAI order. To clear the flag, record why (for example, the FAI is covered on another order).`);
     const faiRevised = state.masterWIs.some(x => x.id === wi.id && x.revision !== wi.revision);
@@ -6371,7 +6386,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     return { ok: validate(state), repairs: done, blocker: diagnose(state) };
   }
   const MES = { masterAccess, buyoffCredential, diagnose, repair, quarantineOrder, NETSUITE_STOCK, availableLots, lotInStock, woRevLabel, revisionAuthority, nextWoRev, ensureRevisions, revisionEntries, rollWorkOrderRevision, addSavedView, removeSavedView, ensureSavedViews, stepLetter, addAttachment, addTicketAttachment, removeTicketAttachment, ticketAttachments, STOCK_PARTS, OP_BOM_MAX, removeAttachment, aogActive, aogDue, aogMessage, logAogBroadcast, resolveAog, AOG_THREAD, setSchedule, scheduleDays, dateOnly, editOrderOperation, AIRCRAFT, stockedUnits, setWIStepImage, PROFILE_OPTIONS, profileOptionFor, selectProfile, TORQUE_UNITS, isTorqueTool, torqueValid, inventoryReadiness, assignSerial, voidSerial, nextSerial, orderSerials, isSerialized, SERIALIZED_PARTS, autoAssignSerials, moveToInventory, markNetSuitePosted, addKitFile, linkOpToTicket, reworkOpsFor, reworkLibrary, saveReworkTemplate, removeReworkTemplate, saveOpAsReworkTemplate, approveReworkTemplate, addStandardRework, reworkHash, setWIDrawing, releaseUnreleasedWI, wiDrawingUnreleased, isInspectionOp, STD_INSPECTION, rejectInspection, logTravelerPrint, FAIR_TYPES, FAIR_REASONS, FAIR_DESIGNATORS, INDEX_TYPES, F2_KINDS, saveFairHeader, setFairIndex, addFairForm2, setFairTest, addFairChar, updateFairChar, fairReview, fairSnapshot, verifyFair, approveFair, reopenFair, fairId, SOC_SECTIONS, SOC_ITEMS, ISSUERS, CONF_CHECKS, CONF_PHASES, CONF_VALUES, CONF_CLASS, confSerials, confAuto, confGaps, confOpGate, startConformity, saveConformity, checkConformity, complete8130_9, void8130_9, aqiSign8130_9, notifyCertification, addDarFinding, acceptDarFinding, recordDarApproval, record8130_3, closeConformity, conformityState, atpAssets, faiFirstFor, issueFromOrder, returnIssuedOrder, issuableOrders, traceReport, traceReportCsv, qaReviewMasterWI, releaseWIFromPfmea, traceSearch, setImpactDecision, IMPACT_DECISIONS, linkECO, setWICriticalSafety, addPfmeaRow, updatePfmeaRow, pfmeaGate, PFMEA_HIGH, setStampPin, identityStepUp, trainingCheck, trainingStatus, TRAINING, setMsdsBook, msdsBook, tickFodItem, FOD_CHECKLIST, fodChecklistComplete, isConformityPoint, removeKitFile, netsuiteCsv, ensureMasterWIs, findWI, wiKey, nextWIRevision, addMasterWI, updateMasterWI, saveWIOperations, releaseMasterWI, reviseMasterWI, setStepCheck, BUYOFF_TYPES, OP_CLASSIFICATIONS, EXTERNAL_CLASS, EXTERNAL_TEST_CLASS, EXTERNAL_CLASSES, INSPECTION_CLASS, ATP_CLASS, atpPending, pushATPSoftware, reviewATPPush, linkATPSoftware, addPurchaseOrder, CLOSURE_REASONS, requestOrderClosure, NOTICE_KINDS, postNotice, acknowledgeNotice, updateNotice, requestWorkOrder, decideWORequest, ECR_TYPES, ECR_SOURCES, submitECRRequest, reviewFeedbackECR, linkECRJira, openProcessECRs, ecrsForOperation, incorporateECRs, decideOrderClosure, ASSIGN_TYPES, assignWork, completeAssignment, pingAssignment, syncAssignments, opAssignee, INSPECTION_BUYOFF_TYPES, pendingSequenceChange, inspectionGate, firstInsertIndex, addOrderOperation, removeOrderOperation, approveSequenceChange, toolCheck, stampCheck, stampCredential, stampHolderFor, CAL_TOOLS, CAL_SNAPSHOT, STAMP_HOLDERS, setMaterialLot, PEDIGREES, PRIORITIES, SUBCATEGORIES, PART_CATALOG, partDefinition, revisionLabel, requiresReleaseQA, releaseApproval, approveRelease, approveRelease, approveECR, approveEngineeringChange, SITES, orderSite, MESSAGE_TARGETS, seed, validate, upgrade, getOrder, summary, canAdvance, advance, setMaterial, setPriority, completeOperation, closeOrder, addOrder, addAdhocOrder, splitOrder, splitRequestOrder, requestPedigreeChange, approvePedigreeChange, peerReviewMasterWI, dispositionTicket, DISPOSITIONS, MRB_PEDIGREES, ADHOC_ONLY, CALLOUTS, GROUNDING, FOD_LEVELS, CONSUMABLES, addNote, blockingTickets, createTicket, resolveTicket, returnDisposition, closeSplitRequest, DEFECT_CODES, rejectEngineeringChange, rejectSequenceChange, rejectPedigreeChange, returnRelease, returnMasterWI, withdrawClosure, closeECRRequest, updateProfile, attachEvidence, reviewEvidence, rejectEvidence, removeEvidence, ensureStamps, stampRegister, issueStamp, updateStamp, profileOptions, STAMP_STATUSES, sha256, canonical, signManifest, fullHistory, addMessage, setSlackThread, slackThreadValid };
-  Object.assign(MES, { ownWorkRefusal, coveredBuildOps, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, verifyManifests, recordTraining, personTraining, trainingCurrentFor, ownWorkHit, OWN_WORK_EXEMPT_PEDIGREES, scryptHex, PIN_KDF, saveTraining, trainingCatalog, requiredTrainings, trainingDef, TRAINING_CODE_RE, importStamps, stampRegisterCsv, nextStampNumber, isPlaceholderStamp, STAMP_NUMBER_RE, wiAuthors, wiAuthorRefusal, wiPeerReviewRefusal, buildStamp, buildStampValid, supportActor, supportGrant, logSupport, SUPPORT_RULES, SUPPORT_KINDS, recordSupportAccess, noteDemoBypassRemoved, supportLogValid });
+  Object.assign(MES, { ownWorkRefusal, coveredBuildOps, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, verifyManifests, NFF, recordTraining, personTraining, trainingCurrentFor, ownWorkHit, OWN_WORK_EXEMPT_PEDIGREES, scryptHex, PIN_KDF, saveTraining, trainingCatalog, requiredTrainings, trainingDef, TRAINING_CODE_RE, importStamps, stampRegisterCsv, nextStampNumber, isPlaceholderStamp, STAMP_NUMBER_RE, wiAuthors, wiAuthorRefusal, wiPeerReviewRefusal, buildStamp, buildStampValid, supportActor, supportGrant, logSupport, SUPPORT_RULES, SUPPORT_KINDS, recordSupportAccess, noteDemoBypassRemoved, supportLogValid });
   if (typeof module !== 'undefined' && module.exports) module.exports = MES;
   if (root) root.MES = MES;
 })(typeof window !== 'undefined' ? window: null);
