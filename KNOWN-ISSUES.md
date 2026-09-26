@@ -55,29 +55,51 @@ skip is the release zip check, which needs `RELEASE_OUTPUT_DIR` (issue 2).
 from the machine that built v72. It reports Skip unless `RELEASE_OUTPUT_DIR`
 points at a release output directory. It tests packaging, not the product.
 
-## 3. Demo build grants every pilot seat every capability (open)
+## 3. Demo build granted every pilot seat every capability (closed)
 
-Seven `qa_full` checks under `Demo | Roles` fail: the demo build's
-`canManageAccess`, `can` and `skCan` relaxations give `tech`, `operations`,
-`mfgeng`, `quality` and `engineering` every capability, although those seats
-exist to rehearse the real roles. Handled by the in-repo demo build chain.
+**Cause.** The demo build chain lived outside this repository. Its overlay said the
+five pilot seats keep their real role, but its `isShared()` returned true for every
+account and the build also forced `can`, `skCan` and `canManageAccess` open, so
+`tech`, `operations`, `mfgeng`, `quality` and `engineering` had every capability.
+Seven `qa_full` checks under `Demo | Roles` failed.
 
-## 4. `qa_multi`: stamp prompt check expects a stamp number field (open)
+**Fix.** The demo is now built in this repository by `tools/build-demo.mjs` from
+`index.html` with numbered deviations (`docs/DEMO_DEVIATIONS.md`). The role
+deviations apply only to accounts that are not pilot seats: `capsOf` returns
+every capability only for them, and `canManageAccess`, the QA Manager only
+settings, Use for Dev and MRB seat eligibility follow the same test. Pilot seats
+keep their real role. Covered by `qa_full` (Demo / Roles, now passing) and
+`tests/test_demo_build.mjs` (each pilot seat checked against its role, each
+full-access account checked for every capability).
 
-`UI flow | Stamp prompt appears when the last step is checked` signs in as the
-`demo` account, whose buy-off credential is an override, so the prompt shows no
-stamp number field and the check fails. Handled with the removal of the `demo`
-username relaxation and the demo build chain.
+## 4. `qa_multi`: stamp prompt check expected a stamp number field (closed)
 
-## 5. `test_v77`: a Quality account could take the Certification seat (open)
+**Cause.** The old demo gave every account a "Demo override" at buy-off, which
+hides the stamp number field. `qa_multi` checks that finishing the last step
+opens the prompt with the stamp number field, so it failed.
 
-`quality account cannot take the Certification seat` fails: the Certification
-vote is recorded for a Quality account. The `mrb-cert` capability is granted
-to the Certification role but never checked when a seat is taken. Handled by
-capability-based MRB seats.
+**Fix.** The demo now gives every account a demo stamp instead of an override
+(deviations "Every account holds a demo stamp" and the three that follow): the
+prompt shows the stamp number field, and the number, training and PIN are not
+checked for a demo stamp. The PIN fields are optional in the demo. `qa_multi`:
+161 of 161; `test_v80i` still buys off through the prompt.
 
-## 6. `test_v78`: record print capture records nothing (open)
+## 5. `test_v77`: a Quality account could take the Certification seat (closed)
 
-Every print assertion fails because the harness stubs `window.open` and the
-prints no longer go through it, so the captured HTML is empty. To be diagnosed
-with the demo rebuild.
+**Cause.** In the demo every account sat in every MRB seat (issue 3).
+
+**Fix.** Pilot seats keep their real MRB seats in the demo, so the `quality`
+account holds only the Quality seat. `test_v77` passes. Capability-based seat
+checks in production are item 6.
+
+## 6. `test_v78`: record print capture recorded nothing (closed)
+
+**Cause.** The harness captured prints by stubbing `window.open` and reading
+what was written into the new window. Record prints now go through
+`printRecord`, which opens a blob URL instead, so the capture was empty and
+every assertion failed. The prints themselves were correct.
+
+**Fix.** The harness also captures the HTML blob handed to the browser. Every
+assertion is unchanged (SKYRYSE header, sections, no SPR/SCAR print) and all
+pass. The same capture is used by `test_demo_build` to check that every demo
+print carries DEMO, NOT FOR ACCEPTANCE.

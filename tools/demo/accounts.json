@@ -1,0 +1,85 @@
+{
+ "users": [
+  {
+   "username": "demo",
+   "displayName": "Demo User",
+   "salt": "00",
+   "hash": "2e82950b567b14b51e406c5f3fdde137869a99e7b3552408e4725c9c69a7ff16",
+   "role": "qm",
+   "createdAt": "2026-09-17T00:00:00.000Z",
+   "createdBy": "demo build"
+  },
+  {
+   "username": "master",
+   "displayName": "Master Access",
+   "salt": "00",
+   "hash": "2e82950b567b14b51e406c5f3fdde137869a99e7b3552408e4725c9c69a7ff16",
+   "role": "admin",
+   "createdAt": "2026-09-17T00:00:00.000Z",
+   "createdBy": "demo build"
+  },
+  {
+   "username": "mfgeng",
+   "displayName": "Manufacturing Engineer",
+   "salt": "00",
+   "hash": "2e82950b567b14b51e406c5f3fdde137869a99e7b3552408e4725c9c69a7ff16",
+   "role": "me",
+   "createdAt": "2026-09-17T00:00:00.000Z",
+   "createdBy": "demo build"
+  },
+  {
+   "username": "operations",
+   "displayName": "Operations",
+   "salt": "00",
+   "hash": "2e82950b567b14b51e406c5f3fdde137869a99e7b3552408e4725c9c69a7ff16",
+   "role": "operator",
+   "createdAt": "2026-09-17T00:00:00.000Z",
+   "createdBy": "demo build"
+  },
+  {
+   "username": "tech",
+   "displayName": "Technician",
+   "salt": "00",
+   "hash": "2e82950b567b14b51e406c5f3fdde137869a99e7b3552408e4725c9c69a7ff16",
+   "role": "technician",
+   "createdAt": "2026-09-17T00:00:00.000Z",
+   "createdBy": "demo build"
+  },
+  {
+   "username": "quality",
+   "displayName": "Quality",
+   "salt": "00",
+   "hash": "2e82950b567b14b51e406c5f3fdde137869a99e7b3552408e4725c9c69a7ff16",
+   "role": "qe",
+   "createdAt": "2026-09-17T00:00:00.000Z",
+   "createdBy": "demo build"
+  },
+  {
+   "username": "engineering",
+   "displayName": "Engineering",
+   "salt": "00",
+   "hash": "2e82950b567b14b51e406c5f3fdde137869a99e7b3552408e4725c9c69a7ff16",
+   "role": "swe",
+   "createdAt": "2026-09-17T00:00:00.000Z",
+   "createdBy": "demo build"
+  },
+  {
+   "username": "safety",
+   "displayName": "Safety Team",
+   "salt": "00",
+   "hash": "2e82950b567b14b51e406c5f3fdde137869a99e7b3552408e4725c9c69a7ff16",
+   "role": "safety",
+   "createdAt": "2026-09-17T00:00:00.000Z",
+   "createdBy": "demo build"
+  },
+  {
+   "username": "certification",
+   "displayName": "Certification",
+   "salt": "00",
+   "hash": "2e82950b567b14b51e406c5f3fdde137869a99e7b3552408e4725c9c69a7ff16",
+   "role": "cert",
+   "createdAt": "2026-09-17T00:00:00.000Z",
+   "createdBy": "demo build"
+  }
+ ]
+}

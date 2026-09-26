@@ -17,16 +17,20 @@ One product, three modules, all in the same file:
 ## Files
 
 - `index.html`: production build. All gates enforced. This is the app.
-- `demo.html`: demo build. Same app with the separation-of-duties, PIN and stamp
-  gates relaxed and a sample data set loaded. Sign in demo / demo1234.
+- `demo.html`: demo build, generated. Same app with the separation-of-duties, PIN
+  and stamp gates relaxed and a sample data set loaded. Pilot seats (`tech`,
+  `quality`, `mfgeng`, `operations`, `engineering`) keep their real role. Sign in
+  with any demo account and the password demo1234. Every page and print says
+  DEMO, NOT FOR ACCEPTANCE.
 - `tests/`: Playwright harnesses and their fixtures. See `TESTING.md`.
 - `VERSION.md`: the only place the product build id is written. `ACCESS.md`: how the machines
   and Claude sessions share this repo.
 
-`demo.html` is generated from `index.html` by a build chain that does not live
-in this repo. Do not edit `demo.html` by hand expecting it to survive; make the
-change in `index.html` and say so in the PR or commit, and the demo gets rebuilt
-on the next release.
+`demo.html` and the demo test fixtures are generated from `index.html` by
+`node tools/build-demo.mjs`, which applies the numbered deviations in
+`tools/demo/deviations.mjs` (listed in `docs/DEMO_DEVIATIONS.md`). Never edit
+`demo.html` or a fixture by hand: change `index.html`, rebuild, and commit both.
+`node tools/build-demo.mjs --check` fails if they are out of date.
 
 ## Rules that are not negotiable
 
