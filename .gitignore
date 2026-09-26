@@ -1,1 +1,10 @@
-.DS_Store
+# Playwright installed per TESTING.md; not part of the app (AGENTS.md: no build tooling).
+node_modules/
+package.json
+package-lock.json
+
+# Harness outputs
+tests/qa_e2e_results.json
+tests/qa_full_results.json
+tests/qa_results.json
+tests/shots/

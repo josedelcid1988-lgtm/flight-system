@@ -14,7 +14,8 @@ await p.evaluate(a=>{const o=MES.getOrder(state,a.o),op=o.operations.find(x=>x.i
 v=await vis();ok('Complete operation appears when all steps are checked; panel still hidden',v.dock&&!v.fieldset,JSON.stringify(v));
 await p.click('#operation-form .task-actions [data-action="buyoff-now"]');await p.waitForTimeout(300);
 ok('Complete operation opens the stamp prompt',await p.evaluate(()=>!!document.getElementById('step-stamp-form')),'no prompt');
-await p.evaluate(()=>{document.getElementById('step-stamp-form').elements.stampNumber.value='DEMO';document.getElementById('step-stamp-form').requestSubmit();});await p.waitForTimeout(600);
+// The demo account is on the override path, so the prompt shows no stamp number field; type one only when the prompt asks for it.
+await p.evaluate(()=>{const f=document.getElementById('step-stamp-form');if(f.elements.stampNumber)f.elements.stampNumber.value='DEMO';f.requestSubmit();});await p.waitForTimeout(600);
 ok('operation bought off through the prompt',await p.evaluate(a=>MES.getOrder(state,a.o).operations.find(x=>x.id===a.op).done,fx),await p.evaluate(()=>(document.getElementById('operation-error')||{}).textContent));
 await p.screenshot({path:'/Users/josedelcid/projects/flight-system/tests/shots/v80i_done.png'});
 }
