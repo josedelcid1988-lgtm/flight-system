@@ -4,6 +4,47 @@ What changed in Flight System, newest first. The build id is set in `VERSION.md`
 the end of `VERSION.md` names the exact files and the suite results for the build. Storage keys, form
 numbers and record number formats have not changed in any entry below.
 
+## Authority, stamps and training (build v81, after the handover merge)
+
+Requested by the QA Manager on 26 September 2026. Saved workspaces keep their stamp register and accounts;
+nothing in them is rewritten.
+
+- **Stamp register as the in-system database.** Stamps are numbered SKY-0000 onward. A fresh register ships
+  with open placeholders SKY-0000 to SKY-0006 (no people) and the generic role credentials, retired. Leaving
+  the number blank takes the next open placeholder, then the next SKY number; numbers are never reused.
+  Holder names are editable, holders import from CSV (all or nothing, the bad row named) and the register
+  downloads as CSV.
+- **Several stamps per person**, one per buy-off type. Every stamp after a person's first cites a training
+  they hold a current record for, and pauses while that training is not current.
+- **Stamp PINs stored with scrypt** (RFC 7914, N = 16384, r = 8, p = 1), verified against the RFC test
+  vector. PINs set earlier still verify. The PIN stays required at every buy-off.
+- **Training requirements configured in the system.** The QA Manager adds or changes trainings (code, name,
+  validity, LMS course); every change cites the QMS document and revision and a reason, and a revision can
+  require retraining. Operations require ESD and FOD through their callouts and any other training by a
+  tick in the WI or operation editor. **Training records** are entered per person.
+- **More than one role per account.** Adding a role beyond the primary one cites a current training and
+  pauses while it is not current.
+- **Granted authorities.** Inspection, the four MRB seats, conformity package work and the AQI signature
+  are no longer part of any role. A QA Manager or Master Access account grants each to a named, eligible
+  person with a reason and a current training record, never to themselves; grants are signed, logged and
+  pause when the training lapses. Master Access holds none until granted. Nobody holds any at first.
+  Inspection now needs the inspection grant on every inspection operation.
+- **Development NFF own-work exception.** On a Development NFF order the builder may inspect their own work;
+  the order history records it. Every other separation-of-duties rule still applies.
+- **Development NFF never reaches a flight path.** An NFF unit cannot go into a Production or Development
+  order (as a sub-assembly or a rework source), cannot have a conformity package, 8130-9 or 8130-3, is never
+  an FAI order or FAIR, and its pedigree never changes. NFF orders no longer use up a WI revision's
+  first-article slot. Enforced in the engine; no role or override lifts it.
+- **FAIR as AS9102 Rev C forms.** On screen, Form 1, Form 2, Form 3 and Review and sign are separate pages.
+  The print and download follow the Rev C boxes: Form 2 box 8 is the supplier (name, address, code), and
+  Form 3 is the Rev C grid (5 to 12, box 10 designed / qualified tooling) with Skyryse's revision, sample
+  size, quantity, inspector, date and M&TE in a marked supplemental section. Box 22 (FAI reviewer /
+  approval) is an optional second signature by someone other than the verifier; unsigned, boxes 22 and 23
+  carry the verifier as before.
+- **AQI self-signature with a warning.** The person who completed an 8130-9 may give the AQI signature after
+  acknowledging a warning; the signature and its manifest record the self-signature.
+- New suite `test_authority`; `tests/lib/grants.mjs` grants authorities in suites that exercise other rules.
+
 ## Handover, 30 September 2026 (build v81)
 
 Prepared for the handover to the in-house developer and IT. Workspace schema unchanged; saved workspaces

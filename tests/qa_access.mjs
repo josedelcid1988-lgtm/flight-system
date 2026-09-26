@@ -17,8 +17,11 @@ try {
   await page.reload();
   await page.waitForFunction(()=>!document.getElementById('sk-boot'));
   assert.equal(await page.evaluate(()=>skAuth.role()),'admin');
-  for(const cap of ['manage-access','safety-buyoff','mrb-cert','approve-wi','approve-wo','approve-nc','operate-steps'])
+  for(const cap of ['manage-access','safety-buyoff','approve-wi','approve-wo','approve-nc','operate-steps'])
     assert.equal(await page.evaluate(cap=>skAuth.can(cap),cap),true);
+  // Granted authorities are not part of Master Access: none until a QA Manager grants them.
+  for(const cap of ['mrb-cert','inspect-steps','conformity','aqi-sign'])
+    assert.equal(await page.evaluate(cap=>skAuth.can(cap),cap),false);
   assert.equal(await page.evaluate(()=>MES.stampCheck({name:'Unregistered Test',credentialId:'invalid'}).ok),false);
   await page.getByRole('button',{name:'Your credentials',exact:true}).click();
   await page.getByRole('button',{name:'Create Master Access account',exact:true}).click();

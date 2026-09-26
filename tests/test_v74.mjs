@@ -54,11 +54,14 @@ await p.screenshot({path:TESTS+'shots/v74_fair.png',fullPage:true});
 await signIn('quality');
 step('verify (quality stamp)',await S(o=>MES.verifyFair(state,o,{pin:''}),O));
 no('edit after verify refused',await run(o=>MES.addFairChar(structuredClone(state),o,{no:'9',ref:'x',requirement:'x'}),O));
+no('box 22 cannot be signed by the person who verified the FAIR',await run(o=>MES.reviewFair(structuredClone(state),o,{pin:''}),O));
 step('approve (Skyryse QA)',await S(o=>MES.approveFair(state,o,{pin:''}),O));
 await valid('fair approved');
 await run(o=>{selectedId=o;view='order';tab='quality';render();},O); await p.waitForTimeout(300);
+step('the FAIR shows Form 1, Form 2, Form 3 and Review and sign as separate pages',{ok:await run(()=>{const tabs=[...document.querySelectorAll('#fair-panel [data-fair-page]')].map(b=>b.textContent.trim());const shown=[...document.querySelectorAll('#fair-panel .fair-page')].filter(x=>!x.hidden).length;return tabs.length===4&&/Form 1/.test(tabs[0])&&/Form 3/.test(tabs[2])&&shown===1;}),message:'pages'});
+step('choosing Form 3 shows only Form 3',{ok:await run(()=>{document.querySelector('#fair-panel [data-fair-page="3"]').click();const shown=[...document.querySelectorAll('#fair-panel .fair-page')].filter(x=>!x.hidden);return shown.length===1&&shown[0].id==='fair-page-3';}),message:'form 3'});
 const [dl]=await Promise.all([p.waitForEvent('download',{timeout:5000}).catch(()=>null),p.click('[data-action="fair-download"]')]);
-if(dl){const fs=await import('fs');const path=await dl.path();const h=fs.readFileSync(path,'utf8');step('FAIR download has Forms 1 to 3 blocks',{ok:/Form 1/.test(h)&&/Form 2/.test(h)&&/Form 3/.test(h)&&/25\. Date/.test(h)&&/3A\. Sample size/.test(h)&&/AMS-QQ-A-250\/11/.test(h),message:'content'});fs.copyFileSync(path,TESTS+'shots/v74_fair_download.html');}else step('FAIR download',{ok:false,message:'none'});
+if(dl){const fs=await import('fs');const path=await dl.path();const h=fs.readFileSync(path,'utf8');step('FAIR download has Forms 1 to 3 blocks',{ok:/Form 1/.test(h)&&/Form 2/.test(h)&&/Form 3/.test(h)&&/25\. Date/.test(h)&&/3A\. Sample size/.test(h)&&/AMS-QQ-A-250\/11/.test(h)&&/AS9102 Form 3: Characteristic Accountability/.test(h)&&/10\. Designed \/ qualified tooling/.test(h)&&/22\. FAIR reviewed \/ approved by/.test(h)&&/Supplemental data/.test(h)&&/8\. Supplier \(name, address, code\)/.test(h),message:'content'});fs.copyFileSync(path,TESTS+'shots/v74_fair_download.html');}else step('FAIR download',{ok:false,message:'none'});
 step('FAI pill shows approved',{ok:await run(()=>/FAIR approved/.test(document.querySelector('#order-title').textContent)),message:'pill'});
 step('close order with approved FAIR',await S(o=>MES.closeOrder(state,o),O));
 // ---- Conformity package ----

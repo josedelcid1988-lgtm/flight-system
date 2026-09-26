@@ -69,6 +69,8 @@ failing suite, `tests/suite_<name>.log`. `--only a,b` runs named suites.
 | `node tests/test_mrb_seat_caps.mjs` | MRB seats and the QA Manager safety buy-off follow capabilities, with the refusal paths. |
 | `node tests/test_build_stamp.mjs` | The build id and index.html SHA-256: the stamp tool, and the stamp on manifests, history events, Support Overrides entries and prints; older unstamped records still verify. |
 | `node tests/test_frozen_contract.mjs` | The frozen contract: storage keys, form numbers and every separation-of-duties rule in the engine, plus the WI author and peer reviewer release refusals. Fails if any of them changes. |
+| `node tests/test_authority.mjs` | Stamp placeholders and SKY numbering, issue, import and export; the training requirements list with QMS references and retraining; person training records; several stamps per person; QA Manager grants and extra roles tied to training (never to oneself, eligible roles only, paused on lapse); stamp PINs with scrypt. |
+| `node tests/test_nff_boundary.mjs` | Development NFF stays out of every flight and production path: no FAI or FAIR, no conformity package, 8130-9 or 8130-3, no issue or rework into Production or Development, pedigree one way, first-article slot untouched. |
 | `node tests/test_mirror.mjs` | The persistence mirror: off by default, on, outage and recovery, idempotent retry, no password or PIN material, tamper detection, backup, restore test and restart on the restored file. |
 
 Each harness prints `FAILS []` or a list, and the browser page errors it saw.
