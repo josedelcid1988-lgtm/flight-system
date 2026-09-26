@@ -19,10 +19,10 @@ The accounts `tech`, `quality`, `mfgeng`, `operations`, `engineering` are pilot 
 their real role (Technician, Quality, Manufacturing Engineering, Operations, Engineering) so a pilot
 can rehearse the real hand-offs. Every other demo account (`demo`, `master`, `safety`,
 `certification` and any account a person creates) has full access (D-6 to D-10). The stamp,
-PIN and separation-of-duties relaxations (D-13 to D-19; D-20 to D-26) apply to every
+PIN and separation-of-duties relaxations (D-13 to D-19; D-20 to D-27) apply to every
 demo account so no scenario stalls. Sign in with any account and the password `demo1234`.
 
-Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-27 to D-28).
+Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-28 to D-29).
 
 ## Outputs
 
@@ -61,8 +61,9 @@ Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-2
 | D-21 | Separation of duties | Closure, software push and change approval self-checks never match | Same as the rule above for the checks that compare against the current actor held in a local variable. | 3 |
 | D-22 | Separation of duties | Two approvals from one discipline allowed | A pedigree change can be approved twice from the same discipline. | 1 |
 | D-23 | Separation of duties | Flight Maneuver same-person checks never match | Root cause and verification, and one person one MRB seat, are lifted in the demo. | 1 |
-| D-24 | Separation of duties | Screens offer self-approval | The sequence release, closure withdrawal and pedigree approval controls render for the person who made the change. | 5 |
-| D-25 | Separation of duties | NC quality review shows the approval form to the disposition author | The person who recorded the ME disposition can approve it and close the ticket, matching the engine relaxation above. | 1 |
-| D-26 | Separation of duties | Any valid credential counts as a QA credential for release records | Release approvals recorded by any demo account validate. | 1 |
-| D-27 | Marking | DEMO, NOT FOR ACCEPTANCE on every print and download | A printed or downloaded demo record cannot be mistaken for a production record. | 1 |
-| D-28 | Marking | Demo overlay appended | Loads the sample workspace once, issues stamps to the pilot accounts, seeds a PFMEA example, activates the generic role stamps and shows DEMO, NOT FOR ACCEPTANCE on every page. Source: tools/demo/overlay.js. | 1 |
+| D-24 | Separation of duties | An inspector may inspect work they performed | One person can build an operation and inspect it, so a work order can be walked alone. Production refuses this to every role, Master Access and Support Access included. | 1 |
+| D-25 | Separation of duties | Screens offer self-approval | The sequence release, closure withdrawal and pedigree approval controls render for the person who made the change. | 5 |
+| D-26 | Separation of duties | NC quality review shows the approval form to the disposition author | The person who recorded the ME disposition can approve it and close the ticket, matching the engine relaxation above. | 1 |
+| D-27 | Separation of duties | Any valid credential counts as a QA credential for release records | Release approvals recorded by any demo account validate. | 1 |
+| D-28 | Marking | DEMO, NOT FOR ACCEPTANCE on every print and download | A printed or downloaded demo record cannot be mistaken for a production record. | 1 |
+| D-29 | Marking | Demo overlay appended | Loads the sample workspace once, issues stamps to the pilot accounts, seeds a PFMEA example, activates the generic role stamps and shows DEMO, NOT FOR ACCEPTANCE on every page. Source: tools/demo/overlay.js. | 1 |
