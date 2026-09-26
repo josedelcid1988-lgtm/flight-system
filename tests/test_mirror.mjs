@@ -13,6 +13,7 @@ const FIXTURES=TESTS+'fixtures/';
 const ROOT=path.resolve(TESTS,'..');
 const {createMirror,sha256,verifyChain,pruneBackups}=await import(path.join(ROOT,'server/server.mjs'));
 const PROD='file://'+FIXTURES+'publish.html';
+const STAMP=(h=>({build:h.match(/<meta name="fs-build" content="([^"]*)">/)[1],sha256:h.match(/<meta name="fs-build-sha256" content="([^"]*)">/)[1]}))(fs.readFileSync(FIXTURES+'publish.html','utf8'));
 const fails=[];const ok=(w,c,m='')=>{console.log((c?'  ok   ':'  FAIL ')+w+(c?'':' -> '+m));if(!c)fails.push(w);};
 const tmp=fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()),'fs-mirror-test-'));
 const dbPath=path.join(tmp,'mirror.sqlite'),backupDir=path.join(tmp,'backups');
@@ -97,7 +98,7 @@ const drain=()=>p.evaluate(async()=>{for(let i=0;i<60&&window.skMirror.status().
 const w1=await mkOrder(p);let st=await drain();
 const count=()=>Number(m.db.prepare('SELECT COUNT(*) n FROM records').get().n);
 ok('mirror on: a committed write saves locally and every queued record reaches the server',w1.ok&&w1.saved&&st.unsynced===0&&count()>0,JSON.stringify({w1,st,rows:count()}));
-ok('the order written is on the server with the build and the signed-in person',!!m.db.prepare("SELECT 1 FROM records WHERE entity_type='order' AND entity_id=? AND actor LIKE 'Jordan Doe%' AND build_version<>''").get(w1.id));
+ok('the order written is on the server with the build and the signed-in person',!!m.db.prepare("SELECT 1 FROM records WHERE entity_type='order' AND entity_id=? AND actor LIKE 'Jordan Doe%' AND build_version=? AND build_sha256=?").get(w1.id,STAMP.build,STAMP.sha256));
 ok('accounts are mirrored with name and role',!!m.db.prepare("SELECT 1 FROM records WHERE entity_type='account' AND entity_id='rpark' AND payload_json LIKE '%\"role\":\"qm\"%'").get());
 ok('the header shows Synced',await p.evaluate(()=>document.getElementById('sync-indicator')?.textContent)==='Synced');
 // A closure signed by a second account carries a manifest to the server.

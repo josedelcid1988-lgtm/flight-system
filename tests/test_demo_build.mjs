@@ -71,7 +71,7 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  await ctx.close();}
 {const {p,ctx}=await open('tests/fixtures/publish.html',null);
  const r=await p.evaluate(()=>({banner:!!document.querySelector('.demo-banner'),mark:markDocument('<html><body><p>x</p></body></html>'),title:document.title}));
- ok('production shows no demo banner and leaves prints unmarked',!r.banner&&r.mark==='<html><body><p>x</p></body></html>'&&/^Flight System(?! Demo)/.test(r.title),JSON.stringify(r));await ctx.close();}
+ ok('production shows no demo banner and prints carry the build line but no demo mark',!r.banner&&!/NOT FOR ACCEPTANCE/.test(r.mark)&&/^<html><body><p>x<\/p><div class="fs-build-line"/.test(r.mark)&&/^Flight System(?! Demo)/.test(r.title),JSON.stringify(r));await ctx.close();}
 ok('no page errors',errs.length===0,errs.join(' | '));
 await b.close();
 console.log('errors',errs,'FAILS',JSON.stringify(fails));

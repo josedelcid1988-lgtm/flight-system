@@ -1,4 +1,4 @@
-<!doctype html><!-- Product build id: VERSION.md. Do not copy the build number into this file. --><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v81"><meta name="fs-build-sha256" content="ae5ee69f4c501482dee9cb798fb4ad1230f6d5d557c8cc8cd04c2cc8c8ac1c59"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
 <script>window.skTable=window.skTable||{state:function(){return {sort:{col:null,dir:'asc'},filters:{}};},selected:function(){return [];},active:function(){return false;},match:function(){return true;},matchAny:function(){return true;},sort:function(){return {col:null,dir:'asc'};},reset:function(){},save:function(){},views:function(){return [];}};</script>
 
 <html lang="en">
@@ -2169,6 +2169,11 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // Approvals and authoring are attributed to the signed-in account, not the buy-off credential.
   // Stamps apply to operations only. Outside a browser (tests) there is no account: fall back to the profile.
   const accountActor = () => (typeof window !== 'undefined' && window.skAuth && typeof window.skAuth.actor === 'function') ? window.skAuth.actor() : null;
+  // The build that wrote a record: the build id and the SHA-256 of index.html, both written into the head by
+  // tools/stamp-build.mjs. A copy that was never stamped says so rather than guessing, so any acceptance can be
+  // traced to the exact file that recorded it.
+  const buildStamp = () => { const meta = name => { try { const m = typeof document !== 'undefined' ? document.querySelector(`meta[name="${name}"]`) : null; return m ? String(m.getAttribute('content') || '') : ''; } catch (e) { return ''; } }; return { version: meta('fs-build') || 'unstamped', sha256: meta('fs-build-sha256') || 'unstamped' }; };
+  const buildStampValid = b => plain(b) && typeof b.version === 'string' && !!b.version && (b.sha256 === 'unstamped' || /^[0-9a-f]{64}$/.test(b.sha256));
   // Synchronous SHA-256 so a signature manifest can be produced inside the rule engine. The
   // server re-signs the same manifest once records move to the backend; hashes made now stay comparable.
   const sha256 = (() => {
@@ -2200,7 +2205,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   function signManifest(state, meaning, subject, at) {
     const acct = accountActor();
     const signer = acct ? { name: acct.name, role: acct.role, credentialId: acct.credentialId, account: acct.account } : { ...profileSnapshot(state.profile), account: null };
-    return { meaning, at, signer, algorithm: 'SHA-256', hash: sha256(canonical(subject)), authenticated: false, ...(subject.override ? { override: { ...subject.override } } : {}) };
+    return { meaning, at, signer, algorithm: 'SHA-256', hash: sha256(canonical(subject)), authenticated: false, build: buildStamp(), ...(subject.override ? { override: { ...subject.override } } : {}) };
   }
   // Subject builders shared by the signing sites and verifyManifests, so a hash can be recomputed
   // from the stored record. Each mirrors exactly what was hashed when the record was signed.
@@ -2219,7 +2224,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       if (Array.isArray(node)) { node.forEach((x, i) => walk(x, `${path}[${i}]`)); return; }
       if (!plain(node)) return;
       Object.keys(node).forEach(k => {
-        if (k === 'manifest' && node[k] !== null && node[k] !== undefined) { checked++; if (!shapeOk(node[k])) failures.push({ where: `${path}.manifest`, reason: 'manifest shape is invalid' }); }
+        if (k === 'manifest' && node[k] !== null && node[k] !== undefined) { checked++; if (!shapeOk(node[k])) failures.push({ where: `${path}.manifest`, reason: 'manifest shape is invalid' }); else if (node[k].build !== undefined && !buildStampValid(node[k].build)) failures.push({ where: `${path}.manifest.build`, reason: 'build stamp is malformed' }); }
         else walk(node[k], `${path}.${k}`);
       });
     };
@@ -2266,7 +2271,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   function supportEntry(state, fields) {
     if (!Array.isArray(state.supportLog)) state.supportLog = [];
     const taken = new Set(state.supportLog.map(e => e && e.id)); let n = state.supportLog.length + 1; while (taken.has(`SUP-${String(n).padStart(5, '0')}`)) n += 1;
-    const entry = { id: `SUP-${String(n).padStart(5, '0')}`, at: new Date().toISOString(), ...fields };
+    const entry = { id: `SUP-${String(n).padStart(5, '0')}`, at: new Date().toISOString(), ...fields, build: buildStamp() };
     state.supportLog.unshift(entry);
     if (state.supportLog.length > SUPPORT_LOG_MAX) state.supportLog.length = SUPPORT_LOG_MAX;
     return entry;
@@ -4878,7 +4883,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     // Event ids stay unique across the order history, its archive and the workspace activity log, even when
     // imported data numbered them differently (FC-IMP-036).
     const eventId = (() => { const taken = new Set([...(order.historyArchive || []), ...order.history, ...(state.activity || []), ...(state.activityArchive || [])].map(e => e && e.id)); let n = (Array.isArray(order.historyArchive) ? order.historyArchive.length : 0) + order.history.length + 1; while (taken.has(`${order.id}-event-${n}`)) n += 1; return `${order.id}-event-${n}`; })();
-    const event = { id: eventId, at: new Date().toISOString(), action, actor: (function () { const acct = accountActor(); return acct ? `${acct.name} · ${acct.credentialId}` : state.profile ? `${state.profile.name} · ${state.profile.credentialId}` : actor; })() };
+    const event = { id: eventId, at: new Date().toISOString(), action, actor: (function () { const acct = accountActor(); return acct ? `${acct.name} · ${acct.credentialId}` : state.profile ? `${state.profile.name} · ${state.profile.credentialId}` : actor; })(), build: buildStamp() };
     // bounded local history; production audit storage belongs on a controlled server.
     while (order.history.some(item => item.id === event.id)) event.id += '-new';
     order.history.push(event);
@@ -6015,7 +6020,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     return { ok: validate(state), repairs: done, blocker: diagnose(state) };
   }
   const MES = { masterAccess, buyoffCredential, diagnose, repair, quarantineOrder, NETSUITE_STOCK, availableLots, lotInStock, woRevLabel, revisionAuthority, nextWoRev, ensureRevisions, revisionEntries, rollWorkOrderRevision, addSavedView, removeSavedView, ensureSavedViews, stepLetter, addAttachment, addTicketAttachment, removeTicketAttachment, ticketAttachments, STOCK_PARTS, OP_BOM_MAX, removeAttachment, aogActive, aogDue, aogMessage, logAogBroadcast, resolveAog, AOG_THREAD, setSchedule, scheduleDays, dateOnly, editOrderOperation, AIRCRAFT, stockedUnits, setWIStepImage, PROFILE_OPTIONS, profileOptionFor, selectProfile, TORQUE_UNITS, isTorqueTool, torqueValid, inventoryReadiness, assignSerial, voidSerial, nextSerial, orderSerials, isSerialized, SERIALIZED_PARTS, autoAssignSerials, moveToInventory, markNetSuitePosted, addKitFile, linkOpToTicket, reworkOpsFor, reworkLibrary, saveReworkTemplate, removeReworkTemplate, saveOpAsReworkTemplate, approveReworkTemplate, addStandardRework, reworkHash, setWIDrawing, releaseUnreleasedWI, wiDrawingUnreleased, isInspectionOp, STD_INSPECTION, rejectInspection, logTravelerPrint, FAIR_TYPES, FAIR_REASONS, FAIR_DESIGNATORS, INDEX_TYPES, F2_KINDS, saveFairHeader, setFairIndex, addFairForm2, setFairTest, addFairChar, updateFairChar, fairReview, fairSnapshot, verifyFair, approveFair, reopenFair, fairId, SOC_SECTIONS, SOC_ITEMS, ISSUERS, CONF_CHECKS, CONF_PHASES, CONF_VALUES, CONF_CLASS, confSerials, confAuto, confGaps, confOpGate, startConformity, saveConformity, checkConformity, complete8130_9, void8130_9, aqiSign8130_9, notifyCertification, addDarFinding, acceptDarFinding, recordDarApproval, record8130_3, closeConformity, conformityState, atpAssets, faiFirstFor, issueFromOrder, returnIssuedOrder, issuableOrders, traceReport, traceReportCsv, qaReviewMasterWI, releaseWIFromPfmea, traceSearch, setImpactDecision, IMPACT_DECISIONS, linkECO, setWICriticalSafety, addPfmeaRow, updatePfmeaRow, pfmeaGate, PFMEA_HIGH, setStampPin, identityStepUp, trainingCheck, trainingStatus, TRAINING, setMsdsBook, msdsBook, tickFodItem, FOD_CHECKLIST, fodChecklistComplete, isConformityPoint, removeKitFile, netsuiteCsv, ensureMasterWIs, findWI, wiKey, nextWIRevision, addMasterWI, updateMasterWI, saveWIOperations, releaseMasterWI, reviseMasterWI, setStepCheck, BUYOFF_TYPES, OP_CLASSIFICATIONS, EXTERNAL_CLASS, EXTERNAL_TEST_CLASS, EXTERNAL_CLASSES, INSPECTION_CLASS, ATP_CLASS, atpPending, pushATPSoftware, reviewATPPush, linkATPSoftware, addPurchaseOrder, CLOSURE_REASONS, requestOrderClosure, NOTICE_KINDS, postNotice, acknowledgeNotice, updateNotice, requestWorkOrder, decideWORequest, ECR_TYPES, ECR_SOURCES, submitECRRequest, reviewFeedbackECR, linkECRJira, openProcessECRs, ecrsForOperation, incorporateECRs, decideOrderClosure, ASSIGN_TYPES, assignWork, completeAssignment, pingAssignment, syncAssignments, opAssignee, INSPECTION_BUYOFF_TYPES, pendingSequenceChange, inspectionGate, firstInsertIndex, addOrderOperation, removeOrderOperation, approveSequenceChange, toolCheck, stampCheck, stampCredential, stampHolderFor, CAL_TOOLS, CAL_SNAPSHOT, STAMP_HOLDERS, setMaterialLot, PEDIGREES, PRIORITIES, SUBCATEGORIES, PART_CATALOG, partDefinition, revisionLabel, requiresReleaseQA, releaseApproval, approveRelease, approveRelease, approveECR, approveEngineeringChange, SITES, orderSite, MESSAGE_TARGETS, seed, validate, upgrade, getOrder, summary, canAdvance, advance, setMaterial, setPriority, completeOperation, closeOrder, addOrder, addAdhocOrder, splitOrder, splitRequestOrder, requestPedigreeChange, approvePedigreeChange, peerReviewMasterWI, dispositionTicket, DISPOSITIONS, MRB_PEDIGREES, ADHOC_ONLY, CALLOUTS, GROUNDING, FOD_LEVELS, CONSUMABLES, addNote, blockingTickets, createTicket, resolveTicket, returnDisposition, closeSplitRequest, DEFECT_CODES, rejectEngineeringChange, rejectSequenceChange, rejectPedigreeChange, returnRelease, returnMasterWI, withdrawClosure, closeECRRequest, updateProfile, attachEvidence, reviewEvidence, rejectEvidence, removeEvidence, ensureStamps, stampRegister, issueStamp, updateStamp, profileOptions, STAMP_STATUSES, sha256, canonical, signManifest, fullHistory, addMessage, setSlackThread, slackThreadValid };
-  Object.assign(MES, { ownWorkRefusal, coveredBuildOps, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, verifyManifests, supportActor, supportGrant, logSupport, SUPPORT_RULES, SUPPORT_KINDS, recordSupportAccess, noteDemoBypassRemoved, supportLogValid });
+  Object.assign(MES, { ownWorkRefusal, coveredBuildOps, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, verifyManifests, buildStamp, buildStampValid, supportActor, supportGrant, logSupport, SUPPORT_RULES, SUPPORT_KINDS, recordSupportAccess, noteDemoBypassRemoved, supportLogValid });
   if (typeof module !== 'undefined' && module.exports) module.exports = MES;
   if (root) root.MES = MES;
 })(typeof window !== 'undefined' ? window: null);
@@ -6785,7 +6790,7 @@ const ATTACH_KINDS = Object.freeze(['mrb','cars','ncs','sprs']);
     if (m.proposed !== ticket.dispo.decision) return fail(`${m.id} approved ${m.proposed}, but the ticket now proposes ${ticket.dispo.decision}. Convene a new board.`);
     return null;
   }
-  const MES_record = (state, order, action) => { try { const a = actor(state); const taken = new Set([...(order.historyArchive || []), ...order.history, ...(state.activity || []), ...(state.activityArchive || [])].map(e => e && e.id)); let n = (Array.isArray(order.historyArchive) ? order.historyArchive.length : 0) + order.history.length + 1; while (taken.has(`${order.id}-event-${n}`)) n += 1; order.history.push({ id: `${order.id}-event-${n}`, at: now(), action: String(action).slice(0, 600), actor: `${a.name} · ${a.credentialId}` }); if (order.history.length > 300) { order.historyArchive = [...(order.historyArchive || []), ...order.history.splice(0, order.history.length - 300)]; } } catch (e) {} };
+  const MES_record = (state, order, action) => { try { const a = actor(state); const taken = new Set([...(order.historyArchive || []), ...order.history, ...(state.activity || []), ...(state.activityArchive || [])].map(e => e && e.id)); let n = (Array.isArray(order.historyArchive) ? order.historyArchive.length : 0) + order.history.length + 1; while (taken.has(`${order.id}-event-${n}`)) n += 1; order.history.push({ id: `${order.id}-event-${n}`, at: now(), action: String(action).slice(0, 600), actor: `${a.name} · ${a.credentialId}`, build: MES.buildStamp() }); if (order.history.length > 300) { order.historyArchive = [...(order.historyArchive || []), ...order.history.splice(0, order.history.length - 300)]; } } catch (e) {} };
 
   // ---------- stock NC: a product problem found outside a work order ----------
   const ticketSequence = state => Math.max(0, ...allTickets(state).map(x => Number(String(x.ticket.id).split('-').at(-1)) || 0)) + 1;
@@ -7082,7 +7087,7 @@ const ATTACH_KINDS = Object.freeze(['mrb','cars','ncs','sprs']);
       effectiveness: { checkDate: dayAgo(4), result: 'Effective', note: 'Fourteen installation orders since the change with zero torque nonconformances; step data shows unit recorded every time.', by: qe, at: daysAgo(4) },
       closure: null, cancelled: null, raisedBy: qe, raisedAt: daysAgo(30), history: [h(daysAgo(30), 'Raised (Major, source NC). Owner Rafael Ortega.', qe), h(daysAgo(28), 'Containment recorded.', me), h(daysAgo(24), 'Root cause recorded (Method).', me), h(daysAgo(17), 'Action CA-1 completed.', me), h(daysAgo(13), 'Action CA-2 completed.', me), h(daysAgo(11), 'Actions verified.', qe), h(daysAgo(4), 'Effectiveness check: effective.', qe)] };
     const subject = { id: c1.id, title: c1.title, severity: c1.severity, rootCause: c1.rootCause.statement, actions: c1.actions.map(a => ({ id: a.id, description: a.description, completedAt: a.completedAt })), verification: c1.verification.at, effectiveness: c1.effectiveness.result, note: 'Root cause addressed at the template level; effectiveness demonstrated across fourteen orders.' };
-    c1.closure = { note: subject.note, by: qe, at: closedAt, manifest: { meaning: 'Corrective action closure', at: closedAt, signer: { ...qe }, algorithm: 'SHA-256', hash: MES.sha256(MES.canonical(subject)), authenticated: false } };
+    c1.closure = { note: subject.note, by: qe, at: closedAt, manifest: { meaning: 'Corrective action closure', at: closedAt, signer: { ...qe }, algorithm: 'SHA-256', hash: MES.sha256(MES.canonical(subject)), authenticated: false, build: MES.buildStamp() } };
     c1.history.push(h(closedAt, `Closed: ${subject.note}`, qe));
     // An open CAR mid-way through the chain.
     const c2 = { id: 'CAR-1002', title: 'Harness connector pin retention failures at ATP', description: 'Two harness assemblies failed pin retention at ATP. Pins backed out of the 38-pin connector under the pull test.', sourceType: 'Observation', severity: 'Major', link: { orderId: null, ticketId: null, ref: 'SPR-101, SPR-102' }, dueDate: ahead(9), owner: me, status: 'Actions',
@@ -9661,8 +9666,9 @@ function ticketRow(o,t){return `<button class="linked-row ticket-row" data-actio
 function reportRow(o,r){return `<button class="linked-row report-row" data-action="atp-report" data-report="${esc(r.id)}">${icon('file')}<span><strong>${esc(r.title)}</strong><small class="mono">${esc(r.id)} · Op ${operationNumber(o,r.operationId)} · Rev ${esc(r.revision)}</small></span><span class="report-result ${r.result==='Pass'?'pass':r.result==='Fail'?'fail':''}">${esc(r.result)}</span>${icon('external')}</button>`;}
 function operationLinks(o,op){const tickets=o.tickets.filter(t=>t.operationId===op.id),reports=o.reports.filter(r=>r.operationId===op.id);return `<section class="operation-links" aria-label="Linked operation records"><div class="linked-heading"><h3>Linked quality records</h3></div>${tickets.map(t=>ticketRow(o,t)).join('')}${reports.map(r=>reportRow(o,r)).join('')}${!tickets.length&&!reports.length?'<p class="small muted no-links">Nothing linked.</p>':''}</section>`;}
 function operationActions(o,op){const canAdd=o.status!=='Closed',canTicket=['Kitting','Building','Quality'].includes(o.status);return `${canAdd?`<label class="btn att-btn" for="att-input">${icon('upload')} Upload files</label><input class="sr-only" id="att-input" type="file" multiple aria-label="Attach files to operation ${esc(op.id)}" data-attachment data-order="${esc(o.id)}" data-op="${esc(op.id)}">`:''}<button class="btn" data-action="create-ticket" data-op="${esc(op.id)}" ${canTicket?'':'disabled'}>${icon('plus')} Create NC</button>${MES.isInspectionOp(op)&&!op.done&&o.status==='Building'&&skCan('raise-nc')?`<button class="btn danger" data-action="insp-reject" data-op="${esc(op.id)}">Reject inspection</button>`:''}`;}
-// Every printed or downloaded document passes through here. Production returns it unchanged; the demo build marks it.
-function markDocument(html){/* DEMO D-28 */const mark="<div class=\"demo-print-mark\" style=\"margin:0 0 8px;padding:6px 10px;border:2px solid #7a1f00;color:#7a1f00;font:700 14px/18px sans-serif;text-align:center;letter-spacing:.06em\">DEMO, NOT FOR ACCEPTANCE</div>";return /<body[^>]*>/i.test(html)?html.replace(/<body[^>]*>/i,b=>b+mark):mark+html;}
+// Every printed or downloaded document passes through here. It carries the build id and the SHA-256 of index.html
+// so a printed record traces to the exact build that produced it. The demo build also marks it.
+function markDocument(html){/* DEMO D-28 */{const mark="<div class=\"demo-print-mark\" style=\"margin:0 0 8px;padding:6px 10px;border:2px solid #7a1f00;color:#7a1f00;font:700 14px/18px sans-serif;text-align:center;letter-spacing:.06em\">DEMO, NOT FOR ACCEPTANCE</div>";html=/<body[^>]*>/i.test(html)?html.replace(/<body[^>]*>/i,b=>b+mark):mark+html;}const b=MES.buildStamp(),line=`<div class="fs-build-line" style="font:10px/1.4 Menlo,Consolas,monospace;color:#555;margin-top:10px">Flight System build ${esc(b.version)} · index.html SHA-256 ${esc(b.sha256)}</div>`;return /<\/body>/i.test(html)?html.replace(/<\/body>(?![\s\S]*<\/body>)/i,line+'</body>'):html+line;}
 function printRecord(html,name){html=markDocument(html);const doc=html.replace('<body>','<body><button class="print-action" type="button" onclick="window.print()" style="position:fixed;top:12px;right:12px;padding:8px 16px;font-weight:700">Print</button><style>@media print{.print-action{display:none}}</style>'),url=URL.createObjectURL(new Blob([doc],{type:'text/html'})),w=window.open(url,'_blank');if(w){w.opener=null;setTimeout(()=>URL.revokeObjectURL(url),60000);notify('Opened for printing. Use Print in the preview.');}else{URL.revokeObjectURL(url);dlHtml(name,html);notify('Pop-ups are blocked, so the record was downloaded as a file to print.');}}
 document.addEventListener('click',e=>{const b=e.target.closest('[data-action="fair-print"],[data-action="conf-8130-print"]');if(!b)return;e.preventDefault();e.stopPropagation();const o=MES.getOrder(state,b.dataset.order);if(!o)return;if(b.dataset.action==='fair-print'){printRecord(fairHtml(o),`FAIR-${o.id}.html`);return;}const pk=(o.conformity||[]).find(x=>x.serial===b.dataset.serial);if(pk&&pk.form)printRecord(conf8130Html(o,pk),`8130-9-${o.partNumber}-${pk.serial}.html`);},true);
 // Printable records for tickets raised outside a work order (stock NC, CAR, MRB, PFMEA).
@@ -11224,7 +11230,7 @@ window.SK_MIRROR = window.SK_MIRROR || {
   }
   function build() {
     var meta = function (name) { var m = document.querySelector('meta[name="' + name + '"]'); return m ? m.getAttribute('content') : ''; };
-    return { version: meta('fs-build') || window.SK_BUILD || 'unknown', sha256: meta('fs-build-sha256') || 'unstamped' };
+    return window.MES && typeof MES.buildStamp === 'function' ? MES.buildStamp() : { version: meta('fs-build') || 'unstamped', sha256: meta('fs-build-sha256') || 'unstamped' };
   }
   function enqueue(map, onlyTypes) {
     var acct = window.skAuth && typeof skAuth.actor === 'function' ? skAuth.actor() : null;
@@ -11316,7 +11322,7 @@ window.SK_MIRROR = window.SK_MIRROR || {
 /* Hardening layer, v63. Security log, idle lock, stamp register administration, credential
    binding, audit export, reset audit, tool-log staleness, and the integration seam for the
    NetSuite MCP. Uses the shared app state and helpers at call time. */
-window.SK_BUILD = 'v63';
+window.SK_BUILD = window.MES && typeof MES.buildStamp === 'function' ? MES.buildStamp().version : 'unstamped';
 window.SK_INTEGRATIONS = window.SK_INTEGRATIONS || {
   // LMS: training records (ESD, FOD) land on the stamp register. Until the feed is connected an
   // access administrator records the expiry dates by hand in Your credentials.
@@ -11470,7 +11476,7 @@ window.SK_INTEGRATIONS = window.SK_INTEGRATIONS || {
   // ---- audit export and reset audit -----------------------------------------------------------------
   function auditExport() {
     var body = JSON.stringify(state);
-    var doc = { application: 'Flight System', build: window.SK_BUILD, exportedAt: new Date().toISOString(), exportedBy: window.skAuth && window.skAuth.actor ? window.skAuth.actor() : null, workspaceHash: window.MES.sha256(body), workspace: state, securityLog: readLog() };
+    var doc = { application: 'Flight System', build: window.SK_BUILD, buildSha256: window.MES && MES.buildStamp ? MES.buildStamp().sha256 : 'unstamped', exportedAt: new Date().toISOString(), exportedBy: window.skAuth && window.skAuth.actor ? window.skAuth.actor() : null, workspaceHash: window.MES.sha256(body), workspace: state, securityLog: readLog() };
     var blob = new Blob([JSON.stringify(doc)], { type: 'application/json' });
     var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'flight-control-audit-' + doc.exportedAt.slice(0, 19).replace(/[:T]/g, '-') + '.json'; document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
     secLog({ type: 'audit-export', hash: doc.workspaceHash, by: (doc.exportedBy || {}).account });

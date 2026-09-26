@@ -3,8 +3,11 @@
 build: v81
 released: 2026-09-20
 
-This file is the only place the product build id is written. Do not copy it into
-other docs or into `index.html`. Point there instead.
+This file is where the product build id is set. `node tools/stamp-build.mjs` copies it
+into the head of `index.html` together with the SHA-256 of `index.html`, and every
+signature manifest, order history event, Support Overrides entry, mirrored record
+and printed document then carries both. Do not write the build id into `index.html`
+or any other doc by hand. Point here instead.
 
 The build id is not the workspace schema (`state.version` in `index.html`) and
 not the suffix on the `skyryse-mes-*` storage keys. Those stay fixed so saved

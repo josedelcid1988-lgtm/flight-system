@@ -2,7 +2,7 @@
 
 Skyryse in-house MES. Modules: Flight Control (work order execution and quality
 records), Flight Plan (planning), Flight Maneuver (corrective action).
-The product build id is written only in VERSION.md. See TESTING.md for the test suites.
+The product build id is set in VERSION.md and stamped into index.html by tools/stamp-build.mjs. See TESTING.md for the test suites.
 
 ## Original notes
 

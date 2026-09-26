@@ -23,14 +23,16 @@ One product, three modules, all in the same file:
   with any demo account and the password demo1234. Every page and print says
   DEMO, NOT FOR ACCEPTANCE.
 - `tests/`: Playwright harnesses and their fixtures. See `TESTING.md`.
-- `VERSION.md`: the only place the product build id is written. `ACCESS.md`: how the machines
+- `VERSION.md`: where the product build id is set; `tools/stamp-build.mjs` writes it and the
+  SHA-256 of `index.html` into the head of `index.html`. `ACCESS.md`: how the machines
   and Claude sessions share this repo.
 
 `demo.html` and the demo test fixtures are generated from `index.html` by
 `node tools/build-demo.mjs`, which applies the numbered deviations in
 `tools/demo/deviations.mjs` (listed in `docs/DEMO_DEVIATIONS.md`). Never edit
-`demo.html` or a fixture by hand: change `index.html`, rebuild, and commit both.
-`node tools/build-demo.mjs --check` fails if they are out of date.
+`demo.html` or a fixture by hand: change `index.html`, run `node tools/stamp-build.mjs`,
+then `node tools/build-demo.mjs`, and commit all of them. `--check` on either tool fails
+if its output is out of date.
 
 ## Rules that are not negotiable
 
