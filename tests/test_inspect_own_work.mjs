@@ -3,7 +3,8 @@
 // exempt and no override lifts it, Master Access and Support Access included.
 import {chromium} from 'playwright';
 const TESTS=decodeURI(new URL('.',import.meta.url).pathname);
-const PROD='file://'+TESTS+'fixtures/publish.html';
+const FIXTURES=process.env.FS_FIXTURES_DIR?process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):TESTS+'fixtures/';
+const PROD='file://'+FIXTURES+'publish.html';
 const AUTH='skyryse-mes-auth-v1',SESSION='skyryse-mes-session-v1';
 const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{});
 const p=await (await b.newContext({viewport:{width:1440,height:1000}})).newPage();

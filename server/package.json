@@ -1,0 +1,18 @@
+{
+  "name": "flight-system-mirror",
+  "version": "1.0.0",
+  "description": "Persistence mirror for Flight System: append-only, hash-chained record store on SQLite. Node built-ins only.",
+  "private": true,
+  "type": "module",
+  "main": "server.mjs",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "backup": "node server.mjs --backup-now",
+    "restore-test": "node restore-test.mjs",
+    "test": "node ../tests/test_mirror.mjs"
+  },
+  "dependencies": {}
+}

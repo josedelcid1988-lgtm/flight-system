@@ -1622,7 +1622,7 @@ function skBoot(){
  // ---- local sign-in gate (hashed in-browser; a real deployment authenticates against a server) ----
  var AUTH_KEY='skyryse-mes-auth-v1',SESSION_KEY='skyryse-mes-session-v1';
  function loadAuth(){try{var a=JSON.parse(localStorage.getItem(AUTH_KEY)||'null');return a&&Array.isArray(a.users)?a:{users:[]};}catch(e){return {users:[]};}}
- function saveAuth(a){localStorage.setItem(AUTH_KEY,JSON.stringify(a));}
+ function saveAuth(a){localStorage.setItem(AUTH_KEY,JSON.stringify(a));try{window.dispatchEvent(new CustomEvent('sk-auth-saved'));}catch(e){}}
  function toHex(buf){return Array.prototype.map.call(new Uint8Array(buf),function(b){return ('0'+b.toString(16)).slice(-2);}).join('');}
  function randomSalt(){var b=new Uint8Array(16);(window.crypto||{}).getRandomValues?crypto.getRandomValues(b):b.forEach(function(_,i){b[i]=Math.floor(Math.random()*256);});return toHex(b);}
  function hashPassword(salt,password){if(!(window.crypto&&crypto.subtle))return Promise.reject(new Error('Secure hashing is not available in this browser context.'));return crypto.subtle.digest('SHA-256',new TextEncoder().encode(salt+':'+password)).then(toHex);}
@@ -9028,7 +9028,7 @@ if(loadProblem){
 }
 MES.ensureMasterWIs(state);FlightPlan.ensure(state);
 let lastSaved=structuredClone(state);
-function save(){if(!MES.validate(state)){const rep=MES.repair(state);if(!rep.ok){const why=rep.blocker?rep.blocker.detail:'';state=structuredClone(lastSaved);render();notify('Change not saved: it would leave this workspace in an invalid state. '+why);return false;}}try{if(storageBlocked)throw Error('blocked');localStorage.setItem(KEY,JSON.stringify(state));lastSaved=structuredClone(state);return true;}catch(error){if(!storageBlocked){storageBlocked=true;$('#storage-alert').hidden=false;$('#storage-alert').textContent='Browser storage is full or unavailable. Free browser storage and reload before making changes.';}state=structuredClone(lastSaved);render();notify('Change not saved. Browser storage is unavailable.');return false;}}
+function save(){if(!MES.validate(state)){const rep=MES.repair(state);if(!rep.ok){const why=rep.blocker?rep.blocker.detail:'';state=structuredClone(lastSaved);render();notify('Change not saved: it would leave this workspace in an invalid state. '+why);return false;}}try{if(storageBlocked)throw Error('blocked');localStorage.setItem(KEY,JSON.stringify(state));lastSaved=structuredClone(state);try{if(window.skMirror)window.skMirror.commit(state);}catch(e){}return true;}catch(error){if(!storageBlocked){storageBlocked=true;$('#storage-alert').hidden=false;$('#storage-alert').textContent='Browser storage is full or unavailable. Free browser storage and reload before making changes.';}state=structuredClone(lastSaved);render();notify('Change not saved. Browser storage is unavailable.');return false;}}
 function paintIcons(root=document){root.querySelectorAll('[data-icon]').forEach(el=>el.innerHTML=icon(el.dataset.icon));}
 function notify(message){clearTimeout(toastTimer);$('#toast p').textContent=message;$('#toast').hidden=false;toastTimer=setTimeout(()=>$('#toast').hidden=true,5500);}
 function order(){return MES.getOrder(state,selectedId)||state.orders[0];}
@@ -10048,6 +10048,8 @@ function mediaCommit(next) {
   if (storageBlocked) throw Error('Saved workspace is unavailable or changed in another tab. Reload before making changes; download any unsaved recording first.');
   try { localStorage.setItem(KEY, JSON.stringify(next)); } catch (_) { throw Error('Changes could not be saved. Free browser storage and retry; download any unsaved recording first.'); }
   state = next; lastSaved = structuredClone(next);
+  // The mirror only ever sees a committed, valid workspace.
+  try { if (window.skMirror && window.skMirror.enabled && MES.validate(next)) window.skMirror.commit(next); } catch (e) { /* the mirror never blocks a write */ }
 }
 function mediaLock(locked) {
   mediaBusy = locked;
@@ -11127,6 +11129,180 @@ function holdActionButtons(o,h){const me=skActorId();const out=[];
   };
 })();
 (function(){var n=0,iv=setInterval(function(){if(window.__ready||++n>150){clearInterval(iv);try{if(window.__ready&&typeof view!=='undefined'&&String(view).startsWith('mnv'))window.skManeuverLanding();}catch(e){}}},200);})();
+</script>
+<script id="sk-mirror">
+/* Persistence mirror client. Off until IT sets SK_MIRROR.url; with the url empty nothing here runs and
+   the file works on its own exactly as before. When on: after every committed write (save() and
+   mediaCommit(), and only once validation has passed) it compares the workspace and the account list
+   with what it last queued, adds one record per changed entity to the queue kept under
+   skyryse-mes-sync-queue-v1, and posts the queue to the mirror server (server/, POST /api/v1/writes).
+   Nothing in the engine waits on the server: a failed post leaves the records queued and flagged, and
+   they are retried with backoff until the server confirms them. Passwords, stamp PINs and their hashes
+   and salts are never queued or sent; accounts are mirrored as name, role and Support Access only. */
+window.SK_MIRROR = window.SK_MIRROR || {
+  url: '',        // e.g. https://mes-mirror.internal:8787  (IT). Empty: the mirror is off.
+  token: '',      // sent as Authorization: Bearer <token> when the server requires one
+  batchSize: 50   // records per POST
+};
+(function () {
+  'use strict';
+  var cfg = window.SK_MIRROR || {};
+  var base = String(cfg.url || '').trim().replace(/\/+$/, '');
+  var QUEUE_KEY = 'skyryse-mes-sync-queue-v1', SENT_KEY = 'skyryse-mes-sync-sent-v1', CLIENT_KEY = 'skyryse-mes-sync-client-v1', AUTH_KEY = 'skyryse-mes-auth-v1';
+  var off = { enabled: false, commit: function () {}, status: function () { return { enabled: false, unsynced: 0, rejected: 0 }; }, flush: function () { return Promise.resolve(); } };
+  if (!base) { window.skMirror = off; return; }
+
+  var read = function (key, fallback) { try { var v = JSON.parse(localStorage.getItem(key) || 'null'); return v === null ? fallback : v; } catch (e) { return fallback; } };
+  var client = read(CLIENT_KEY, null);
+  if (!client || typeof client.id !== 'string') { client = { id: 'client-' + (window.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2)), seq: 0 }; }
+  var queue = read(QUEUE_KEY, []); if (!Array.isArray(queue)) queue = [];
+  var sent = read(SENT_KEY, {}); if (!sent || typeof sent !== 'object') sent = {};
+  var lastJson = {};          // entity key -> JSON last queued in this page (fast path; sent holds the hashes across reloads)
+  var inflight = null, retryTimer = null, attempt = 0, lastError = '', lastSyncAt = null, memoryOnly = false;
+  var persist = function () {
+    try { localStorage.setItem(QUEUE_KEY, JSON.stringify(queue)); localStorage.setItem(SENT_KEY, JSON.stringify(sent)); localStorage.setItem(CLIENT_KEY, JSON.stringify(client)); memoryOnly = false; }
+    catch (e) { memoryOnly = true; }
+  };
+  var hash = function (text) { return window.MES && typeof MES.sha256 === 'function' ? MES.sha256(text) : ''; };
+
+  // Never mirror a password, a PIN or their hashes. A salt next to a hash marks a secret (accounts,
+  // stamp PINs); a manifest hash has no salt and is kept.
+  function scrub(value) {
+    if (Array.isArray(value)) return value.map(scrub);
+    if (!value || typeof value !== 'object') return value;
+    var out = {}, secret = Object.prototype.hasOwnProperty.call(value, 'salt');
+    Object.keys(value).forEach(function (k) {
+      if (k === 'pin' || k === 'password' || k === 'passwordHash' || k === 'pinHash' || k === 'salt' || (secret && k === 'hash')) return;
+      out[k] = scrub(value[k]);
+    });
+    return out;
+  }
+  function manifestsOf(value, pathName, out) {
+    if (Array.isArray(value)) { value.forEach(function (v, i) { manifestsOf(v, pathName + '[' + i + ']', out); }); return out; }
+    if (!value || typeof value !== 'object') return out;
+    Object.keys(value).forEach(function (k) {
+      var v = value[k];
+      if (k === 'manifest' && v && typeof v === 'object' && /^[0-9a-f]{64}$/.test(v.hash || '') && v.signer) out.push({ path: pathName + '.manifest', meaning: String(v.meaning || '').slice(0, 200) || 'Signature', signerName: String(v.signer.name || 'Unknown').slice(0, 120), signerCredential: String(v.signer.credentialId || 'unknown').slice(0, 100), signedAt: String(v.at || ''), algorithm: 'SHA-256', hash: v.hash });
+      else manifestsOf(v, pathName + '.' + k, out);
+    });
+    return out;
+  }
+  // The workspace as separate entities, so a change to one work order sends that work order only.
+  var LISTS = { orders: 'order', plannedOrders: 'planned-order', ecrRequests: 'ecr', woRequests: 'wo-request', notices: 'notice', assignments: 'assignment', reworkLibrary: 'rework-template', supportLog: 'support-log', serialLog: 'serial' };
+  var MANEUVER = { cars: 'car', mrb: 'mrb', ncs: 'nc', sprs: 'spr', pfmeas: 'pfmea' };
+  var SKIP = { activity: 1, activityArchive: 1, maneuver: 1, masterWIs: 1, stamps: 1 };
+  function entities(ws, storeKey) {
+    var out = {};
+    var put = function (type, id, value) { out[type + '|' + id] = { type: type, id: String(id), storeKey: storeKey, value: value }; };
+    var idOf = function (e, i) { return e && (e.id !== undefined ? e.id : e.number !== undefined ? e.number : e.serial !== undefined ? e.serial : '#' + i); };
+    Object.keys(LISTS).forEach(function (k) { (Array.isArray(ws[k]) ? ws[k] : []).forEach(function (e, i) { put(LISTS[k], k === 'serialLog' ? (e.serial + '/' + (e.orderId || '') + '/' + (e.unit || i)) : idOf(e, i), e); }); });
+    (Array.isArray(ws.masterWIs) ? ws.masterWIs : []).forEach(function (w, i) { put('master-wi', w && w.id ? w.id + ' Rev ' + w.revision : '#' + i, w); });
+    (Array.isArray(ws.stamps) ? ws.stamps : []).forEach(function (s, i) { put('stamp', idOf(s, i), s); });
+    var mv = ws.maneuver && typeof ws.maneuver === 'object' ? ws.maneuver : {};
+    Object.keys(MANEUVER).forEach(function (k) { (Array.isArray(mv[k]) ? mv[k] : []).forEach(function (e, i) { put(MANEUVER[k], idOf(e, i), e); }); });
+    var settings = {};
+    Object.keys(ws).forEach(function (k) { if (!LISTS[k] && !SKIP[k]) settings[k] = ws[k]; });
+    Object.keys(mv).forEach(function (k) { if (!MANEUVER[k]) settings['maneuver.' + k] = mv[k]; });
+    put('workspace-settings', 'settings', settings);
+    return out;
+  }
+  function accountEntities() {
+    var out = {}, a = read(AUTH_KEY, { users: [] });
+    (Array.isArray(a.users) ? a.users : []).forEach(function (u) {
+      if (!u || !u.username) return;
+      out['account|' + u.username] = { type: 'account', id: u.username, storeKey: AUTH_KEY, value: { username: u.username, displayName: u.displayName || '', role: u.role || 'general', supportAccess: u.supportAccess === true, sso: u.sso === true, createdAt: u.createdAt || null, createdBy: u.createdBy || null } };
+    });
+    return out;
+  }
+  function build() {
+    var meta = function (name) { var m = document.querySelector('meta[name="' + name + '"]'); return m ? m.getAttribute('content') : ''; };
+    return { version: meta('fs-build') || window.SK_BUILD || 'unknown', sha256: meta('fs-build-sha256') || 'unstamped' };
+  }
+  function enqueue(map, onlyTypes) {
+    var acct = window.skAuth && typeof skAuth.actor === 'function' ? skAuth.actor() : null;
+    var b = build(), now = new Date().toISOString(), added = 0;
+    Object.keys(map).forEach(function (key) {
+      var e = map[key], json = JSON.stringify(scrub(e.value));
+      if (lastJson[key] === json) return;
+      var h = hash(json);
+      if (sent[key] === h) { lastJson[key] = json; return; }
+      client.seq += 1;
+      queue.push({ clientWriteId: client.id + '-' + client.seq, storeKey: e.storeKey, entityType: e.type, entityId: e.id, operation: 'upsert', payloadJson: json, payloadSha256: h, actor: acct ? acct.name + ' · ' + acct.credentialId : null, credential: acct ? acct.credentialId : null, clientTs: now, buildVersion: b.version, buildSha256: b.sha256, manifests: manifestsOf(JSON.parse(json), e.type, []), synced: false });
+      sent[key] = h; lastJson[key] = json; added += 1;
+    });
+    Object.keys(sent).forEach(function (key) {
+      var type = key.split('|')[0];
+      // A workspace commit owns every entity type except accounts; the account pass owns accounts only.
+      var mine = onlyTypes[0] === '*' ? type !== 'account' : onlyTypes.indexOf(type) >= 0;
+      if (map[key] || !mine) return;
+      var id = key.slice(type.length + 1), json = JSON.stringify({ entityType: type, entityId: id, deleted: true });
+      client.seq += 1;
+      queue.push({ clientWriteId: client.id + '-' + client.seq, storeKey: type === 'account' ? AUTH_KEY : (typeof KEY !== 'undefined' ? KEY : 'skyryse-mes-work-order-v1'), entityType: type, entityId: id, operation: 'delete', payloadJson: json, payloadSha256: hash(json), actor: acct ? acct.name + ' · ' + acct.credentialId : null, credential: acct ? acct.credentialId : null, clientTs: now, buildVersion: b.version, buildSha256: b.sha256, manifests: [], synced: false });
+      delete sent[key]; delete lastJson[key]; added += 1;
+    });
+    if (added) persist();
+    return added;
+  }
+  // Called after a write has been validated and saved. Records are queued first, then posted in the
+  // background; the caller never waits.
+  function commit(ws) {
+    try {
+      var storeKey = typeof KEY !== 'undefined' ? KEY : 'skyryse-mes-work-order-v1';
+      enqueue(entities(ws, storeKey), ['*']);
+      enqueue(accountEntities(), ['account']);
+      paint(); schedule(0);
+    } catch (e) { lastError = 'Mirror could not queue this change: ' + e.message; paint(); }
+  }
+  function pending() { return queue.filter(function (r) { return !r.rejected; }); }
+  function schedule(ms) { if (retryTimer) return; retryTimer = setTimeout(function () { retryTimer = null; flush(); }, ms); }
+  function flush() {
+    if (inflight) return inflight;
+    var batch = pending().slice(0, Math.max(1, Math.min(500, Number(cfg.batchSize) || 50)));
+    if (!batch.length) { paint(); return Promise.resolve(); }
+    var headers = { 'content-type': 'application/json' }; if (cfg.token) headers.authorization = 'Bearer ' + cfg.token;
+    var body = JSON.stringify({ clientId: client.id, records: batch.map(function (r) { var c = {}; Object.keys(r).forEach(function (k) { if (k !== 'synced' && k !== 'rejected') c[k] = r[k]; }); return c; }) });
+    inflight = fetch(base + '/api/v1/writes', { method: 'POST', headers: headers, body: body })
+      .then(function (res) { return res.json().catch(function () { return {}; }).then(function (j) { if (!res.ok || !j.ok) throw new Error((j.error && j.error.message) || ('HTTP ' + res.status)); return j; }); })
+      .then(function (j) {
+        var done = {}, bad = {};
+        (j.results || []).forEach(function (r) { if (r.status === 'stored' || r.status === 'duplicate') done[r.clientWriteId] = 1; else if (r.status === 'rejected') bad[r.clientWriteId] = r.reason || 'rejected'; });
+        queue = queue.filter(function (r) { return !done[r.clientWriteId]; });
+        queue.forEach(function (r) { if (bad[r.clientWriteId]) r.rejected = bad[r.clientWriteId]; });
+        persist(); attempt = 0; lastError = Object.keys(bad).length ? 'The mirror refused ' + Object.keys(bad).length + ' record(s): ' + bad[Object.keys(bad)[0]] : ''; lastSyncAt = new Date().toISOString();
+        inflight = null; paint();
+        if (pending().length) schedule(0);
+      })
+      .catch(function (e) {
+        inflight = null; attempt += 1; lastError = 'Mirror unreachable: ' + e.message + '. Records stay queued on this device.';
+        var wait = Math.min(60000, 1000 * Math.pow(2, Math.min(attempt, 6))) + Math.floor(Math.random() * 250);
+        paint(); schedule(wait);
+      });
+    return inflight;
+  }
+  function status() { return { enabled: true, unsynced: queue.length, rejected: queue.filter(function (r) { return r.rejected; }).length, lastError: lastError, lastSyncAt: lastSyncAt, clientId: client.id, memoryOnly: memoryOnly, url: base }; }
+  function paint() {
+    try {
+      var el = document.getElementById('sync-indicator');
+      if (!el) {
+        var anchor = document.getElementById('profile-button'); if (!anchor || !anchor.parentNode) return;
+        el = document.createElement('span'); el.id = 'sync-indicator'; el.className = 'sync-indicator'; el.setAttribute('role', 'status'); el.setAttribute('aria-live', 'polite');
+        anchor.parentNode.insertBefore(el, anchor);
+      }
+      var s = status();
+      el.textContent = s.unsynced ? s.unsynced + ' unsynced' : 'Synced';
+      el.dataset.state = s.unsynced ? (s.rejected ? 'rejected' : 'pending') : 'synced';
+      el.title = s.unsynced ? (s.lastError || 'Waiting to send to the mirror server.') + (s.memoryOnly ? ' The queue could not be saved on this device; keep this tab open until it syncs.' : '') : 'Every committed change is on the mirror server' + (s.lastSyncAt ? ' (last sent ' + s.lastSyncAt + ').' : '.');
+    } catch (e) { /* the indicator never blocks work */ }
+  }
+  var style = document.createElement('style');
+  style.textContent = '.sync-indicator{display:inline-flex;align-items:center;gap:4px;margin-right:8px;padding:2px 8px;border-radius:999px;font:600 12px/18px var(--font,sans-serif);white-space:nowrap;background:#e8f3ea;color:#1d5b2e}.sync-indicator::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}.sync-indicator[data-state=pending]{background:#fff4de;color:#7a4b00}.sync-indicator[data-state=rejected]{background:#fde8e8;color:#8a1c1c}';
+  document.head.appendChild(style);
+  window.addEventListener('sk-auth-saved', function () { try { enqueue(accountEntities(), ['account']); paint(); schedule(0); } catch (e) { /* retried on the next commit */ } });
+  window.addEventListener('online', function () { attempt = 0; schedule(0); });
+  window.skMirror = { enabled: true, commit: commit, status: status, flush: flush };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', paint); else paint();
+  if (queue.length) schedule(500);
+})();
 </script>
 <script id="sk-hardening">
 /* Hardening layer, v63. Security log, idle lock, stamp register administration, credential

@@ -1,4 +1,4 @@
-import {mkdirSync as __mkdirTests} from 'fs';const TESTS=decodeURI(new URL('.',import.meta.url).pathname);__mkdirTests(TESTS+'shots',{recursive:true}); // fixtures, shots and results resolve from this folder
+import {mkdirSync as __mkdirTests} from 'fs';const TESTS=decodeURI(new URL('.',import.meta.url).pathname);const FIXTURES=process.env.FS_FIXTURES_DIR?process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):TESTS+'fixtures/';__mkdirTests(TESTS+'shots',{recursive:true}); // shots and results resolve from this folder; fixtures from FS_FIXTURES_DIR when set (tools/run-suites.mjs --mirror)
 import {chromium} from 'playwright';
 const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{});
 const ctx=await b.newContext({viewport:{width:1600,height:1000}});
@@ -8,7 +8,7 @@ const step=(who,what,r)=>{const ok=r&&r.ok!==false;console.log((ok?'  ok   ':'  
 async function signIn(u){
   // Each person signs in on their own machine; here one browser plays every seat, so sign out first.
   await p.evaluate(()=>{try{sessionStorage.removeItem('skyryse-mes-session-v1');}catch(e){}}).catch(()=>{});
-  await p.goto('file://'+TESTS+'fixtures/demo_qa150_publish.html'); await p.waitForTimeout(900);
+  await p.goto('file://'+FIXTURES+'demo_qa150_publish.html'); await p.waitForTimeout(900);
   const gate=await p.evaluate(()=>!!document.querySelector('#sk-boot input[name=username]'));
   if(gate) await p.evaluate(x=>{const un=document.querySelector('#sk-boot input[name=username]');const pw=document.querySelector('#sk-boot input[type=password]');
     un.value=x;un.dispatchEvent(new Event('input',{bubbles:true}));pw.value='demo1234';pw.dispatchEvent(new Event('input',{bubbles:true}));

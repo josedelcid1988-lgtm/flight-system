@@ -1,8 +1,8 @@
-import {mkdirSync as __mkdirTests} from 'fs';const TESTS=decodeURI(new URL('.',import.meta.url).pathname);__mkdirTests(TESTS+'shots',{recursive:true}); // fixtures, shots and results resolve from this folder
+import {mkdirSync as __mkdirTests} from 'fs';const TESTS=decodeURI(new URL('.',import.meta.url).pathname);const FIXTURES=process.env.FS_FIXTURES_DIR?process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):TESTS+'fixtures/';__mkdirTests(TESTS+'shots',{recursive:true}); // shots and results resolve from this folder; fixtures from FS_FIXTURES_DIR when set (tools/run-suites.mjs --mirror)
 import {chromium} from 'playwright';
 const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{});const p=await (await b.newContext({viewport:{width:1440,height:1000}})).newPage();
 const errs=[];p.on('pageerror',e=>errs.push(e.message));const fails=[];const ok=(w,c,m)=>{console.log((c?'  ok   ':'  FAIL ')+w+(c?'':' -> '+m));if(!c)fails.push(w);};
-async function signIn(u){await p.evaluate(()=>{try{sessionStorage.removeItem('skyryse-mes-session-v1');}catch(e){}}).catch(()=>{});await p.goto('file://'+TESTS+'fixtures/'+FILE);await p.waitForTimeout(900);
+async function signIn(u){await p.evaluate(()=>{try{sessionStorage.removeItem('skyryse-mes-session-v1');}catch(e){}}).catch(()=>{});await p.goto('file://'+FIXTURES+''+FILE);await p.waitForTimeout(900);
  await p.evaluate(x=>{const un=document.querySelector('#sk-boot input[name=username]');if(!un)return;const pw=document.querySelector('#sk-boot input[type=password]');un.value=x;un.dispatchEvent(new Event('input',{bubbles:true}));pw.value='demo1234';pw.dispatchEvent(new Event('input',{bubbles:true}));un.closest('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));},u);await p.waitForTimeout(2800);}
 const R=(fn,a)=>p.evaluate(fn,a);
 let FILE='demo_qa150_publish.html';import fs from 'fs';
@@ -14,7 +14,7 @@ ok('pair in wrong order refused',!(await R(()=>MES.saveReworkTemplate(structured
 ok('inspection with Technician buy-off refused',!(await R(()=>MES.saveReworkTemplate(structuredClone(state),{ops:[{classification:'Rework',title:'x',buyoffType:'Technician',steps:[{title:'a',instruction:'b'}]},{classification:'Inspection',title:'i',buyoffType:'Technician',steps:[{title:'a',instruction:'b'}]}]}))).ok,'allowed');
 const nid=await R(()=>{const r=MES.saveReworkTemplate(state,{title:'Replace damaged grommet',classification:'Rework',buyoffType:'Technician',steps:'Remove grommet: Remove the damaged grommet.\nInstall grommet: Install a new grommet per the drawing.'});return r.id||r.message;});
 ok('new pair saved as Draft',/^SRW-/.test(nid),nid);
-{const prod=fs.readFileSync(TESTS+'fixtures/publish.html','utf8');ok('production keeps the author-cannot-approve guard (demo lifts it)',/author\.credentialId && author\.credentialId === actor\(state\)\.credentialId\) return fail\('The person who wrote or last edited this standard rework/.test(prod),'guard missing');}
+{const prod=fs.readFileSync(FIXTURES+'publish.html','utf8');ok('production keeps the author-cannot-approve guard (demo lifts it)',/author\.credentialId && author\.credentialId === actor\(state\)\.credentialId\) return fail\('The person who wrote or last edited this standard rework/.test(prod),'guard missing');}
 ok('seed pair (no author) can be approved by QA',await R(()=>{const t=MES.reworkLibrary(state)[0];const r=MES.approveReworkTemplate(state,t.id);return r.ok&&t.status==='Approved'&&t.rev===1;}),'not approved');
 ok('any content edit returns an approved pair to Draft',await R(()=>{const t=MES.reworkLibrary(state)[0];MES.saveReworkTemplate(state,{id:t.id,title:t.title+' rev',classification:t.classification,buyoffType:t.buyoffType,steps:t.ops[0].steps});return t.status==='Draft';}),'still approved');
 // ---- demo build: add to a WO ----

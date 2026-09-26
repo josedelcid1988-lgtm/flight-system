@@ -1,7 +1,7 @@
 import {chromium} from 'playwright';
 // A Master Access account seeded into a throwaway browser context, so both builds open signed in without a file on disk.
 const auth=JSON.stringify({users:[{username:'qa',displayName:'QA Admin',salt:'',hash:'unused',role:'admin',createdAt:new Date().toISOString()}]});
-const fixtures=new URL('./fixtures/',import.meta.url).href;
+const fixtures=((process.env.FS_FIXTURES_DIR?'file://'+process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):null)||new URL('./fixtures/',import.meta.url).href);
 const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{});
 let bad=0,ok=0;
 for(const file of ['publish.html','demo_publish.html']){

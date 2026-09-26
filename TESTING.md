@@ -3,8 +3,9 @@
 The product build id is written only in `VERSION.md`. Suite names such as
 `test_v80.mjs` record when that suite was added. They are not the build id.
 
-The app is a single HTML file with no backend. Every harness drives a real
-browser against a built copy, so a test failure is a real user-visible failure.
+The app is a single HTML file. The optional persistence mirror in `server/` is
+off by default. Every browser harness drives a real browser against a built
+copy, so a test failure is a real user-visible failure.
 
 ## Setup
 
@@ -31,12 +32,26 @@ Sign in with `demo` / `demo1234`. Other demo accounts: `master`, `quality`,
 `mfgeng`, `engineering`, `certification`, `operations`, `tech`, `safety`, same
 password. The demo build relaxes separation of duties, PIN entry and the stamp
 binding so one person can walk a whole flow; the production build enforces them.
+Every relaxation is listed in `docs/DEMO_DEVIATIONS.md`. Rebuild the demo and the
+fixtures with `node tools/build-demo.mjs`; never edit them by hand.
+
+## Run everything
+
+```bash
+node tools/run-suites.mjs            # every suite, mirror off (as shipped)
+node tools/run-suites.mjs --mirror   # every suite again with the mirror on, then checks the server's chain
+```
+
+The runner fails a suite on a non-zero exit, a non-empty `FAILS` list, a failed
+check or flow, a page error, or a skip that is not explained in
+`tests/allowed_skips.json`. It writes `tests/suite_results.json` and, for a
+failing suite, `tests/suite_<name>.log`. `--only a,b` runs named suites.
 
 ## Suites
 
 | Command | What it covers |
 | --- | --- |
-| `node tests/qa_full.mjs` | 307 checks: engine rules, guards, UI flows, rendering at 1440 and 375 px. Expect 304 pass, 3 skip, 0 fail once the demo build keeps role capabilities for the pilot seats (see `docs/QA_INSPECTION_2026-09-25.md`); the committed demo fixtures grant every seat every capability, which fails 7 Demo / Roles checks. |
+| `node tests/qa_full.mjs` | 309 checks: engine rules, guards, signature manifest verification, UI flows, rendering at 1440 and 375 px. Expect 308 pass, 1 explained skip (the release zip check, `KNOWN-ISSUES.md` issue 2), 0 fail. |
 | `node tests/qa_e2e.mjs` | 30 end-to-end flows: every order type and every ticket type driven to closure, with actions, typed fields, role handoffs and gates counted per flow. Writes `qa_e2e_results.json`. |
 | `node tests/qa_multi.mjs` | 161 checks across modules (Flight Control, Flight Plan, Flight Maneuver). |
 | `node tests/pilot_rehearsal.mjs` | Three scenarios run through the real pilot accounts. |
@@ -46,6 +61,12 @@ binding so one person can walk a whole flow; the production build enforces them.
 | `node tests/qa_operator.mjs` | `demo.html`: operator cues (current operation, beacon, blocked state, reduced motion, mobile) and unchanged records. |
 | `node tests/qa_ui.mjs` | Production `index.html`: landing photograph, glossary, mobile navigation, search focus, reduced motion, recent-items key. |
 | `node tests/test_v74.mjs` … `test_v80i.mjs` | Feature suites: FAIR and conformity (v74), inspection reject and prints (v75), unreleased WIs and standard rework (v76), Certification seat, stock NC source and Use for Dev (v77), record prints (v78), MRB auto-decision and scrap closure (v79), QA-approved rework pairs (v80), FAIR links and revision authority (v80c to v80e), rework entry points and buy-off flow (v80h, v80i). |
+
+| `node tests/test_support_access.mjs` | Support Access: granted only through Master Access, reason required, activity entry, Support Overrides log, a saved account named demo loads as an ordinary account. |
+| `node tests/test_demo_build.mjs` | `demo.html` and the demo fixtures are current, every deviation is marked, production has no demo username check, pilot seats keep their real role, the demo watermark on pages and prints. |
+| `node tests/test_inspect_own_work.mjs` | Nobody inspects their own work, for every role including Master Access and Support Access. |
+| `node tests/test_mrb_seat_caps.mjs` | MRB seats and the QA Manager safety buy-off follow capabilities, with the refusal paths. |
+| `node tests/test_mirror.mjs` | The persistence mirror: off by default, on, outage and recovery, idempotent retry, no password or PIN material, tamper detection, backup, restore test and restart on the restored file. |
 
 Each harness prints `FAILS []` or a list, and the browser page errors it saw.
 

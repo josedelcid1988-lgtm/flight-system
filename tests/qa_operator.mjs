@@ -5,7 +5,7 @@ const browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const errors = []; page.on('pageerror', e => errors.push(e.message));
-  await page.goto(process.env.FLIGHT_DEMO_URL || new URL('../demo.html', import.meta.url).href);
+  await page.goto(process.env.FLIGHT_DEMO_URL || new URL((process.env.FS_FIXTURES_DIR?'file://'+process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):null)?(process.env.FS_FIXTURES_DIR?'file://'+process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):null)+'demo_publish.html':new URL('../demo.html', import.meta.url).href).href);
   await page.locator('input[name=username]').fill('demo');
   await page.locator('input[name=password]').fill('demo1234');
   await page.locator('#sk-boot form').evaluate(f => f.requestSubmit());

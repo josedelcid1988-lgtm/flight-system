@@ -6,6 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import {spawnSync} from 'child_process';
 const TESTS=decodeURI(new URL('.',import.meta.url).pathname);
+const FIXTURES=process.env.FS_FIXTURES_DIR?process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):TESTS+'fixtures/';
 const ROOT=path.resolve(TESTS,'..');
 const {buildDemo,demoLiteralLines,deviationsDoc,OUTPUTS,PRODUCTION_FIXTURE}=await import(path.join(ROOT,'tools/build-demo.mjs'));
 const {DEVIATIONS,PILOT_SEATS}=await import(path.join(ROOT,'tools/demo/deviations.mjs'));

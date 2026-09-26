@@ -1,7 +1,7 @@
-import {mkdirSync as __mkdirTests} from 'fs';const TESTS=decodeURI(new URL('.',import.meta.url).pathname);__mkdirTests(TESTS+'shots',{recursive:true}); // fixtures, shots and results resolve from this folder
+import {mkdirSync as __mkdirTests} from 'fs';const TESTS=decodeURI(new URL('.',import.meta.url).pathname);const FIXTURES=process.env.FS_FIXTURES_DIR?process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):TESTS+'fixtures/';__mkdirTests(TESTS+'shots',{recursive:true}); // shots and results resolve from this folder; fixtures from FS_FIXTURES_DIR when set (tools/run-suites.mjs --mirror)
 import {chromium} from 'playwright';
 const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{});const p=await (await b.newContext({viewport:{width:1440,height:1000}})).newPage();const errs=[];p.on('pageerror',e=>errs.push(e.message));const fails=[];const ok=(w,c,m)=>{console.log((c?'  ok   ':'  FAIL ')+w+(c?'':' -> '+m));if(!c)fails.push(w);};
-await p.goto('file://'+TESTS+'fixtures/demo_publish.html');await p.waitForTimeout(900);
+await p.goto('file://'+FIXTURES+'demo_publish.html');await p.waitForTimeout(900);
 await p.evaluate(()=>{const un=document.querySelector('#sk-boot input[name=username]');const pw=document.querySelector('#sk-boot input[type=password]');un.value='demo';un.dispatchEvent(new Event('input',{bubbles:true}));pw.value='demo1234';pw.dispatchEvent(new Event('input',{bubbles:true}));un.closest('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));});await p.waitForTimeout(3500);
 const id=await p.evaluate(()=>{const o=state.orders.find(o=>o.status==='Quality'&&o.fai&&o.fai.required&&!(o.fair&&o.fair.status==='Approved'));selectedId=o.id;view='order';tab='quality';render();return o.id;});
 const m=await p.evaluate(id=>MES.closeOrder(structuredClone(state),id).message,id);ok('close refusal says where to go',/Quality tab/.test(m)&&/Verify and Approve/.test(m),m);
