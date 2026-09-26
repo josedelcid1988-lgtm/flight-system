@@ -70,3 +70,9 @@ below exist for AS9100 and 14 CFR reasons; do not "simplify" them away.
 - If you add a rule, add a test for it and for the refusal path (the thing it is
   supposed to block).
 - Small, reviewable commits with a message that says what changed and why.
+
+## Design
+
+Read `docs/DESIGN.md` before touching anything visual. It holds the visual
+direction, the rules and the review checklist. Screens carry headings,
+labels, values and actions; do not add explainer paragraphs.
