@@ -1657,19 +1657,20 @@ function skBoot(){
   {key:'qe', label:'Quality', profileRole:'Quality Engineer', hint:'All QA and inspection: check off and buy off inspection operations (never on work you performed), approve WO release, sequence changes, ECR/ECO and closure; release WIs after ME peer review; approve NCs after ME disposition; hold the Quality seat on an MRB.'},
   {key:'safety', label:'Safety Team', profileRole:'Safety Engineer', hint:'View, raise an NC, submit an ECR, and give the final Safety Team buy-off on a PFMEA, which releases a critical safety work instruction.'},
   {key:'cert', label:'Certification', profileRole:'Certification Engineer', hint:'View, raise an NC, submit an ECR, and hold the Certification seat on a Material Review Board for Production FAI and Mfg. work orders.'},
-  {key:'qm', label:'QA Manager', profileRole:'Quality Manager', hint:'Everything.'}
+  {key:'qm', label:'QA Manager', profileRole:'Quality Manager', hint:'Everything a Quality account can, plus Manufacturing Engineering authoring, the Quality, Manufacturing Engineering and Engineering MRB seats, the Safety Team PFMEA buy-off (never on an analysis they reviewed or wrote), notices and access management. Not the Certification seat.'}
  ];
  var EVERYONE=['view','raise-nc','submit-ecr'];
  var ROLE_CAPS={
   general: EVERYONE,
   technician: EVERYONE.concat(['operate-steps']),
   operator: EVERYONE.concat(['operate','operate-steps','split','request-pedigree','approve-pedigree']),
-  me: EVERYONE.concat(['operate','operate-steps','split','request-pedigree','approve-pedigree','edit-wi','peer-review-wi','create-wo','adjust-wo','dispo-nc','push-software','assign-work']),
-  swe: EVERYONE.concat(['push-software','accept-software']),
+  // MRB seats are capabilities: mrb-quality, mrb-me, mrb-eng and mrb-cert. A vote in a seat needs its capability.
+  me: EVERYONE.concat(['operate','operate-steps','split','request-pedigree','approve-pedigree','edit-wi','peer-review-wi','create-wo','adjust-wo','dispo-nc','push-software','assign-work','mrb-me']),
+  swe: EVERYONE.concat(['push-software','accept-software','mrb-eng']),
   safety: EVERYONE.concat(['safety-buyoff']),
   cert: EVERYONE.concat(['mrb-cert']),
-  qe: EVERYONE.concat(['inspect-steps','request-pedigree','approve-pedigree','approve-wo','approve-wi','approve-nc','assign-work']),
-  qm: EVERYONE.concat(['operate','operate-steps','split','request-pedigree','approve-pedigree','edit-wi','peer-review-wi','create-wo','adjust-wo','dispo-nc','approve-wo','approve-wi','approve-nc','push-software','accept-software','assign-work','post-notice','manage-access'])
+  qe: EVERYONE.concat(['inspect-steps','request-pedigree','approve-pedigree','approve-wo','approve-wi','approve-nc','assign-work','mrb-quality']),
+  qm: EVERYONE.concat(['operate','operate-steps','split','request-pedigree','approve-pedigree','edit-wi','peer-review-wi','create-wo','adjust-wo','dispo-nc','approve-wo','approve-wi','approve-nc','push-software','accept-software','assign-work','post-notice','manage-access','safety-buyoff','mrb-quality','mrb-me','mrb-eng'])
  };
  ROLE_CAPS.admin=Array.from(new Set(Object.values(ROLE_CAPS).flat()));
  var ALL_CAPS=ROLE_CAPS.admin;
@@ -1712,7 +1713,7 @@ function skBoot(){
   // Support Access is an account flag, not a role. Only a Master Access account sets or clears it, always with a reason.
   supportAccess:function(){var u=currentUser();return !!(u&&u.supportAccess===true);},
   setSupportAccess:function(username,on,reason){username=String(username||'').trim().toLowerCase();reason=String(reason||'').trim();var me=currentUser(),a=loadAuth(),u=a.users.find(function(x){return x.username===username;});if(!(me&&roleOf(me)==='admin'))return {ok:false,message:'Only a Master Access account grants or removes Support Access.'};if(!u)return {ok:false,message:'That account is not on this device.'};if(reason.length<10||reason.length>500)return {ok:false,message:'Give the reason in 10 to 500 characters.'};if(on)u.supportAccess=true;else delete u.supportAccess;saveAuth(a);secEvent(on?'support-grant':'support-revoke',{username:username,by:me.username,reason:reason});try{window.dispatchEvent(new CustomEvent('sk-support-access',{detail:{username:username,on:!!on,reason:reason}}));}catch(e){}return {ok:true,message:(on?'Support Access granted to ':'Support Access removed from ')+username+'.'};},
-  label:function(cap){return ({'view':'view','operate':'work the floor (kit, inventory, serials, AOG, schedule, stages)','operate-steps':'run and buy off operations','inspect-steps':'check off and buy off inspection operations','safety-buyoff':'give the Safety Team PFMEA buy-off','mrb-cert':'hold the Certification seat on an MRB','raise-nc':'raise an NC','submit-ecr':'submit an ECR','edit-wi':'author work instructions','peer-review-wi':'peer-review a work instruction','approve-wi':'release a work instruction','create-wo':'create work orders','adjust-wo':'adjust work-order operations','split':'split a work order','approve-wo':'approve work orders','dispo-nc':'record the NC initial disposition','approve-nc':'approve an NC','request-pedigree':'request a pedigree change','approve-pedigree':'approve a pedigree change'})[cap]||cap;},
+  label:function(cap){return ({'view':'view','operate':'work the floor (kit, inventory, serials, AOG, schedule, stages)','operate-steps':'run and buy off operations','inspect-steps':'check off and buy off inspection operations','safety-buyoff':'give the Safety Team PFMEA buy-off','mrb-quality':'hold the Quality seat on an MRB','mrb-me':'hold the Manufacturing Engineering seat on an MRB','mrb-eng':'hold the Engineering seat on an MRB','mrb-cert':'hold the Certification seat on an MRB','push-software':'push ATP software to an operation','accept-software':'accept or reject a software push','assign-work':'assign work to a person','post-notice':'post a notice to the floor','manage-access':'manage accounts and roles','raise-nc':'raise an NC','submit-ecr':'submit an ECR','edit-wi':'author work instructions','peer-review-wi':'peer-review a work instruction','approve-wi':'release a work instruction','create-wo':'create work orders','adjust-wo':'adjust work-order operations','split':'split a work order','approve-wo':'approve work orders','dispo-nc':'record the NC initial disposition','approve-nc':'approve an NC','request-pedigree':'request a pedigree change','approve-pedigree':'approve a pedigree change'})[cap]||cap;},
   accessHtml:function(){var a=loadAuth(),me=currentUser();if(!me)return '';var isQM=canManageAccess(me);var esc=function(v){return String(v).replace(/[<&>"]/g,'');};
    var isMaster=roleOf(me)==='admin';
    var rows=a.users.map(function(u){return '<tr><th scope="row">'+esc(u.displayName)+'<small>'+esc(u.username)+(u.supportAccess===true?' · Support Access':'')+'</small>'+(isMaster?'<button type="button" class="btn quiet small" data-support-toggle="'+esc(u.username)+'" data-on="'+(u.supportAccess===true?'0':'1')+'">'+(u.supportAccess===true?'Remove Support Access':'Grant Support Access')+'</button>':'')+'</th><td>'+(isQM?'<select data-role-user="'+esc(u.username)+'" aria-label="Role for '+esc(u.username)+'">'+ROLES.map(function(r){return '<option value="'+r.key+'"'+(roleOf(u)===r.key?' selected':'')+'>'+r.label+'</option>';}).join('')+'</select>':'<span class="pill">'+roleLabel(roleOf(u))+'</span>')+'</td>'+(isQM?'<td><button type="button" class="btn quiet" data-account-password="'+esc(u.username)+'">Reset password</button></td>':'')+'</tr>';}).join('');
@@ -6236,7 +6237,10 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   const SCAR_STATUSES = Object.freeze(['Jira ticket needed', 'In Jira', 'Closed']);
   const DEFECTS = () => (MES && MES.DEFECT_CODES) || [];
   const defectFor = (code, sub) => { const c = DEFECTS().find(d => d.code === code); if (!c) return null; const x = sub ? (c.subs || []).find(z => z.code === sub) : null; if (sub && !x) return null; return { defectCode: c.code, defectName: c.name, subCode: x ? x.code : null, subName: x ? x.name : null }; };
-  const seatsForRole = role => (typeof window!=='undefined'&&window.__demoFull&&window.__demoFull()) /* DEMO D-10 */ ? [...ALL_SEATS] : role === 'admin' ? [...ALL_SEATS] : role === 'cert' ? [CERT_SEAT] : role === 'qm' ? [...MRB_SEATS] : role === 'qe' ? ['Quality'] : role === 'me' ? ['Manufacturing Engineering'] : role === 'swe' ? ['Engineering'] : [];
+  // Each seat is a capability. A role holds the seats whose capability it holds; a vote checks the account's capability.
+  const SEAT_CAPS = Object.freeze({ 'Quality': 'mrb-quality', 'Manufacturing Engineering': 'mrb-me', 'Engineering': 'mrb-eng', [CERT_SEAT]: 'mrb-cert' });
+  const seatsForRole = role => (typeof window!=='undefined'&&window.__demoFull&&window.__demoFull()) /* DEMO D-10 */ ? [...ALL_SEATS] : ALL_SEATS.filter(seat => !!role && !!(root && root.skAuth && typeof root.skAuth.roleCan === 'function') && root.skAuth.roleCan(role, SEAT_CAPS[seat]));
+  const seatsForAccount = () => ALL_SEATS.filter(seat => can(SEAT_CAPS[seat]));
 
   const KINDS = Object.freeze(['cars', 'mrb', 'ncs', 'sprs', 'pfmeas']);
   const bag = state => { if (!plain(state.maneuver)) state.maneuver = { cars: [], mrb: [], ncs: [], sprs: [] }; migrate(state); KINDS.forEach(k => { if (!Array.isArray(state.maneuver[k])) state.maneuver[k] = []; }); return state.maneuver; };
@@ -6678,7 +6682,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (m.status !== 'Open') return fail(`${m.id} is ${m.status.toLowerCase()}; votes are closed.`);
     if (!seatsOf(m).includes(seat)) return fail(`Choose a seat on this board: ${seatsOf(m).join(', ')}.`);
     if (!VOTES.includes(vote)) return fail('Vote Approve or Reject.');
-    const who = actor(state), allowed = seatsForRole(accountRole());
+    const who = actor(state), allowed = seatsForAccount();
     let seatOverride = null;
     if (root && root.skAuth && !allowed.includes(seat)) {
       const refusal = `Your role does not hold the ${seat} seat. ${allowed.length ? `You can vote as ${allowed.join(' or ')}.` : 'Ask the QA Manager to change your role.'}`;
@@ -7107,7 +7111,7 @@ const ATTACH_KINDS = Object.freeze(['mrb','cars','ncs','sprs']);
     return state;
   }
 
-  const FlightManeuver = { seatsOf, CERT_SEAT, certRequired, NC_SOURCES, CAR_STATUSES, SEVERITIES, CAR_SOURCES, FISHBONE, MRB_SEATS, MRB_STATUSES, MRB_REQUIRED, VOTES, SPR_FOUND_AT, SPR_STATUSES, NC_FOUND_AT, ESCAPED_FROM, DETECTED_AT, STOCK, SCAR_STATUSES, seatsForRole, list, get, ensure, maneuverValid, carValid, mrbValid, raiseCAR, recordContainment, recordRootCause, addAction, completeAction, verifyCAR, effectivenessCheck, closeCAR, cancelCAR, carOverdue, carNext, needsMRB, mrbFor, openMRB, voteMRB, decideMRB, linkCAR, addRecordFile, removeRecordFile, ATTACH_KINDS, gateResolve, findTicket, allTickets, raiseNC, dispositionNC, containNC, approveNC, linkReworkOrder, raiseSPR, linkSPRJira, closeSPR, requestSCAR, linkSCARJira, closeSCAR, jiraQueue, intake, pareto, trend, metrics, metricsReport, metricsCsv, PFMEA_STATUSES, PFMEA_STEPS, pfmeaFor, openPFMEA, setPfmeaScope, addPfmeaMode, removePfmeaMode, markOpNoRisk, completePfmeaAnalysis, setPfmeaAction, closePfmeaAction, completePfmeaActions, pfmeaSafetyBuyoff, pfmeaCoverage: coverage, pfmeaHigh: isHigh };
+  const FlightManeuver = { seatsOf, SEAT_CAPS, seatsForAccount, CERT_SEAT, certRequired, NC_SOURCES, CAR_STATUSES, SEVERITIES, CAR_SOURCES, FISHBONE, MRB_SEATS, MRB_STATUSES, MRB_REQUIRED, VOTES, SPR_FOUND_AT, SPR_STATUSES, NC_FOUND_AT, ESCAPED_FROM, DETECTED_AT, STOCK, SCAR_STATUSES, seatsForRole, list, get, ensure, maneuverValid, carValid, mrbValid, raiseCAR, recordContainment, recordRootCause, addAction, completeAction, verifyCAR, effectivenessCheck, closeCAR, cancelCAR, carOverdue, carNext, needsMRB, mrbFor, openMRB, voteMRB, decideMRB, linkCAR, addRecordFile, removeRecordFile, ATTACH_KINDS, gateResolve, findTicket, allTickets, raiseNC, dispositionNC, containNC, approveNC, linkReworkOrder, raiseSPR, linkSPRJira, closeSPR, requestSCAR, linkSCARJira, closeSCAR, jiraQueue, intake, pareto, trend, metrics, metricsReport, metricsCsv, PFMEA_STATUSES, PFMEA_STEPS, pfmeaFor, openPFMEA, setPfmeaScope, addPfmeaMode, removePfmeaMode, markOpNoRisk, completePfmeaAnalysis, setPfmeaAction, closePfmeaAction, completePfmeaActions, pfmeaSafetyBuyoff, pfmeaCoverage: coverage, pfmeaHigh: isHigh };
   if (typeof module !== 'undefined' && module.exports) module.exports = FlightManeuver;
   if (root) {
     root.FlightManeuver = FlightManeuver;
