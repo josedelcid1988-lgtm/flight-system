@@ -43,7 +43,7 @@ First screen shows the primary task: fail (first operation at y=1484 desktop, 14
 
 **Is information duplicated?** Yes, see the inventory. Revision appears six times and status five times with three spellings. The details strip and the metadata grid carry the same four fields back to back.
 
-**Can a technician tell immediately where to click?** On a laptop, yes within a few seconds, because the bar is the only saturated blue button in view. In Building state the bar lies by omission: it shows a greyed "Complete operation" with no reason while the reason ("no valid stamp; Abel Napoleon holds a Quality credential") sits roughly 2,000 px below. Clicking any bar action does not scroll or move focus, so on tablet and phone the click feels like nothing happened.
+**Can a technician tell immediately where to click?** On a laptop, yes within a few seconds, because the bar is the only saturated blue button in view. In Building state the bar lies by omission: it shows a greyed "Complete operation" with no reason while the reason ("no valid stamp; Avery Nolan holds a Quality credential") sits roughly 2,000 px below. Clicking any bar action does not scroll or move focus, so on tablet and phone the click feels like nothing happened.
 
 ## Field defects reproduced from the iPhone screenshots (375 px, iOS WebView)
 

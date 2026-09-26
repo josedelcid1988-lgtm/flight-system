@@ -7,7 +7,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
-  await page.goto(process.env.FLIGHT_UI_URL || new URL('../index.html', import.meta.url).href);
+  await page.goto(process.env.FLIGHT_UI_URL || new URL((process.env.FS_FIXTURES_DIR?'file://'+process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):null)?(process.env.FS_FIXTURES_DIR?'file://'+process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):null)+'publish.html':new URL('../index.html', import.meta.url).href).href);
   await page.waitForSelector('#sk-boot input[name=username]');
   await page.evaluate(() => {
     const form = document.querySelector('#sk-boot form');

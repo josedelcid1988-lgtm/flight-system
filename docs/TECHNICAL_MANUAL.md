@@ -1,6 +1,6 @@
 # Flight Control MES · Technical Manual
 
-Build: the product build id is only in [VERSION.md](../VERSION.md). This manual does not carry its own build number.
+Build: the product build id is set in [VERSION.md](../VERSION.md) and stamped into `index.html` with its SHA-256 by `tools/stamp-build.mjs`. This manual does not carry its own build number.
 Scope: architecture, data model, access control, every workflow and its rules, printing, storage, integrations, known limits, operations and testing.
 Audience: developers, the backend engineer who will host it, QA/QMS owners validating it.
 
@@ -340,13 +340,13 @@ Per-operation local messages with Slack thread references. Not synchronized with
 | Content | Internal | External |
 |---|:-:|:-:|
 | Metadata (part, serial, revisions, pedigree, status, closed-as) | ✔ | ✔ |
-| Pre-release QA record | ✔ | — |
+| Pre-release QA record | ✔ | No |
 | Engineering change control | ✔ | ✔ |
 | Operation sequence with steps as rows under each operation (checks, torque, consumable lots) | ✔ | ✔ |
 | Callout notes (ESD, FOD level, tool control, MSDS) | ✔ | ✔ |
-| Operation assignee | ✔ | — |
+| Operation assignee | ✔ | No |
 | Linked records (tickets, ATP reports, evidence metadata) | ✔ | ✔ |
-| Team discussions | ✔ | — |
+| Team discussions | ✔ | No |
 
 Record tab: **Export internal JSON** of the work order.
 
@@ -384,7 +384,7 @@ See `docs/BACKEND_CONTRACT.md` for endpoints. Summary:
 
 ### 15.1 Deploy
 
-Static hosting of `index.html` plus `assets/` (hero images). Published today as a private Claude artifact and in the private GitHub repo `josedelcid1988-lgtm/flight-control-mes` (`main`).
+Static hosting of `index.html` plus `assets/` (hero images). The code of record is this repository (`main`); CI builds nothing, so the file on `main` is the file to host. The optional persistence mirror runs beside it (`server/README.md`).
 
 ### 15.2 Backup and reset
 

@@ -5,7 +5,7 @@ const browser=await chromium.launch(process.env.CHROME_PATH?{executablePath:proc
 try {
   const page=await browser.newPage();
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
-  await page.goto(process.env.FLIGHT_UI_URL||new URL('../index.html',import.meta.url).href);
+  await page.goto(process.env.FLIGHT_UI_URL||new URL((process.env.FS_FIXTURES_DIR?'file://'+process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):null)?(process.env.FS_FIXTURES_DIR?'file://'+process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):null)+'publish.html':new URL('../index.html',import.meta.url).href).href);
   const password='Test-'+crypto.randomUUID();
   await page.locator('#sk-displayname').fill('Access Test');
   await page.locator('#sk-username').fill('access-test');

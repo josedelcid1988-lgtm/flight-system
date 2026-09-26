@@ -5,7 +5,7 @@ const { chromium } = await import(process.env.FLIGHT_PLAYWRIGHT || 'playwright')
 const browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
 try {
   const demo = await browser.newPage();
-  await demo.goto(new URL('./fixtures/demo_publish.html', import.meta.url).href,{waitUntil:'domcontentloaded'});
+  await demo.goto(new URL((process.env.FS_FIXTURES_DIR?'file://'+process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):null)?(process.env.FS_FIXTURES_DIR?'file://'+process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):null)+'demo_publish.html':new URL('./fixtures/demo_publish.html', import.meta.url).href).href,{waitUntil:'domcontentloaded'});
   await demo.locator('#sk-username').fill('demo');
   await demo.locator('#sk-password').fill('demo1234');
   await demo.locator('#sk-login-submit').click();
@@ -14,7 +14,7 @@ try {
   await demo.close();
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const errors = []; page.on('pageerror', e => errors.push(e.message));
-  await page.goto(process.env.FLIGHT_UI_URL || new URL('../index.html', import.meta.url).href,{waitUntil:'domcontentloaded'});
+  await page.goto(process.env.FLIGHT_UI_URL || new URL((process.env.FS_FIXTURES_DIR?'file://'+process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):null)?(process.env.FS_FIXTURES_DIR?'file://'+process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):null)+'publish.html':new URL('../index.html', import.meta.url).href).href,{waitUntil:'domcontentloaded'});
   const password = 'Test-' + crypto.randomUUID();
   for (const [id, value] of Object.entries({ 'sk-displayname': 'Master Test', 'sk-username': 'master-test', 'sk-password': password, 'sk-confirm': password })) await page.locator('#' + id).fill(value);
   await page.locator('#sk-login-submit').click();

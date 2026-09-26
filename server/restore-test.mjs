@@ -1,0 +1,52 @@
+#!/usr/bin/env node
+// Restore test: proves a backup can be restored and that it carries an intact record chain.
+//
+//   node server/restore-test.mjs <backup.sqlite> [--against <live.sqlite>]
+//
+// The backup is copied to a temporary folder and opened there (the original is never touched). The
+// script walks the whole hash chain and prints the row count and the chain tip. With --against it also
+// checks that every row in the backup is identical to the same row in the live database, so the backup
+// is a true prefix of what the server holds now. Exit status 0 means the restore is good; 1 means it is not.
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { verifyChain } from './server.mjs';
+
+const argv = process.argv.slice(2);
+const backup = argv.find(a => !a.startsWith('--'));
+const againstAt = argv.indexOf('--against');
+const against = againstAt >= 0 ? argv[againstAt + 1] : null;
+if (!backup || !fs.existsSync(backup)) { console.error('FAIL give the backup file to test: node server/restore-test.mjs <backup.sqlite> [--against <live.sqlite>]'); process.exit(1); }
+
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fs-restore-'));
+const copy = path.join(dir, 'restored.sqlite');
+fs.copyFileSync(backup, copy);
+let ok = true;
+try {
+  const db = new DatabaseSync(copy);
+  const v = verifyChain(db);
+  const manifests = Number(db.prepare('SELECT COUNT(*) n FROM signature_manifests').get().n);
+  const triggers = db.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name").all().map(t => t.name);
+  console.log(`restored ${path.basename(backup)}: ${v.records} records, ${manifests} signature manifests, chain ${v.ok ? 'intact' : 'BROKEN'}${v.ok ? `, tip ${v.tip}` : `: row ${v.firstBreak.id}, ${v.firstBreak.reason}`}`);
+  if (!v.ok) ok = false;
+  const want = ['manifests_no_delete', 'manifests_no_update', 'records_no_delete', 'records_no_update'];
+  if (want.some(t => !triggers.includes(t))) { console.error(`FAIL the restored database is missing its append-only triggers: ${want.filter(t => !triggers.includes(t)).join(', ')}`); ok = false; }
+  if (against) {
+    const live = new DatabaseSync(against, { readOnly: true });
+    const cols = 'id, client_write_id, store_key, entity_type, entity_id, operation, payload_json, payload_sha256, prev_sha256, actor, credential, client_ts, server_ts, build_version, build_sha256, client_id';
+    const get = live.prepare(`SELECT ${cols} FROM records WHERE id = ?`);
+    let mismatch = null;
+    for (const row of db.prepare(`SELECT ${cols} FROM records ORDER BY id`).iterate()) {
+      const other = get.get(row.id);
+      if (!other || JSON.stringify(other) !== JSON.stringify(row)) { mismatch = Number(row.id); break; }
+    }
+    const liveCount = Number(live.prepare('SELECT COUNT(*) n FROM records').get().n);
+    if (mismatch !== null) { console.error(`FAIL row ${mismatch} in the backup differs from the live database`); ok = false; }
+    else console.log(`backup matches the first ${v.records} of ${liveCount} live records`);
+    live.close();
+  }
+  db.close();
+} catch (error) { console.error('FAIL ' + error.message); ok = false; }
+fs.rmSync(dir, { recursive: true, force: true });
+process.exit(ok ? 0 : 1);

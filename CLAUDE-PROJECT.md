@@ -16,7 +16,7 @@ operations, buy-offs, FAIR, LRU conformity and 8130-9, prints), Flight Plan
 (planned orders and conversion), Flight Maneuver (NC/IDR, MRB, CAR/SCAR, SPR,
 FRACAS, escapes, PFMEA).
 
-The code of record is the private GitHub repo josedelcid1988-lgtm/flight-system.
+The code of record is the private GitHub repo <owner>/flight-system.
 `index.html` is the production build, `demo.html` the demo build (sign in
 demo / demo1234). Reach the code through whichever computer this session is
 linked to, at ~/projects/flight-system on the MacBook Air. Pull before changing

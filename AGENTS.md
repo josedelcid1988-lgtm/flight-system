@@ -17,16 +17,22 @@ One product, three modules, all in the same file:
 ## Files
 
 - `index.html`: production build. All gates enforced. This is the app.
-- `demo.html`: demo build. Same app with the separation-of-duties, PIN and stamp
-  gates relaxed and a sample data set loaded. Sign in demo / demo1234.
+- `demo.html`: demo build, generated. Same app with the separation-of-duties, PIN
+  and stamp gates relaxed and a sample data set loaded. Pilot seats (`tech`,
+  `quality`, `mfgeng`, `operations`, `engineering`) keep their real role. Sign in
+  with any demo account and the password demo1234. Every page and print says
+  DEMO, NOT FOR ACCEPTANCE.
 - `tests/`: Playwright harnesses and their fixtures. See `TESTING.md`.
-- `VERSION.md`: the only place the product build id is written. `ACCESS.md`: how the machines
+- `VERSION.md`: where the product build id is set; `tools/stamp-build.mjs` writes it and the
+  SHA-256 of `index.html` into the head of `index.html`. `ACCESS.md`: how the machines
   and Claude sessions share this repo.
 
-`demo.html` is generated from `index.html` by a build chain that does not live
-in this repo. Do not edit `demo.html` by hand expecting it to survive; make the
-change in `index.html` and say so in the PR or commit, and the demo gets rebuilt
-on the next release.
+`demo.html` and the demo test fixtures are generated from `index.html` by
+`node tools/build-demo.mjs`, which applies the numbered deviations in
+`tools/demo/deviations.mjs` (listed in `docs/DEMO_DEVIATIONS.md`). Never edit
+`demo.html` or a fixture by hand: change `index.html`, run `node tools/stamp-build.mjs`,
+then `node tools/build-demo.mjs`, and commit all of them. `--check` on either tool fails
+if its output is out of date.
 
 ## Rules that are not negotiable
 
@@ -35,9 +41,10 @@ below exist for AS9100 and 14 CFR reasons; do not "simplify" them away.
 
 1. Separation of duties. The person who does a thing cannot approve it: the
    author of a WI cannot release it, the peer reviewer cannot release it, the
-   requester of a closure cannot approve it, one person holds one MRB seat, and
-   the person who prepares an 8130-9 cannot sign it as the authorized inspector.
-   The demo build lifts these; the production build must not.
+   requester of a closure cannot approve it, one person holds one MRB seat, the
+   person who prepares an 8130-9 cannot sign it as the authorized inspector, and
+   nobody inspects their own work. The demo build lifts these; the production
+   build must not. `tests/test_frozen_contract.mjs` fails if one changes.
 2. Every approval and buy-off writes a record with the person, their credential,
    the time and a SHA-256 signature manifest. Never drop those fields.
 3. State is re-validated on every write and rolled back if it would leave the

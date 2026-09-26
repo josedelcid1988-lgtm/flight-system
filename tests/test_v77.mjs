@@ -1,10 +1,11 @@
+import {mkdirSync as __mkdirTests} from 'fs';const TESTS=decodeURI(new URL('.',import.meta.url).pathname);const FIXTURES=process.env.FS_FIXTURES_DIR?process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):TESTS+'fixtures/';__mkdirTests(TESTS+'shots',{recursive:true}); // shots and results resolve from this folder; fixtures from FS_FIXTURES_DIR when set (tools/run-suites.mjs --mirror)
 import {chromium} from 'playwright';
 const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{});
 const p=await (await b.newContext({viewport:{width:1440,height:1000}})).newPage();
 const errs=[]; p.on('pageerror',e=>errs.push(e.message));
 const fails=[]; const step=(w,r)=>{const ok=r&&r.ok!==false;console.log((ok?'  ok   ':'  FAIL ')+w+(ok?'':' -> '+(r&&r.message)));if(!ok)fails.push(w);};
 const no=(w,r)=>step(w,{ok:!(r&&r.ok),message:r&&r.message||'was allowed'});
-async function signIn(u){await p.evaluate(()=>{try{sessionStorage.removeItem('skyryse-mes-session-v1');}catch(e){}}).catch(()=>{});await p.goto('file:///Users/josedelcid/projects/flight-system/tests/fixtures/demo_qa150_publish.html'); await p.waitForTimeout(900);
+async function signIn(u){await p.evaluate(()=>{try{sessionStorage.removeItem('skyryse-mes-session-v1');}catch(e){}}).catch(()=>{});await p.goto('file://'+FIXTURES+'demo_qa150_publish.html'); await p.waitForTimeout(900);
 await p.evaluate(x=>{const un=document.querySelector('#sk-boot input[name=username]');if(!un)return;const pw=document.querySelector('#sk-boot input[type=password]');un.value=x;un.dispatchEvent(new Event('input',{bubbles:true}));pw.value='demo1234';pw.dispatchEvent(new Event('input',{bubbles:true}));un.closest('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));},u);
 await p.waitForTimeout(2800);}
 await signIn('master');
@@ -51,5 +52,5 @@ step('valid at end',{ok:await run(()=>MES.validate(state)),message:'invalid'});
 await run(()=>{view='mnv-intake';render();});await p.waitForTimeout(300);
 await run(()=>{const b=[...document.querySelectorAll('button')].find(x=>/Raise NC|NC \/ IDR outside/i.test(x.textContent));b&&b.click();});await p.waitForTimeout(400);
 step('stock NC form has the source picker',{ok:await run(()=>!!document.querySelector('#mnv-nc-form .mnv-nc-source input[name=sourceType]')),message:'no picker'});
-await p.screenshot({path:'/Users/josedelcid/projects/flight-system/tests/shots/v77_nc_source.png'});
+await p.screenshot({path:TESTS+'shots/v77_nc_source.png'});
 console.log('errors',errs,'FAILS',JSON.stringify(fails));await b.close();

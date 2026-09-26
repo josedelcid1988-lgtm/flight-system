@@ -1,10 +1,11 @@
+import {mkdirSync as __mkdirTests} from 'fs';const TESTS=decodeURI(new URL('.',import.meta.url).pathname);const FIXTURES=process.env.FS_FIXTURES_DIR?process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):TESTS+'fixtures/';__mkdirTests(TESTS+'shots',{recursive:true}); // shots and results resolve from this folder; fixtures from FS_FIXTURES_DIR when set (tools/run-suites.mjs --mirror)
 import {chromium} from 'playwright';
 const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{});
 const p=await (await b.newContext({viewport:{width:1440,height:1000}})).newPage();
 const errs=[]; p.on('pageerror',e=>errs.push(e.message));
 const fails=[]; const step=(w,r)=>{const ok=r&&r.ok!==false;console.log((ok?'  ok   ':'  FAIL ')+w+(ok?'':' -> '+(r&&r.message)));if(!ok)fails.push(w);};
 const no=(w,r)=>step(w,{ok:!(r&&r.ok),message:r&&r.message||'was allowed'});
-await p.goto('file:///Users/josedelcid/projects/flight-system/tests/fixtures/demo_qa150_publish.html'); await p.waitForTimeout(900);
+await p.goto('file://'+FIXTURES+'demo_qa150_publish.html'); await p.waitForTimeout(900);
 await p.evaluate(x=>{const un=document.querySelector('#sk-boot input[name=username]');const pw=document.querySelector('#sk-boot input[type=password]');un.value=x;un.dispatchEvent(new Event('input',{bubbles:true}));pw.value='demo1234';pw.dispatchEvent(new Event('input',{bubbles:true}));un.closest('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));},'master');
 await p.waitForTimeout(3000);
 const run=(fn,a)=>p.evaluate(fn,a);
@@ -43,7 +44,7 @@ await run(a=>{selectedId=a.o;view='order';tab='operations';render();ticketDialog
 step('NC view links to rework operation',{ok:await run(()=>!!document.querySelector('#dialog .rework-links [data-action="ticket-operation"]')),message:'no link'});
 await p.click('#dialog .rework-links [data-action="ticket-operation"]');await p.waitForTimeout(400);
 step('link opens the rework op with the linked NC shown',{ok:await run(a=>!!document.querySelector('#operation-detail .linked-nc [data-ticket="'+a.t+'"]'),fx),message:'op not shown'});
-await p.screenshot({path:'/Users/josedelcid/projects/flight-system/tests/shots/v76_rework.png'});
+await p.screenshot({path:TESTS+'shots/v76_rework.png'});
 await run(()=>{view='wis';render();});await p.waitForTimeout(300);
 step('library panel on WI page',{ok:await run(()=>!!document.querySelector('.std-rw-panel')&&/approved/i.test(document.querySelector('.std-rw-panel').textContent)),message:'no panel'});
 await run(()=>{sequenceAddDialog&&0;});
