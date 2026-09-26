@@ -69,7 +69,7 @@ orders(){
    gate('close before operations done',c=>MES.closeOrder(c,o.id));finish(o);stock(o,'SUB-A1');window.__stockA=o.id;end(O(o.id).status+' + stocked '+O(o.id).inventory.lotNumber);});
  flow('O2 Production FAI with FAIR to closed',()=>{const o=mk('MWI-0003',1);issue(o);build(o);buy(o,o.operations.length);st('Operator','hand to Quality',0,()=>MES.advance(state,o.id));
    gate('close FAI order without approved FAIR',c=>MES.closeOrder(c,o.id));fair(o);
-   st('QA','verify FAIR (blocks 20-23)',1,()=>MES.verifyFair(state,o.id,{pin:''}));st('QA Manager','approve FAIR',1,()=>MES.approveFair(state,o.id,{pin:''}));
+   st('QA','verify FAIR (blocks 20-21)',1,()=>MES.verifyFair(state,o.id,{pin:''}));st('QA Manager','review FAIR (box 22)',1,()=>MES.reviewFair(state,o.id,{pin:''}));st('QA Manager','approve FAIR',1,()=>MES.approveFair(state,o.id,{pin:''}));
    st('QA','final quality review and close',0,()=>MES.closeOrder(state,o.id));end(O(o.id).status+', FAIR '+O(o.id).fair.status);});
  flow('O3 Production Installation to closed',()=>{const o=mk('MWI-0005',1,Object.assign({subcategory:'Installation'},waiver));issue(o);build(o);finish(o);end(O(o.id).status);});
  flow('O4 Development Mfg. to closed',()=>{const o=mk('MWI-0006',1,{pedigree:'Development',fai:false,faiWaiver:'Development build.'});issue(o);build(o);finish(o);end(O(o.id).status);});
@@ -101,7 +101,7 @@ tickets(){
    const seats=board(o,t);check('Certification seated',seats.includes('Certification'),seats.join(','));qaApprove(o,t);finish(o);end(tk(o,t).status+', seats '+seats.length+', WO '+O(o.id).status);});
  flow('T3 NC Repair, Production FAI, MRB + repair op',()=>{const o=mk('MWI-0006',1,{fai:true});issue(o);build(o);const t=ticket(o,'NC','Thread damaged','Helicoil required on tapped hole 4.');
    dispo(o,t,'Repair');const seats=board(o,t);check('Certification seated (FAI)',seats.includes('Certification'));qaApprove(o,t);reworkOp(o,t,'Repair');
-   buy(o,o.operations.filter(x=>!x.done).length);st('Operator','hand to Quality',0,()=>MES.advance(state,o.id));fair(o);st('QA','verify FAIR',1,()=>MES.verifyFair(state,o.id,{pin:''}));st('QA Manager','approve FAIR',1,()=>MES.approveFair(state,o.id,{pin:''}));
+   buy(o,o.operations.filter(x=>!x.done).length);st('Operator','hand to Quality',0,()=>MES.advance(state,o.id));fair(o);st('QA','verify FAIR',1,()=>MES.verifyFair(state,o.id,{pin:''}));st('QA Manager','review FAIR (box 22)',1,()=>MES.reviewFair(state,o.id,{pin:''}));st('QA Manager','approve FAIR',1,()=>MES.approveFair(state,o.id,{pin:''}));
    st('QA','close',0,()=>MES.closeOrder(state,o.id));end(tk(o,t).status+', WO '+O(o.id).status);});
  flow('T4 NC Use for Dev: QA Manager + pedigree downgrade',()=>{const o=mk('MWI-0007',1,waiver);issue(o);build(o);const t=ticket(o,'NC','Bore oversize','Bore 0.503 in, max 0.501 in.');
    dispo(o,t,'Use for Dev');check('no MRB for Use for Dev',!FlightManeuver.needsMRB(O(o.id),tk(o,t)));qaApprove(o,t,'QA Manager');check('downgraded to Development',O(o.id).pedigree==='Development',O(o.id).pedigree);
@@ -169,7 +169,7 @@ maneuver(){
    st('Engineering','close ECR',2,()=>MES.closeECRRequest(state,r.id,'Rejected','Covered by existing ECO-2201.'));end((state.ecrRequests.find(e=>e.id===r.id)||{}).status);});
  return T.filter(x=>!x.ok&&!x.gate).length;},
 conf1(){flow('C1 LRU: FAI + ATP + Part Conformity + 8130-9 + 8130-3',()=>{const o=mk('MWI-0001',1,{fai:true});window.__conf=o.id;issue(o);addOp(o,ATP);addOp(o,CONF);build(o);buy(o,o.operations.length-1);fair(o);
-   st('QA','verify FAIR',1,()=>MES.verifyFair(state,o.id,{pin:''}));st('QA Manager','approve FAIR',1,()=>MES.approveFair(state,o.id,{pin:''}));const sn=MES.confSerials(state,O(o.id))[0];window.__confSn=sn;
+   st('QA','verify FAIR',1,()=>MES.verifyFair(state,o.id,{pin:''}));st('QA Manager','review FAIR (box 22)',1,()=>MES.reviewFair(state,o.id,{pin:''}));st('QA Manager','approve FAIR',1,()=>MES.approveFair(state,o.id,{pin:''}));const sn=MES.confSerials(state,O(o.id))[0];window.__confSn=sn;
    st('QA','start conformity package',2,()=>MES.startConformity(state,o.id,{serial:sn,jira:'CONF-301'}));st('QA','package details (RFC, MDL, staging)',4,()=>MES.saveConformity(state,o.id,sn,{rfc:'RFC-0201',mdlRev:'G',mdlReceived:today(-2),staging:'QA cage A',nc:'No'}));
    const keys=['1.2','1.3','1.4','3.1','3.2','3.3','3.4','4.1a','4.1b','4.1c','4.1d','4.2'];st('QA','checklist phases 1-4 ('+keys.length+' items)',keys.length,()=>{for(const k of keys){const r=MES.checkConformity(state,o.id,sn,k,k==='3.3'?{value:'N/A',note:'No purchased parts.'}:{value:'Yes'});if(!r.ok)return r;}return {ok:true};});
    gate('N/A without justification',c=>MES.checkConformity(c,o.id,sn,'5.2',{value:'N/A'}));

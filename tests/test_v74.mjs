@@ -45,7 +45,8 @@ step('char 3 (balloon number kept)',await S(o=>MES.addFairChar(state,o,{no:'3',r
 no('duplicate balloon refused',await run(o=>MES.addFairChar(structuredClone(state),o,{no:'3',ref:'x',requirement:'x'}),O));
 step('char 2 no result yet',await S(o=>MES.addFairChar(state,o,{no:'2',ref:'Sht 1 C2',requirement:'Ø 0.125 +0.002/-0.000'}),O));
 step('review flags char 2',{ok:await run(o=>MES.fairReview(state,MES.getOrder(state,o)).some(g=>/results missing for 2/.test(g)),O),message:'no flag'});
-step('char 2 result',await S(o=>MES.updateFairChar(state,o,'C-2',{result:'0.1261',ok:'yes',tool:'PIN-GAGE-14'}),O));
+step('char 2 result',await S(o=>MES.updateFairChar(state,o,'C-2',{result:'0.1261',ok:'yes',tool:'PIN-GAGE-14',designedTooling:'GAUGE 0.125-0.127'}),O));
+step('box 10 designed / qualified tooling is kept',{ok:await run(o=>MES.getOrder(state,o).fair.chars.find(c=>c.id==='C-2').designedTooling==='GAUGE 0.125-0.127',O),message:'box 10'});
 step('order sorted by balloon',{ok:await run(o=>MES.getOrder(state,o).fair.chars.map(c=>c.id).join()==='C-1,C-2,C-3',O),message:'order'});
 step('review clean',{ok:await run(o=>MES.fairReview(state,MES.getOrder(state,o)).length===0,O),message:JSON.stringify(await run(o=>MES.fairReview(state,MES.getOrder(state,o)),O))});
 await valid('fair data');
@@ -54,14 +55,18 @@ await p.screenshot({path:TESTS+'shots/v74_fair.png',fullPage:true});
 await signIn('quality');
 step('verify (quality stamp)',await S(o=>MES.verifyFair(state,o,{pin:''}),O));
 no('edit after verify refused',await run(o=>MES.addFairChar(structuredClone(state),o,{no:'9',ref:'x',requirement:'x'}),O));
-no('box 22 cannot be signed by the person who verified the FAIR',await run(o=>MES.reviewFair(structuredClone(state),o,{pin:''}),O));
+// The demo lifts "the verifier cannot sign box 22" (D-33); test_frozen_contract pins it in the production build.
+{const r=await run(o=>MES.approveFair(structuredClone(state),o,{pin:''}),O);step('Skyryse QA approval is refused until a second person signs box 22',{ok:!r.ok&&/Box 22 is not signed/.test(r.message),message:JSON.stringify(r)});}
+await signIn('master');
+step('box 22 signed by a second person',await S(o=>MES.reviewFair(state,o,{pin:''}),O));
 step('approve (Skyryse QA)',await S(o=>MES.approveFair(state,o,{pin:''}),O));
+await signIn('quality');
 await valid('fair approved');
 await run(o=>{selectedId=o;view='order';tab='quality';render();},O); await p.waitForTimeout(300);
 step('the FAIR shows Form 1, Form 2, Form 3 and Review and sign as separate pages',{ok:await run(()=>{const tabs=[...document.querySelectorAll('#fair-panel [data-fair-page]')].map(b=>b.textContent.trim());const shown=[...document.querySelectorAll('#fair-panel .fair-page')].filter(x=>!x.hidden).length;return tabs.length===4&&/Form 1/.test(tabs[0])&&/Form 3/.test(tabs[2])&&shown===1;}),message:'pages'});
 step('choosing Form 3 shows only Form 3',{ok:await run(()=>{document.querySelector('#fair-panel [data-fair-page="3"]').click();const shown=[...document.querySelectorAll('#fair-panel .fair-page')].filter(x=>!x.hidden);return shown.length===1&&shown[0].id==='fair-page-3';}),message:'form 3'});
 const [dl]=await Promise.all([p.waitForEvent('download',{timeout:5000}).catch(()=>null),p.click('[data-action="fair-download"]')]);
-if(dl){const fs=await import('fs');const path=await dl.path();const h=fs.readFileSync(path,'utf8');step('FAIR download has Forms 1 to 3 blocks',{ok:/Form 1/.test(h)&&/Form 2/.test(h)&&/Form 3/.test(h)&&/25\. Date/.test(h)&&/3A\. Sample size/.test(h)&&/AMS-QQ-A-250\/11/.test(h)&&/AS9102 Form 3: Characteristic Accountability/.test(h)&&/10\. Designed \/ qualified tooling/.test(h)&&/22\. FAIR reviewed \/ approved by/.test(h)&&/Supplemental data/.test(h)&&/8\. Supplier \(name, address, code\)/.test(h),message:'content'});fs.copyFileSync(path,TESTS+'shots/v74_fair_download.html');}else step('FAIR download',{ok:false,message:'none'});
+if(dl){const fs=await import('fs');const path=await dl.path();const h=fs.readFileSync(path,'utf8');step('FAIR download has Forms 1 to 3 blocks',{ok:/Form 1/.test(h)&&/Form 2/.test(h)&&/Form 3/.test(h)&&/25\. Date/.test(h)&&/3A\. Sample size/.test(h)&&/AMS-QQ-A-250\/11/.test(h)&&/AS9102 Form 3: Characteristic Accountability/.test(h)&&/10\. Designed \/ qualified tooling/.test(h)&&/22\. FAIR reviewed \/ approved by/.test(h)&&/Supplemental data/.test(h)&&/GAUGE 0\.125-0\.127/.test(h)&&/8\. Supplier \(name, address, code\)/.test(h),message:'content'});fs.copyFileSync(path,TESTS+'shots/v74_fair_download.html');}else step('FAIR download',{ok:false,message:'none'});
 step('FAI pill shows approved',{ok:await run(()=>/FAIR approved/.test(document.querySelector('#order-title').textContent)),message:'pill'});
 step('close order with approved FAIR',await S(o=>MES.closeOrder(state,o),O));
 // ---- Conformity package ----

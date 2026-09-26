@@ -143,6 +143,10 @@ const LIST = [
     why: 'Inspection, the MRB seats, conformity work and the AQI signature work for every eligible demo account without a grant or a training record, so scenarios run without setup. Production requires a named grant and a current training record.',
     find: ' function grantActive(u,cap){', count: 1,
     replace: (ctx, m, id) => ` function grantActive(u,cap){return true;/* DEMO ${id} */` },
+  { area: 'Separation of duties', title: 'The person who verified a FAIR may sign box 22',
+    why: 'One person can verify a FAIR and review it in box 22, so an FAI order can be walked alone. Production refuses this to every role, Master Access and Support Access included. The QA approval still waits for box 22.',
+    find: '    if (fair.verified && fair.verified.by && by.credentialId === fair.verified.by.credentialId) return fail(', count: 1,
+    replace: (ctx, m, id) => `    if (false /* DEMO ${id} */ && fair.verified && fair.verified.by && by.credentialId === fair.verified.by.credentialId) return fail(` },
 ];
 
 export const DEVIATIONS = LIST.map((d, i) => Object.freeze({ ...d, id: `D-${i + 1}` }));
