@@ -1,4 +1,4 @@
-<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<!doctype html><!-- Product build id: VERSION.md. Do not copy the build number into this file. --><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
 <script>window.skTable=window.skTable||{state:function(){return {sort:{col:null,dir:'asc'},filters:{}};},selected:function(){return [];},active:function(){return false;},match:function(){return true;},matchAny:function(){return true;},sort:function(){return {col:null,dir:'asc'};},reset:function(){},save:function(){},views:function(){return [];}};</script>
 
 <html lang="en">
@@ -2187,6 +2187,42 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const signer = acct ? { name: acct.name, role: acct.role, credentialId: acct.credentialId, account: acct.account } : { ...profileSnapshot(state.profile), account: null };
     return { meaning, at, signer, algorithm: 'SHA-256', hash: sha256(canonical(subject)), authenticated: false, ...(subject.override ? { override: { ...subject.override } } : {}) };
   }
+  // Subject builders shared by the signing sites and verifyManifests, so a hash can be recomputed
+  // from the stored record. Each mirrors exactly what was hashed when the record was signed.
+  const NO_EVIDENCE_NOTE = 'Record step recorded. No production evidence.';
+  const buyoffSubject = (order, operation, note) => { const b = operation.buyoff; return { orderId: order.id, operationId: operation.id, title: operation.title, note, stepChecks: operation.stepChecks, evidenceIds: b.evidenceIds, stamp: b.stamp, ...(b.override ? { override: b.override } : {}), tools: b.tools, ...(b.testAssets ? { testAssets: b.testAssets } : {}) }; };
+  const ticketSubject = (order, ticket) => ({ orderId: order.id, ticketId: ticket.id, operationId: ticket.operationId, dispo: ticket.dispo, resolution: ticket.resolution, defect: ticket.defect || null, affected: ticket.affected || null });
+  const closureSubject = (state, order) => ({ orderId: order.id, reason: order.closure.reason, note: order.closure.note, ticket: order.closure.ticket || null, serials: orderSerials(state, order).map(e => e.serial) });
+  // Verifies every signature manifest in a workspace. Every manifest found anywhere in the state must
+  // have a valid shape (meaning, time, named signer with a credential, SHA-256 hash). Buy-offs, NC/IDR
+  // approvals and order closures are recomputed from the stored record; FAIR and 8130-9 chains are
+  // checked link by link. Any edit to a signed field after signing shows up as a failure.
+  function verifyManifests(state) {
+    const failures = []; let checked = 0, recomputed = 0;
+    const shapeOk = m => plain(m) && typeof m.meaning === 'string' && !!m.meaning && typeof m.at === 'string' && !Number.isNaN(Date.parse(m.at)) && plain(m.signer) && typeof m.signer.name === 'string' && !!m.signer.name.trim() && typeof m.signer.credentialId === 'string' && !!m.signer.credentialId.trim() && m.algorithm === 'SHA-256' && /^[0-9a-f]{64}$/.test(m.hash);
+    const walk = (node, path) => {
+      if (Array.isArray(node)) { node.forEach((x, i) => walk(x, `${path}[${i}]`)); return; }
+      if (!plain(node)) return;
+      Object.keys(node).forEach(k => {
+        if (k === 'manifest' && node[k] !== null && node[k] !== undefined) { checked++; if (!shapeOk(node[k])) failures.push({ where: `${path}.manifest`, reason: 'manifest shape is invalid' }); }
+        else walk(node[k], `${path}.${k}`);
+      });
+    };
+    walk(state, 'state');
+    const recheck = (where, manifest, subject) => { recomputed++; if (sha256(canonical(subject)) !== manifest.hash) failures.push({ where, reason: 'hash does not match the signed record' }); };
+    (state.orders || []).forEach(order => {
+      (order.operations || []).forEach(op => {
+        const b = op.buyoff; if (!plain(b) || !plain(b.manifest)) return;
+        const note = op.note === NO_EVIDENCE_NOTE ? '' : String(op.note || '');
+        recheck(`${order.id} ${op.id} buy-off`, b.manifest, buyoffSubject(order, op, note));
+      });
+      (order.tickets || []).forEach(t => { if (plain(t.manifest) && t.status === 'Resolved') recheck(`${order.id} ${t.id} approval`, t.manifest, ticketSubject(order, t)); });
+      if (plain(order.closure) && plain(order.closure.manifest)) recheck(`${order.id} closure`, order.closure.manifest, closureSubject(state, order));
+      const fair = order.fair;
+      if (plain(fair) && plain(fair.approved) && plain(fair.approved.manifest) && plain(fair.verified) && plain(fair.verified.manifest)) { recomputed++; const sub = { fair: fairId(order), verified: fair.verified.manifest.hash, ...(fair.approved.manifest.override ? { override: fair.approved.manifest.override } : {}) }; if (sha256(canonical(sub)) !== fair.approved.manifest.hash) failures.push({ where: `${order.id} FAIR approval`, reason: 'approval does not chain to the verified FAIR' }); }
+    });
+    return { ok: failures.length === 0, checked, recomputed, failures };
+  }
   const actor = state => { const acct = accountActor(); return acct ? { name: acct.name, role: acct.role, credentialId: acct.credentialId } : profileSnapshot(state.profile); };
   const accountRole = () => { const acct = accountActor(); return acct ? acct.accountRole : null; };
   // Authority comes from the signed-in account, never a chosen profile or a typed name.
@@ -2658,7 +2694,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     order.status = 'Closed';
     order.closedAs = req.reason;
     order.closure = { ...req, approvedBy: who, approvedAt: at };
-    order.closure.manifest = signManifest(state, `Closure approval: ${req.reason}`, { orderId: order.id, reason: req.reason, note: req.note, ticket: req.ticket || null, serials: orderSerials(state, order).map(e => e.serial) }, at);
+    order.closure.manifest = signManifest(state, `Closure approval: ${req.reason}`, closureSubject(state, order), at);
     delete order.closureRequest;
     record(state, order, `Work order closed as ${req.reason}${req.ticket ? ` per ${req.ticket.ticketId}` : ''}. ${req.note}. Approved by ${who.name}.${voided.length ? ` Serials voided: ${voided.map(e => e.serial).join(', ')}.` : ''}`, 'Quality reviewer');
     return { ok: true, message: `${order.id} closed as ${req.reason}.` };
@@ -5069,11 +5105,11 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (operation.classification === ATP_CLASS) { const r = atpAssets(execution.testAssets, at); if (!r.ok) return r; testAssets = r.list; }
     if (operation.classification === CONF_CLASS) { const r = confOpGate(state, order); if (!r.ok) return r; }
     operation.done = true;
-    operation.note = note.trim() || 'Record step recorded. No production evidence.';
+    operation.note = note.trim() || NO_EVIDENCE_NOTE;
     operation.buyoff = { ...(stamp.override ? actor(state) : profileSnapshot(state.profile)), at, virtual: true, evidenceIds, stamp: stamp.override ? null : { type: stamp.holder.type, number: stamp.holder.number, department: stamp.holder.department, buyoffType }, ...(stamp.override ? { override: stamp.override } : {}), tools: toolChecks.map(({ tool }) => ({ tag: tool.tag, description: tool.description, serial: tool.serial, expires: tool.expires, ...(isTorqueTool(tool) ? { torque: { value: Number(execution.torque[tool.tag].value), unit: execution.torque[tool.tag].unit } } : {}) })), toolLog: CAL_SNAPSHOT };
     if (testAssets) operation.buyoff.testAssets = testAssets;
     if (isInspectionOp(operation)) operation.buyoff.standardInspection = true;
-    operation.buyoff.manifest = signManifest(state, `${buyoffType} buy-off`, { orderId: order.id, operationId: operation.id, title: operation.title, note: note.trim(), stepChecks: operation.stepChecks, evidenceIds, stamp: operation.buyoff.stamp, ...(stamp.override ? { override: stamp.override } : {}), tools: operation.buyoff.tools, ...(testAssets ? { testAssets } : {}) }, at);
+    operation.buyoff.manifest = signManifest(state, `${buyoffType} buy-off`, buyoffSubject(order, operation, note.trim()), at);
     record(state, order, ` operation recorded: ${operation.title}.${operation.atpLinkDeferred ? ' ATP software NOT linked (temporary override).' : ''}${operation.atp ? ` ATP software ${operation.atp.baseline.version} · ${operation.atp.baseline.sha.slice(0, 7)}.` : ''}${operation.fodLevel === 'critical' ? ' FOD checklist complete (FOD Critical Area).' : ''} Buy-off by ${operation.buyoff.name} (${stamp.override ? 'Master Access override: ' + stamp.override.account + '; ' + buyoffType + '; bypassed ' + stamp.override.bypassed.join(', ') : stamp.holder.type + ' stamp ' + stamp.holder.number}); tools: ${toolChecks.length ? toolChecks.map(check => isTorqueTool(check.tool) ? `${check.tool.tag} @ ${execution.torque[check.tool.tag].value} ${execution.torque[check.tool.tag].unit}` : check.tool.tag).join(', ') : 'none logged'}. Not an authenticated signature.`);
     return { ok: true, message: 'Operation recorded.' };
   }
@@ -5633,7 +5669,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     ticket.resolution = resolution.trim();
     ticket.resolvedBy = actor(state);
     ticket.resolvedAt = new Date(Math.max(Date.now(), Date.parse(ticket.createdAt))).toISOString();
-    ticket.manifest = signManifest(state, 'Quality approval of ME disposition', { orderId: order.id, ticketId: ticket.id, operationId: ticket.operationId, dispo: ticket.dispo, resolution: ticket.resolution, defect: ticket.defect || null, affected: ticket.affected || null }, ticket.resolvedAt);
+    ticket.manifest = signManifest(state, 'Quality approval of ME disposition', ticketSubject(order, ticket), ticket.resolvedAt);
     record(state, order, `${ticket.id} from ${ticket.operationId}: Quality approved the ME disposition "${ticket.dispo.decision}" (${defectLabel}; ${qty} of ${order.quantity} affected) and closed the ticket. Approval rationale: ${ticket.resolution}${devNote}`, 'Quality reviewer');
     return { ok: true, message: `${ticket.id}: ME disposition "${ticket.dispo.decision}" approved. Ticket closed.${devNote}${ticket.splitRequestId ? ` Split request ${ticket.splitRequestId} sent to ME.` : ''}` };
   }
@@ -5881,7 +5917,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     return { ok: validate(state), repairs: done, blocker: diagnose(state) };
   }
   const MES = { masterAccess, demoAccount: isDemoAccount, buyoffCredential, diagnose, repair, quarantineOrder, NETSUITE_STOCK, availableLots, lotInStock, woRevLabel, revisionAuthority, nextWoRev, ensureRevisions, revisionEntries, rollWorkOrderRevision, addSavedView, removeSavedView, ensureSavedViews, stepLetter, addAttachment, addTicketAttachment, removeTicketAttachment, ticketAttachments, STOCK_PARTS, OP_BOM_MAX, removeAttachment, aogActive, aogDue, aogMessage, logAogBroadcast, resolveAog, AOG_THREAD, setSchedule, scheduleDays, dateOnly, editOrderOperation, AIRCRAFT, stockedUnits, setWIStepImage, PROFILE_OPTIONS, profileOptionFor, selectProfile, TORQUE_UNITS, isTorqueTool, torqueValid, inventoryReadiness, assignSerial, voidSerial, nextSerial, orderSerials, isSerialized, SERIALIZED_PARTS, autoAssignSerials, moveToInventory, markNetSuitePosted, addKitFile, linkOpToTicket, reworkOpsFor, reworkLibrary, saveReworkTemplate, removeReworkTemplate, saveOpAsReworkTemplate, approveReworkTemplate, addStandardRework, reworkHash, setWIDrawing, releaseUnreleasedWI, wiDrawingUnreleased, isInspectionOp, STD_INSPECTION, rejectInspection, logTravelerPrint, FAIR_TYPES, FAIR_REASONS, FAIR_DESIGNATORS, INDEX_TYPES, F2_KINDS, saveFairHeader, setFairIndex, addFairForm2, setFairTest, addFairChar, updateFairChar, fairReview, fairSnapshot, verifyFair, approveFair, reopenFair, fairId, SOC_SECTIONS, SOC_ITEMS, ISSUERS, CONF_CHECKS, CONF_PHASES, CONF_VALUES, CONF_CLASS, confSerials, confAuto, confGaps, confOpGate, startConformity, saveConformity, checkConformity, complete8130_9, void8130_9, aqiSign8130_9, notifyCertification, addDarFinding, acceptDarFinding, recordDarApproval, record8130_3, closeConformity, conformityState, atpAssets, faiFirstFor, issueFromOrder, returnIssuedOrder, issuableOrders, traceReport, traceReportCsv, qaReviewMasterWI, releaseWIFromPfmea, traceSearch, setImpactDecision, IMPACT_DECISIONS, linkECO, setWICriticalSafety, addPfmeaRow, updatePfmeaRow, pfmeaGate, PFMEA_HIGH, setStampPin, identityStepUp, trainingCheck, trainingStatus, TRAINING, setMsdsBook, msdsBook, tickFodItem, FOD_CHECKLIST, fodChecklistComplete, isConformityPoint, removeKitFile, netsuiteCsv, ensureMasterWIs, findWI, wiKey, nextWIRevision, addMasterWI, updateMasterWI, saveWIOperations, releaseMasterWI, reviseMasterWI, setStepCheck, BUYOFF_TYPES, OP_CLASSIFICATIONS, EXTERNAL_CLASS, EXTERNAL_TEST_CLASS, EXTERNAL_CLASSES, INSPECTION_CLASS, ATP_CLASS, atpPending, pushATPSoftware, reviewATPPush, linkATPSoftware, addPurchaseOrder, CLOSURE_REASONS, requestOrderClosure, NOTICE_KINDS, postNotice, acknowledgeNotice, updateNotice, requestWorkOrder, decideWORequest, ECR_TYPES, ECR_SOURCES, submitECRRequest, reviewFeedbackECR, linkECRJira, openProcessECRs, ecrsForOperation, incorporateECRs, decideOrderClosure, ASSIGN_TYPES, assignWork, completeAssignment, pingAssignment, syncAssignments, opAssignee, INSPECTION_BUYOFF_TYPES, pendingSequenceChange, inspectionGate, firstInsertIndex, addOrderOperation, removeOrderOperation, approveSequenceChange, toolCheck, stampCheck, stampCredential, stampHolderFor, CAL_TOOLS, CAL_SNAPSHOT, STAMP_HOLDERS, setMaterialLot, PEDIGREES, PRIORITIES, SUBCATEGORIES, PART_CATALOG, partDefinition, revisionLabel, requiresReleaseQA, releaseApproval, approveRelease, approveRelease, approveECR, approveEngineeringChange, SITES, orderSite, MESSAGE_TARGETS, seed, validate, upgrade, getOrder, summary, canAdvance, advance, setMaterial, setPriority, completeOperation, closeOrder, addOrder, addAdhocOrder, splitOrder, splitRequestOrder, requestPedigreeChange, approvePedigreeChange, peerReviewMasterWI, dispositionTicket, DISPOSITIONS, MRB_PEDIGREES, ADHOC_ONLY, CALLOUTS, GROUNDING, FOD_LEVELS, CONSUMABLES, addNote, blockingTickets, createTicket, resolveTicket, returnDisposition, closeSplitRequest, DEFECT_CODES, rejectEngineeringChange, rejectSequenceChange, rejectPedigreeChange, returnRelease, returnMasterWI, withdrawClosure, closeECRRequest, updateProfile, attachEvidence, reviewEvidence, rejectEvidence, removeEvidence, ensureStamps, stampRegister, issueStamp, updateStamp, profileOptions, STAMP_STATUSES, sha256, canonical, signManifest, fullHistory, addMessage, setSlackThread, slackThreadValid };
-  Object.assign(MES, { isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange });
+  Object.assign(MES, { isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, verifyManifests });
   if (typeof module !== 'undefined' && module.exports) module.exports = MES;
   if (root) root.MES = MES;
 })(typeof window !== 'undefined' ? window: null);
