@@ -1,4 +1,4 @@
-<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v81"><meta name="fs-build-sha256" content="457883805723baee50ae7a8494edd63b3dc47ddbeb1e1c59c6b5c17fc99f5413"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v81"><meta name="fs-build-sha256" content="b2af90dd63f4ef3993b759ed4e2a0befa721657aa010238351ffc1df7d8ad469"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
 <script>window.skTable=window.skTable||{state:function(){return {sort:{col:null,dir:'asc'},filters:{}};},selected:function(){return [];},active:function(){return false;},match:function(){return true;},matchAny:function(){return true;},sort:function(){return {col:null,dir:'asc'};},reset:function(){},save:function(){},views:function(){return [];}};</script>
 
 <html lang="en">
@@ -13650,8 +13650,7 @@ html body .app .order-link.order-link:hover,html body .app .link-btn.link-btn:ho
 .app .data-table td:first-child{min-width:220px}
 
 /* Audit round 6. */
-.app .task-actions{display:flex!important;justify-content:flex-end!important;align-items:center;gap:12px}
-.app .task-actions>.btn{flex:0 0 auto!important;width:auto!important;min-width:0!important}
+@media(min-width:901px){.app .task-actions{display:flex!important;justify-content:flex-end!important;align-items:center;gap:12px}.app .task-actions>.btn{flex:0 0 auto!important;width:auto!important;min-width:0!important}}
 .app .sequence-panel .panel-head .btn{white-space:nowrap}
 dialog .choice,dialog [class*="choice"]>button,dialog button.btn:has(small){display:flex!important;flex-direction:row!important;align-items:flex-start!important;justify-content:flex-start!important;text-align:left!important;gap:12px}
 dialog button.btn:has(small) small{display:block;text-align:left}
@@ -13687,6 +13686,10 @@ body .mnv-landing-cap,body .mnv-landing-cap h1{color:#f2f3f6!important}
 body .mnv-landing-cap .hero-eyebrow{color:#8b909d!important}
 body .mnv-landing-skip,body a.skip{background:rgba(255,255,255,.1)!important;color:#f2f3f6!important;border:1px solid rgba(255,255,255,.2)!important}
 }
+
+/* No animation on every render (definition rule 21). */
+.content>*,.execution-layout>*,.sequence-list li{animation:none!important}
+
 /* ===== The dock ===== */
 
 body .sidebar{position:fixed!important;inset:auto auto 14px 50%!important;transform:translateX(-50%);width:auto!important;max-width:calc(100vw - 24px);height:auto!important;min-height:0!important;padding:8px 12px!important;margin:0!important;display:flex!important;flex-direction:row!important;align-items:flex-end!important;gap:6px!important;background:rgba(22,24,33,.62)!important;backdrop-filter:blur(30px) saturate(180%);-webkit-backdrop-filter:blur(30px) saturate(180%);border:1px solid rgba(255,255,255,.14)!important;border-radius:24px!important;box-shadow:0 1px 0 rgba(255,255,255,.10) inset,0 24px 60px rgba(0,0,0,.55),0 0 0 1px rgba(0,0,0,.4)!important;overflow:visible!important;z-index:60!important;color:var(--mac-text)}
@@ -13778,7 +13781,10 @@ var cv=document.createElement('canvas').getContext('2d');
 function selects(root){root.querySelectorAll('select').forEach(function(s){if(!s.offsetWidth)return;var pd=s.parentElement&&getComputedStyle(s.parentElement).display;if(pd==='grid'||(s.closest('label')&&getComputedStyle(s.closest('label').parentElement).display==='grid'))return;var cs=getComputedStyle(s);cv.font=cs.fontWeight+' '+cs.fontSize+' '+cs.fontFamily;var t=(s.options[s.selectedIndex]||{}).text||'';var need=Math.ceil(cv.measureText(t).width+parseFloat(cs.paddingLeft)+parseFloat(cs.paddingRight)+4);if(need>s.clientWidth)s.style.minWidth=need+'px';});}
 function dialogs(root){root.querySelectorAll('dialog p').forEach(function(pp){var t=(pp.textContent||'').trim();if(t.length>60&&!pp.closest('td,fieldset .record,.step-card,.signoff,textarea')&&!pp.querySelector('input,select,button,textarea')&&(pp.matches('.small,.muted,.hint,.lede,.dialog-intro')||pp.parentElement.matches('form,.dialog-body,#dialog-body')))pp.hidden=true;});}
 function notices(root){root.querySelectorAll('.task-actions>p').forEach(function(pp){if(/not required/i.test(pp.textContent||''))pp.hidden=true;});root.querySelectorAll('select').forEach(function(s){var o=s.options[s.selectedIndex];if(o&&o.value===''&&/^Choose /.test(o.text)&&s.scrollWidth>s.clientWidth-8)o.text='Choose';});}
-function run(root){try{fixText(root);unjoin(root);months(root);selects(root);dialogs(document);notices(root);}catch(e){}}
+var LH={10:14,11:16,12:16,13:18,14:20,15:22,16:24,17:24,18:24,20:28,22:28,24:32,28:34,32:38,40:46};
+function leading(root){root.querySelectorAll('#main *, .sidebar *').forEach(function(e){if(e.children.length||!(e.textContent||'').trim()||e.closest('svg'))return;var cs=getComputedStyle(e),fs=Math.round(parseFloat(cs.fontSize)),lh=LH[fs];if(lh&&cs.lineHeight!==lh+'px')e.style.setProperty('line-height',lh+'px','important');if(cs.fontWeight==='500')e.style.setProperty('font-weight','600','important');});}
+if(typeof window.render==='function'&&!window.render.macWrapped){var _render=window.render;window.render=function(){var r=_render.apply(this,arguments);try{leading(document);}catch(e){}return r;};window.render.macWrapped=true;}
+function run(root){try{leading(document);fixText(root);unjoin(root);months(root);selects(root);dialogs(document);notices(root);}catch(e){}}
 var busy=false;function sched(){if(busy)return;busy=true;requestAnimationFrame(function(){busy=false;run(document.body);});}
 run(document.body);new MutationObserver(function(ms){for(var i=0;i<ms.length;i++){if(ms[i].addedNodes.length||ms[i].attributeName==='open'){sched();return;}}}).observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['open']});
 })();</script>
