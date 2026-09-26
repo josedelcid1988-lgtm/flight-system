@@ -1,7 +1,9 @@
-// Item 5: nobody inspects their own work. Quality holds inspect-steps (inspection operations only).
-// Anyone who performed a build operation an inspection covers is refused that inspection: no role is
-// exempt and no override lifts it, Master Access and Support Access included.
+// Item 5: nobody inspects their own work. Inspection (inspect-steps) is granted to a person by a QA Manager
+// against a current training record; the grants below are that setup. Anyone who performed a build operation
+// an inspection covers is refused that inspection: no role is exempt and no override lifts it, Master Access
+// and Support Access included. Development NFF orders are the one exception, and it is recorded.
 import {chromium} from 'playwright';
+import {grantAuthorities} from './lib/grants.mjs';
 const TESTS=decodeURI(new URL('.',import.meta.url).pathname);
 const FIXTURES=process.env.FS_FIXTURES_DIR?process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):TESTS+'fixtures/';
 const PROD='file://'+FIXTURES+'publish.html';
@@ -23,6 +25,8 @@ await run(async([AUTH])=>{const a=JSON.parse(localStorage.getItem(AUTH));const s
 
 // Quality stamp for the independent inspector, issued by Master Access.
 await as('jdoe');
+const granted=await grantAuthorities(p,{mhale:['inspect-steps'],qinsp:['inspect-steps'],qbuild:['inspect-steps'],rsup:['inspect-steps']},{extraRoles:{rsup:['qe']}});
+ok('setup: a QA Manager grants inspection to each inspector against a training record',granted===true,String(granted));
 const stamp=await run(()=>{const r=MES.issueStamp(state,{number:'QI-77',name:'Quinn Inspector',department:'Quality',buyoffType:'Quality',account:'qinsp',expires:'2029-01-01'});if(!r.ok)return r.message;const st=state.stamps.find(s=>s.number==='QI-77');st.account='qinsp';const pin=MES.setStampPin(state,st.id,'2468','2468');if(!pin.ok)return pin.message;save();return true;});
 ok('an independent Quality inspector holds a Quality stamp with a PIN',stamp===true,String(stamp));
 
@@ -93,6 +97,16 @@ ok('a QA Manager builds Op 010 on a Technician stamp',qmStamp===true&&sel===true
 await as('qbuild');
 const qm=await tryInspect(W2);
 ok('the QA Manager who performed a covered build operation is refused the inspection',qm.step===false&&qm.buy===false&&/Nobody inspects their own work/.test(qm.stepMsg),JSON.stringify(qm));
+
+// ---- Development NFF: the one exception, and it is recorded ----
+await as('jdoe');
+const W3=await run(()=>{const wi=state.masterWIs.find(x=>x.status==='Released');const r=MES.addOrder(state,{masterWI:wi.id+'|'+wi.revision,pedigree:'Development NFF',subcategory:'Mfg.',quantity:1,aircraft:MES.AIRCRAFT[0],site:MES.SITES[0]});if(!r.ok)throw new Error(r.message);const o=MES.getOrder(state,r.id);let a=MES.advance(state,r.id);if(!a.ok)throw new Error(a.message);o.materials.forEach(m=>{const l=MES.availableLots(m.partNumber)[0];MES.setMaterialLot(state,r.id,m.id,l?l.lot:'L1');MES.setMaterial(state,r.id,m.id,true);});MES.addKitFile(state,r.id,{name:'kit.pdf',type:'application/pdf',size:10,dataUrl:null});a=MES.advance(state,r.id);if(!a.ok)throw new Error(a.message);save();return r.id;});
+await as('mhale');const n1=await build(W3);const n2=await build(W3);const n3=await build(W3);
+ok('fixture: Master Access builds the three operations of a Development NFF order',[n1,n2,n3].every(x=>/^op-/.test(x)),JSON.stringify([n1,n2,n3]));
+const nff=await run(([W])=>{const o=MES.getOrder(state,W);const op=o.operations.find(x=>!x.done);const refusal=MES.ownWorkHit(state,o,op);const steps=op.steps.map(s=>MES.setStepCheck(state,W,op.id,s.id,true));const buy=MES.completeOperation(state,W,op.id,'Inspected on a development build.',{tools:op.requiresTooling?[MES.CAL_TOOLS.find(t=>MES.toolCheck(t.tag).ok&&!MES.isTorqueTool(t)).tag]:[],noTools:!op.requiresTooling,standardInspection:true,toolControlAck:true});return {hit:!!refusal,steps:steps.every(x=>x.ok),stepMsg:(steps.find(x=>!x.ok)||{}).message||'',buy:buy.ok,buyMsg:buy.message,note:o.history.some(h=>/own-work exception/.test(h.action))};},[W3]);
+ok('on a Development NFF order the builder may inspect their own work',nff.hit&&nff.steps&&nff.buy,JSON.stringify(nff));
+ok('the order history records that the own-work exception was used',nff.note,JSON.stringify(nff));
+ok('the exception is Development NFF only: production still refuses',await run(()=>MES.OWN_WORK_EXEMPT_PEDIGREES.length===1&&MES.OWN_WORK_EXEMPT_PEDIGREES[0]==='Development NFF'));
 
 ok('state valid at end',await run(()=>MES.validate(state)));
 ok('manifests verify at end',await run(()=>MES.verifyManifests(state).ok));

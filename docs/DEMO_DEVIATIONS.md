@@ -18,7 +18,7 @@ differs byte for byte, if any target is missing, or if the production engine com
 The accounts `tech`, `quality`, `mfgeng`, `operations`, `engineering` are pilot seats. They keep the capabilities of
 their real role (Technician, Quality, Manufacturing Engineering, Operations, Engineering) so a pilot
 can rehearse the real hand-offs. Every other demo account (`demo`, `master`, `safety`,
-`certification` and any account a person creates) has full access (D-6 to D-10). The stamp,
+`certification` and any account a person creates) has full access (D-6 to D-32). The stamp,
 PIN and separation-of-duties relaxations (D-13 to D-19; D-20 to D-31) apply to every
 demo account so no scenario stalls. Sign in with any account and the password `demo1234`.
 
@@ -45,7 +45,7 @@ Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-2
 | D-5 | Data | Separate workspace storage key | The demo never reads or overwrites a production workspace kept in the same browser. The production key stays frozen. | 1 |
 | D-6 | Roles | Full capabilities for accounts that are not pilot seats | A solo walk-through can run every workflow. Pilot seats keep their real role. | 1 |
 | D-7 | Roles | Access management for accounts that are not pilot seats | Anyone walking the demo can add accounts and change roles. Pilot seats keep their real role. | 1 |
-| D-8 | Roles | QA Manager only settings open to accounts that are not pilot seats | The SDS book, the stamp register and stamp changes can be exercised by the full-access accounts. | 3 |
+| D-8 | Roles | QA Manager only settings open to accounts that are not pilot seats | The SDS book, the stamp register, stamp changes, the stamp CSV import, training requirements and training records can be exercised by the full-access accounts. | 6 |
 | D-9 | Roles | Use for Dev approval open to accounts that are not pilot seats | Use for Dev needs a QA Manager in production; the full-access demo accounts can approve it. | 2 |
 | D-10 | Roles | Every MRB seat for accounts that are not pilot seats | One person can walk a board to its decision. Pilot seats vote only the seats their role holds. | 1 |
 | D-11 | Limits | Work order limit 250 | Holds the 150-order regression dataset with room to create more. | 1 |
@@ -69,3 +69,4 @@ Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-2
 | D-29 | Marking | Demo overlay appended | Loads the sample workspace once, issues stamps to the pilot accounts, seeds a PFMEA example, activates the generic role stamps and shows DEMO, NOT FOR ACCEPTANCE on every page. Source: tools/demo/overlay.js. | 1 |
 | D-30 | Separation of duties | The author of a master WI may release it | One person can write a WI and release it, so a demo can be walked alone. Production refuses this to every role, Master Access and Support Access included. | 1 |
 | D-31 | Separation of duties | The author of a master WI may record its peer review | One person can write a WI and peer-review it, so a demo can be walked alone. Production refuses this to every role, Master Access and Support Access included. | 1 |
+| D-32 | Roles | Authorities follow the role without a QA Manager grant | Inspection, the MRB seats, conformity work and the AQI signature work for every eligible demo account without a grant or a training record, so scenarios run without setup. Production requires a named grant and a current training record. | 1 |

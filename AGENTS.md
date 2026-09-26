@@ -41,10 +41,14 @@ below exist for AS9100 and 14 CFR reasons; do not "simplify" them away.
 
 1. Separation of duties. The person who does a thing cannot approve it: the
    author of a WI cannot release it, the peer reviewer cannot release it, the
-   requester of a closure cannot approve it, one person holds one MRB seat, the
-   person who prepares an 8130-9 cannot sign it as the authorized inspector, and
-   nobody inspects their own work. The demo build lifts these; the production
-   build must not. `tests/test_frozen_contract.mjs` fails if one changes.
+   requester of a closure cannot approve it, one person holds one MRB seat, and
+   nobody inspects their own work (Development NFF orders excepted, and recorded).
+   The person who completes an 8130-9 may give the AQI signature only after an
+   acknowledged warning, recorded on the signature. Inspection, MRB seats,
+   conformity work and the AQI signature are granted to named people by a QA
+   Manager against a current training record, never to themselves. The demo
+   build lifts these; the production build must not.
+   `tests/test_frozen_contract.mjs` fails if one changes.
 2. Every approval and buy-off writes a record with the person, their credential,
    the time and a SHA-256 signature manifest. Never drop those fields.
 3. State is re-validated on every write and rolled back if it would leave the

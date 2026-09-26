@@ -1,6 +1,7 @@
 // Item 6: MRB seats are capabilities (mrb-quality, mrb-me, mrb-eng, mrb-cert) and a vote checks the
 // seat's capability; the QA Manager holds safety-buyoff and the PFMEA Safety Team buy-off checks it.
 import {chromium} from 'playwright';
+import {grantAuthorities} from './lib/grants.mjs';
 const TESTS=decodeURI(new URL('.',import.meta.url).pathname);
 const FIXTURES=process.env.FS_FIXTURES_DIR?process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):TESTS+'fixtures/';
 const PROD='file://'+FIXTURES+'publish.html';
@@ -20,7 +21,13 @@ await run(async([AUTH])=>{const a=JSON.parse(localStorage.getItem(AUTH));const s
   add('kqe','Kai Quality','qe');add('tme','Taylor Engineer','me');add('sswe','Sam Software','swe');add('ccert','Cam Cert','cert');add('pqm','Parker Manager','qm');add('lqm','Lee Manager','qm');add('ssafe','Sky Safety','safety');add('ttech','Toni Tech','technician');
   localStorage.setItem(AUTH,JSON.stringify(a));},[AUTH]);
 
-// ---- roles hold seats through capabilities ----
+// Seats are granted to people by a QA Manager against a current training record; a role makes them eligible.
+await as('jdoe');
+const ungranted=await run(()=>{sessionStorage.setItem('skyryse-mes-session-v1','kqe');const r=FlightManeuver.seatsForAccount();sessionStorage.setItem('skyryse-mes-session-v1','jdoe');return r;});
+ok('a Quality account holds no seat until it is granted',ungranted.length===0,JSON.stringify(ungranted));
+const seated=await grantAuthorities(p,{kqe:['mrb-quality'],tme:['mrb-me'],sswe:['mrb-eng'],ccert:['mrb-cert'],pqm:['mrb-quality','mrb-me','mrb-eng'],lqm:['mrb-quality','mrb-me','mrb-eng']});
+ok('setup: the QA Manager grants each seat against a training record',seated===true,String(seated));
+// ---- roles make people eligible for seats ----
 const seats=await run(()=>Object.fromEntries(['qe','me','swe','cert','qm','admin','technician','safety','general'].map(r=>[r,FlightManeuver.seatsForRole(r)])));
 ok('Quality holds the Quality seat only',JSON.stringify(seats.qe)==='["Quality"]',JSON.stringify(seats.qe));
 ok('Manufacturing Engineering holds its seat only',JSON.stringify(seats.me)==='["Manufacturing Engineering"]',JSON.stringify(seats.me));

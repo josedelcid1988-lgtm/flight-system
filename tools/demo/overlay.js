@@ -83,7 +83,8 @@
   // named people. The demo activates them so every buy-off type can be exercised; every other stamp
   // rule (type, expiry, suspension) still applies to them.
   (function activateRoleStamps() {
-    var GENERIC = ['TE-01', 'QI-01', 'AP-01', 'EN-01', 'AI-01'];
+    // SKY-0007 to SKY-0011; the older role numbers stay listed for demo workspaces saved before the renumbering.
+    var GENERIC = ['SKY-0007', 'SKY-0008', 'SKY-0009', 'SKY-0010', 'SKY-0011', 'TE-01', 'QI-01', 'AP-01', 'EN-01', 'AI-01'];
     var horizon = new Date(Date.now() + 730 * 86400000).toISOString().slice(0, 10);
     function run(st) {
       try {
