@@ -1,0 +1,65 @@
+name: CI
+
+# Every pull request and every push to main: the generated files are current, then every suite runs with
+# the persistence mirror off and on. Any failed check, page error or unexplained skip fails the run
+# (tools/run-suites.mjs; the explained skips are in tests/allowed_skips.json).
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  suites:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      # node:sqlite without a flag needs Node 22.13 or later (server/package.json).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+
+      # Test tooling only. The app and the server have no dependencies.
+      - name: Install Playwright and Chromium
+        run: |
+          npm install --no-save --no-package-lock playwright@1.56.1
+          npx playwright install --with-deps chromium
+
+      - name: Build stamp is current (index.html carries VERSION.md build and its own SHA-256)
+        run: node tools/stamp-build.mjs --check
+
+      - name: Demo build and fixtures are current
+        run: node tools/build-demo.mjs --check
+
+      - name: Role matrix is current
+        run: node tools/role-matrix.mjs --check
+
+      - name: VERSION.md release record matches index.html and demo.html
+        run: node tools/release-report.mjs --check
+
+      - name: All suites, mirror off
+        run: node tools/run-suites.mjs --parallel 2
+
+      - name: All suites, mirror on
+        if: success() || failure()
+        run: node tools/run-suites.mjs --mirror --parallel 2
+
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: suite-results
+          path: |
+            tests/suite_results.json
+            tests/suite_results_mirror.json
+            tests/suite_*.log
+          if-no-files-found: ignore

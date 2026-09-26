@@ -11,11 +11,12 @@
 //
 // A suite fails if it exits non-zero, prints a non-empty FAILS list, reports a failed check or flow,
 // reports a page error, or reports a skip that is not explained in tests/allowed_skips.json. Results
-// are written to tests/suite_results.json. Exit status 0 only when every suite passed. Node built-ins only.
+// are written to tests/suite_results.json (tests/suite_results_mirror.json with --mirror). Exit status 0 only when every suite passed. Node built-ins only.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -74,6 +75,11 @@ async function main() {
   const files = fs.readdirSync(TESTS).filter(f => f.endsWith('.mjs') && (!only || only.includes(f.replace(/\.mjs$/, '')))).sort();
   let env = { ...process.env }, m = null;
   if (withMirror) { m = await mirrorFixtures(); env = { ...env, FS_FIXTURES_DIR: m.dir }; console.log(`mirror on: ${m.url}; fixtures ${m.dir}`); }
+  // The files under test, so a results file can be matched to the exact build it tested (tools/release-report.mjs).
+  const fileSha = f => crypto.createHash('sha256').update(fs.readFileSync(path.join(ROOT, f))).digest('hex');
+  const stampOf = (html, name) => (html.match(new RegExp(`<meta name="${name}" content="([^"]*)">`)) || [])[1] || 'unstamped';
+  const indexHtml = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  const tested = { build: stampOf(indexHtml, 'fs-build'), indexStamp: stampOf(indexHtml, 'fs-build-sha256'), indexFileSha256: fileSha('index.html'), demoFileSha256: fileSha('demo.html') };
   const queue = [...files], results = [];
   const started = new Date().toISOString();
   await Promise.all(Array.from({ length: Math.min(parallel, queue.length) }, async () => {
@@ -99,7 +105,7 @@ async function main() {
   results.sort((a, b) => a.name.localeCompare(b.name));
   const failed = results.filter(r => r.status !== 'pass');
   const skips = results.flatMap(r => r.skips.map(s => ({ suite: r.name, ...s })));
-  fs.writeFileSync(path.join(TESTS, 'suite_results.json'), JSON.stringify({ startedAt: started, finishedAt: new Date().toISOString(), mirror: mirrorSummary, suites: results, skips }, null, 1));
+  fs.writeFileSync(path.join(TESTS, withMirror ? 'suite_results_mirror.json' : 'suite_results.json'), JSON.stringify({ startedAt: started, finishedAt: new Date().toISOString(), tested, mirror: mirrorSummary, suites: results, skips }, null, 1));
   console.log(`\n${results.length - failed.length} of ${results.length} suites passed${skips.length ? `; ${skips.length} explained skip${skips.length > 1 ? 's' : ''}` : ''}${withMirror ? ' (mirror on)' : ''}.`);
   process.exit(failed.length ? 1 : 0);
 }

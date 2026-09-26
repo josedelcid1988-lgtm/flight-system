@@ -15,4 +15,5 @@ tests/qa_results.json
 tests/shots/
 
 tests/suite_results.json
+tests/suite_results_mirror.json
 tests/suite_*.log
