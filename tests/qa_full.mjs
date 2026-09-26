@@ -1,8 +1,9 @@
+import {mkdirSync as __mkdirTests} from 'fs';const TESTS=decodeURI(new URL('.',import.meta.url).pathname);__mkdirTests(TESTS+'shots',{recursive:true}); // fixtures, shots and results resolve from this folder
 // Full multi-point QA of Flight Control MES v72: demo build and production build.
 import {chromium} from 'playwright'; import fs from 'fs';
 const results=[]; const add=(build,area,check,ok,detail='')=>results.push({build,area,check,result:ok===true?'Pass':ok==='Skip'?'Skip':'Fail',detail:String(detail??'').slice(0,400)});
 const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{});
-const FILES={demo:'file:///Users/josedelcid/projects/flight-system/tests/fixtures/demo_qa150_publish.html',prod:'file:///Users/josedelcid/projects/flight-system/tests/fixtures/publish.html'};
+const FILES={demo:'file://'+TESTS+'fixtures/demo_qa150_publish.html',prod:'file://'+TESTS+'fixtures/publish.html'};
 
 async function newPage(w=1440){const ctx=await b.newContext({viewport:{width:w,height:1000}});const p=await ctx.newPage();const errs=[];p.on('pageerror',e=>errs.push(String(e.message||e)));p.on('console',m=>{if(m.type()==='error'&&!/ERR_FILE_NOT_FOUND|favicon/.test(m.text()))errs.push('console: '+m.text());});return {p,errs,ctx};}
 async function signIn(p,build,u,pw='demo1234',displayName){await p.evaluate(()=>{try{sessionStorage.removeItem('skyryse-mes-session-v1');}catch(e){}}).catch(()=>{});
@@ -312,7 +313,7 @@ await p.context().close();
 // ---- Static build checks ----
 {
 const S='Static';
-const prod=fs.readFileSync('/Users/josedelcid/projects/flight-system/tests/fixtures/publish.html','utf8'),demo=fs.readFileSync('/Users/josedelcid/projects/flight-system/tests/fixtures/demo_qa150_publish.html','utf8');
+const prod=fs.readFileSync(TESTS+'fixtures/publish.html','utf8'),demo=fs.readFileSync(TESTS+'fixtures/demo_qa150_publish.html','utf8');
 add(S,'Build','Production build carries no demo relaxations',!/D-5|demo relaxation|DEMO_LIFT|__demoFullAccess/.test(prod)&&!/skDemoRelax/.test(prod),`${(prod.length/1024).toFixed(0)} KB`);
 add(S,'Build','Demo build is titled Flight System Demo',/<title>Flight System Demo<\/title>/.test(demo),'');
 add(S,'Build','Production build is titled Flight Control',/<title>Flight Control(?: · [^<]*)?<\/title>/.test(prod),'');
@@ -324,7 +325,7 @@ add(S,'Build','Zips present for v72',OUT?(fs.existsSync(`${OUT}/flight-control-m
 }
 
 await b.close();
-fs.writeFileSync('/Users/josedelcid/projects/flight-system/tests/qa_full_results.json',JSON.stringify(results,null,1));
+fs.writeFileSync(TESTS+'qa_full_results.json',JSON.stringify(results,null,1));
 const fails=results.filter(r=>r.result==='Fail'),skips=results.filter(r=>r.result==='Skip');
 console.log('checks',results.length,'pass',results.length-fails.length-skips.length,'fail',fails.length,'skip',skips.length);
 fails.forEach(f=>console.log('FAIL',f.build,'|',f.area,'|',f.check,'|',f.detail));

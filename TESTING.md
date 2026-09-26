@@ -10,7 +10,7 @@ browser against a built copy, so a test failure is a real user-visible failure.
 
 ```bash
 npm i -D playwright && npx playwright install chromium
-bash tests/setpaths.sh     # rewrites the absolute paths baked into the harnesses to this checkout
+# No path setup: every harness resolves tests/fixtures, tests/shots and its result file from its own folder.
 ```
 
 Every harness honours `CHROME_PATH=/path/to/chrome` when the Playwright package
