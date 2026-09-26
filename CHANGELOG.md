@@ -36,7 +36,7 @@ nothing in them is rewritten.
   an FAI order or FAIR, and its pedigree never changes. NFF orders no longer use up a WI revision's
   first-article slot. Enforced in the engine; no role or override lifts it.
 - **FAIR as AS9102 Rev C forms.** On screen, Form 1, Form 2, Form 3 and Review and sign are separate pages.
-  The print and download follow the Rev C boxes: Form 2 box 8 is the special process supplier code, and
+  The print and download follow the Rev C boxes: Form 2 box 8 is the supplier (name, address, code), and
   Form 3 is the Rev C grid (5 to 12, box 10 designed / qualified tooling) with Skyryse's revision, sample
   size, quantity, inspector, date and M&TE in a marked supplemental section. Box 22 (FAI reviewer /
   approval) is an optional second signature by someone other than the verifier; unsigned, boxes 22 and 23
