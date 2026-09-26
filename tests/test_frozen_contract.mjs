@@ -33,6 +33,7 @@ ok('no renamed traveler form number',!/F-850-00[02-9]\b/.test(src));
 const SOD=[
   ['the author of a WI cannot release it (rule)',"const wiAuthorRefusal = (state, wi) => wiAuthors(wi).has(actor(state).credentialId) ?",1],
   ['the author rule guards QA release, release against the ECO and the Safety Team release',"{ const own = wiAuthorRefusal(state, wi); if (own) return own; }",3],
+  ['the author of a WI cannot record its peer review',"    { const own = wiPeerReviewRefusal(state, wi); if (own) return own; }",1],
   ['the peer reviewer cannot release the WI',"if (wi.peerReview.credentialId === actor(state).credentialId) return fail('The peer reviewer cannot also release the WI.');",1],
   ['the peer reviewer cannot record the QA review',"if (wi.peerReview.credentialId === actor(state).credentialId) return fail('The peer reviewer cannot also record the QA review.');",1],
   ['the requester of a closure cannot approve it',"if (req.requestedBy?.credentialId === who.credentialId) return fail('The person who requested the closure can’t approve or reject it.');",1],
@@ -72,6 +73,8 @@ ok('Support Access lifts only stamp binding and MRB seat eligibility, never a se
 await as('jdoe');
 const wi=await run(()=>{const w=state.masterWIs.find(x=>x.status==='Released'&&x.criticalSafety!==true&&!state.masterWIs.some(y=>y.id===x.id&&y.status==='Draft'));const r=MES.reviseMasterWI(state,w.id,w.revision);if(!r.ok)return {error:r.message};const u=MES.updateMasterWI(state,r.id,r.revision,{title:w.title+' (rev)'});return {id:r.id,revision:r.revision,edited:u.ok,authors:MES.findWI(state,r.id,r.revision).authors};});
 ok('editing a WI revision records its author',wi.edited&&Array.isArray(wi.authors)&&wi.authors.length===1,JSON.stringify(wi));
+const selfPeer=await run(w=>MES.peerReviewMasterWI(structuredClone(state),w.id,w.revision),wi);
+ok('the author cannot record the peer review, even with Master Access',!selfPeer.ok&&/so you cannot peer-review it/.test(selfPeer.message),JSON.stringify(selfPeer));
 await as('radmin');
 const peer=await run(w=>MES.peerReviewMasterWI(state,w.id,w.revision),wi);
 ok('a second person records the peer review',peer.ok,JSON.stringify(peer));

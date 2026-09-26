@@ -135,6 +135,10 @@ const LIST = [
     why: 'One person can write a WI and release it, so a demo can be walked alone. Production refuses this to every role, Master Access and Support Access included.',
     find: '  const wiAuthorRefusal = (state, wi) => wiAuthors(wi).has(actor(state).credentialId) ?', count: 1,
     replace: (ctx, m, id) => `  const wiAuthorRefusal = (state, wi) => false /* DEMO ${id} */ && wiAuthors(wi).has(actor(state).credentialId) ?` },
+  { area: 'Separation of duties', title: 'The author of a master WI may record its peer review',
+    why: 'One person can write a WI and peer-review it, so a demo can be walked alone. Production refuses this to every role, Master Access and Support Access included.',
+    find: '  const wiPeerReviewRefusal = (state, wi) => wiAuthors(wi).has(actor(state).credentialId) ?', count: 1,
+    replace: (ctx, m, id) => `  const wiPeerReviewRefusal = (state, wi) => false /* DEMO ${id} */ && wiAuthors(wi).has(actor(state).credentialId) ?` },
 ];
 
 export const DEVIATIONS = LIST.map((d, i) => Object.freeze({ ...d, id: `D-${i + 1}` }));

@@ -19,7 +19,7 @@ The accounts `tech`, `quality`, `mfgeng`, `operations`, `engineering` are pilot 
 their real role (Technician, Quality, Manufacturing Engineering, Operations, Engineering) so a pilot
 can rehearse the real hand-offs. Every other demo account (`demo`, `master`, `safety`,
 `certification` and any account a person creates) has full access (D-6 to D-10). The stamp,
-PIN and separation-of-duties relaxations (D-13 to D-19; D-20 to D-30) apply to every
+PIN and separation-of-duties relaxations (D-13 to D-19; D-20 to D-31) apply to every
 demo account so no scenario stalls. Sign in with any account and the password `demo1234`.
 
 Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-28 to D-29).
@@ -68,3 +68,4 @@ Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-2
 | D-28 | Marking | DEMO, NOT FOR ACCEPTANCE on every print and download | A printed or downloaded demo record cannot be mistaken for a production record. | 1 |
 | D-29 | Marking | Demo overlay appended | Loads the sample workspace once, issues stamps to the pilot accounts, seeds a PFMEA example, activates the generic role stamps and shows DEMO, NOT FOR ACCEPTANCE on every page. Source: tools/demo/overlay.js. | 1 |
 | D-30 | Separation of duties | The author of a master WI may release it | One person can write a WI and release it, so a demo can be walked alone. Production refuses this to every role, Master Access and Support Access included. | 1 |
+| D-31 | Separation of duties | The author of a master WI may record its peer review | One person can write a WI and peer-review it, so a demo can be walked alone. Production refuses this to every role, Master Access and Support Access included. | 1 |

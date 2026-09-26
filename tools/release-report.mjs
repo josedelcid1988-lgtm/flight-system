@@ -64,7 +64,7 @@ export function record(now, off, on) {
     `| Suites run | ${off.startedAt.slice(0, 10)} |`,
     `| Mirror off | ${count(off)} |`,
     `| Mirror on | ${count(on)}${on.mirror ? `; the mirror received ${on.mirror.records} records, chain ${on.mirror.chainIntact ? 'intact' : 'broken'}` : ''} |`,
-    `| Skips | ${skips.length}, every one explained below |`,
+    `| Skips | ${skips.length ? `${skips.length}, every one explained below` : 'none'} |`,
     '',
     'The stamped SHA-256 is the hash of `index.html` with its own `fs-build-sha256` field set to',
     '`unstamped`; recompute it with `node tools/stamp-build.mjs --verify index.html`. The file SHA-256',

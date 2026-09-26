@@ -319,9 +319,13 @@ add(S,'Build','Demo build is titled Flight System Demo',/<title>Flight System De
 add(S,'Build','Production build is titled Flight Control',/<title>Flight Control(?: · [^<]*)?<\/title>/.test(prod),'');
 add(S,'Build','Both builds embed Inter from Google Fonts and no other external hosts',[prod,demo].every(h=>{const ext=[...h.matchAll(/(?:src|href)="(https?:\/\/[^"]+)"/g)].map(m=>new URL(m[1]).host);return ext.every(x=>/fonts\.(googleapis|gstatic)\.com/.test(x));}),'');
 add(S,'Build','No em dashes in UI copy',!/\u2014/.test(prod),'an em dash is in index.html');
-// Release zips live outside the repo. Check them only when RELEASE_OUTPUT_DIR points at a release output directory.
-const OUT=process.env.RELEASE_OUTPUT_DIR||'';
-add(S,'Build','Zips present for v72',OUT?(fs.existsSync(`${OUT}/flight-control-mes-v72.zip`)&&fs.existsSync(`${OUT}/flight-control-mes-v72-demo.zip`)):'Skip',OUT||'set RELEASE_OUTPUT_DIR to check release zips');
+// Release zips: package the current build with tools/package-release.mjs and check both zips hold exactly
+// the files in the tree. With RELEASE_OUTPUT_DIR set, the zips already there are checked instead.
+{const {packageRelease,verifyRelease}=await import(new URL('../tools/package-release.mjs',import.meta.url).href);
+ const os=await import('os');const OUT=process.env.RELEASE_OUTPUT_DIR||fs.mkdtempSync(os.tmpdir()+'/fs-release-');
+ let problems;try{if(!process.env.RELEASE_OUTPUT_DIR)packageRelease(OUT);problems=verifyRelease(OUT);}catch(e){problems=[e.message];}
+ if(!process.env.RELEASE_OUTPUT_DIR)fs.rmSync(OUT,{recursive:true,force:true});
+ add(S,'Build','Release zips package the current build and match the tree',problems.length===0,problems.join('; ')||OUT);}
 }
 
 await b.close();

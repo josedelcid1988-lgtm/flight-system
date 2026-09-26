@@ -17,9 +17,9 @@ npm i -D playwright && npx playwright install chromium
 
 Every harness honours `CHROME_PATH=/path/to/chrome` when the Playwright package
 and the installed Chromium do not match (for example on a machine that already
-carries a browser under `PLAYWRIGHT_BROWSERS_PATH`). `qa_full` reports the
-release zip check as Skip unless `RELEASE_OUTPUT_DIR` points at a release
-output directory.
+carries a browser under `PLAYWRIGHT_BROWSERS_PATH`). `qa_full` packages the
+release zips on every run (`tools/package-release.mjs`); set `RELEASE_OUTPUT_DIR`
+to check zips already built there instead.
 
 ## Fixtures in tests/fixtures
 
@@ -52,7 +52,7 @@ failing suite, `tests/suite_<name>.log`. `--only a,b` runs named suites.
 
 | Command | What it covers |
 | --- | --- |
-| `node tests/qa_full.mjs` | 309 checks: engine rules, guards, signature manifest verification, UI flows, rendering at 1440 and 375 px. Expect 308 pass, 1 explained skip (the release zip check, `KNOWN-ISSUES.md` issue 2), 0 fail. |
+| `node tests/qa_full.mjs` | 309 checks: engine rules, guards, signature manifest verification, UI flows, rendering at 1440 and 375 px. Expect 309 pass, 0 skip, 0 fail. |
 | `node tests/qa_e2e.mjs` | 30 end-to-end flows: every order type and every ticket type driven to closure, with actions, typed fields, role handoffs and gates counted per flow. Writes `qa_e2e_results.json`. |
 | `node tests/qa_multi.mjs` | 161 checks across modules (Flight Control, Flight Plan, Flight Maneuver). |
 | `node tests/pilot_rehearsal.mjs` | Three scenarios run through the real pilot accounts. |

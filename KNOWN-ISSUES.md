@@ -1,7 +1,7 @@
 # Known issues
 
-Every entry names the cause, what was done about it, and the test that now
-covers it. Entries are numbered in the order they were found and are never
+There are no open issues. Every entry names the cause, what was done about it,
+and the test that now covers it. Entries are numbered in the order they were found and are never
 renumbered. Closed entries stay here as the record of what changed and why.
 
 ## 1. Two `qa_full` checks skipped on every run since the fork (closed)
@@ -46,14 +46,21 @@ workspace it never did:
 - A new check edits a signed closure note after signing and requires
   `verifyManifests` to report that exact closure. This is the refusal path.
 
-**Result.** `qa_full`: 309 checks. Both checks run and pass. The only remaining
-skip is the release zip check, which needs `RELEASE_OUTPUT_DIR` (issue 2).
+**Result.** `qa_full`: 309 checks. Both checks run and pass.
 
-## 2. Release zip check skips unless `RELEASE_OUTPUT_DIR` is set (open, explained)
+## 2. Release zip check skipped on every run (closed)
 
-`Static | Build | Zips present for v72` looks for release zips in a directory
-from the machine that built v72. It reports Skip unless `RELEASE_OUTPUT_DIR`
-points at a release output directory. It tests packaging, not the product.
+**Cause.** `Static | Build | Zips present for v72` looked for v72 zips in a
+folder on the machine that built v72, so everywhere else it reported Skip.
+There was no packaging tool in the repository to produce the zips it checked.
+
+**Fix.** `tools/package-release.mjs` builds the two release zips for the build
+stamped in `index.html` (`flight-system-<build>.zip` with `index.html` and
+`assets/`, `flight-system-<build>-demo.zip` with `demo.html` and `assets/`),
+reproducibly, and `--verify` checks a folder of zips against the tree. The
+`qa_full` check now packages the current build on every run and requires both
+zips to hold exactly the files in the tree. It is no longer skipped anywhere:
+`tests/allowed_skips.json` is empty and every suite runs with zero skips.
 
 ## 3. Demo build granted every pilot seat every capability (closed)
 
@@ -119,17 +126,15 @@ The check sits after the existing preconditions, so every earlier refusal keeps
 its message. `tests/test_frozen_contract.mjs` covers the rule and its refusal
 paths; the demo lifts it as D-30.
 
-## 8. The author of a WI can record its peer review (open)
+## 8. The author of a WI could record its peer review (closed)
 
-**What.** Nothing stops the person who wrote a revision from also recording
-the Manufacturing Engineering peer review. The release rules still hold (the
-peer reviewer and every author are refused at release), so a WI always passes
-through at least one person who did not write it, but the peer review itself
-may not be independent.
+**Cause.** Nothing stopped the person who wrote a revision from also recording
+the Manufacturing Engineering peer review, so the peer review might not be
+independent (release itself was already refused to every author).
 
-**Recommendation.** Refuse peer review by an author with the same
-`wiAuthorRefusal` check. Left open because it changes who can complete a
-peer review on the floor and needs the QA Manager's agreement first.
+**Fix.** Peer review refuses anyone who edited the revision, using the same
+author record as release, with no role or override exempt. The demo lifts it as
+D-31. `tests/test_frozen_contract.mjs` pins the rule and checks the refusal.
 
 ## 9. Real names in the reference data and samples (closed)
 
@@ -143,11 +148,12 @@ old names, so their manifests were re-signed with the engine's own subject
 builder and `MES.verifyManifests` passes on every demo fixture. The real
 register is entered by the QA Manager (`docs/HANDOVER.md`, open items).
 
-## 10. Rejecting an inspection is not restricted to an independent inspector (by design)
+## 10. Rejecting an inspection of one's own work (not an issue; moved)
 
-Nobody may accept an inspection of their own work (`CHANGELOG.md`,
-Controls). Rejecting one is allowed to anyone who may inspect, because a rejection
-only raises an NC against the source operation and cannot release product.
+This was a note, not a defect: anyone who may inspect can reject an
+inspection, including of work they did, because a rejection only raises an NC
+and cannot release product. It is documented with the rules in
+`docs/HANDOVER.md` section 2.
 
 ## 11. `qa_multi` failed six 1440 px render checks on a loaded machine (closed)
 

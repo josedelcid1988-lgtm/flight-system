@@ -1,3 +1,1 @@
-{
-  "Static | Build | Zips present for v72": "Checks release zips in a directory from the machine that built v72; set RELEASE_OUTPUT_DIR to run it. It tests packaging, not the product (KNOWN-ISSUES.md, issue 2)."
-}
+{}

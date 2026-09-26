@@ -42,12 +42,12 @@ separation-of-duties rules is removed or reworded.
 
 | Rule | What the engine does | Why |
 | --- | --- | --- |
-| The author of a WI cannot release it | Anyone who edited a draft revision (created it, changed its title, operations, pictures, drawing status or critical safety flag) is refused at QA release, at release against the drawing ECO, and at release by the Safety Team buy-off. | Documents are approved by someone other than their author: AS9100D 7.5.2, 14 CFR 21.137(b). |
+| The author of a WI cannot peer-review or release it | Anyone who edited a draft revision (created it, changed its title, operations, pictures, drawing status or critical safety flag) is refused at peer review, QA release, release against the drawing ECO, and release by the Safety Team buy-off. | Documents are approved by someone other than their author: AS9100D 7.5.2, 14 CFR 21.137(b). |
 | The peer reviewer cannot release the WI or record its QA review | Refused by credential. | Two independent reviews means two people. |
 | The requester of a closure or an engineering change cannot approve it | Refused by credential. A pedigree change needs two approvals from two different disciplines. | Approval is a separate act from the request: AS9100D 8.5.6 (control of changes). |
 | One person holds one MRB seat | A second vote by the same person on another seat is refused, whatever their capabilities. | An MRB is a multi-discipline decision on nonconforming product: AS9100D 8.7.1, 14 CFR 21.137(h). |
 | The 8130-9 preparer cannot sign as the authorized inspector | The AQI signature is refused for the person who completed the form. | The statement of conformity (14 CFR 21.53, FAA Form 8130-9) is attested by an independent inspector. |
-| Nobody inspects their own work | An inspection buy-off or an inspection step check is refused for anyone who performed a build operation the inspection covers. No role is exempt, Master Access and Support Access included. | Product is released by an authorized person independent of the work: AS9100D 8.6, 14 CFR 21.137(e). |
+| Nobody inspects their own work | An inspection buy-off or an inspection step check is refused for anyone who performed a build operation the inspection covers. No role is exempt, Master Access and Support Access included. Rejecting an inspection is open to anyone who may inspect, because a rejection only raises an NC and cannot release product. | Product is released by an authorized person independent of the work: AS9100D 8.6, 14 CFR 21.137(e). |
 | The person who recorded a disposition or a root cause cannot approve or close it | Refused by credential. | Review of nonconformity and corrective action: AS9100D 8.7 and 10.2, 14 CFR 21.137(h) and (i). |
 | An author of a PFMEA cannot give the Safety Team buy-off; the author of a standard rework cannot approve it | Refused by credential. | Independent review of risk analysis and of approved repair methods. |
 | Every approval, buy-off and decision is signed | A signature manifest records the person, their credential, the time, what the signature means, a SHA-256 hash of the record content at that moment, and the build that recorded it. `MES.verifyManifests(state)` recomputes the hashes. | Quality records identify the person and cannot be altered unnoticed: 14 CFR 21.137(k), AS9100D 7.5.3, FAA AC 120-78A (electronic signatures and records). |
@@ -97,6 +97,7 @@ changes.
 | `tools/role-matrix.mjs` | Writes `docs/ROLE_MATRIX.md` from the role table in `index.html`. |
 | `tools/run-suites.mjs` | Runs every suite, mirror off or on. |
 | `tools/release-report.mjs` | Writes the release record into `VERSION.md`. |
+| `tools/package-release.mjs` | Builds the production and demo release zips; `--verify` checks them. |
 | `tests/` | Playwright and Node suites, their fixtures, and `allowed_skips.json`. See `TESTING.md`. |
 | `.github/workflows/ci.yml` | CI (section 9). |
 | `docs/TECHNICAL_MANUAL.md` | Screen-by-screen and rule-by-rule reference. |
@@ -174,8 +175,7 @@ node tools/run-suites.mjs --mirror   # every suite, mirror on
 ```
 
 `TESTING.md` lists every suite and what it covers. A suite fails on a failed check, a page error or a
-skip not explained in `tests/allowed_skips.json`. There is one explained skip: a packaging check that
-needs a release output directory (`KNOWN-ISSUES.md` issue 2).
+skip not explained in `tests/allowed_skips.json`. There are no skips: every check runs.
 
 CI (`.github/workflows/ci.yml`) runs on every pull request and push to `main`. It checks that the build
 stamp, demo build, role matrix and release record are current, then runs every suite with the mirror
@@ -189,7 +189,8 @@ off and on. The results are kept as a run artifact.
 4. Run `node tools/release-report.mjs`. It writes the release record (build, hashes, results, skips)
    into `VERSION.md`, and refuses a failed run or results from different files.
 5. Open a pull request; CI must be green. Merge.
-6. Deploy `index.html` and `assets/` from `main`. Check the deployed copy with
+6. `node tools/package-release.mjs` writes `release/flight-system-<build>.zip` and the demo zip.
+   Deploy `index.html` and `assets/` from `main` (or unpack the production zip). Check the deployed copy with
    `node tools/stamp-build.mjs --verify <deployed index.html>`.
 7. Record the build id and the SHA-256 from the release record in the quality system's software
    configuration record.
@@ -205,5 +206,5 @@ off and on. The results are kept as a run artifact.
 | Stamp register population (real holders, stamp numbers, PINs, training dates) | QA Manager | 2 Oct 2026 |
 
 The stamp register and the people in the sample data that ship with the app are fictional placeholders.
-The real register is entered in the Organization view before production use. Further limits and their
-status are in `KNOWN-ISSUES.md`.
+The real register is entered in the Organization view before production use. There are no open
+issues; `KNOWN-ISSUES.md` records what was found and fixed.

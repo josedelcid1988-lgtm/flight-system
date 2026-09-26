@@ -61,13 +61,13 @@ the tree.
 | Item | Value |
 | --- | --- |
 | Build | v81 |
-| index.html SHA-256, as stamped in the file | `9b1083811369e5b11f276c0dbffee106365aaa49bda83ec0892da7a026c8c0d1` |
-| index.html file SHA-256 | `c52a3bbb8450ac7d9c6105c9c9a90866ff90bc1a89395c10322719bb68d5dc9b` |
-| demo.html file SHA-256 | `680b478cea5f15822bbabb76901094def99b3c727718872801cb2d1b3a0d156c` |
+| index.html SHA-256, as stamped in the file | `0a6b979916f5e495c89d47b10545f6c97d7ccd1a1ea9a2f42bd12b3a0f86e67e` |
+| index.html file SHA-256 | `233ac64b2832ea65bf38dcf40ce988360b1027651741cf53ebac4afa7c5d8fb5` |
+| demo.html file SHA-256 | `062fb27e5c4b3c069af601baef297742df3e7c197efbac319f61c01b154b591d` |
 | Suites run | 2026-09-26 |
 | Mirror off | 28 of 28 pass |
 | Mirror on | 28 of 28 pass; the mirror received 14882 records, chain intact |
-| Skips | 2, every one explained below |
+| Skips | none |
 
 The stamped SHA-256 is the hash of `index.html` with its own `fs-build-sha256` field set to
 `unstamped`; recompute it with `node tools/stamp-build.mjs --verify index.html`. The file SHA-256
@@ -104,8 +104,5 @@ values are plain hashes of the files as committed.
 | test_v80h |  | pass | pass |
 | test_v80i |  | pass | pass |
 
-Skips:
-
-- qa_full, mirror off: Static | Build | Zips present for v72. Checks release zips in a directory from the machine that built v72; set RELEASE_OUTPUT_DIR to run it. It tests packaging, not the product (KNOWN-ISSUES.md, issue 2).
-- qa_full, mirror on: Static | Build | Zips present for v72. Checks release zips in a directory from the machine that built v72; set RELEASE_OUTPUT_DIR to run it. It tests packaging, not the product (KNOWN-ISSUES.md, issue 2).
+No skips.
 <!-- release-record:end -->
