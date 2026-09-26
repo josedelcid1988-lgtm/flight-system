@@ -5,3 +5,4 @@ build/
 tests/shots/
 tests/*_results.json
 .pw-browsers/
+dist/

@@ -1,5 +1,5 @@
 // Full multi-point QA of Flight Control MES v72: demo build and production build.
-import {chromium} from 'playwright'; import fs from 'fs'; import path from 'node:path'; import {fileURLToPath, pathToFileURL} from 'node:url';
+import {execFileSync} from 'node:child_process'; import {chromium} from 'playwright'; import fs from 'fs'; import path from 'node:path'; import {fileURLToPath, pathToFileURL} from 'node:url';
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const results=[]; const add=(build,area,check,ok,detail='')=>results.push({build,area,check,result:ok===true?'Pass':ok==='Skip'?'Skip':'Fail',detail:String(detail??'').slice(0,400)});
 const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{});
@@ -298,7 +298,7 @@ add(S,'Build','Demo build is titled Flight System Demo',/<title>Flight System De
 add(S,'Build','Production build is titled Flight Control',/<title>Flight Control(?: · [^<]*)?<\/title>/.test(prod),'');
 add(S,'Build','Both builds embed Inter from Google Fonts and no other external hosts',[prod,demo].every(h=>{const ext=[...h.matchAll(/(?:src|href)="(https?:\/\/[^"]+)"/g)].map(m=>new URL(m[1]).host);return ext.every(x=>/fonts\.(googleapis|gstatic)\.com/.test(x));}),'');
 add(S,'Build','No em dashes in UI copy',!/—/.test(prod.replace(/<!--[\s\S]*?-->/g,''))||true,'informational');
-add(S,'Build','Release packaging entrypoint and lockfile are present',fs.existsSync(path.join(ROOT,'tools/build-react.mjs'))&&fs.existsSync(path.join(ROOT,'package-lock.json')),'');
+let archivesBuilt=false,archiveDetail='';try{execFileSync('npm',['run','package:release'],{cwd:ROOT,stdio:'pipe'});archivesBuilt=['flight-control-v82.zip','flight-control-demo-v82.zip'].every(n=>fs.existsSync(path.join(ROOT,'dist',n)));if(archivesBuilt)execFileSync('unzip',['-tqq',path.join(ROOT,'dist','flight-control-v82.zip')]);}catch(e){archiveDetail=String(e.stderr||e.message||e).slice(0,350);}add(S,'Build','Production and demo release archives build and pass ZIP integrity checks',archivesBuilt,archiveDetail);
 }
 
 await b.close();

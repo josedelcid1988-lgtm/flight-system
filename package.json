@@ -8,7 +8,8 @@
     "test:server": "node tests/test_server.mjs",
     "test:migration": "node tests/test_migration.mjs",
     "test:react": "node tests/test_react_build.mjs",
-    "check:paths": "node tests/check_no_machine_paths.mjs"
+    "check:paths": "node tests/check_no_machine_paths.mjs",
+    "package:release": "node tools/package-release.mjs"
   },
   "dependencies": {
     "lucide-react": "0.577.0",
