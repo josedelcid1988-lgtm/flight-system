@@ -10,8 +10,14 @@ browser against a built copy, so a test failure is a real user-visible failure.
 
 ```bash
 npm i -D playwright && npx playwright install chromium
-bash tests/setpaths.sh     # points the harnesses at tests/fixtures in this checkout
+bash tests/setpaths.sh     # rewrites the absolute paths baked into the harnesses to this checkout
 ```
+
+Every harness honours `CHROME_PATH=/path/to/chrome` when the Playwright package
+and the installed Chromium do not match (for example on a machine that already
+carries a browser under `PLAYWRIGHT_BROWSERS_PATH`). `qa_full` reports the
+release zip check as Skip unless `RELEASE_OUTPUT_DIR` points at a release
+output directory.
 
 ## Fixtures in tests/fixtures
 
@@ -30,11 +36,15 @@ binding so one person can walk a whole flow; the production build enforces them.
 
 | Command | What it covers |
 | --- | --- |
-| `node tests/qa_full.mjs` | 306 checks: engine rules, guards, UI flows, rendering at 1440 and 375 px. Expect 304 pass, 2 skip, 0 fail. |
+| `node tests/qa_full.mjs` | 307 checks: engine rules, guards, UI flows, rendering at 1440 and 375 px. Expect 304 pass, 3 skip, 0 fail once the demo build keeps role capabilities for the pilot seats (see `docs/QA_INSPECTION_2026-09-25.md`); the committed demo fixtures grant every seat every capability, which fails 7 Demo / Roles checks. |
 | `node tests/qa_e2e.mjs` | 30 end-to-end flows: every order type and every ticket type driven to closure, with actions, typed fields, role handoffs and gates counted per flow. Writes `qa_e2e_results.json`. |
 | `node tests/qa_multi.mjs` | 161 checks across modules (Flight Control, Flight Plan, Flight Maneuver). |
 | `node tests/pilot_rehearsal.mjs` | Three scenarios run through the real pilot accounts. |
-| `node tests/stable_test.mjs` | Table layout stability across 18 views. |
+| `node tests/stable_test.mjs` | Table layout stability across both builds, four widths and eight views (64 checks). Seeds its own Master Access account; no file on disk is needed. |
+| `node tests/qa_access.mjs` | Production `index.html`: first-account setup, reload, role functions, invalid stamp refusal, master creation, password reset, unauthorized creation refusal, in-place account switch. |
+| `node tests/qa_master.mjs` | Production `index.html` with the curated sample: all six buy-off types, FAIR and AQI signatures, signed override payload, ordinary-role refusal, holds, persistence. |
+| `node tests/qa_operator.mjs` | `demo.html`: operator cues (current operation, beacon, blocked state, reduced motion, mobile) and unchanged records. |
+| `node tests/qa_ui.mjs` | Production `index.html`: landing photograph, glossary, mobile navigation, search focus, reduced motion, recent-items key. |
 | `node tests/test_v74.mjs` … `test_v80i.mjs` | Feature suites: FAIR and conformity (v74), inspection reject and prints (v75), unreleased WIs and standard rework (v76), Certification seat, stock NC source and Use for Dev (v77), record prints (v78), MRB auto-decision and scrap closure (v79), QA-approved rework pairs (v80), FAIR links and revision authority (v80c to v80e), rework entry points and buy-off flow (v80h, v80i). |
 
 Each harness prints `FAILS []` or a list, and the browser page errors it saw.
