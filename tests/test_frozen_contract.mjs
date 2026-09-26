@@ -57,6 +57,8 @@ const SOD=[
   ['the author of a standard rework cannot approve it',"if (author.credentialId && author.credentialId === actor(state).credentialId) return fail('The person who wrote or last edited this standard rework can’t approve it.",1],
   ['nobody inspects their own work: buy-off',"    { const own = ownWorkRefusal(state, order, operation); if (own) return own; }",1],
   ['nobody inspects their own work: step check',"if (checked) { const own = ownWorkRefusal(state, order, operation); if (own) return own; }",1],
+  ['the person who verified a FAIR cannot sign box 22',"    if (fair.verified && fair.verified.by && by.credentialId === fair.verified.by.credentialId) return fail('The FAI reviewer in box 22 is a second person.",1],
+  ['the Skyryse QA approval of a FAIR waits for box 22',"    if (!plain(fair.reviewed)) return fail('Box 22 is not signed.",1],
 ];
 for(const [label,text,count] of SOD) has(label,text,count);
 

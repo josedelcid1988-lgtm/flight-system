@@ -76,7 +76,9 @@ try {
     {const {s,o,op}=setup();const later=o.operations[o.operations.indexOf(op)+1];
       if(later) assert(!MES.completeOperation(s,o.id,later.id,'Out of sequence',{standardInspection:true}).ok,'Sequence still enforced');}
     {const s=structuredClone(base),o=s.orders.find(o=>o.fair?.verified);
-      assert(o,'FAIR signature fixture');o.fair.status='Verified';o.fair.approved=null;
+      assert(o,'FAIR signature fixture');o.fair.status='Verified';o.fair.approved=null;delete o.fair.reviewed;
+      assert(!MES.approveFair(structuredClone(s),o.id,{}).ok,'FAIR approval waits for box 22, even for Master Access');
+      check(MES.reviewFair(s,o.id,{}));
       check(MES.approveFair(s,o.id,{}));
       assert(o.fair.approved.by.override.kind==='Master Access override','FAIR bypass is explicit');
       assert(o.fair.approved.manifest.override.account==='master-test','FAIR override signed');

@@ -61,12 +61,12 @@ the tree.
 | Item | Value |
 | --- | --- |
 | Build | v81 |
-| index.html SHA-256, as stamped in the file | `e3abf81953ebd2d5634734ac72f71b2f7510f092ca718338c575fed6a985626b` |
-| index.html file SHA-256 | `887112e4e51a1ec53fe650071041db64018ec484c27df3558f0cd36de4eb11a3` |
-| demo.html file SHA-256 | `499ddb9cd736cdc2b8a4775c6f3ea2275a808ff67ca59878f602afde005c9562` |
+| index.html SHA-256, as stamped in the file | `50c57c34df6589d7354070e90024b81546f9d7a74a90808ffc6339151d5158ee` |
+| index.html file SHA-256 | `c52c1e6f6c456f594d733f34488f4969f8197219d66ad321a6731f5ba2b7f3f1` |
+| demo.html file SHA-256 | `a39013ecb85b6e826883cb08968c324fe0deb7373f35f89c2748ebc4bc97a048` |
 | Suites run | 2026-09-26 |
 | Mirror off | 30 of 30 pass |
-| Mirror on | 30 of 30 pass; the mirror received 15003 records, chain intact |
+| Mirror on | 30 of 30 pass; the mirror received 14995 records, chain intact |
 | Skips | none |
 
 The stamped SHA-256 is the hash of `index.html` with its own `fs-build-sha256` field set to

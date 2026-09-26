@@ -19,7 +19,7 @@ The accounts `tech`, `quality`, `mfgeng`, `operations`, `engineering` are pilot 
 their real role (Technician, Quality, Manufacturing Engineering, Operations, Engineering) so a pilot
 can rehearse the real hand-offs. Every other demo account (`demo`, `master`, `safety`,
 `certification` and any account a person creates) has full access (D-6 to D-32). The stamp,
-PIN and separation-of-duties relaxations (D-13 to D-19; D-20 to D-31) apply to every
+PIN and separation-of-duties relaxations (D-13 to D-19; D-20 to D-33) apply to every
 demo account so no scenario stalls. Sign in with any account and the password `demo1234`.
 
 Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-28 to D-29).
@@ -70,3 +70,4 @@ Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-2
 | D-30 | Separation of duties | The author of a master WI may release it | One person can write a WI and release it, so a demo can be walked alone. Production refuses this to every role, Master Access and Support Access included. | 1 |
 | D-31 | Separation of duties | The author of a master WI may record its peer review | One person can write a WI and peer-review it, so a demo can be walked alone. Production refuses this to every role, Master Access and Support Access included. | 1 |
 | D-32 | Roles | Authorities follow the role without a QA Manager grant | Inspection, the MRB seats, conformity work and the AQI signature work for every eligible demo account without a grant or a training record, so scenarios run without setup. Production requires a named grant and a current training record. | 1 |
+| D-33 | Separation of duties | The person who verified a FAIR may sign box 22 | One person can verify a FAIR and review it in box 22, so an FAI order can be walked alone. Production refuses this to every role, Master Access and Support Access included. The QA approval still waits for box 22. | 1 |
