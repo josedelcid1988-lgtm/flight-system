@@ -54,6 +54,7 @@ jobs:
             PR NUMBER: ${{ github.event.pull_request.number }}
             BASE: ${{ github.event.pull_request.base.ref }}
             EVENT: ${{ github.event.action }}
+            HEAD SHA: ${{ github.event.pull_request.head.sha }}
 
             You are the required reviewer for this pull request. The PR branch is checked out.
 
@@ -70,6 +71,8 @@ jobs:
             5. Post one top-level summary with `gh pr comment`, opening with the tally line REVIEW.md asks for.
                If EVENT is `synchronize`, read your earlier comments first (`gh pr view --comments`), say
                which earlier findings the push fixed, and post only new Important findings.
+            6. Put HEAD SHA in the summary and end it with the exact verdict
+               line from the "Merge gate" section of REVIEW.md. The merger reads that line as Claude's okay.
 
             Do not push commits, approve or request changes. Only post GitHub comments.
           claude_args: |

@@ -77,3 +77,16 @@ their behalf.
   `No blocking issues.` when there are none.
 - At most five Nits per review; count the rest in the summary.
 - After the first review of a PR, post only Important findings on later pushes.
+
+## Merge gate
+
+Claude's okay is one of the conditions for merging. End every summary with
+exactly one of these lines, on its own, as the last line:
+
+- `Claude verdict: OK to merge` when the review of the current head found no
+  Important findings and no earlier Important finding is still open.
+- `Claude verdict: changes needed (N important)` otherwise.
+
+Only the verdict on the PR's current head commit counts. A push makes earlier
+verdicts stale until the next review posts a new one. Nits never block the
+verdict.
