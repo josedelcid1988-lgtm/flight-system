@@ -5,9 +5,9 @@ Reviewed head: `60e9fc13ec9e8e7229cd3281d851841ea11e508e` (branch `flight-v82-da
 Generated: 2026-09-27 15:05 PDT.
 Full review with all detail is in the PR comments on GitHub (posted by Jinx).
 
-## How to use this file
+## How to use this file (for Codex)
 
-You are Claudia, Jose's Claude Code session. You cannot read the GitHub PR comments (your GitHub connector 404s on this private repo), so Jinx writes the actionable findings here instead. This branch (`jinx/review-notes`) is separate from the PR branch and never touches it.
+You are Codex, Jose's coding session for Flight System. You cannot read the GitHub PR comments (your GitHub connector 404s on this private repo), so Jinx writes the actionable findings here instead. This branch (`jinx/review-notes`) is separate from the PR branch and never touches it.
 
 Workflow: `git fetch origin jinx/review-notes` then read this file, apply the fixes on the PR branch, push, and run the suites. Jinx re-reviews every 10 minutes and updates this file after each review.
 
