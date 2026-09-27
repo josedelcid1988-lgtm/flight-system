@@ -3,13 +3,38 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createServer } from '../server/server.mjs';
+import { createServer, finalizedRecords } from '../server/server.mjs';
 
 const sha = (salt, password) => createHash('sha256').update(`${salt}:${password}`).digest('hex');
 const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flight-export-delivery-'));
 const server = createServer({ dbPath: ':memory:', quiet: true });
 let token;
 try {
+  const manifest = { hash: 'a'.repeat(64) };
+  const eligible = finalizedRecords({
+    orders: [
+      { id: 'WO-1001', status: 'Closed', fair: { id: 'FAIR-1001', status: 'Approved', approved: { manifest } }, conformity: [
+        { serial: 'SN-1001', status: 'AQI signed', aqi: { manifest } },
+        { serial: 'SN-1002', status: '8130-9 completed', aqi: { by: { name: 'unsigned' } } }
+      ], tickets: [{ id: 'IDR-1001', status: 'Resolved', dispo: { decision: 'Scrap' } }] },
+      { id: 'WO-1002', status: 'Building', fair: { id: 'FAIR-1002', status: 'Approved', approved: { by: 'unsigned' } }, conformity: [{ serial: 'SN-1003', status: 'AQI signed', aqi: { by: { name: 'unsigned' } } }] }
+    ],
+    maneuver: {
+      ncs: [{ id: 'NC-1001', status: 'Resolved', dispo: { decision: 'Use as is' } }],
+      cars: [{ id: 'CAR-1001', status: 'Closed', effectiveness: { result: 'Effective' } }],
+      mrb: [{ id: 'MRB-1001', status: 'Approved', decision: { note: 'Approved' }, seats: ['Quality', 'Engineering'], votes: [{ seat: 'Quality' }, { seat: 'Engineering' }] }],
+      pfmeas: [{ id: 'PFMEA-1001', safety: { decision: 'Approve', manifest } }]
+    },
+    stamps: [{ id: 'STP-1001', status: 'Active', history: [{ action: 'Issued to user' }] }],
+    trainingRecords: [{ id: 'TRN-1001', trainerSignature: { manifest } }]
+  });
+  assert.deepEqual([...eligible.values()].map(record => `${record.recordType}:${record.recordId}`).sort(), [
+    '8130-9:WO-1001-SN-1001', 'car:CAR-1001', 'fair:FAIR-1001', 'mrb:MRB-1001',
+    'nc-idr:IDR-1001', 'nc-idr:NC-1001', 'pfmea:PFMEA-1001', 'stamp:STP-1001',
+    'training:TRN-1001', 'work-order:WO-1001'
+  ]);
+  assert.equal([...eligible.values()].some(record => record.recordId === 'FAIR-1002' || record.recordId.endsWith('SN-1002') || record.recordId.endsWith('SN-1003')), false, 'unsigned FAIR and AQI data and an 8130-9 awaiting AQI signature are not final exports');
+
   await server.ready;
   const port = await server.listenAsync(0, '127.0.0.1');
   const base = `http://127.0.0.1:${port}/api`;

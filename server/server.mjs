@@ -53,12 +53,12 @@ const EVIDENCE_ID = /^EV-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 const EXPORT_RECORD_TYPES = Object.freeze(['work-order', 'fair', '8130-9', 'nc-idr', 'car', 'mrb', 'stamp', 'training', 'pfmea']);
 // Every recording the document names, with where it sits and whether its operation is signed.
 const evidenceRefs = state => (state && Array.isArray(state.orders) ? state.orders : []).flatMap(o => (o.operations || []).flatMap(op => (op.evidence || []).map(e => ({ orderId: o.id, opId: op.id, done: !!op.done, signed: !!(op.done && op.buyoff && (op.buyoff.evidenceIds || []).includes(e.id)), e }))));
-function finalizedRecords(state) {
+export function finalizedRecords(state) {
   const out = new Map(), add = (type, id, record) => { if (id && record) out.set(`${type}\0${id}`, { recordType: type, recordId: String(id), record }); };
   for (const order of state?.orders || []) {
     if (order.status === 'Closed') add('work-order', order.id, order);
-    if (order.fair?.status === 'Approved' && order.fair.approved) add('fair', order.fair.id || `FAIR-${order.id}`, { orderId: order.id, fair: order.fair });
-    for (const packageRecord of order.conformity || []) if (packageRecord.aqi) add('8130-9', `${order.id}-${packageRecord.serial}`, { orderId: order.id, package: packageRecord });
+    if (order.fair?.status === 'Approved' && order.fair.approved?.manifest?.hash) add('fair', order.fair.id || `FAIR-${order.id}`, { orderId: order.id, fair: order.fair });
+    for (const packageRecord of order.conformity || []) if (packageRecord.status === 'AQI signed' && packageRecord.aqi?.manifest?.hash) add('8130-9', `${order.id}-${packageRecord.serial}`, { orderId: order.id, package: packageRecord });
     for (const ticket of order.tickets || []) if (ticket.status === 'Resolved' && ticket.dispo) add('nc-idr', ticket.id, { orderId: order.id, ticket });
   }
   const maneuver = state?.maneuver || {};
