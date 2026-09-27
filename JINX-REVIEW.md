@@ -42,6 +42,17 @@ Fix: pass the URL as the `--dbname` argument to pg_dump (libpq parses `--dbname`
 - `flushSync` wraps every React render; fine for the island architecture, revisit once legacy renderers are gone.
 - `HANDOVER-v82.md` says release archives "must be rebuilt and verified against this revision before release" while `docs/RELEASE-SUMMARY-v82.md` says they were rebuilt and verified. Make the wording match reality; if the ZIPs were not rebuilt at this head, that is a release blocker.
 
+## Phase 2 gaps (not merge blockers, track separately)
+The handover lists these as unfinished. Do not claim any is closed until its tests are green.
+- Full server command coverage
+- External Jira tenant validation
+- Live calendar connectors (real Google Calendar and Outlook sync; build on the existing calendar adapter safety gates, do not claim the connectors exist until they do)
+- Remaining Datum migration fixtures
+- Device checks
+- PostgreSQL target, backup, and restore validation
+- Outstanding React screens
+- Shared-workspace gaps (example already fixed: expired announcements were purged by direct browser mutation so cleanup never reached the server; moved into an explicit server-allowlisted MES command)
+
 ## Verified good (no action)
 - Jira bridge: attacker fields ignored, canonical server-side payload, no double-send on uncertain responses, secrets asserted absent from the served page.
 - Hash-chained audit log refuses server startup on tamper.
