@@ -96,6 +96,7 @@ Claude/CI events and on a five-minute sweep because GitHub does not provide a
 safe PR-branch workflow trigger for Jinx's review submission. It refuses to
 auto-merge changes to `.github/workflows/**`, `.github/scripts/review-gate.cjs`,
 `tools/run-suites.mjs`, `tests/allowed_skips.json`,
-`tests/test_frozen_contract.mjs`, or `tests/test_review_gate.mjs`; those policy changes require a separate
-controlled merge decision. A new commit or a new `main` commit invalidates the
+`tests/test_frozen_contract.mjs`, or `tests/test_review_gate.mjs`, including
+renames. It also refuses incomplete changed-file listings. Those policy changes
+require a separate controlled merge decision. A new commit or a new `main` commit invalidates the
 old Claude verdict. Never merge to get around a missing verdict.

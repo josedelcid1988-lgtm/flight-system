@@ -43,13 +43,18 @@ function hasUnresolvedImportant(threads) {
   return threads.some(thread => !thread.isResolved && thread.comments.some(isImportantFinding));
 }
 
-function hasProtectedAutoMergeChange(paths) {
-  return paths.some(path => path.startsWith('.github/workflows/') ||
+function hasProtectedAutoMergeChange(files) {
+  return files.some(file => [file.filename, file.previous_filename].filter(Boolean).some(path =>
+    path.startsWith('.github/workflows/') ||
     path === '.github/scripts/review-gate.cjs' ||
     path === 'tests/allowed_skips.json' ||
     path === 'tests/test_frozen_contract.mjs' ||
     path === 'tests/test_review_gate.mjs' ||
-    path === 'tools/run-suites.mjs');
+    path === 'tools/run-suites.mjs'));
+}
+
+function changedFilesComplete(files, expectedCount) {
+  return Number.isInteger(expectedCount) && files.length === expectedCount;
 }
 
 function latestCiSucceeded(runs, pullNumber, headSha) {
@@ -63,6 +68,7 @@ function latestCiSucceeded(runs, pullNumber, headSha) {
 
 module.exports = {
   claudeApproved,
+  changedFilesComplete,
   hasProtectedAutoMergeChange,
   hasUnresolvedImportant,
   isImportantFinding,

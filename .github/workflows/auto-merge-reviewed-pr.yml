@@ -115,7 +115,10 @@ jobs:
               const changedFiles = await github.paginate(github.rest.pulls.listFiles, {
                 owner, repo, pull_number: pull.number, per_page: 100,
               });
-              if (gateSignals.hasProtectedAutoMergeChange(changedFiles.map(file => file.filename))) {
+              if (!gateSignals.changedFilesComplete(changedFiles, pull.changed_files)) {
+                return { ok: false, message: 'GitHub returned an incomplete changed-file list; cannot verify protected paths.' };
+              }
+              if (gateSignals.hasProtectedAutoMergeChange(changedFiles)) {
                 return { ok: false, message: 'This PR changes workflow or test-gate policy files. The trusted merge workflow will not auto-merge that class of change.' };
               }
 

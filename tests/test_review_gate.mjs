@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const {
   claudeApproved,
+  changedFilesComplete,
   hasProtectedAutoMergeChange,
   hasUnresolvedImportant,
   isImportantFinding,
@@ -48,13 +49,17 @@ assert.equal(isImportantFinding('No blocking issues.'), false);
 assert.equal(hasUnresolvedImportant([{ isResolved: false, comments: ['- **Important:** still open'] }]), true);
 assert.equal(hasUnresolvedImportant([{ isResolved: true, comments: ['Important: addressed'] }]), false);
 
-assert.equal(hasProtectedAutoMergeChange(['.github/workflows/ci.yml']), true);
-assert.equal(hasProtectedAutoMergeChange(['tests/allowed_skips.json']), true);
-assert.equal(hasProtectedAutoMergeChange(['tests/test_frozen_contract.mjs']), true);
-assert.equal(hasProtectedAutoMergeChange(['tests/test_review_gate.mjs']), true);
-assert.equal(hasProtectedAutoMergeChange(['.github/scripts/review-gate.cjs']), true);
-assert.equal(hasProtectedAutoMergeChange(['tools/run-suites.mjs']), true);
-assert.equal(hasProtectedAutoMergeChange(['docs/CLAUDE_REVIEW_ROUTINE.md']), false);
+assert.equal(hasProtectedAutoMergeChange([{ filename: '.github/workflows/ci.yml' }]), true);
+assert.equal(hasProtectedAutoMergeChange([{ filename: 'tests/allowed_skips.json' }]), true);
+assert.equal(hasProtectedAutoMergeChange([{ filename: 'tests/test_frozen_contract.mjs' }]), true);
+assert.equal(hasProtectedAutoMergeChange([{ filename: 'tests/test_review_gate.mjs' }]), true);
+assert.equal(hasProtectedAutoMergeChange([{ filename: '.github/scripts/review-gate.cjs' }]), true);
+assert.equal(hasProtectedAutoMergeChange([{ filename: 'tools/run-suites.mjs' }]), true);
+assert.equal(hasProtectedAutoMergeChange([{ filename: '.github/disabled/ci.yml', previous_filename: '.github/workflows/ci.yml' }]), true, 'renaming a protected file refuses');
+assert.equal(hasProtectedAutoMergeChange([{ filename: 'docs/CLAUDE_REVIEW_ROUTINE.md' }]), false);
+assert.equal(changedFilesComplete([{ filename: 'a' }, { filename: 'b' }], 2), true);
+assert.equal(changedFilesComplete([{ filename: 'a' }], 2), false, 'truncated file lists refuse');
+assert.equal(changedFilesComplete([], undefined), false, 'missing expected file count refuses');
 
 const ciRun = {
   event: 'pull_request',
