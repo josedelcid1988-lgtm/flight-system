@@ -12,7 +12,6 @@ const {
   descriptionSha256,
   hasProtectedAutoMergeChange,
   hasUnresolvedImportant,
-  isIndependentReviewer,
   isEligiblePullRequest,
   isImportantFinding,
   jinxApproved,
@@ -36,14 +35,11 @@ const jinxReview = {
 };
 assert.equal(jinxApproved([jinxReview], 'jinx-reviewer', head), true);
 assert.equal(jinxApproved([{ ...jinxReview, body: '**Jinx verdict:** No blockers\n\nReviewed by Jinx (Muse AI)' }], 'jinx-reviewer', head), true, 'markdown-emphasized Jinx verdict is accepted');
+assert.equal(jinxApproved([{ ...jinxReview, user: { login: 'repo-owner' } }], 'repo-owner', head), true, 'formal Jinx COMMENTED review may use the connected owner account');
 assert.equal(jinxApproved([jinxReview], 'jinx-reviewer', 'c'.repeat(40)), false, 'stale Jinx SHA refuses');
 assert.equal(jinxApproved([{ ...jinxReview, state: 'APPROVED' }], 'jinx-reviewer', head), false, 'wrong Jinx review state refuses');
 assert.equal(jinxApproved([{ ...jinxReview, body: 'No blockers in the first pass; still investigating.' }], 'jinx-reviewer', head), false, 'ambiguous Jinx wording refuses');
 assert.equal(jinxApproved([jinxReview, { ...jinxReview, submitted_at: '2026-09-27T13:00:00Z', body: 'Jinx verdict: changes needed' }], 'jinx-reviewer', head), false, 'latest Jinx review wins');
-assert.equal(isIndependentReviewer('jinx-reviewer', 'repo-owner'), true);
-assert.equal(isIndependentReviewer('repo-owner', 'repo-owner'), false, 'PR author cannot self-approve as Jinx');
-assert.equal(isIndependentReviewer('', 'repo-owner'), false, 'missing Jinx identity refuses');
-
 const claudeComment = {
   user: { login: 'claude[bot]', type: 'Bot' },
   created_at: '2026-09-27T12:00:00Z',

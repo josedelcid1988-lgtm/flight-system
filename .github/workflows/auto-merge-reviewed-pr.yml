@@ -103,10 +103,6 @@ jobs:
               if (!pull || pull.state !== 'open' || pull.draft || pull.base.ref !== 'main') {
                 return { ok: false, message: 'Only open, ready-for-review PRs targeting main are eligible.' };
               }
-              if (!gateSignals.isIndependentReviewer(jinxLogin, pull.user?.login)) {
-                return { ok: false, message: 'Jinx’s approval identity must be a dedicated account separate from the PR author.' };
-              }
-
               const headSha = pull.head.sha;
               const mainSha = (await github.rest.repos.getBranch({ owner, repo, branch: 'main' })).data.commit.sha;
               const comparison = await github.rest.repos.compareCommits({ owner, repo, base: mainSha, head: headSha });

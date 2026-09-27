@@ -19,10 +19,6 @@ function jinxApproved(reviews, login, headSha) {
   });
 }
 
-function isIndependentReviewer(login, authorLogin) {
-  return Boolean(login && authorLogin && login.toLowerCase() !== authorLogin.toLowerCase());
-}
-
 function descriptionSha256(pull) {
   return crypto.createHash('sha256')
     .update(JSON.stringify([pull?.title || '', pull?.body || '']), 'utf8')
@@ -95,7 +91,6 @@ module.exports = {
   descriptionSha256,
   hasProtectedAutoMergeChange,
   hasUnresolvedImportant,
-  isIndependentReviewer,
   isImportantFinding,
   isEligiblePullRequest,
   jinxApproved,

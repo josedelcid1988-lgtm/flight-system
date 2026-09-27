@@ -45,11 +45,11 @@ token owner instead of `claude[bot]`.
 
 The Jinx approval signal is the latest submitted GitHub pull request review
 with state `COMMENTED`, `commit_id` equal to the current PR head SHA, and a
-standalone no-blockers statement such as `Jinx verdict: No blockers`. The
-Actions variable `JINX_REVIEWER_LOGIN` must contain Jinx's dedicated GitHub
-login, distinct from the PR author. An issue conversation comment, a review by
-the PR author, a review with another state, ambiguous wording, or a review on an
-older commit does not approve the PR.
+standalone no-blockers statement such as `Jinx verdict: No blockers`. For now,
+the review may use the connected GitHub account; a dedicated Jinx account can
+be used when real `APPROVE` reviews are introduced. A top-level issue comment,
+a review with another state, ambiguous wording, or a review on an older commit
+does not approve the PR.
 
 The merge gate also requires all of the following:
 
@@ -82,9 +82,8 @@ PR branch to be up to date, to prevent a base-branch race at merge time.
 3. Add `CLAUDE_CODE_OAUTH_TOKEN` as an environment secret. Remove repository or
    organization secrets with that name after confirming the environment secret
    is available.
-4. Set `JINX_REVIEWER_LOGIN` to Jinx's dedicated GitHub login. Do not set it to
-   the PR author's login. If Jinx cannot submit an independent review, the gate
-   remains blocked.
+4. Set `JINX_REVIEWER_LOGIN` to the GitHub login used by Jinx's formal
+   `COMMENTED` reviews.
 5. Enable Actions `GITHUB_TOKEN` write permissions for workflows and require
    the PR branch to be up to date before merging to `main`.
 

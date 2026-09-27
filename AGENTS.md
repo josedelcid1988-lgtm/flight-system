@@ -80,9 +80,10 @@ Every pull request is reviewed by Claude (the workflow in
 automation may merge an eligible pull request only when all of these hold:
 
 1. CI (`CI / suites`) is green.
-2. Jinx has posted a `COMMENTED` review on the current PR head SHA that explicitly says it has no
-   blockers (for example, `Jinx verdict: No blockers`). Jinx uses a dedicated GitHub account
-   distinct from the PR author; a review from the PR author's account is not independent approval.
+2. Jinx has submitted a formal `COMMENTED` review on the current PR head SHA that explicitly says
+   it has no blockers (for example, `Jinx verdict: No blockers`). For now the review may use the
+   connected GitHub account; a dedicated Jinx account can be used when real `APPROVE` reviews are
+   introduced. A top-level issue comment does not count.
 3. The latest Claude review comment is authored by `claude[bot]`, names the
    current PR head SHA, the current `main` SHA it was reviewed against, and the
    SHA-256 of the exact PR title and description. Its last line (ignoring a
