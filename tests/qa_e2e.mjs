@@ -16,7 +16,7 @@ async function signIn(u){await p.evaluate(()=>{try{sessionStorage.removeItem('sk
  await p.evaluate(x=>{const un=document.querySelector('#sk-boot input[name=username]');if(!un)return;const pw=document.querySelector('#sk-boot input[type=password]');un.value=x;un.dispatchEvent(new Event('input',{bubbles:true}));pw.value='demo1234';pw.dispatchEvent(new Event('input',{bubbles:true}));un.closest('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));},u);await p.waitForTimeout(2800);
  await p.evaluate(()=>{window.__T=JSON.parse(localStorage.getItem('qa-e2e-trace')||'[]');});
  await p.evaluate(fs0=>eval(fs0),H);}
-const H=fs.readFileSync(TESTS+'qa_e2e_helpers.js','utf8');
+const H=fs.readFileSync(new URL('./qa_e2e_helpers.js',import.meta.url),'utf8');
 const ALL=[];const phase=async(name,fn)=>{const r=await p.evaluate(fn);console.log(name,JSON.stringify(r).slice(0,400),'orders',await p.evaluate(()=>state.orders.length));const t=await p.evaluate(()=>{save();const t=window.__T.splice(0);return t;});ALL.push(...t);return r;};
 await signIn('demo');
 await p.evaluate(()=>localStorage.setItem('qa-e2e-trace','[]'));await p.evaluate(()=>{window.__T.length=0;});

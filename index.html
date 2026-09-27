@@ -1,4 +1,4 @@
-<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v82"><meta name="fs-build-sha256" content="dad5228b4d5c09d8d25b11f3f7d0d081d6d1044c543a5c4ac12bf18bf11dd6bc"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><!-- FLIGHT REACT ASSETS BEGIN -->
+<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v82"><meta name="fs-build-sha256" content="66eaabd997528201380b3fbebeb47dbeefcb725fc9e94aac9915bd45b260ebca"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><!-- FLIGHT REACT ASSETS BEGIN -->
 <link rel="stylesheet" href="assets/flight-ui-fonts.css">
 <link rel="stylesheet" href="assets/flight-ui.css">
 <!-- FLIGHT REACT ASSETS END -->
@@ -2791,7 +2791,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     return version < 3 || (unique(state.orders.flatMap(order => order.operations.flatMap(operation => operation.evidence.map(item => item.id)))) && state.orders.every(order => !order.sourceTicket || state.orders.some(source => source.id === order.sourceTicket.orderId && source.tickets.some(ticket => ticket.id === order.sourceTicket.ticketId))));
   }
 
-  const validate = state => validateVersion(state, 3);
+  const validate = state => validateVersion(state, 3) && (!Object.hasOwn(state, 'masterWIs') || masterWIsValid(state.masterWIs));
 
   // Buy-off types, inspection points, operation sequence changes, and master WIs (master work orders).
   const BUYOFF_TYPES = Object.freeze(['Technician', 'Quality', 'A&P', 'Engineering', '8130-9 Authorized Inspector', 'Conformity Inspector']);
@@ -3243,6 +3243,36 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const wiOperationValid = op => plain(op) && str(op.id, 40) && str(op.title, 120) && !!op.title.trim() && str(op.description, 400) && !!op.description.trim() && typeof op.requiresRecording === 'boolean' && BUYOFF_TYPES.includes(op.buyoffType) && typeof op.inspectionPoint === 'boolean' && (op.requiresTooling === undefined || typeof op.requiresTooling === 'boolean') && (!op.inspectionPoint || INSPECTION_BUYOFF_TYPES.includes(op.buyoffType)) && calloutsValid(op) && atpValid(op) && bomValid(op.materials) && (op.poRequest === undefined || (plain(op.poRequest) && str(op.poRequest.vendor, 80) && str(op.poRequest.process, 200))) && (op.atpLinkDeferred === undefined || op.atpLinkDeferred === true) && (op.externalPO === undefined || (plain(op.externalPO) && str(op.externalPO.number, 30) && (op.externalPO.url === undefined || (str(op.externalPO.url, 500) && /^https:\/\//.test(op.externalPO.url))))) && Array.isArray(op.steps) && op.steps.length >= 1 && op.steps.length <= 30 && unique(op.steps.map(step => step && step.id)) && op.steps.every(stepValid);
   const masterWIValid = wi => plain(wi) && str(wi.id, 24) && /^MWI-\d{4}$/.test(wi.id) && str(wi.revision, 4) && WI_STATUSES.includes(wi.status) && !!partDefinition(wi.partNumber) && partDefinition(wi.partNumber).revisions.includes(wi.partRevision) && str(wi.title, 120) && Array.isArray(wi.operations) && wi.operations.length >= 1 && wi.operations.length <= 20 && unique(wi.operations.map(op => op && op.id)) && wi.operations.every(wiOperationValid) && Array.isArray(wi.history) && wi.history.length <= 200 && (wi.peerReview === undefined || (snapshotValid(wi.peerReview) && timestamp(wi.peerReview.at))) && (wi.qaReview === undefined || (snapshotValid(wi.qaReview) && timestamp(wi.qaReview.at))) && pfmeaValid(wi) && impactValid(wi) && (wi.drawingReleased === undefined || typeof wi.drawingReleased === 'boolean') && (wi.status !== 'Unreleased' || wi.drawingReleased === false) && (wi.eco === undefined || str(wi.eco, 40)) && (wi.drawingRef === undefined || str(wi.drawingRef, 80, 0));
   const masterWIsValid = list => Array.isArray(list) && list.length >= 1 && list.length <= 200 && unique(list.map(wi => wi && `${wi.id}/${wi.revision}`)) && list.every(masterWIValid);
+  function masterWIInvalidField(wi) {
+    if (!plain(wi)) return 'record';
+    const checks = [
+      ['id', str(wi.id, 24) && /^MWI-\d{4}$/.test(wi.id)], ['revision', str(wi.revision, 4)],
+      ['status', WI_STATUSES.includes(wi.status)], ['partNumber', !!partDefinition(wi.partNumber)],
+      ['partRevision', !!partDefinition(wi.partNumber) && partDefinition(wi.partNumber).revisions.includes(wi.partRevision)],
+      ['title', str(wi.title, 120) && !!wi.title.trim()], ['operations', Array.isArray(wi.operations) && wi.operations.length >= 1 && wi.operations.length <= 20],
+      ['history', Array.isArray(wi.history) && wi.history.length <= 200], ['pfmea', pfmeaValid(wi)], ['impact', impactValid(wi)]
+    ];
+    const bad = checks.find(([, ok]) => !ok); if (bad) return bad[0];
+    for (let oi = 0; oi < wi.operations.length; oi += 1) {
+      const op = wi.operations[oi];
+      if (!wiOperationValid(op)) {
+        if (!plain(op)) return `operations[${oi}]`;
+        if (Array.isArray(op.steps)) for (let si = 0; si < op.steps.length; si += 1) if (!stepValid(op.steps[si])) {
+          const step = op.steps[si];
+          if (!plain(step)) return `operations[${oi}].steps[${si}]`;
+          return `operations[${oi}].steps[${si}].${!str(step.title, 120) || !step.title.trim() ? 'title' : !str(step.instruction, 1000) || !step.instruction.trim() ? 'instruction' : 'record'}`;
+        }
+        for (const [field, ok] of [['title', str(op.title, 120) && !!op.title.trim()], ['description', str(op.description, 400) && !!op.description.trim()], ['steps', Array.isArray(op.steps) && op.steps.length >= 1 && op.steps.length <= 30], ['buyoffType', BUYOFF_TYPES.includes(op.buyoffType)], ['inspectionPoint', typeof op.inspectionPoint === 'boolean'], ['callouts', calloutsValid(op)], ['materials', bomValid(op.materials)], ['atp', atpValid(op)]]) if (!ok) return `operations[${oi}].${field}`;
+        return `operations[${oi}]`;
+      }
+      for (let si = 0; si < op.steps.length; si += 1) if (!stepValid(op.steps[si])) {
+        const step = op.steps[si];
+        if (!plain(step)) return `operations[${oi}].steps[${si}]`;
+        return `operations[${oi}].steps[${si}].${!str(step.title, 120) || !step.title.trim() ? 'title' : !str(step.instruction, 1000) || !step.instruction.trim() ? 'instruction' : 'record'}`;
+      }
+    }
+    return 'record';
+  }
   const wiKey = wi => `${wi.id} Rev ${wi.revision}`;
   const wiRef = wi => ({ id: wi.id, revision: wi.revision, title: wi.title });
   const findWI = (state, id, revision) => (Array.isArray(state?.masterWIs) ? state.masterWIs: []).find(wi => wi.id === id && wi.revision === revision) || null;
@@ -3274,13 +3304,15 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (!plain(state) || !Array.isArray(state.orders)) return state;
     ensureStamps(state);
     try { migrateChangeIds(state); } catch (e) {}
-    if (!masterWIsValid(state.masterWIs)) {
+    // An absent library is the first-run case. A present but malformed library is a
+    // damaged quality record: keep it byte-for-byte and let validation stop the load.
+    if (!Object.hasOwn(state, 'masterWIs')) {
       state.masterWIs = seedMasterWIs();
       state.orders.forEach(order => {
         const wi = state.masterWIs.find(item => item.partNumber === order.partNumber && item.status === 'Released');
         if (wi && !plain(order.masterWI)) order.masterWI = wiRef(wi);
       });
-    }
+    } else if (!masterWIsValid(state.masterWIs)) return state;
     state.orders.forEach(order => { if (!AIRCRAFT.includes(order.aircraft)) order.aircraft = AIRCRAFT[parseInt(order.id.slice(3), 10) % AIRCRAFT.length]; if (!order.start || order.start > order.due) order.start = new Date(Date.parse(order.due) - 7 * 86400000).toISOString().slice(0, 10); if (aogActive(order) && !plain(order.aog)) order.aog = { startedAt: new Date().toISOString(), startedBy: { name: 'Assembly operator', role: 'Assembly technician', credentialId: 'SR-OP-001' }, notified: 0, lastNotifiedAt: null, nextNotifyAt: new Date().toISOString() }; if (!aogActive(order)) order.aog = null; });
     state.masterWIs.forEach(wi => wi.operations.forEach(op => { if (typeof op.requiresTooling !== 'boolean') op.requiresTooling = ['op-030', 'op-040'].includes(op.id); op.steps.forEach(step => { if (typeof step.recordsTorque !== 'boolean') step.recordsTorque = /torque/i.test(step.title); }); }));
     state.orders.forEach(order => order.operations.forEach(operation => {
@@ -6330,6 +6362,12 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (!trainingRecordsValid(state.trainingRecords)) return { where: 'trainingRecords', detail: 'A training record is malformed or has a duplicate id.' };
     if (!trainingCatalogValid(state.trainingCatalog)) return { where: 'trainingCatalog', detail: 'The training requirements list is malformed or has a duplicate code.' };
     if (!supportLogValid(state.supportLog)) return { where: 'supportLog', detail: 'The Support Overrides log has a malformed or duplicate entry.', fix: s => { const seen = new Set(); const keep = [], bad = []; (Array.isArray(s.supportLog) ? s.supportLog : []).forEach(e => (supportEntryValid(e) && !seen.has(e.id) && seen.add(e.id) ? keep : bad).push(e)); s.supportLog = keep.slice(0, SUPPORT_LOG_MAX); s.supportLogQuarantine = [...bad, ...(Array.isArray(s.supportLogQuarantine) ? s.supportLogQuarantine : [])].slice(0, 1000); } };
+    if (Object.hasOwn(state, 'masterWIs') && !masterWIsValid(state.masterWIs)) {
+      const wi = Array.isArray(state.masterWIs) ? state.masterWIs.find(item => !masterWIValid(item)) : null;
+      const field = wi ? masterWIInvalidField(wi) : 'masterWIs';
+      const label = wi && wi.id && wi.revision ? `${wi.id} Rev ${wi.revision}` : 'Master WI library';
+      return { where: label, detail: `${label} is malformed at field ${field}. The saved work instruction was not changed.`, fix: null };
+    }
     for (let oi = 0; oi < state.orders.length; oi += 1) {
       const o = state.orders[oi];
       if (orderValid(o)) continue;
@@ -6757,13 +6795,33 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   }
   function maneuverValid(state) {
     if (!plain(state) || state.maneuver === undefined) return true;
-    const m = state.maneuver;
+    let candidate;
+    try { candidate = structuredClone(state); } catch (e) { return false; }
+    const m = candidate.maneuver;
     if (!plain(m)) return false;
-    migrate(state);
+    try { migrate(candidate); } catch (e) { return false; }
     if (m.pfmeas === undefined) m.pfmeas = [];
     const ok = KINDS.every(k => Array.isArray(m[k]) && m[k].length <= MAX && uniq(m[k])) && m.pfmeas.every(pfmeaTicketValid);
-    return ok && m.cars.every(c => carValid(c) && scarValid(c)) && m.mrb.every(x => mrbValid(x, state)) && m.ncs.every(ncValid) && m.sprs.every(sprValid)
+    return ok && m.cars.every(c => carValid(c) && scarValid(c)) && m.mrb.every(x => mrbValid(x, candidate)) && m.ncs.every(ncValid) && m.sprs.every(sprValid)
       && m.mrb.every(x => x.carId === null || m.cars.some(c => c.id === x.carId)) && m.ncs.every(x => x.carId === null || m.cars.some(c => c.id === x.carId));
+  }
+  function diagnoseManeuver(state) {
+    if (!plain(state) || state.maneuver === undefined) return null;
+    let candidate;
+    try { candidate = structuredClone(state); } catch (e) { return { where: 'Flight Maneuver', detail: 'Flight Maneuver data could not be read.' }; }
+    if (!plain(candidate.maneuver)) return { where: 'Flight Maneuver', detail: 'Flight Maneuver field maneuver is malformed.' };
+    try { migrate(candidate); } catch (e) { return { where: 'Flight Maneuver', detail: 'Flight Maneuver data could not be migrated without changing the saved copy.' }; }
+    const m = candidate.maneuver;
+    if (m.pfmeas === undefined) m.pfmeas = [];
+    for (const kind of KINDS) {
+      if (!Array.isArray(m[kind])) return { where: `Flight Maneuver ${kind}`, detail: `Flight Maneuver field ${kind} is malformed. The saved records were not changed.` };
+      for (let i = 0; i < m[kind].length; i += 1) {
+        const item = m[kind][i];
+        const valid = kind === 'cars' ? carValid(item) && scarValid(item) : kind === 'mrb' ? mrbValid(item, candidate) : kind === 'ncs' ? ncValid(item) : kind === 'sprs' ? sprValid(item) : pfmeaTicketValid(item);
+        if (!valid) return { where: `Flight Maneuver ${item && item.id || kind + '[' + i + ']'}`, detail: `Flight Maneuver record ${item && item.id || kind + '[' + i + ']'} failed validation. The saved records were not changed.` };
+      }
+    }
+    return maneuverValid(state) ? null : { where: 'Flight Maneuver', detail: 'Flight Maneuver records do not form a valid set. The saved records were not changed.' };
   }
 
   // ---------- PFMEA ticket ----------
@@ -7484,11 +7542,12 @@ const ATTACH_KINDS = Object.freeze(['mrb','cars','ncs','sprs']);
     return lines.join('\n');
   }
 
-  // ---------- demo seed ----------
-  function ensure(state) {
+  // ---------- demo-only sample records ----------
+  function seedDemoRecords(state) {
     if (!plain(state) || !Array.isArray(state.orders)) return state;
-    if (state.maneuver !== undefined && maneuverValid(state)) return state;
-    state.maneuver = { cars: [], mrb: [], ncs: [], sprs: [], __ticketsV2: 2 };
+    if (!plain(state.maneuver) || !maneuverValid(state)) return state;
+    if (state.maneuver.__demoSamplesLoaded) return state;
+    state.maneuver.__demoSamplesLoaded = true;
     const seedActor = (name, role, cred) => ({ name, role, credentialId: cred, account: null });
     const me = seedActor('Harper Olsen', 'Manufacturing Engineer', 'ACCT-holsen'), qe = seedActor('Avery Nolan', 'Quality Engineer', 'ACCT-anolan'), eng = seedActor('Jules Navarro', 'Design Engineer', 'ACCT-jnavarro');
     const daysAgo = n => new Date(Date.now() - n * 86400000).toISOString(), dayAgo = n => daysAgo(n).slice(0, 10), ahead = n => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
@@ -7530,11 +7589,20 @@ const ATTACH_KINDS = Object.freeze(['mrb','cars','ncs','sprs']);
       const m = { id: 'MRB-101', orderId: withTicket.id, ticketId: t0.id, partNumber: withTicket.partNumber, serials: [], pedigree: withTicket.pedigree, proposed: t0.dispo.decision, summary: `${t0.title}. ME proposes ${t0.dispo.decision}: ${t0.dispo.note}`, votes: [{ seat: 'Manufacturing Engineering', vote: 'Approve', note: 'Within repair scheme limits.', by: me, at: daysAgo(1) }], status: 'Open', decision: null, carId: null, openedBy: me, openedAt: daysAgo(1), history: [h(daysAgo(1), `Convened for ${t0.id} on ${withTicket.id}.`, me), h(daysAgo(1), 'Manufacturing Engineering voted Approve.', me)] };
       state.maneuver.mrb.push(m);
     }
-    if (!maneuverValid(state)) state.maneuver = { cars: [], mrb: [], ncs: [], sprs: [], __ticketsV2: 2 };
     return state;
   }
 
-  const FlightManeuver = { seatsOf, SEAT_CAPS, seatsForAccount, CERT_SEAT, certRequired, NC_SOURCES, CAR_STATUSES, SEVERITIES, CAR_SOURCES, FISHBONE, MRB_SEATS, MRB_STATUSES, MRB_REQUIRED, VOTES, SPR_FOUND_AT, SPR_STATUSES, NC_FOUND_AT, ESCAPED_FROM, DETECTED_AT, STOCK, SCAR_STATUSES, seatsForRole, list, get, ensure, maneuverValid, carValid, mrbValid, raiseCAR, recordContainment, recordRootCause, addAction, completeAction, verifyCAR, effectivenessCheck, closeCAR, cancelCAR, carOverdue, carNext, needsMRB, mrbFor, openMRB, voteMRB, decideMRB, linkCAR, addRecordFile, removeRecordFile, ATTACH_KINDS, gateResolve, findTicket, allTickets, raiseNC, dispositionNC, containNC, approveNC, linkReworkOrder, raiseSPR, linkSPRJira, closeSPR, requestSCAR, linkSCARJira, closeSCAR, jiraQueue, intake, pareto, trend, metrics, metricsReport, metricsCsv, PFMEA_STATUSES, PFMEA_STEPS, pfmeaFor, openPFMEA, setPfmeaScope, addPfmeaMode, removePfmeaMode, markOpNoRisk, completePfmeaAnalysis, setPfmeaAction, closePfmeaAction, completePfmeaActions, pfmeaSafetyBuyoff, pfmeaCoverage: coverage, pfmeaHigh: isHigh };
+  // Production opens a valid empty registry on first use. Existing records that fail
+  // validation are preserved for diagnosis and never replaced with examples.
+  function ensure(state) {
+    if (!plain(state) || !Array.isArray(state.orders)) return state;
+    if (state.maneuver === undefined) state.maneuver = { cars: [], mrb: [], ncs: [], sprs: [], pfmeas: [], __ticketsV2: 2 };
+    else if (!maneuverValid(state)) return state;
+    else { migrate(state); if (state.maneuver.pfmeas === undefined) state.maneuver.pfmeas = []; }
+    return state;
+  }
+
+  const FlightManeuver = { seatsOf, SEAT_CAPS, seatsForAccount, CERT_SEAT, certRequired, NC_SOURCES, CAR_STATUSES, SEVERITIES, CAR_SOURCES, FISHBONE, MRB_SEATS, MRB_STATUSES, MRB_REQUIRED, VOTES, SPR_FOUND_AT, SPR_STATUSES, NC_FOUND_AT, ESCAPED_FROM, DETECTED_AT, STOCK, SCAR_STATUSES, seatsForRole, list, get, ensure, seedDemoRecords, maneuverValid, diagnose: diagnoseManeuver, carValid, mrbValid, raiseCAR, recordContainment, recordRootCause, addAction, completeAction, verifyCAR, effectivenessCheck, closeCAR, cancelCAR, carOverdue, carNext, needsMRB, mrbFor, openMRB, voteMRB, decideMRB, linkCAR, addRecordFile, removeRecordFile, ATTACH_KINDS, gateResolve, findTicket, allTickets, raiseNC, dispositionNC, containNC, approveNC, linkReworkOrder, raiseSPR, linkSPRJira, closeSPR, requestSCAR, linkSCARJira, closeSCAR, jiraQueue, intake, pareto, trend, metrics, metricsReport, metricsCsv, PFMEA_STATUSES, PFMEA_STEPS, pfmeaFor, openPFMEA, setPfmeaScope, addPfmeaMode, removePfmeaMode, markOpNoRisk, completePfmeaAnalysis, setPfmeaAction, closePfmeaAction, completePfmeaActions, pfmeaSafetyBuyoff, pfmeaCoverage: coverage, pfmeaHigh: isHigh };
   if (typeof module !== 'undefined' && module.exports) module.exports = FlightManeuver;
   if (root) {
     root.FlightManeuver = FlightManeuver;
@@ -7548,6 +7616,11 @@ const ATTACH_KINDS = Object.freeze(['mrb','cars','ncs','sprs']);
       const origValidate = MES.validate;
       const v = state => origValidate(state) && maneuverValid(state);
       v.__maneuver = true; MES.validate = v;
+    }
+    if (MES && typeof MES.diagnose === 'function' && !MES.diagnose.__maneuver) {
+      const origDiagnose = MES.diagnose;
+      const d = state => { const base = origDiagnose(state); if (base && !(base.where === 'workspace' && base.detail === 'The workspace fails a validation rule that could not be isolated.')) return base; const issue = diagnoseManeuver(state); return issue ? { ...issue, fix: null } : base; };
+      d.__maneuver = true; MES.diagnose = d;
     }
   }
 })(typeof window !== 'undefined' ? window : null);
@@ -9538,7 +9611,7 @@ document.addEventListener('submit',event=>{const form=event.target;if(form.id===
 document.addEventListener('input',event=>{if(event.target.id==='plan-search'&&!event.isComposing){const p=event.target.selectionStart;planSearch=event.target.value;render();$('#plan-search').focus();$('#plan-search').setSelectionRange(p,p);}});
 document.addEventListener('change',event=>{if(event.target.id==='plan-status'){planStatus=event.target.value;render();}if(event.target.id==='plan-wi')planWiReadout();});
 function purgeNotices(){if(typeof uiBusy==='function'&&uiBusy())return;try{const cut=Date.now()-24*60*60*1000;const before=(state.notices||[]).length;state.notices=(state.notices||[]).filter(n=>n.pinned||Date.parse(n.at)>=cut);if(state.notices.length!==before&&MES.validate(state)){try{localStorage.setItem(KEY,JSON.stringify(state));lastSaved=structuredClone(state);}catch(e){}}}catch(e){}}
-function render({focus=false}={}){purgeNotices();const profileButton=$('#profile-button');{const signed=window.skAuth?.actor?.()?.name||state.profile.name;profileButton.textContent=signed.trim().split(/\s+/).map(s=>s[0]).slice(0,2).join('').toUpperCase();profileButton.dataset.actingAs=signed!==state.profile.name?state.profile.name:'';}profileButton.title=state.profile.name+' · '+state.profile.credentialId+'';if(!MES.getOrder(state,selectedId))selectedId=state.orders.length?state.orders[0].id:null;document.querySelectorAll('.nav button').forEach(btn=>{const savedActive=view==='orders'&&typeof activeViewId!=='undefined'&&activeViewId;if(btn.dataset.view===view&&!savedActive)btn.setAttribute('aria-current','page');else if(btn.dataset.view)btn.removeAttribute('aria-current');});const moduleOf=v=>['wis','wi'].includes(v)?'wi':String(v).startsWith('plan')?'plan':String(v).startsWith('mnv')?'maneuver':'execution';const activeModule=moduleOf(view),wiModule=activeModule==='wi',planWs=activeModule==='plan',mnvWs=activeModule==='maneuver',altWs=planWs||mnvWs;document.querySelectorAll('.nav button').forEach(btn=>{if(btn.dataset.workspaceNav!==undefined)return;btn.hidden=moduleOf(btn.dataset.view)!==activeModule;if(view==='wi'&&btn.dataset.view==='wis')btn.setAttribute('aria-current','page');});document.querySelectorAll('.module-switch button').forEach(btn=>btn.setAttribute('aria-pressed',String(!altWs&&(btn.dataset.module==='wi')===wiModule)));document.body.dataset.module=wiModule?'wi':'execution';$('.module-switch').hidden=altWs;$('#saved-views').hidden=altWs;document.body.dataset.workspace=planWs?'plan':mnvWs?'maneuver':'control';{const pn=$('.product-name');if(pn&&pn.tagName==='SELECT')pn.value=planWs?'plan':mnvWs?'maneuver':'control';else if(pn)pn.textContent=planWs?'Flight Plan':mnvWs?'Flight Maneuver':'Flight Control';}$('#workspace-toggle').textContent=planWs?'Open Flight Control':'Open Flight Plan';$('#workspace-toggle-nav').lastElementChild.textContent=planWs?'Flight Control':'Flight Plan';{const mb=$('#workspace-toggle-mnv');if(mb)mb.textContent=mnvWs?'Open Flight Control':'Open Flight Maneuver';const mn=$('#workspace-maneuver-nav');if(mn){mn.lastElementChild.textContent=mnvWs?'Flight Control':'Flight Maneuver';}if(window.FlightManeuver){window.FlightManeuver.ensure(state);const FM=window.FlightManeuver;const ic=$('#mnv-intake-count'),cc=$('#mnv-car-count'),mc=$('#mnv-mrb-count'),ec=$('#mnv-spr-count');if(ic)ic.textContent=FM.intake(state).filter(r=>r.mrbState==='Needed'||(r.mrb&&r.mrb.status==='Open')||(r.stock&&r.ticketStatus==='Open')).length;if(cc)cc.textContent=FM.list(state,'cars').filter(c=>!['Closed','Cancelled'].includes(c.status)).length;if(mc)mc.textContent=FM.list(state,'mrb').filter(m=>m.status==='Open').length;if(ec)ec.textContent=FM.list(state,'sprs').filter(e=>e.status!=='Closed').length;{const pc=$('#mnv-pfmea-count');if(pc)pc.textContent=FM.list(state,'pfmeas').filter(t=>t.status!=='Approved').length;}}}$('#plan-count').textContent=FlightPlan.list(state).filter(po=>['Planned','Firm'].includes(po.status)).length;$('#wi-count').textContent=(state.masterWIs||[]).filter(wi=>wi.status!=='Obsolete').length;$('#order-count').textContent=state.orders.length;{const tc=$('#task-count');if(tc){const n=dashboardTasks().length+myAssignments().length+(state.notices||[]).filter(x=>x.ackRequired&&!x.acks.some(a=>a.credentialId===window.skAuth?.actor?.()?.credentialId)).length;tc.textContent=n;tc.hidden=!n;}}renderSavedViews();if(altWs)$('#saved-views').hidden=true;document.body.dataset.view=view;$('#breadcrumb').textContent={home:'Hangar',order:'Work order',orders:'All work orders',quality:'Quality queue',activity:'Activity record',wis:'Master WI library',wi:'Master WI',serials:'Serial numbers',trace:'Traceability',plan:'Planned orders','plan-kanban':'Kanban','plan-forecast':'MRP forecast','plan-home':'Planning Hangar',...(window.FlightManeuverUI?window.FlightManeuverUI.LABELS:{})}[view];var legacyMarkup=(mnvWs?(window.FlightManeuverUI?window.FlightManeuverUI.render(view):''):view==='plan-home'?(typeof renderPlanDashboard==='function'?renderPlanDashboard():''):view==='plan'?renderPlanBoard():view==='plan-kanban'?renderPlanKanban():view==='plan-forecast'?renderPlanForecast():view==='home'?renderDashboard():view==='serials'?renderSerialLog():view==='trace'?renderTrace():view==='trace-report'?renderTraceReport():view==='wis'?renderWILibrary():view==='wi'?renderWIDetail():view==='order'?(state.orders.length?renderOrder():renderNoOrders()):view==='activity'?renderActivity():view==='support-log'?renderSupportLog():renderOrders())+footer();if(view==='home'&&window.FlightReact){$('#main').innerHTML='<div id="flight-react-island"></div>';window.FlightReact.renderHangar($('#flight-react-island'),state,MES,function(id){selectedId=id;view='order';render({focus:true});window.scrollTo(0,0);});}else{if(window.FlightReact)window.FlightReact.unmount();$('#main').innerHTML=legacyMarkup;}paintIcons();setRoute();observeHoldRows();document.title=`Flight System · ${mnvWs?'Flight Maneuver':planWs?'Flight Plan':'Flight Control'} · ${(view==='order'&&selectedId)?selectedId:($('#breadcrumb').textContent||'Work orders')}`;if(focus)$('#main').focus({preventScroll:true});if(window.__pendingReveal){const f=window.__pendingReveal;window.__pendingReveal=null;setTimeout(f,30);}window.__ready=true;}
+function render({focus=false}={}){if(loadProblem){const main=$('#main');if(main)main.innerHTML=`<section class="storage-failure" role="alert" aria-labelledby="storage-failure-title"><h1 id="storage-failure-title">Saved workspace not loaded</h1><p>${esc(loadProblem)}</p><p>Your stored copy is unchanged. Download it from the alert above and have the record repaired before reopening it.</p></section>`;document.title='Flight System · Workspace not loaded';window.__ready=true;return;}purgeNotices();const profileButton=$('#profile-button');{const signed=window.skAuth?.actor?.()?.name||state.profile.name;profileButton.textContent=signed.trim().split(/\s+/).map(s=>s[0]).slice(0,2).join('').toUpperCase();profileButton.dataset.actingAs=signed!==state.profile.name?state.profile.name:'';}profileButton.title=state.profile.name+' · '+state.profile.credentialId+'';if(!MES.getOrder(state,selectedId))selectedId=state.orders.length?state.orders[0].id:null;document.querySelectorAll('.nav button').forEach(btn=>{const savedActive=view==='orders'&&typeof activeViewId!=='undefined'&&activeViewId;if(btn.dataset.view===view&&!savedActive)btn.setAttribute('aria-current','page');else if(btn.dataset.view)btn.removeAttribute('aria-current');});const moduleOf=v=>['wis','wi'].includes(v)?'wi':String(v).startsWith('plan')?'plan':String(v).startsWith('mnv')?'maneuver':'execution';const activeModule=moduleOf(view),wiModule=activeModule==='wi',planWs=activeModule==='plan',mnvWs=activeModule==='maneuver',altWs=planWs||mnvWs;document.querySelectorAll('.nav button').forEach(btn=>{if(btn.dataset.workspaceNav!==undefined)return;btn.hidden=moduleOf(btn.dataset.view)!==activeModule;if(view==='wi'&&btn.dataset.view==='wis')btn.setAttribute('aria-current','page');});document.querySelectorAll('.module-switch button').forEach(btn=>btn.setAttribute('aria-pressed',String(!altWs&&(btn.dataset.module==='wi')===wiModule)));document.body.dataset.module=wiModule?'wi':'execution';$('.module-switch').hidden=altWs;$('#saved-views').hidden=altWs;document.body.dataset.workspace=planWs?'plan':mnvWs?'maneuver':'control';{const pn=$('.product-name');if(pn&&pn.tagName==='SELECT')pn.value=planWs?'plan':mnvWs?'maneuver':'control';else if(pn)pn.textContent=planWs?'Flight Plan':mnvWs?'Flight Maneuver':'Flight Control';}$('#workspace-toggle').textContent=planWs?'Open Flight Control':'Open Flight Plan';$('#workspace-toggle-nav').lastElementChild.textContent=planWs?'Flight Control':'Flight Plan';{const mb=$('#workspace-toggle-mnv');if(mb)mb.textContent=mnvWs?'Open Flight Control':'Open Flight Maneuver';const mn=$('#workspace-maneuver-nav');if(mn){mn.lastElementChild.textContent=mnvWs?'Flight Control':'Flight Maneuver';}if(window.FlightManeuver){window.FlightManeuver.ensure(state);const FM=window.FlightManeuver;const ic=$('#mnv-intake-count'),cc=$('#mnv-car-count'),mc=$('#mnv-mrb-count'),ec=$('#mnv-spr-count');if(ic)ic.textContent=FM.intake(state).filter(r=>r.mrbState==='Needed'||(r.mrb&&r.mrb.status==='Open')||(r.stock&&r.ticketStatus==='Open')).length;if(cc)cc.textContent=FM.list(state,'cars').filter(c=>!['Closed','Cancelled'].includes(c.status)).length;if(mc)mc.textContent=FM.list(state,'mrb').filter(m=>m.status==='Open').length;if(ec)ec.textContent=FM.list(state,'sprs').filter(e=>e.status!=='Closed').length;{const pc=$('#mnv-pfmea-count');if(pc)pc.textContent=FM.list(state,'pfmeas').filter(t=>t.status!=='Approved').length;}}}$('#plan-count').textContent=FlightPlan.list(state).filter(po=>['Planned','Firm'].includes(po.status)).length;$('#wi-count').textContent=(state.masterWIs||[]).filter(wi=>wi.status!=='Obsolete').length;$('#order-count').textContent=state.orders.length;{const tc=$('#task-count');if(tc){const n=dashboardTasks().length+myAssignments().length+(state.notices||[]).filter(x=>x.ackRequired&&!x.acks.some(a=>a.credentialId===window.skAuth?.actor?.()?.credentialId)).length;tc.textContent=n;tc.hidden=!n;}}renderSavedViews();if(altWs)$('#saved-views').hidden=true;document.body.dataset.view=view;$('#breadcrumb').textContent={home:'Hangar',order:'Work order',orders:'All work orders',quality:'Quality queue',activity:'Activity record',wis:'Master WI library',wi:'Master WI',serials:'Serial numbers',trace:'Traceability',plan:'Planned orders','plan-kanban':'Kanban','plan-forecast':'MRP forecast','plan-home':'Planning Hangar',...(window.FlightManeuverUI?window.FlightManeuverUI.LABELS:{})}[view];var legacyMarkup=(mnvWs?(window.FlightManeuverUI?window.FlightManeuverUI.render(view):''):view==='plan-home'?(typeof renderPlanDashboard==='function'?renderPlanDashboard():''):view==='plan'?renderPlanBoard():view==='plan-kanban'?renderPlanKanban():view==='plan-forecast'?renderPlanForecast():view==='home'?renderDashboard():view==='serials'?renderSerialLog():view==='trace'?renderTrace():view==='trace-report'?renderTraceReport():view==='wis'?renderWILibrary():view==='wi'?renderWIDetail():view==='order'?(state.orders.length?renderOrder():renderNoOrders()):view==='activity'?renderActivity():view==='support-log'?renderSupportLog():renderOrders())+footer();if(view==='home'&&window.FlightReact){$('#main').innerHTML='<div id="flight-react-island"></div>';window.FlightReact.renderHangar($('#flight-react-island'),state,MES,function(id){selectedId=id;view='order';render({focus:true});window.scrollTo(0,0);});}else{if(window.FlightReact)window.FlightReact.unmount();$('#main').innerHTML=legacyMarkup;}paintIcons();setRoute();observeHoldRows();document.title=`Flight System · ${mnvWs?'Flight Maneuver':planWs?'Flight Plan':'Flight Control'} · ${(view==='order'&&selectedId)?selectedId:($('#breadcrumb').textContent||'Work orders')}`;if(focus)$('#main').focus({preventScroll:true});if(window.__pendingReveal){const f=window.__pendingReveal;window.__pendingReveal=null;setTimeout(f,30);}window.__ready=true;}
 function revStrip(o){return `<div class="rev-strip" aria-label="Work order revisions">${o.plannedOrder?`<button type="button" class="rev-chip rev-chip-action" data-action="open-plan" data-plan="${esc(o.plannedOrder.id)}" title="Open in Flight Plan"><small>Planned order</small><strong class="mono">${esc(o.plannedOrder.id)}</strong></button>`:''}<span class="rev-chip"><small>Drawing rev</small><strong class="mono">${esc(o.drawingRev||'-')}</strong></span><span class="rev-chip"><small>WI rev</small><strong class="mono">${esc(o.wiRev||'-')}</strong></span><button type="button" class="rev-chip rev-chip-action" data-action="tab" data-tab="record"><small>WO rev</small><strong class="mono">${esc(MES.woRevLabel(o.woRev||'Baseline'))}</strong></button>${(()=>{const log=(state.serialLog||[]).filter(e=>e.orderId===o.id);const live=log.filter(e=>e.status!=='Voided').map(e=>e.serial),dead=log.filter(e=>e.status==='Voided').map(e=>e.serial);const all=[...live,...dead.map(x=>x+' (voided)')];const shown=all.length?all[0]:'None assigned';return `<span class="rev-chip wo-fact"><small>WO qty</small><strong class="mono">${esc(o.quantity)}</strong></span>${all.length>1?`<details class="rev-chip wo-fact wo-serials wo-serial-list"><summary aria-label="Show the ${all.length} serial numbers on this work order"><small>Serials (${all.length})</small><strong class="mono">Multiple</strong></summary><ul class="serial-pop">${all.map(x=>`<li class="mono">${esc(x)}</li>`).join('')}</ul></details>`:`<span class="rev-chip wo-fact wo-serials"><small>Serial</small><strong class="mono">${esc(shown)}</strong></span>`}<span class="rev-chip wo-fact"><small>Category</small><strong>${esc(o.pedigree||'-')}</strong></span>${(o.fai&&o.fai.required)||o.subcategory==='FAI'?`<button type="button" class="rev-chip rev-chip-action wo-fact" data-action="goto-fair" title="Open the AS9102 FAIR on the Quality tab"><small>Subcategory · FAIR ${o.fair?esc(o.fair.status==='Approved'?'approved':o.fair.status):'not started'}</small><strong>${esc(String(o.subcategory||'-'))} ${icon('arrow')}</strong></button>`:`<span class="rev-chip wo-fact"><small>Subcategory</small><strong>${esc(String(o.subcategory||'-'))}</strong></span>`}`;})()}</div>`;}
 
 function revisionPanel(o){

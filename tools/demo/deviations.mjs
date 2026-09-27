@@ -147,6 +147,10 @@ const LIST = [
     why: 'One person can verify a FAIR and review it in box 22, so an FAI order can be walked alone. Production refuses this to every role, Master Access and Support Access included. The QA approval still waits for box 22.',
     find: '    if (fair.verified && fair.verified.by && by.credentialId === fair.verified.by.credentialId) return fail(', count: 1,
     replace: (ctx, m, id) => `    if (false /* DEMO ${id} */ && fair.verified && fair.verified.by && by.credentialId === fair.verified.by.credentialId) return fail(` },
+  { area: 'Data', title: 'Demo-only Flight Maneuver examples',
+    why: 'Sample corrective actions, SPRs and NCs load only in the explicitly marked demo build. Production opens a valid empty register and never replaces damaged records with examples.',
+    find: 'window.FlightManeuver.ensure(state);const FM=window.FlightManeuver;', count: 1,
+    replace: (ctx, m, id) => `const hadManeuver=Object.hasOwn(state,'maneuver');window.FlightManeuver.ensure(state);if(!hadManeuver)window.FlightManeuver.seedDemoRecords(state);/* DEMO ${id} */const FM=window.FlightManeuver;` },
 ];
 
 export const DEVIATIONS = LIST.map((d, i) => Object.freeze({ ...d, id: `D-${i + 1}` }));
