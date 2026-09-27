@@ -62,11 +62,16 @@ creates a signed draft and hash-chained action record.
    not change the source record, approve a drawing, release a work instruction,
    close a corrective action, or authorize product release.
 
-QA Manager and Master Access accounts can configure signed triggers. A trigger
-is an authorized run definition; the current release does not automatically
-connect every trigger to each business event. Model execution is unavailable.
-The analysis tools do not read external records unless their contents are
-provided to Flight System as input.
+QA Manager and Master Access accounts can configure signed triggers for
+supported skill and event combinations. After an accepted NC raise, CAR raise,
+CAR verification, FAIR approval, or master WI release, the matching trigger
+automatically creates a review-only analysis draft. The trigger records the
+event actor, source references, reason, and configured trigger ID in the
+hash-chained action log. Replaying identical trigger input does not create a
+second action or draft. Unsupported skill and event combinations are refused.
+SPC, MSA, and drawing review remain manually run tools. Model execution is
+unavailable. The analysis tools do not read external records unless their
+contents are provided to Flight System as input.
 
 ### Skills outside Flight System
 
