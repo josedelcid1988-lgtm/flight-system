@@ -17,6 +17,10 @@ export function openDb(path) {
     CREATE TABLE IF NOT EXISTS evidence (id TEXT PRIMARY KEY, sha256 TEXT NOT NULL, size INTEGER NOT NULL, mime TEXT NOT NULL, file_name TEXT, uploaded_by TEXT NOT NULL, uploaded_at TEXT NOT NULL, bytes BLOB NOT NULL, superseded_by TEXT, superseded_at TEXT, superseded_reason TEXT);
     -- Closed work orders moved out of the live document. Same file, same backup. Rows are never deleted.
     CREATE TABLE IF NOT EXISTS archive (order_id TEXT PRIMARY KEY, json TEXT NOT NULL, sha256 TEXT NOT NULL, schema INTEGER NOT NULL, part_number TEXT, serials TEXT NOT NULL, lots TEXT NOT NULL, parts TEXT NOT NULL, title TEXT, closed_at TEXT, archived_at TEXT NOT NULL, archived_by TEXT);
+    CREATE TABLE IF NOT EXISTS record_extracts (export_id TEXT PRIMARY KEY, record_type TEXT NOT NULL, record_id TEXT NOT NULL, kind TEXT NOT NULL, exported_at TEXT NOT NULL, exported_by TEXT NOT NULL, sha256 TEXT NOT NULL, summary TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS record_extracts_record ON record_extracts (record_type, record_id, exported_at);
+    CREATE TRIGGER IF NOT EXISTS record_extracts_no_update BEFORE UPDATE ON record_extracts BEGIN SELECT RAISE(ABORT, 'record extracts are append-only'); END;
+    CREATE TRIGGER IF NOT EXISTS record_extracts_no_delete BEFORE DELETE ON record_extracts BEGIN SELECT RAISE(ABORT, 'record extracts are append-only'); END;
     CREATE TABLE IF NOT EXISTS skill_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, username TEXT, skill TEXT NOT NULL, input TEXT, output TEXT, status TEXT NOT NULL);
   `);
   const accountColumns = new Set(db.prepare('PRAGMA table_info(accounts)').all().map(row => row.name));
@@ -106,6 +110,14 @@ export function openDb(path) {
         ? db.prepare("SELECT order_id, part_number, serials, lots, parts, title, closed_at, archived_at FROM archive WHERE UPPER(order_id) = ? OR EXISTS (SELECT 1 FROM json_each(archive.serials) WHERE UPPER(value) = ?) OR EXISTS (SELECT 1 FROM json_each(archive.lots) WHERE UPPER(value) = ?) OR EXISTS (SELECT 1 FROM json_each(archive.parts) WHERE UPPER(value) = ?) ORDER BY archived_at DESC LIMIT ?").all(q, q, q, q, limit)
         : db.prepare('SELECT order_id, part_number, serials, lots, parts, title, closed_at, archived_at FROM archive ORDER BY archived_at DESC LIMIT ?').all(limit);
       return rows.map(r => ({ orderId: r.order_id, partNumber: r.part_number, serials: JSON.parse(r.serials), lots: JSON.parse(r.lots), parts: JSON.parse(r.parts), title: r.title, closedAt: r.closed_at, archivedAt: r.archived_at, status: 'Closed', source: 'archive' }));
+    },
+    // Stamped downloads and prints are separate append-only history rows so an archived order stays immutable.
+    recordExtract(e) {
+      db.prepare('INSERT INTO record_extracts (export_id, record_type, record_id, kind, exported_at, exported_by, sha256, summary) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(e.exportId, e.recordType, e.recordId, e.kind, e.exportedAt || now(), e.exportedBy, e.sha256, JSON.stringify(e.summary || {}));
+      return this.extractHistory(e.recordType, e.recordId).find(row => row.exportId === e.exportId);
+    },
+    extractHistory(recordType, recordId) {
+      return db.prepare('SELECT export_id, record_type, record_id, kind, exported_at, exported_by, sha256, summary FROM record_extracts WHERE record_type = ? AND record_id = ? ORDER BY exported_at, export_id').all(recordType, recordId).map(row => ({ exportId: row.export_id, recordType: row.record_type, recordId: row.record_id, kind: row.kind, exportedAt: row.exported_at, exportedBy: row.exported_by, sha256: row.sha256, summary: JSON.parse(row.summary) }));
     },
     // ---- evidence ----
     evidenceMeta(id) {

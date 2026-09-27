@@ -193,6 +193,20 @@ try {
     assert.equal(archived.status, 200);
     assert.equal(archived.json.order.status, 'Closed');
     assert.equal(archived.json.readOnly, true);
+    const exported = await api('GET', `/archive/${expected[0]}/export`, { token });
+    assert.equal(exported.status, 200);
+    assert.match(exported.json.exportId, /^EXT-[A-F0-9]{32}$/);
+    assert.equal(exported.json.hashAlgorithm, 'SHA-256');
+    const extractContent = { order: exported.json.order, activity: exported.json.activity, evidence: exported.json.evidence, archiveSha256: exported.json.archiveSha256, archivedAt: exported.json.archivedAt, archivedBy: exported.json.archivedBy, schema: exported.json.schema };
+    assert.equal(exported.json.extractSha256, createHash('sha256').update(JSON.stringify(extractContent)).digest('hex'));
+    const printed = await request(base + `/archive/${expected[0]}/print`, { headers: { Authorization: `Bearer ${token}` } });
+    assert.equal(printed.status, 200);
+    assert.match(await printed.text(), /flight-extract-stamp/);
+    const extracted = await api('GET', `/archive/${expected[0]}`, { token });
+    assert.deepEqual(extracted.json.extractHistory.map(row => row.kind), ['json-download', 'print']);
+    assert.equal(extracted.json.extractHistory[0].exportId, exported.json.exportId);
+    assert.throws(() => server.store.db.prepare('DELETE FROM record_extracts').run(), /append-only/);
+    assert.throws(() => server.store.db.prepare('UPDATE record_extracts SET kind = ?').run('changed'), /append-only/);
   });
   await check('role-gated actions run through the same MES engine', async () => {
     const admin = server.store.accounts().find(account => account.username === 'one');

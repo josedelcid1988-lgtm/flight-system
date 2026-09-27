@@ -1,9 +1,16 @@
-import {mkdirSync as __mkdirTests} from 'fs';const TESTS=decodeURI(new URL('.',import.meta.url).pathname);const FIXTURES=process.env.FS_FIXTURES_DIR?process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):TESTS+'fixtures/';__mkdirTests(TESTS+'shots',{recursive:true}); // shots and results resolve from this folder; fixtures from FS_FIXTURES_DIR when set (tools/run-suites.mjs --mirror)
+import { mkdirSync as __mkdirTests } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+const TESTS = path.dirname(fileURLToPath(import.meta.url)) + path.sep;
+const FIXTURES = process.env.FS_FIXTURES_DIR
+  ? path.resolve(process.env.FS_FIXTURES_DIR) + path.sep
+  : fileURLToPath(new URL('./fixtures/', import.meta.url));
+__mkdirTests(path.join(TESTS, 'shots'), { recursive: true }); // Outputs stay beside this harness; fixtures resolve beside it unless the mirror runner supplies another folder.
 // Full multi-point QA of Flight Control MES v72: demo build and production build.
 import {chromium} from 'playwright'; import fs from 'fs';
 const results=[]; const add=(build,area,check,ok,detail='')=>results.push({build,area,check,result:ok===true?'Pass':ok==='Skip'?'Skip':'Fail',detail:String(detail??'').slice(0,400)});
 const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{});
-const FILES={demo:'file://'+FIXTURES+'demo_qa150_publish.html',prod:'file://'+FIXTURES+'publish.html'};
+const FILES={demo:pathToFileURL(path.join(FIXTURES,'demo_qa150_publish.html')).href,prod:pathToFileURL(path.join(FIXTURES,'publish.html')).href};
 
 async function newPage(w=1440){const ctx=await b.newContext({viewport:{width:w,height:1000}});const p=await ctx.newPage();const errs=[];p.on('pageerror',e=>errs.push(String(e.message||e)));p.on('console',m=>{if(m.type()==='error'&&!/ERR_FILE_NOT_FOUND|favicon/.test(m.text()))errs.push('console: '+m.text());});return {p,errs,ctx};}
 async function signIn(p,build,u,pw='demo1234',displayName){await p.evaluate(()=>{try{sessionStorage.removeItem('skyryse-mes-session-v1');}catch(e){}}).catch(()=>{});

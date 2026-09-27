@@ -188,6 +188,14 @@ export function createServer(options = {}) {
     const script = `<script id="flight-server">window.FLIGHT_SERVER=${JSON.stringify(ctx).replace(/</g, '\\u003c')};</script>`;
     return host.html.replace('<head>', `<head>${script}`);
   };
+  const recordExtract = (recordId, kind, username, content, summary) => {
+    const stamp = { exportId: `EXT-${randomBytes(16).toString('hex').toUpperCase()}`, recordType: 'work-order', recordId, kind, exportedAt: new Date(clock()).toISOString(), exportedBy: username, sha256: sha256hex(JSON.stringify(content)), summary };
+    store.recordExtract(stamp);
+    store.audit(username, 'record-extract', { ...stamp, summary });
+    return stamp;
+  };
+  const htmlText = value => String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
+  const printExtractStamp = stamp => `<footer class="flight-extract-stamp"><strong>Record extract</strong><br>Export ID: ${htmlText(stamp.exportId)} · ${htmlText(stamp.exportedBy)} · ${htmlText(stamp.exportedAt)}<br>SHA-256: ${htmlText(stamp.sha256)}<br>Summary: ${htmlText(JSON.stringify(stamp.summary))}</footer>`;
   const serveStatic = (req, res, rel) => {
     const file = path.normalize(path.join(ROOT, rel));
     if (!file.startsWith(ROOT) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { send(res, 404, { error: 'Not found' }); return; }
@@ -399,10 +407,13 @@ export function createServer(options = {}) {
       if (arc && m === 'GET') {
         const a = store.archived(arc[1]);
         if (!a) { send(res, 404, { error: `${arc[1]} is not in the archive. Search by serial, lot or part to find it.` }); return; }
-        if (!arc[2]) { send(res, 200, { ...a.entry, sha256: a.sha256, schema: a.schema, archivedAt: a.archivedAt, archivedBy: a.archivedBy, readOnly: true }); return; }
+        if (!arc[2]) { send(res, 200, { ...a.entry, sha256: a.sha256, schema: a.schema, archivedAt: a.archivedAt, archivedBy: a.archivedBy, readOnly: true, extractHistory: store.extractHistory('work-order', a.id) }); return; }
         if (arc[2] === '/print') {
           const mode = url.searchParams.get('mode') === 'external' ? 'external' : 'internal';
           let html; try { html = host.MESPrint.document(a.entry.order, mode); } catch (e) { send(res, 500, { error: `The record could not be printed: ${e.message}` }); return; }
+          const summary = { orderId: a.id, partNumber: a.entry.order.partNumber, status: a.entry.order.status, operationCount: (a.entry.order.operations || []).length, closedAt: a.entry.order.closure && a.entry.order.closure.at || null };
+          const stamp = recordExtract(a.id, 'print', session.username, { order: a.entry.order, activity: a.entry.activity, archiveSha256: a.sha256, mode }, summary);
+          html = html.replace('</body>', `${printExtractStamp(stamp)}</body>`);
           store.audit(session.username, 'archive-print', { orderId: a.id, mode });
           res.writeHead(200, { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-store' }); res.end(html); return;
         }
@@ -412,8 +423,11 @@ export function createServer(options = {}) {
           const key = e.copyOf || e.id, meta = store.evidenceMeta(key); if (!meta || evidence[key]) continue;
           evidence[key] = { ...meta, base64: store.evidenceBytes(key).toString('base64') };
         }
-        store.audit(session.username, 'archive-export', { orderId: a.id });
-        const body = JSON.stringify({ application: 'Flight System', kind: 'archived-work-order', exportedAt: new Date().toISOString(), exportedBy: session.username, sha256: a.sha256, archivedAt: a.archivedAt, archivedBy: a.archivedBy, schema: a.schema, order: a.entry.order, activity: a.entry.activity, evidence });
+        const summary = { orderId: a.id, partNumber: a.entry.order.partNumber, status: a.entry.order.status, operationCount: (a.entry.order.operations || []).length, activityCount: (a.entry.activity || []).length, evidenceCount: Object.keys(evidence).length, closedAt: a.entry.order.closure && a.entry.order.closure.at || null };
+        const content = { order: a.entry.order, activity: a.entry.activity, evidence, archiveSha256: a.sha256, archivedAt: a.archivedAt, archivedBy: a.archivedBy, schema: a.schema };
+        const stamp = recordExtract(a.id, 'json-download', session.username, content, summary);
+        store.audit(session.username, 'archive-export', { orderId: a.id, exportId: stamp.exportId, sha256: stamp.sha256 });
+        const body = JSON.stringify({ application: 'Flight System', kind: 'archived-work-order', exportId: stamp.exportId, exportedAt: stamp.exportedAt, exportedBy: stamp.exportedBy, hashAlgorithm: 'SHA-256', extractSha256: stamp.sha256, dataSummary: summary, ...content });
         res.writeHead(200, { 'Content-Type': MIME['.json'], 'Content-Disposition': `attachment; filename="${a.id}-archive.json"`, 'Cache-Control': 'no-store' }); res.end(body); return;
       }
 

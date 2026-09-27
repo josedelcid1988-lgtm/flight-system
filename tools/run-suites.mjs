@@ -15,7 +15,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
@@ -72,6 +72,10 @@ async function mirrorFixtures() {
 }
 
 async function main() {
+  const pathCheck = spawnSync(process.execPath, [path.join(ROOT, 'tests/check_no_machine_paths.mjs')], { cwd: ROOT, encoding: 'utf8' });
+  if (pathCheck.stdout) process.stdout.write(pathCheck.stdout);
+  if (pathCheck.stderr) process.stderr.write(pathCheck.stderr);
+  if (pathCheck.status !== 0) process.exit(pathCheck.status || 1);
   const files = fs.readdirSync(TESTS).filter(f => f.endsWith('.mjs') && (!only || only.includes(f.replace(/\.mjs$/, '')))).sort();
   let env = { ...process.env }, m = null;
   if (withMirror) { m = await mirrorFixtures(); env = { ...env, FS_FIXTURES_DIR: m.dir }; console.log(`mirror on: ${m.url}; fixtures ${m.dir}`); }
