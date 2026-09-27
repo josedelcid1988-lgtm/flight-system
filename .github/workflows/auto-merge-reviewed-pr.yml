@@ -1,0 +1,175 @@
+name: Auto-merge Claude and Jinx approved PRs
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, ready_for_review, reopened]
+  issue_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  workflow_run:
+    workflows: [CI, Claude PR Review]
+    types: [completed]
+
+permissions:
+  actions: read
+  checks: read
+  contents: write
+  issues: read
+  pull-requests: write
+
+concurrency:
+  group: auto-merge-${{ github.event.pull_request.number || github.event.issue.number || github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  merge-when-approved:
+    if: >-
+      github.repository == 'josedelcid1988-lgtm/flight-system' &&
+      (github.event_name != 'issue_comment' || (github.event.issue.pull_request && github.event.comment.user.login == 'claude[bot]')) &&
+      (github.event_name != 'pull_request_review' || github.event.review.user.login == vars.JINX_REVIEWER_LOGIN)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify current-head Claude and Jinx approvals, then merge
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          JINX_REVIEWER_LOGIN: ${{ vars.JINX_REVIEWER_LOGIN }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const fail = message => core.setFailed('Auto-merge blocked: ' + message);
+            const jinxLogin = (process.env.JINX_REVIEWER_LOGIN || '').trim().toLowerCase();
+            if (!jinxLogin) {
+              fail('Set the Actions variable JINX_REVIEWER_LOGIN to Jinx’s exact GitHub login.');
+              return;
+            }
+
+            async function eventPullRequest() {
+              if (context.eventName === 'pull_request_target' || context.eventName === 'pull_request_review') {
+                return context.payload.pull_request || null;
+              }
+              if (context.eventName === 'issue_comment') {
+                const issue = context.payload.issue;
+                if (!issue?.pull_request || context.payload.comment?.user?.login !== 'claude[bot]') return null;
+                return (await github.rest.pulls.get({ owner, repo, pull_number: issue.number })).data;
+              }
+              if (context.eventName === 'workflow_run') {
+                const run = context.payload.workflow_run;
+                if (!['CI', 'Claude PR Review'].includes(run.name)) return null;
+                for (const linked of run.pull_requests || []) {
+                  const pull = (await github.rest.pulls.get({ owner, repo, pull_number: linked.number })).data;
+                  if (pull.state === 'open') return pull;
+                }
+                const openPulls = await github.paginate(github.rest.pulls.list, {
+                  owner, repo, state: 'open', per_page: 100,
+                });
+                return openPulls.find(pull => pull.head.sha === run.head_sha && pull.head.ref === run.head_branch) || null;
+              }
+              return null;
+            }
+
+            async function latestCi(pull, sha) {
+              const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+                owner, repo, workflow_id: 'ci.yml', branch: pull.head.ref, event: 'pull_request', per_page: 100,
+              });
+              const sameHead = runs.filter(run => run.event === 'pull_request' && run.head_branch === pull.head.ref &&
+                (run.head_sha === sha || (run.pull_requests || []).some(link => link.number === pull.number && link.head?.sha === sha)))
+                .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+              return sameHead[0] || null;
+            }
+
+            async function unresolvedImportant(pullNumber) {
+              const query = 'query($owner:String!, $repo:String!, $number:Int!, $cursor:String) {' +
+                ' repository(owner:$owner, name:$repo) { pullRequest(number:$number) {' +
+                ' reviewThreads(first:100, after:$cursor) {' +
+                ' nodes { isResolved comments(first:100) { nodes { body } pageInfo { hasNextPage } } }' +
+                ' pageInfo { hasNextPage endCursor } } } } }';
+              let cursor = null;
+              do {
+                const data = await github.graphql(query, { owner, repo, number: pullNumber, cursor });
+                const page = data.repository.pullRequest.reviewThreads;
+                for (const thread of page.nodes) {
+                  if (thread.comments.pageInfo.hasNextPage) throw new Error('A review thread has more than 100 comments; cannot verify all Important findings.');
+                  if (!thread.isResolved && thread.comments.nodes.some(comment => /^\s*Important\s*:/i.test(comment.body || ''))) return true;
+                }
+                if (!page.pageInfo.hasNextPage) return false;
+                cursor = page.pageInfo.endCursor;
+              } while (true);
+            }
+
+            function claudeVerdict(comment, headSha, mainSha) {
+              if (comment.user?.login !== 'claude[bot]' || comment.user?.type !== 'Bot') return false;
+              const body = comment.body || '';
+              const lines = body.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+                .filter(line => line !== 'Generated by Claude Code');
+              return body.includes('PR head SHA reviewed: ' + headSha) &&
+                body.includes('Main SHA reviewed against: ' + mainSha) &&
+                lines.at(-1) === 'Claude verdict: OK to merge';
+            }
+
+            function jinxVerdict(review, headSha) {
+              if (review.user?.login?.toLowerCase() !== jinxLogin || review.state !== 'COMMENTED' || review.commit_id !== headSha) return false;
+              return /^\s*(?:Jinx verdict:\s*)?No blockers(?: remain| found)?\s*\.?\s*$/im.test(review.body || '');
+            }
+
+            let pull = await eventPullRequest();
+            if (!pull || pull.state !== 'open') {
+              core.notice('PR is no longer open or this event is not attached to an open PR.');
+              return;
+            }
+            if (pull.draft || pull.base.ref !== 'main') {
+              core.notice('Auto-merge applies only to non-draft PRs targeting main.');
+              return;
+            }
+
+            async function gate(currentPull) {
+              const headSha = currentPull.head.sha;
+              const mainSha = (await github.rest.repos.getBranch({ owner, repo, branch: 'main' })).data.commit.sha;
+              const comparison = await github.rest.repos.compareCommits({ owner, repo, base: mainSha, head: headSha });
+              if (comparison.data.behind_by !== 0) return { ok: false, message: 'The PR branch is behind current main; update it and obtain new head-bound approvals.' };
+
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner, repo, issue_number: currentPull.number, per_page: 100,
+              });
+              const claudeComments = comments.filter(comment => comment.user?.login === 'claude[bot]' && comment.user?.type === 'Bot')
+                .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+              if (!claudeComments.length || !claudeVerdict(claudeComments[0], headSha, mainSha)) {
+                return { ok: false, message: 'The latest claude[bot] summary must approve PR head ' + headSha + ' against current main ' + mainSha + '.' };
+              }
+
+              const reviews = await github.paginate(github.rest.pulls.listReviews, {
+                owner, repo, pull_number: currentPull.number, per_page: 100,
+              });
+              const jinxReviews = reviews.filter(review => review.user?.login?.toLowerCase() === jinxLogin && review.submitted_at)
+                .sort((a, b) => Date.parse(b.submitted_at) - Date.parse(a.submitted_at));
+              if (!jinxReviews.length || !jinxVerdict(jinxReviews[0], headSha)) {
+                return { ok: false, message: 'Jinx latest review must be a COMMENT review on ' + headSha + ' explicitly saying it has no blockers.' };
+              }
+
+              const ci = await latestCi(currentPull, headSha);
+              if (!ci || ci.conclusion !== 'success') return { ok: false, message: 'The latest CI workflow run for PR head ' + headSha + ' is missing or not successful.' };
+              if (await unresolvedImportant(currentPull.number)) return { ok: false, message: 'There is an unresolved Important review thread.' };
+              return { ok: true, headSha, mainSha };
+            }
+
+            let result = await gate(pull);
+            if (!result.ok) {
+              core.notice('Auto-merge waiting: ' + result.message);
+              return;
+            }
+
+            pull = (await github.rest.pulls.get({ owner, repo, pull_number: pull.number })).data;
+            result = await gate(pull);
+            if (!result.ok || result.headSha !== pull.head.sha) {
+              core.notice(result.message || 'The PR head changed during verification.');
+              return;
+            }
+
+            const merged = await github.rest.pulls.merge({
+              owner, repo, pull_number: pull.number, sha: result.headSha, merge_method: 'squash',
+            });
+            if (!merged.data.merged) {
+              fail('GitHub refused the SHA-guarded merge: ' + (merged.data.message || 'unknown reason'));
+              return;
+            }
+            core.info('Merged PR #' + pull.number + ' at ' + result.headSha + ', reviewed against main ' + result.mainSha + '.');
