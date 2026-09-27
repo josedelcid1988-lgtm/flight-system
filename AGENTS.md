@@ -70,3 +70,20 @@ below exist for AS9100 and 14 CFR reasons; do not "simplify" them away.
 - If you add a rule, add a test for it and for the refusal path (the thing it is
   supposed to block).
 - Small, reviewable commits with a message that says what changed and why.
+
+## Reviewing and merging
+
+Every pull request is reviewed by Claude (`.github/workflows/claude-review.yml`,
+standard in `REVIEW.md`) and by Jinx. The merging agent (Codex) merges a pull
+request only when all of these hold on its current head commit:
+
+1. CI (`CI / suites`) is green.
+2. Jinx has approved.
+3. The latest Claude review comment names the current head SHA and ends with
+   the line `Claude verdict: OK to merge`. A verdict on an older commit does
+   not count; `Claude verdict: changes needed` blocks the merge.
+4. There is no merge conflict and no unresolved Important review thread.
+
+If any condition is missing, do not merge: say on the pull request which one
+is missing. Never approve or merge your own change, and never merge to get
+around a missing verdict.
