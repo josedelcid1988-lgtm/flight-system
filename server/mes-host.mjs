@@ -97,10 +97,11 @@ export function createHost(indexPath) {
   // classifies as commands may be invoked there; getters, migration helpers and signature
   // primitives must never become remotely callable just because they are exported on MES.
   const actionName = /^(?:run|add|update|remove|delete|create|complete|close|issue|approve|reject|sign|mark|assign|advance|resolve|disposition|request|release|record|submit|start|stop|review|accept|return|void|reopen|split|move|link|verify|raise|cancel|withdraw|incorporate|peer|roll|set|save|store|open|finish|grant|revoke|capture|attach|detach|quarantine|repair|replace|send|change|configure|stamp|buyoff|log|tick|decide|vote|reset|publish|apply|import|reinspect|firm|convert|carry|propose|escalate|select|clock|aqi|post|acknowledge|edit|revise|ping|push|ical|check|notify|qa|note)/i;
+  const actionExact = new Set(['containNC', 'effectivenessCheck', 'pfmeaSafetyBuyoff']);
   const actionExclude = new Set(['repair','signManifest','verifyManifests','verifyAIActionLog','stampCheck','stampRegister','stampRegisterCsv','stampCredential','stampHolderFor','ticketAttachments','openProcessECRs','syncAssignments','buyoffCredential','ensure','seedDemoRecords','icalExport']);
   function resolveAction(name) {
     const functionName = String(name).split('.').at(-1);
-    return actionName.test(functionName) && !actionExclude.has(functionName) ? resolve(name) : null;
+    return (actionName.test(functionName) || actionExact.has(functionName)) && !actionExclude.has(functionName) ? resolve(name) : null;
   }
   return { MES, FlightPlan, FlightManeuver, MESPrint, roles, withAccount, resolve, resolveAction, html, capsOf, roleOf, rolesOf };
 }
