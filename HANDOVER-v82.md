@@ -9,6 +9,7 @@
 ## Included
 
 - Full application source, generated demo, React Hangar source and browser assets.
+- End-user workflows and the safe outside-app skill handoff are in `docs/USER_MANUAL.md`.
 - Authenticated Node server with SQLite by default and PostgreSQL support for shared installations.
 - Evidence, archive and audit storage, account profiles, export delivery, migration tooling, and test suites. Browser evidence uploads are confirmed in the server store and retrieved with SHA-256 verification before buy-off.
 - Reproducible production and demo deployment packages, plus a source package that excludes Git history,
@@ -62,9 +63,10 @@ check. Persistent storage and tested backups are required.
 
 ## Verification status
 
-The local run (6:32:50 PM to 6:36:42 PM UTC) and mirror run (6:28:33 PM to 6:32:40 PM UTC) on
-September 27, 2026 each passed 66 of 66 suites, including `qa_full` with 310 checks and `qa_multi`
-with 161 checks. Both runs had zero skips and tested index stamp
+The latest local run (18:47:50 to 18:51:39 UTC) on September 27, 2026 passed 66 of 66 suites,
+including `qa_full` with 310 checks and `qa_multi` with 161 checks, with zero skips. The
+mirror-enabled run earlier that day passed 66 of 66 suites with zero skips against the same
+application build; the only intervening source changes were user documentation. Both runs tested index stamp
 `2bcac2bf1604d19e6e8bec95b4dba8cbacf567554cf49fabb8b64add0b5db28c`; the mirror run stored 17,546
 records with an intact chain. These runs include browser checks that server refusals on both the MES
 action and legacy snapshot paths restore the committed workspace. Both runs include FAIR print

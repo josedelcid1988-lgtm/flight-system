@@ -38,6 +38,7 @@ ACCEPTANCE.
 Start with [`HANDOVER-v82.md`](HANDOVER-v82.md) for the package contents,
 on-prem startup steps, verification status, and release blocker. The deeper
 architecture and record-control guide is [`docs/HANDOVER.md`](docs/HANDOVER.md).
+End-user workflows are summarized in [`docs/USER_MANUAL.md`](docs/USER_MANUAL.md).
 
 ## Integrations and deployment status
 

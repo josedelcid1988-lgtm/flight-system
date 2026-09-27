@@ -1,4 +1,4 @@
-<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v82"><meta name="fs-build-sha256" content="2bcac2bf1604d19e6e8bec95b4dba8cbacf567554cf49fabb8b64add0b5db28c"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><!-- FLIGHT REACT ASSETS BEGIN -->
+<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v82"><meta name="fs-build-sha256" content="ab49e52c453d5b7985e8b13ed9149f626dec141657577e5beddc77ffc1a30db0"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><!-- FLIGHT REACT ASSETS BEGIN -->
 <link rel="stylesheet" href="../../assets/flight-ui-fonts.css">
 <link rel="stylesheet" href="../../assets/flight-ui.css">
 <link rel="stylesheet" href="../../assets/flight-plan-react.css">
@@ -2963,9 +2963,15 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     {key:'dwg-review',title:'Drawing review against ASME Y14.5',accept:'engineering'}
   ]);
   const skillTitle=key=>FLIGHT_SKILLS.find(skill=>skill.key===key)?.title||null;
-  function skillDraftBody(key,input){
+  function skillDraftBody(key,input,state){
     const refs=Array.isArray(input.targetRefs)?input.targetRefs.map(String):[];
     const base={scope:String(input.scope||input.partNumber||input.recordId||refs[0]||'Unspecified target').slice(0,160),evidenceReferences:refs.slice(0,20),limitations:['[confirm] Verify the referenced source records and add any missing evidence before acceptance.']};
+    const maneuver=plain(state?.maneuver)?state.maneuver:{};
+    const tickets=[...(Array.isArray(maneuver.ncs)?maneuver.ncs:[]),...(state?.orders||[]).flatMap(order=>(order.tickets||[]).map(ticket=>({...ticket,orderId:order.id})))];
+    const cars=Array.isArray(maneuver.cars)?maneuver.cars:[];
+    const findTicket=id=>tickets.find(ticket=>ticket.id===id)||null;
+    const findCar=id=>cars.find(car=>car.id===id)||null;
+    const recordText=record=>[record.title,record.description,record.affected?.defectName,record.affected?.subName].filter(Boolean).join(' ');
     if(key==='spc-chart-builder'){
       const values=Array.isArray(input.values)?input.values.map(Number).filter(Number.isFinite):[];
       if(values.length<5||values.length>500)return fail('SPC needs 5 to 500 numeric values.');
@@ -2999,18 +3005,151 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       return {...base,gage:String(input.gage||'').slice(0,80),studyDesign:{parts:n,operators:k,trials:r,method:'Average and range (AIAG MSA)'},ev:round(ev),av:round(av),grr:round(grr),pv:round(pv),tv:round(tv),pctGRR:pct===null?null:Number(pct.toFixed(1)),pctTolerance:pctTolerance===null?null:Number(pctTolerance.toFixed(1)),ndc,verdict,limitations:[...base.limitations,'[confirm] Verify study randomization, gage calibration, resolution and the applicable acceptance criteria. The skill does not accept a gage.']};
     }
     if(key==='fair-review-as9102'){
-      const characteristics=Array.isArray(input.characteristics)?input.characteristics:[];
-      return {...base,standard:'AS9102 Rev C',plannedCharacteristicCount:characteristics.length,checks:['Form 1 identity and accountability','Form 2 material, special process and functional test traceability','Form 3 characteristic results and balloon references','Box 22 second reviewer required','Boxes 24 and 25 remain blank'],findings:characteristics.length?characteristics.map((item,index)=>({characteristic:String(item.id||index+1),status:'[confirm] Verify against source evidence.'})):['[confirm] Load the FAIR source record and verify each form.']};
+      const order=(state?.orders||[]).find(item=>item.id===String(input.orderId||refs.find(ref=>(state?.orders||[]).some(order=>order.id===ref))||''));
+      if(!order)return fail('Name an existing work order in orderId or targetRefs.');
+      if(!(order.fai&&order.fai.required))return fail(`${order.id} is not an FAI order.`);
+      if(!plain(order.fair))return fail(`${order.id} has no FAIR record to review.`);
+      const snapshot=MES.fairSnapshot(state,order),gaps=MES.fairReview(state,order);
+      const findings=gaps.map(gap=>({status:'[confirm] Needs source evidence',detail:gap}));
+      if(!findings.length)findings.push({status:'[confirm] Human verification required',detail:'The engine found no configured FAIR gaps. Review all three forms and source evidence before acceptance.'});
+      const chars=snapshot.chars||[];
+      return {...base,scope:order.id,evidenceReferences:[order.id],standard:'AS9102 Rev C',forms:{form1:snapshot.form1,form2:snapshot.form2,tests:snapshot.tests,form3:chars},findings,gapCount:gaps.length,approvalState:'Review draft only. This skill does not verify, review, approve, sign, or close the FAIR.',limitations:[...base.limitations,'Record completeness checks are not technical acceptance. Compare each value with its controlled source and preserve the Box 22 independent-review rule; Boxes 24 and 25 remain blank.']};
     }
-    if(key==='as9102-ballooning-v2')return {...base,standard:'AS9102 Rev C',drawingReference:input.drawingReference||'[confirm]',balloons:(Array.isArray(input.characteristics)?input.characteristics:[]).map((item,index)=>({number:item.balloon||index+1,characteristic:item.characteristic||item.id||'[confirm]',requirement:item.requirement||'[confirm]',source:'[confirm]'})),review:'[confirm] A person must compare every balloon to the controlled drawing. PDM remains master.'};
-    if(key==='five-why')return {...base,problem:input.problem||'[confirm] State the verified problem.',whyChain:Array.from({length:5},(_,i)=>({step:i+1,statement:'[confirm] Enter a cause supported by cited evidence.'})),rootCause:'[confirm] Human-confirmed cause only.'};
-    if(key==='fishbone')return {...base,effect:input.problem||'[confirm] State the verified effect.',categories:['People','Method','Machine','Material','Measurement','Environment'].map(category=>({category,factors:['[confirm] Add evidence-backed factors or mark none reviewed.']}))};
-    if(key==='eight-d-builder')return {...base,disciplines:Array.from({length:8},(_,i)=>({discipline:`D${i+1}`,action:'[confirm] Add a verified action, owner, due date and evidence reference.'}))};
-    if(key==='eight-d-checklist-reviewer')return {...base,checklist:['Team and problem description','Containment and verification','Root cause evidence','Corrective action validation','Implementation and recurrence prevention','Effectiveness check'].map(item=>({item,status:'[confirm] Review source evidence.'}))};
+    if(key==='as9102-ballooning-v2'){
+      const wi=(state?.masterWIs||[]).find(item=>item.id===String(input.wiId||'')&&item.revision===String(input.revision||''))||null;
+      const plan=wi?.form3Plan;
+      if(!wi||!plan||!Array.isArray(plan.characteristics)||!plan.characteristics.length)return fail('Choose a master WI revision with a saved Form 3 plan.');
+      return {...base,scope:`${wi.id} Rev ${wi.revision}`,evidenceReferences:[`${wi.id}|${wi.revision}`],standard:'AS9102 Rev C',drawingReference:String(input.drawingReference||'[confirm] Controlled drawing reference required.'),planHash:plan.sha256,balloons:plan.characteristics.map(item=>({number:item.balloon,characteristic:item.characteristic,requirement:item.requirement,status:'[confirm] Compare balloon, text and requirement with the current controlled drawing.',source:`${wi.id} Rev ${wi.revision} Form 3 plan`})),review:'Draft only. A qualified person verifies every balloon against the controlled drawing. PDM remains the drawing master.',limitations:[...base.limitations,'This draft copies the saved master-WI Form 3 plan. It does not inspect drawing geometry, confirm revision effectivity, approve a drawing, or release a work instruction.']};
+    }
+    if(key==='five-why'){
+      const car=findCar(String(input.carId||refs.find(ref=>findCar(ref))||''));
+      const ticket=findTicket(String(input.ncId||refs.find(ref=>findTicket(ref))||''));
+      if(!car&&!ticket)return fail('Reference an existing Flight Maneuver CAR or NC in targetRefs, carId, or ncId.');
+      const related=ticket||(car?.link?.ticketId?findTicket(car.link.ticketId):null),primary=car||ticket;
+      const recorded=Array.isArray(car?.rootCause?.whys)?car.rootCause.whys:[];
+      const whyChain=Array.from({length:5},(_,index)=>{
+        const statement=String(recorded[index]||'').trim();
+        return {step:index+1,statement:statement||'[confirm] Enter a cause supported by cited evidence.',source:statement?car.id:null,status:statement?'Existing CAR entry':'Needs investigation'};
+      });
+      const rootCause=car?.rootCause?.statement||'[confirm] Human-confirmed cause only.';
+      const cited=[...new Set([car?.id,ticket?.id,related?.id].filter(Boolean))].slice(0,20);
+      return {...base,scope:String(primary.partNumber||primary.id),evidenceReferences:cited,problem:{id:primary.id,title:primary.title,description:primary.description||'',partNumber:primary.partNumber||null,revision:primary.revision||null,quantity:primary.quantity||null,foundAt:primary.foundAt||null,status:primary.status},carId:car?.id||null,ncId:ticket?.id||related?.id||null,containment:car?.containment?.note||ticket?.containment?.note||'[confirm] Record and verify containment.',whyChain,rootCause,limitations:[...base.limitations,'Existing CAR why entries are copied as recorded, not independently verified. Empty steps are prompts; do not infer causes from the defect description.']};
+    }
+    if(key==='fishbone'){
+      const selected=new Set(refs),partNumber=String(input.partNumber||'').trim();
+      const evidence=tickets.filter(ticket=>(selected.has(ticket.id)||(!selected.size&&partNumber&&ticket.partNumber===partNumber))&&(!partNumber||ticket.partNumber===partNumber));
+      if(!evidence.length)return fail('Reference existing Flight Maneuver NC records in targetRefs or supply a partNumber with matching NC records.');
+      const categories=['People','Method','Machine','Material','Measurement','Environment'];
+      const clues={People:/\b(operator|technician|training|personnel|human|crew|handling)\b/i,Method:/\b(procedure|work instruction|sequence|process|step|checklist|method)\b/i,Machine:/\b(tool|fixture|equipment|machine|calibration|gage|gauge)\b/i,Material:/\b(supplier|material|lot|coating|raw stock|dye|resin|alloy)\b/i,Measurement:/\b(measure|measurement|dimension|inspection|test|tolerance|reading)\b/i,Environment:/\b(temperature|humidity|environment|contamination|foreign object|fod|esd)\b/i};
+      const groups=categories.map(category=>({category,evidence:evidence.filter(ticket=>clues[category].test(recordText(ticket))).map(ticket=>({id:ticket.id,title:ticket.title,partNumber:ticket.partNumber||null,basis:'text clue only; confirm against source'}))}));
+      return {...base,scope:partNumber||evidence[0].partNumber||evidence[0].id,evidenceReferences:evidence.map(ticket=>ticket.id).slice(0,20),effect:String(input.effect||input.problem||`Review the ${evidence.length} referenced nonconformance record${evidence.length===1?'':'s'}.`),population:{records:evidence.length,open:evidence.filter(ticket=>ticket.status==='Open').length,escaped:evidence.filter(ticket=>!!ticket.escape).length},categories:groups,limitations:[...base.limitations,'Categories contain keyword matches from record text only. A match is a candidate for investigation, not a cause finding. Empty categories are not evidence that a factor was excluded.']};
+    }
+    if(key==='eight-d-builder'){
+      const car=findCar(String(input.carId||refs.find(ref=>findCar(ref))||''));
+      const ticket=findTicket(String(input.ncId||refs.find(ref=>findTicket(ref))||''))||(car?.link?.ticketId?findTicket(car.link.ticketId):null);
+      if(!car&&!ticket)return fail('Reference an existing Flight Maneuver CAR or NC in targetRefs, carId, or ncId.');
+      const primary=car||ticket,root=car?.rootCause||null,actions=car?.actions||[];
+      const disciplines=[
+        {discipline:'D1 Team',content:{owner:car?.owner?.name||'[confirm] Assign a team lead.',raisedBy:car?.raisedBy?.name||ticket?.raisedBy?.name||'[confirm] Identify the initiator.',members:'[confirm] Identify investigation members and roles.'}},
+        {discipline:'D2 Problem description',content:{recordId:ticket?.id||car?.id,title:ticket?.title||car?.title,description:ticket?.description||car?.description,partNumber:ticket?.partNumber||null,revision:ticket?.revision||null,quantity:ticket?.quantity||null,foundAt:ticket?.foundAt||null,createdAt:ticket?.createdAt||car?.raisedAt||null,escape:ticket?.escape||null}},
+        {discipline:'D3 Containment',content:car?.containment?.note||ticket?.containment?.note||'[confirm] Record the containment performed and affected scope.'},
+        {discipline:'D4 Root cause',content:root?{statement:root.statement,category:root.category,whys:root.whys,evidenceReferences:[car.id]}:'[confirm] Record the verified root cause and evidence.'},
+        {discipline:'D5 Corrective action',content:actions.length?actions.map(action=>({description:action.description,owner:action.owner,dueDate:action.dueDate,status:action.status,evidence:action.evidence||null})):['[confirm] Define corrective actions from the verified root cause.']},
+        {discipline:'D6 Implementation and verification',content:car?.verification?{note:car.verification.note,by:car.verification.by?.name,at:car.verification.at,evidenceReferences:[car.id]}:'[confirm] Record implementation evidence and independent verification.'},
+        {discipline:'D7 Prevent recurrence',content:'[confirm] Determine which controlled processes, similar products, documents, suppliers, or training are affected; cite reviewed records.'},
+        {discipline:'D8 Close and effectiveness',content:car?.effectiveness?{checkDate:car.effectiveness.checkDate,result:car.effectiveness.result,note:car.effectiveness.note,by:car.effectiveness.by?.name}: '[confirm] Record the effectiveness result. Only the authorized source workflow can close the CAR.'}
+      ];
+      const evidenceReferences=[...new Set([car?.id,ticket?.id].filter(Boolean))].slice(0,20);
+      return {...base,scope:String(primary.partNumber||primary.id),evidenceReferences,carId:car?.id||null,ncId:ticket?.id||null,disciplines,limitations:[...base.limitations,'Fields copied from a CAR or NC are record facts, not proof the response is adequate. Missing fields are scaffolds. D7 requires a human to identify and verify affected systems; this draft does not alter or close the source CAR.']};
+    }
+    if(key==='eight-d-checklist-reviewer'){
+      const car=findCar(String(input.carId||refs.find(ref=>findCar(ref))||''));
+      if(!car)return fail('Reference an existing Flight Maneuver CAR in targetRefs or carId.');
+      const checks=[
+        {item:'D1 Team and accountability',ok:!!(car.owner?.name&&car.raisedBy?.name),evidence:car.id},
+        {item:'D2 Problem statement',ok:!!(car.title&&car.description),evidence:car.id},
+        {item:'D3 Containment',ok:!!car.containment?.note,evidence:car.containment?car.id:null},
+        {item:'D4 Root cause and causal evidence',ok:!!(car.rootCause?.statement&&car.rootCause?.whys?.filter(Boolean).length>=2),evidence:car.rootCause?car.id:null},
+        {item:'D5 Corrective actions with owners and dates',ok:!!(car.actions?.length&&car.actions.every(action=>action.description&&action.owner&&action.dueDate)),evidence:car.actions?.length?car.id:null},
+        {item:'D6 Implementation and independent verification',ok:!!car.verification,evidence:car.verification?car.id:null},
+        {item:'D7 Prevention of recurrence',ok:!!(car.rootCause?.fishbone&&Object.values(car.rootCause.fishbone).some(items=>items.length)),evidence:car.rootCause?.fishbone?car.id:null},
+        {item:'D8 Effectiveness and closure authority',ok:!!(car.effectiveness?.result==='Effective'&&car.status==='Closed'),evidence:car.effectiveness?car.id:null}
+      ].map(check=>({...check,status:check.ok?'Record evidence present':'[confirm] Missing or insufficient evidence; investigate before acceptance.'}));
+      return {...base,scope:car.id,evidenceReferences:[car.id],checklist:checks,conclusion:checks.every(check=>check.ok)?'All listed record fields are present. Human review must still assess evidence adequacy.':'Incomplete: one or more required fields are absent. This check does not approve or close the CAR.',limitations:[...base.limitations,'Presence checks cannot judge technical adequacy, causal validity, implementation effectiveness, or regulatory conformity. The authorized CAR workflow remains the approval authority.']};
+    }
+    if(key==='pfmea-builder'){
+      const wi=(state?.masterWIs||[]).find(item=>item.id===String(input.wiId||'')&&item.revision===String(input.revision||''));
+      if(!wi)return fail('Name an existing master WI id and revision.');
+      const pfmea=(maneuver.pfmeas||[]).filter(item=>item.wiId===wi.id&&item.wiRevision===wi.revision).sort((a,b)=>String(b.openedAt).localeCompare(String(a.openedAt)))[0]||null;
+      const partTickets=tickets.filter(ticket=>ticket.partNumber===wi.partNumber);
+      const rows=[];
+      for(const op of wi.operations||[]){
+        const linked=partTickets.filter(ticket=>(ticket.orderId&&ticket.operationId===op.id)||(ticket.orderId&&ticket.opId===op.id));
+        const steps=Array.isArray(op.steps)?op.steps:[],text=[op.title,op.description,...steps.flatMap(step=>[step.title,step.instruction])].filter(Boolean).join(' '),existing=(pfmea?.rows||[]).filter(row=>row.opId===op.id);
+        const controls=[...new Set([...steps.map(step=>String(step.title||'').trim()).filter(Boolean),...(op.callouts||[]).map(String),op.buyoffType?`${op.buyoffType} buy-off`:null].filter(Boolean))];
+        const proposals=[];
+        if(steps.some(step=>step.recordsTorque)||/torque/i.test(text))proposals.push({mode:'[confirm] Torque omitted or outside the requirement',effect:'[confirm] Joint loosening, damage, or downstream nonconformance',cause:'[confirm] Review tool setting, calibration, sequence, and operator evidence'});
+        if((op.callouts||[]).includes('FOD'))proposals.push({mode:'[confirm] Foreign object remains after the operation',effect:'[confirm] Damage, jam, or service failure',cause:'[confirm] Review the FOD control and its recorded completion'});
+        if((op.callouts||[]).includes('ESD'))proposals.push({mode:'[confirm] ESD control is ineffective',effect:'[confirm] Latent damage to a sensitive component',cause:'[confirm] Review the ESD setup and evidence'});
+        if(op.classification==='Inspection'||op.inspectionPoint)proposals.push({mode:'[confirm] Nonconforming feature is accepted',effect:'[confirm] Escape to a later operation or customer',cause:'[confirm] Review the characteristic, method, and gage evidence'});
+        if(!proposals.length)proposals.push({mode:'[confirm] Operation is omitted or performed out of sequence',effect:'[confirm] Incomplete or nonconforming product',cause:'[confirm] Review the operation sequence and buy-off evidence'});
+        const makeRow=(proposal,source='candidate')=>({opId:op.id,operation:op.title,mode:proposal.mode,effect:proposal.effect,cause:proposal.cause,currentControls:controls,recordEvidence:linked.map(ticket=>ticket.id),recordCount:linked.length,severity:null,occurrenceSuggestion:linked.length?Math.min(10,2+linked.length*2):null,detection:null,rpn:null,reviewStatus:'[confirm] Candidate only. Cross-functional team must validate the mode and evidence, then score S, O, and D.',source});
+        rows.push(...existing.map(row=>({opId:op.id,operation:op.title,mode:row.mode,effect:row.effect,cause:row.cause,currentControls:row.controls,recordEvidence:linked.map(ticket=>ticket.id),recordCount:linked.length,severity:row.s,occurrenceSuggestion:row.o,detection:row.d,rpn:row.rpn,reviewStatus:'Existing PFMEA row. Verify against the current operation and source records.',source:pfmea.id})));
+        rows.push(...proposals.map(proposal=>makeRow(proposal)));
+      }
+      return {...base,scope:`${wi.id} Rev ${wi.revision}`,evidenceReferences:[`${wi.id}|${wi.revision}`,...partTickets.map(ticket=>ticket.id),...(pfmea?[pfmea.id]:[])].slice(0,20),wiId:wi.id,revision:wi.revision,partNumber:wi.partNumber,pfmeaId:pfmea?.id||null,pfmeaStatus:pfmea?.status||'No PFMEA record',operationCoverage:{total:(wi.operations||[]).length,represented:new Set(rows.map(row=>row.opId)).size},rows,limitations:[...base.limitations,'Suggested failure modes are hypotheses from operation controls, not findings. Occurrence suggestions use only records explicitly linked to the operation. Severity and detection remain unscored; team review is mandatory. This draft does not update the PFMEA record.']};
+    }
+    if(key==='pfmea-checklist-reviewer'){
+      const all=Array.isArray(maneuver.pfmeas)?maneuver.pfmeas:[],pfmea=all.find(item=>item.id===String(input.pfmeaId||refs.find(ref=>all.some(row=>row.id===ref))||''));
+      if(!pfmea)return fail('Reference an existing Flight Maneuver PFMEA record in pfmeaId or targetRefs.');
+      const wi=(state?.masterWIs||[]).find(item=>item.id===pfmea.wiId&&item.revision===pfmea.wiRevision)||null,ops=wi?.operations||[],rows=pfmea.rows||[],high=Number(MES.PFMEA_HIGH?.rpn)||100,severityHigh=Number(MES.PFMEA_HIGH?.severity)||9;
+      const coverage=ops.map(op=>({opId:op.id,covered:rows.some(row=>row.opId===op.id)||!!pfmea.reviewed?.[op.id],evidence:rows.filter(row=>row.opId===op.id).map(row=>row.id)}));
+      const checks=[
+        {item:'Scope and cross-functional team',ok:!!(pfmea.scope?.team&&pfmea.scope?.boundaries),evidence:pfmea.scope?pfmea.id:null},
+        {item:'Every WI operation has a failure mode or recorded no-risk rationale',ok:coverage.every(item=>item.covered),evidence:coverage.filter(item=>!item.covered).map(item=>item.opId).join(', ')||pfmea.id},
+        {item:'Failure mode, effect, cause, and current control are documented',ok:rows.length>0&&rows.every(row=>row.mode&&row.effect&&row.cause&&row.controls),evidence:rows.length?pfmea.id:null},
+        {item:'Severity, occurrence, detection, and RPN are complete and consistent',ok:rows.length>0&&rows.every(row=>Number.isInteger(row.s)&&Number.isInteger(row.o)&&Number.isInteger(row.d)&&row.rpn===row.s*row.o*row.d),evidence:rows.length?pfmea.id:null},
+        {item:'High-risk rows have an owned, dated action',ok:rows.filter(row=>row.rpn>=high||row.s>=severityHigh).every(row=>row.action&&row.owner&&row.due),evidence:pfmea.id},
+        {item:'Action effectiveness is evidenced where actions are complete',ok:rows.filter(row=>row.rpn>=high||row.s>=severityHigh).every(row=>!row.action||row.done?.evidence),evidence:pfmea.id},
+        {item:'Review and Safety Team status are visible',ok:!!(pfmea.analysisDone||pfmea.status==='Scoping'||pfmea.status==='Analysis'),evidence:pfmea.status}
+      ].map(check=>({...check,status:check.ok?'Record fields present':'[confirm] Missing or inconsistent record fields; resolve with the responsible team.'}));
+      return {...base,scope:`${pfmea.wiId} Rev ${pfmea.wiRevision}`,evidenceReferences:[pfmea.id,`${pfmea.wiId}|${pfmea.wiRevision}`],pfmeaId:pfmea.id,status:pfmea.status,coverage,checks,conclusion:checks.every(check=>check.ok)?'Listed fields are present. This check does not establish technical adequacy or approve the PFMEA.':'Incomplete: one or more required fields are absent or inconsistent.',limitations:[...base.limitations,'This is a record-presence and arithmetic check against the Flight PFMEA workflow. It is not a standards conformity determination or Safety Team approval.']};
+    }
     if(key==='pfmea-builder')return {...base,rows:(Array.isArray(input.rows)?input.rows:[]).map(row=>({...row,reviewStatus:'[confirm] Validate failure, effect, cause, controls and ratings.'})),limitations:[...base.limitations,'No severity, occurrence or detection rating is assigned by this draft.']};
     if(key==='pfmea-checklist-reviewer')return {...base,checks:['Scope and function','Failure mode and effect','Cause and prevention control','Detection control','Action owner and due date','Revision and approval traceability'].map(item=>({item,status:'[confirm] Check the released source.'}))};
-    if(key==='effectiveness-follow-up')return {...base,criteria:input.criteria||'[confirm] Define measurable effectiveness criteria.',dueDate:input.dueDate||'[confirm] Set a due date.',evidence:'[confirm] Record the evidence and independent reviewer.'};
-    if(key==='dwg-review')return {...base,standard:'ASME Y14.5',drawingReference:input.drawingReference||'[confirm]',checks:['Datum reference frame','Dimensions and tolerances','Geometric controls','Drawing notes and revision'].map(item=>({item,status:'[confirm] Compare against the controlled drawing.'})),decision:'Review draft only. Never approves a drawing or releases a work instruction. PDM remains master.'};
+    if(key==='effectiveness-follow-up'){
+      const car=findCar(String(input.carId||refs.find(ref=>findCar(ref))||''));
+      if(!car)return fail('Reference an existing Flight Maneuver CAR in targetRefs or carId.');
+      if(!car.verification)return fail(`${car.id} must have independently verified actions before an effectiveness follow-up can be proposed.`);
+      const ncRef=String(input.ncId||refs.find(ref=>findTicket(ref))||car.link?.ticketId||'');
+      const nc=ncRef?findTicket(ncRef):null;
+      const partNumber=nc?.partNumber||String(input.partNumber||'').trim()||null;
+      const related=partNumber?tickets.filter(ticket=>ticket.partNumber===partNumber):nc?[nc]:[];
+      const baseline=related.filter(ticket=>Date.parse(ticket.createdAt||'')<=Date.parse(car.verification.at));
+      const days=Number.isInteger(Number(input.days))&&Number(input.days)>=7&&Number(input.days)<=365?Number(input.days):null;
+      const checkDate=days?new Date(Date.parse(car.verification.at)+days*86400000).toISOString().slice(0,10):'[confirm] Set the observation window.';
+      const criteria=String(input.criteria||'').trim()||(partNumber&&days?`[confirm] Define the recurrence threshold for ${partNumber} during ${days} days after independent verification. The prior 365-day record contains ${baseline.length} matching NC record${baseline.length===1?'':'s'}.`:'[confirm] Define the measurable recurrence threshold, observation window, and records to review.');
+      const evidence=[...new Set([car.id,nc?.id,...baseline.map(ticket=>ticket.id)].filter(Boolean))].slice(0,20);
+      return {...base,scope:car.id,evidenceReferences:evidence,carId:car.id,partNumber,verification:{by:car.verification.by?.name||'',at:car.verification.at,note:car.verification.note},baseline:{nonconformances:baseline.length,recordIds:baseline.map(ticket=>ticket.id).slice(0,20)},days,checkDate,criteria,existingResult:car.effectiveness?{result:car.effectiveness.result,checkDate:car.effectiveness.checkDate,note:car.effectiveness.note}:null,evidence:'[confirm] Attach the post-verification record search and objective evidence; a qualified person records the result.',decision:'Proposal only. The authorized CAR effectiveness workflow records the result and controls closure.',limitations:[...base.limitations,'The input observation period and acceptance threshold require human approval. This skill cannot record an effectiveness result or close the CAR.']};
+    }
+    if(key==='dwg-review'){
+      const list=(value,max=100)=>Array.isArray(value)?value.slice(0,max).map(item=>plain(item)?item:String(item).slice(0,300)):[];
+      const supplied=(value)=>value!==undefined&&value!==null&&String(value).trim()!=='';
+      const dimensions=list(input.dimensions).map(item=>({feature:String(item.feature||'[confirm] Identify feature.').slice(0,160),nominal:supplied(item.nominal)?item.nominal:'[confirm] Record nominal dimension.',tolerance:supplied(item.tolerance)?item.tolerance:'[confirm] Record tolerance.',status:'[confirm] Compare feature, value, units, and tolerance against the controlled drawing.'}));
+      const controls=list(input.geometricControls).map(item=>({feature:String(item.feature||'[confirm] Identify controlled feature.').slice(0,160),control:String(item.control||'[confirm] Identify the geometric control.').slice(0,160),datums:Array.isArray(item.datums)?item.datums.map(String).slice(0,6):'[confirm] Record datum references.',status:'[confirm] Verify the feature control frame and datum references against the drawing.'}));
+      const datums=list(input.datumReferences,40).map(item=>typeof item==='string'?item:{symbol:String(item.symbol||'[confirm]').slice(0,40),feature:String(item.feature||'[confirm]').slice(0,160)});
+      const notes=list(input.notes,80).map(note=>({text:String(note).slice(0,500),status:'[confirm] Verify note text and applicability against the controlled drawing.'}));
+      const evidenceReferences=[...new Set([...refs,...(supplied(input.drawingReference)?[String(input.drawingReference)]:[])])].slice(0,20);
+      const checklist=[
+        {item:'Drawing identity and revision',provided:supplied(input.drawingReference)&&supplied(input.revision),details:{drawingReference:input.drawingReference||'[confirm] Provide controlled drawing number.',revision:input.revision||'[confirm] Provide current revision.'}},
+        {item:'Units and general tolerance',provided:supplied(input.units)&&supplied(input.generalTolerance),details:{units:input.units||'[confirm] Identify drawing units.',generalTolerance:input.generalTolerance||'[confirm] Record general tolerance and applicability.'}},
+        {item:'Datum reference frame',provided:datums.length>0,details:datums.length?datums:'[confirm] List datum features and their references.'},
+        {item:'Dimensions and tolerances',provided:dimensions.length>0,details:dimensions.length?dimensions:'[confirm] Inventory dimensions, nominal values, and tolerances.'},
+        {item:'Geometric controls',provided:controls.length>0,details:controls.length?controls:'[confirm] Inventory geometric controls, feature references, and datums.'},
+        {item:'Drawing notes',provided:notes.length>0,details:notes.length?notes:'[confirm] Review notes, flags, and their applicability.'}
+      ].map(item=>({...item,status:item.provided?'Input supplied; verify against the current controlled drawing.':'[confirm] Missing input; inspect the current controlled drawing.'}));
+      return {...base,scope:String(input.drawingReference||'[confirm] Controlled drawing required.'),evidenceReferences,standard:'ASME Y14.5 topic checklist',drawing:{reference:input.drawingReference||'[confirm]',revision:input.revision||'[confirm]',units:input.units||'[confirm]',generalTolerance:input.generalTolerance||'[confirm]'},datumReferences:datums,dimensions,geometricControls:controls,notes,checklist,decision:'Inventory and checklist only. No drawing image, geometry, symbol, or standards conformity was interpreted. A qualified human must compare every item with the current controlled drawing and governing standard. PDM remains master; this skill cannot approve or release.',limitations:[...base.limitations,'Only structured values explicitly supplied by the user are reviewed; this tool performs no OCR or CAD geometry inspection. Missing inputs remain [confirm] scaffolds and never count as findings. ASME Y14.5 applicability and edition must be confirmed by the organization.']};
+    }
     return fail('Unsupported skill.');
   }
   function setForm3Plan(state,wiId,revision,characteristics){const d=denied('edit-wi','set the Form 3 plan');if(d)return d;const wi=findWI(state,wiId,revision);if(!wi)return fail('Master work instruction revision not found.');if(wi.status!=='Draft')return fail('Form 3 plans can be changed only on a master WI draft.');if(!Array.isArray(characteristics)||!characteristics.length||characteristics.length>400)return fail('Enter 1 to 400 planned Form 3 characteristics.');const rows=characteristics.map((item,index)=>({balloon:Number(item.balloon),characteristic:String(item.characteristic||item.description||'').trim(),requirement:String(item.requirement||'').trim()}));if(rows.some(row=>!Number.isInteger(row.balloon)||row.balloon<1||!str(row.characteristic,120)||!str(row.requirement,200))||!unique(rows.map(row=>row.balloon)))return fail('Each Form 3 characteristic needs a unique positive balloon number, description and drawing requirement.');const who=actor(state);if(!snapshotValid(who))return fail('Sign in before changing the Form 3 plan.');const at=new Date().toISOString(),plan={characteristics:rows,balloonCount:rows.length,sha256:sha256(canonical(rows)),by:{...who},at};plan.manifest=signManifest(state,'AS9102 Form 3 plan',form3PlanSubject(plan),at);wi.form3Plan=plan;return {ok:true,message:`Form 3 plan saved for ${wi.id} Rev ${wi.revision}: ${rows.length} planned characteristics.`};}
@@ -3023,8 +3162,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if(!title)return fail('This skill is not on the Flight System approved list.');
     if(!str(reason,300)||reason.length<8)return fail('Provide a clear reason for this skill run.');
     if(triggerId){const trigger=(state.aiSkillTriggers||[]).find(item=>item.id===triggerId);if(!trigger||!trigger.enabled||trigger.skill!==key)return fail('The requested skill trigger is missing, disabled or configured for another skill.');if(!['qm','admin'].includes(accountRole()))return fail('Only a QA Manager or Master Access account can run an automatic skill trigger.');}
-    const body=skillDraftBody(key,input||{});if(body?.ok===false)return body;
-    const refs=Array.isArray(input.targetRefs)?[...new Set(input.targetRefs.map(String))].slice(0,20):[];
+    const body=skillDraftBody(key,input||{},state);if(body?.ok===false)return body;
+    const refs=[...new Set([...(Array.isArray(input.targetRefs)?input.targetRefs.map(String):[]),...(Array.isArray(body.evidenceReferences)?body.evidenceReferences:[])])].slice(0,20);
     const logged=recordAIAction(state,{skill:key,version:'1.0.0',method:'deterministic',input:{...input},output:body,reason,targetRefs:refs,triggerId});if(!logged.ok)return logged;
     if(logged.duplicate){const existing=(state.aiSkillDrafts||[]).find(d=>d.runId===logged.id);return {ok:true,duplicate:true,runId:logged.id,draftId:existing?.id||null,message:'This trigger and input already have a recorded result.'};}
     state.aiSkillDrafts=Array.isArray(state.aiSkillDrafts)?state.aiSkillDrafts:[];

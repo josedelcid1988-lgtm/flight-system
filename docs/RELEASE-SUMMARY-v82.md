@@ -21,10 +21,11 @@
 - Floor wake-lock opt-in, progress ring, retained helicopter motion, coarse-pointer bounded whole-number picker with touch swipes, design screenshots and browser recording.
 - FAIR print export starts Forms 1, 2, and 3 on separate pages, repeats table headers, and keeps signature fields on Form 1 only.
 - Build, test and source packaging tools, CI coverage and a machine path scan.
+- End-user guide for the three modules, skill review and safe outside-app skill use.
 
 ## Verification
 
-- 66 of 66 suites passed in both local (18:32:50 to 18:36:42 UTC) and mirror-enabled (18:28:33 to 18:32:40 UTC) runs on September 27, 2026. `qa_full` passed 310 checks with zero skips. The mirror stored 17,546 records and its chain remained intact. Both runs used index stamp `2bcac2bf1604d19e6e8bec95b4dba8cbacf567554cf49fabb8b64add0b5db28c`; exact suite output is in `tests/suite_results.json` and `tests/suite_results_mirror.json`. Browser tests verify an authorized inspector signing FAA 8130-9 through the audited server action route.
+- 66 of 66 suites passed in the latest local run (18:47:50 to 18:51:39 UTC) and in the mirror-enabled run earlier on September 27, 2026. Both had zero skips; `qa_full` passed 310 checks. The mirror stored 17,546 records with an intact chain. Both runs used index stamp `2bcac2bf1604d19e6e8bec95b4dba8cbacf567554cf49fabb8b64add0b5db28c`; exact suite output is in `tests/suite_results.json` and `tests/suite_results_mirror.json`. Browser tests verify an authorized inspector signing FAA 8130-9 through the audited server action route. Only user documentation changed between the mirror run and the latest local run.
 - Browser captures exercise Hangar drawers, open holds, search, density, Flight Plan Kanban and MRP forecast, all four dedicated Flight Maneuver queues, the Flight Control work-order queue at 1440px, 1920px with reduced motion, and tablet widths; Created and Due use Month Day, Year formatting, full work order navigation, and the protected helicopter progress visualization. Jira browser verification covers authenticated ECR issue requests and safe replay of a linked ticket.
 - Production, demo, and source ZIPs are rebuilt and checked against the tree for this integration-review package.
 - PostgreSQL integration is configured in CI but was not run against a locally provisioned PostgreSQL database.

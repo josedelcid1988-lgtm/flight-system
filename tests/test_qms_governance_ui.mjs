@@ -28,8 +28,10 @@ try {
   await page.locator('[data-ai-model-config] button[type=submit]').click();
   await page.locator('[data-ai-model-error]').getByText(/server has not confirmed/i).waitFor();
   assert.equal(await page.evaluate(() => state.modelAdapter.enabled), false);
+  const sourceNC = await page.evaluate(() => FlightManeuver.raiseNC(state, { title: 'Fit interference reported', description: 'Inspection recorded fit interference on the received part.', partNumber: 'PN-GOV-1', revision: 'A', sourceType: 'PO line', sourcePo: 'PO-GOV-1', sourceLine: '1', foundAt: 'Receiving inspection', quantity: 1, pedigree: 'Production' }));
+  assert.equal(sourceNC.ok, true);
   await page.locator('[data-flight-skill-run] [name=skill]').selectOption('five-why');
-  await page.locator('[data-flight-skill-run] [name=input]').fill(JSON.stringify({ problem: 'Fit interference reported', targetRefs: ['NC-0001'] }));
+  await page.locator('[data-flight-skill-run] [name=input]').fill(JSON.stringify({ targetRefs: [sourceNC.id] }));
   await page.locator('[data-flight-skill-run] [name=reason]').fill('Review the reported fit interference evidence.');
   await page.locator('[data-flight-skill-run] button[type=submit]').click();
   await page.getByText(/5-Why draft AID-0001 created/i).waitFor();
