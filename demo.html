@@ -1,4 +1,4 @@
-<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v82"><meta name="fs-build-sha256" content="61a6c5f128679c449047b38bb871aea8b53147cbfce60d2f6b4720679ab33fbd"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><!-- FLIGHT REACT ASSETS BEGIN -->
+<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v82"><meta name="fs-build-sha256" content="bbbe48e3c92db2fbaa3626aa3a4515156aec21c77b2a446d814762c043cdf40c"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><!-- FLIGHT REACT ASSETS BEGIN -->
 <link rel="stylesheet" href="assets/flight-ui-fonts.css">
 <link rel="stylesheet" href="assets/flight-ui.css">
 <link rel="stylesheet" href="assets/flight-plan-react.css">
@@ -11293,6 +11293,10 @@ function reactOrderQueueProps(){
     summary(shown){return tblSummary('orders',shown,state.orders.length);}
   }};
 }
+
+function reactActivityRows(){return [...(state.activity||[])].sort((a,b)=>Date.parse(b.at)-Date.parse(a.at)).map((event,index)=>({id:String(event.id||`${event.at||'event'}-${index}`),at:event.at||'',date:date(event.at),day:historyDay(event.at),kind:historyKind(event.action),actorName:String(event.actor||'').split(' · ')[0].trim(),actor:String(event.actor||''),action:String(event.action||''),actionHtml:recordLinks(event.action||'',event.orderId||''),orderId:event.orderId||'',orderHtml:event.orderId?recordLinks(event.orderId,event.orderId):''}));}
+const renderBeforeReactActivity=render;
+render=function(options){renderBeforeReactActivity(options);if(view!=='activity'||!window.FlightReact)return;const main=$('#main');if(!main)return;main.innerHTML='<div id="flight-react-island"></div>';window.FlightReact.renderActivity($('#flight-react-island'),reactActivityRows(),openOrder);};
 
 function updateHoldMotion() {
   const reduced = holdMotionPreference.matches || forcedReducedMotion;

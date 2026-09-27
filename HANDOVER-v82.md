@@ -17,7 +17,7 @@
 - Browser captures and a short interaction recording under `artifacts/design/`.
 - ATP operations require a baseline version and commit tied to an HTTPS repository on any host. Missing links are refused, and migrated legacy unlinked ATP operations require remediation before buy-off.
 
-The approved React design is implemented on the Flight Control Hangar, work-order queue and work-order drawer, the
+The approved React design is implemented on the Flight Control Hangar, Activity record, work-order queue and work-order drawer, the
 Flight Plan planned-order queue, Kanban, MRP forecast, Big Three, project/milestone planning and
 dispatch, and Flight Maneuver Quality Hangar plus NC Intake, Corrective Actions, Material Review
 Board and Problem Reports queues. Search, NC escape/source filters, density and current metrics use
@@ -36,7 +36,7 @@ Control workflows beyond the Hangar and Flight Maneuver full detail screens stil
 | 6. System-level QMS | Partial | Signed audits/findings, supplier approvals, certifications, quality-study values/verdicts, and controlled document revisions with attached, hashed files and separate author/reviewer/releaser credentials. AI governance adds DG-01 to DG-04 and SOP-750-007 drafts, a DG-01 job description template, a 13-entry AI risk register, hash-chained action evidence, a signed ISO/IEC 42001 export, and model-setting controls that verify a named secret exists on the server. `test_qms_records*`, `test_qms_documents*`, `test_qms_governance*` cover the current paths. | DG procedures remain drafts until three-person document release. Model execution is deliberately unavailable; the model setting is configuration evidence only. The ISO export is an evidence extract, not certification of an AI management system. |
 | 7. Skills | Partial | All twelve requested Flight-only skill categories now produce record-backed or input-backed drafts: FAIR review, AS9102 ballooning, 5-Why, Fishbone, 8D builder and checklist, PFMEA builder and checklist, SPC, MSA, effectiveness follow-up, and drawing review. Analysis outputs cite source IDs where available, preserve uncertainty as `[confirm]`, never mutate production records, and cannot be accepted while scaffolds remain. The drawing review inventories explicit structured inputs and does not claim OCR, CAD geometry inspection, standards conformity, or approval. QA Manager/Master Access can configure signed triggers for compatible skill and event pairs; successful NC, CAR, FAIR and WI source actions run them as review-only drafts with event actor and source references in the hash-chained action log, and identical inputs are deduplicated. Triggered FAIR drafts retain immutable snapshots if the source FAIR is subsequently edited. The master WI draft has a Form 3 plan editor with a SHA-256 manifest, and FAIR seeding copies planned characteristics. SPC calculates I-MR control limits, common stability signals and capability from numeric readings. MSA calculates average-and-range repeatability, reproducibility, gage R&R, percent variation and distinct categories for balanced crossed studies. `test_qms_skills.mjs` covers 35 checks, including event execution, FAIR immutability, evidence-backed outputs and missing-input scaffolds. | More Datum source fixtures remain. Model execution is unavailable. |
 | 8. Prints and floor | Partial | Record extracts, print/export logs, build stamps, server sync status, the existing helicopter lifecycle bar, a companion progress ring, an opt-in screen wake lock, and a coarse-pointer bounded whole-number picker with touch adjustment, accessible step controls and min/max enforcement. FAIR Forms 1, 2, and 3 each start on a new printed page, table headers repeat, and the signature block appears only on Form 1. `test_v74.mjs`, `test_floor_ui.mjs`, and `test_floor_picker_ui.mjs` cover print layout, wake-lock consent, helicopter preservation and picker behavior. | Verify the generated picker against representative in-app quantity fields on iOS and Android hardware. No extra vendor library was needed for current work. |
-| 9. Verify and package | Partial | On September 27, 2026, the current v82 index stamp `61a6c5f128679c449047b38bb871aea8b53147cbfce60d2f6b4720679ab33fbd` passed 66 of 66 local suites and 66 of 66 mirror suites with zero skips. Mirror mode stored 17,546 records and its hash chain was intact. The runs cover `qa_full` (310 checks), `qa_multi` (161 checks), legacy migration with `verifyManifests`, path hygiene, React and demo build integrity, browser captures, and the workflows listed above. The production, demo, and source archives are rebuilt and verified after the server action hardening. The browser record-drawer, search/filter, density, focus/motion, pink/red Open Holds and protected-helicopter evidence is under `artifacts/design/final/`, including the interaction recording. These artifacts do not imply that the open phases are complete. | PostgreSQL target checks, all requested feature-phase gaps, and production authorization are still required before release approval. |
+| 9. Verify and package | Partial | On September 27, 2026, v82 index stamp `bbbe48e3c92db2fbaa3626aa3a4515156aec21c77b2a446d814762c043cdf40c` passed 67 of 67 local suites and 67 of 67 mirror suites with zero skips. Mirror mode stored 17,546 records and its hash chain was intact. The runs cover `qa_full` (310 checks), `qa_multi` (161 checks), legacy migration with `verifyManifests`, path hygiene, React and demo build integrity, browser captures, and the workflows listed above. The React Activity view is covered by search, actor/date filters, density, Escape close, focus return and preservation of filter selection. The production, demo, and source archives must be rebuilt and verified against this revision before release. Browser evidence is under `artifacts/design/final/`, including the interaction recording. These artifacts do not imply that the open phases are complete. | PostgreSQL target checks, all requested feature-phase gaps, package verification, and production authorization are still required before release approval. |
 
 The phase list above is the original requested scope, not a claim that phases 2 through 8 are complete.
 
@@ -63,9 +63,9 @@ check. Persistent storage and tested backups are required.
 
 ## Verification status
 
-The latest local run (20:08:00 to 20:11:49 UTC) and mirror-enabled run (20:11:52 to 20:15:44 UTC)
-on September 27, 2026 each passed 66 of 66 suites with zero skips against index stamp
-`61a6c5f128679c449047b38bb871aea8b53147cbfce60d2f6b4720679ab33fbd`. The mirror run stored 17,546
+The latest local run (20:45:32 to 20:51:26 UTC) and mirror-enabled run (20:51:43 to 20:57:40 UTC)
+on September 27, 2026 each passed 67 of 67 suites with zero skips against index stamp
+`bbbe48e3c92db2fbaa3626aa3a4515156aec21c77b2a446d814762c043cdf40c`. The mirror run stored 17,546
 records with an intact chain. These runs include browser checks that server refusals on both the MES
 action and legacy snapshot paths restore the committed workspace. Both runs include FAIR print
 layout checks and an authorized 8130-9 AQI browser signature persisted through its audited server action,
@@ -96,9 +96,11 @@ Flight Plan Kanban and MRP forecast now render in React from `FlightPlan` record
 browser test checks status lane counts against the planner, MRP demand summaries against its
 forecast, compact density, selected-order routing, reduced motion, bounded source-order links and tablet rendering; captures
 are `flight-plan-kanban-1440.png`, `flight-plan-mrp-forecast-1440.png` and
-`flight-plan-mrp-forecast-tablet.png`. Flight Control's work-order execution, detailed trace reports, activity and support workflows, and
+`flight-plan-mrp-forecast-tablet.png`. Flight Control's work-order execution, detailed trace reports and support workflows, and
 Flight Maneuver full detail screens still use legacy rendering; the approved React migration remains
 incomplete.
+
+The Flight Control Activity record now uses the shared React interface over existing activity events. It preserves date, event-type, person and text filters plus linked record identifiers, and adds density control and a read-only detail drawer. Browser verification covers all filters, density, Escape close, focus return and preservation of the underlying filter selection. Capture: `flight-control-activity-1440.png`.
 
 The Flight Control serial-number register now uses the shared React queue, search, status filter,
 compact density and accessible details drawer. Its traceability and work-order inventory actions

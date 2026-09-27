@@ -590,6 +590,86 @@ function TraceSearch({ state, MES, initialQuery, onSearch, onReport, onRoute }) 
   </div>;
 }
 
+function ActivityDrawer({ event, onClose, onOpenOrder, returnFocus }) {
+  const closeButton = useRef(null);
+  useEffect(() => {
+    if (!event) return;
+    closeButton.current?.focus();
+    const handleKeyDown = click => {
+      if (click.key === 'Escape') { click.preventDefault(); onClose(); }
+      if (click.key === 'Tab') {
+        const focusable = [...document.querySelectorAll('.fr-activity-overlay button:not([disabled]), .fr-activity-overlay a[href], .fr-activity-overlay input:not([disabled]), .fr-activity-overlay select:not([disabled]), .fr-activity-overlay [tabindex="0"]')];
+        if (!focusable.length) return;
+        const first = focusable[0], last = focusable[focusable.length - 1];
+        if (click.shiftKey && document.activeElement === first) { click.preventDefault(); last.focus(); }
+        else if (!click.shiftKey && document.activeElement === last) { click.preventDefault(); first.focus(); }
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [event, onClose]);
+  if (!event) return null;
+  const close = () => onClose();
+  return <div className="fr-activity-overlay" onClick={click => { if (click.target === click.currentTarget) close(); }}>
+    <section className="fr-drawer-panel" role="dialog" aria-modal="true" aria-labelledby="fr-activity-drawer-title"><div className="fr-drawer-top"><span>FLIGHT CONTROL · ACTIVITY</span><button ref={closeButton} data-close-activity aria-label="Close activity details" onClick={close}><X size={19}/></button></div><div className="fr-drawer-icon"><CalendarClock size={23}/></div><h2 id="fr-activity-drawer-title">{event.kind}</h2><p className="fr-drawer-id">{event.date}</p><dl className="fr-drawer-fields"><div><dt>Person</dt><dd>{event.actor || 'Not recorded'}</dd></div><div><dt>Work order</dt><dd>{event.orderId || 'Not linked'}</dd></div></dl><div className="fr-activity-detail"><strong>Activity</strong><p>{event.action}</p></div>{event.orderId && <button className="fr-primary" onClick={() => { onOpenOrder(event.orderId); close(); }}>Open work order <ArrowUpRight size={17}/></button>}</section>
+  </div>;
+}
+
+function ActivityLog({ events, onOpenOrder }) {
+  const [query, setQuery] = useState('');
+  const [kind, setKind] = useState('All activity');
+  const [actor, setActor] = useState('Everyone');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [compact, setCompact] = useState(() => { try { return localStorage.getItem(densityKey) === 'compact'; } catch { return false; } });
+  const [selected, setSelected] = useState(null);
+  const returnFocus = useRef(null);
+  const searchRef = useRef(null);
+  const kinds = [...new Set(events.map(event => event.kind))].sort();
+  const actors = [...new Set(events.map(event => event.actorName).filter(Boolean))].sort();
+  const rows = events.filter(event => {
+    const searchable = `${event.action} ${event.actor} ${event.orderId || ''}`.toLowerCase();
+    return (!from || event.day >= from) && (!to || event.day <= to) && (kind === 'All activity' || event.kind === kind) && (actor === 'Everyone' || event.actorName === actor) && searchable.includes(query.trim().toLowerCase());
+  });
+  useEffect(() => {
+    const shortcut = event => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); searchRef.current?.focus(); } };
+    window.addEventListener('keydown', shortcut);
+    return () => window.removeEventListener('keydown', shortcut);
+  }, []);
+  useEffect(() => {
+    if (!selected && returnFocus.current?.isConnected) setTimeout(() => {
+      if (returnFocus.current?.isConnected) returnFocus.current.focus();
+    }, 0);
+  }, [selected]);
+  const closeDetails = () => {
+    setSelected(null);
+  };
+  const setDensity = () => setCompact(value => {
+    const next = !value;
+    try { localStorage.setItem(densityKey, next ? 'compact' : 'comfortable'); } catch {}
+    return next;
+  });
+  const clear = () => { setQuery(''); setKind('All activity'); setActor('Everyone'); setFrom(''); setTo(''); };
+  return <div className="flight-react fr-activity">
+    <div className="fr-page-heading"><div><span className="fr-eyebrow">FLIGHT CONTROL</span><h1>Activity record<span>.</span></h1><p>Search and review recorded work events.</p></div><div className="fr-workspace">Current Flight System records</div></div>
+    <section className="fr-queue" aria-label="Activity record">
+      <div className="fr-queue-heading fr-activity-filters">
+        <label className="fr-search"><Search size={16}/><input ref={searchRef} type="search" aria-label="Search activity" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search activity, person or work order"/><kbd>⌘ K</kbd></label>
+        <label className="fr-filter-select">From<input aria-label="Activity from date" type="date" value={from} onChange={event => setFrom(event.target.value)}/></label>
+        <label className="fr-filter-select">To<input aria-label="Activity to date" type="date" value={to} onChange={event => setTo(event.target.value)}/></label>
+        <label className="fr-filter-select">Activity<select aria-label="Activity type" value={kind} onChange={event => setKind(event.target.value)}><option>All activity</option>{kinds.map(value => <option key={value}>{value}</option>)}</select></label>
+        <label className="fr-filter-select">Person<select aria-label="Activity person" value={actor} onChange={event => setActor(event.target.value)}><option>Everyone</option>{actors.map(value => <option key={value}>{value}</option>)}</select></label>
+        <div className="fr-controls"><button className="fr-density" type="button" aria-pressed={compact} onClick={setDensity}><SlidersHorizontal size={15}/>{compact ? 'Comfortable' : 'Compact'}</button><button className="fr-density" type="button" onClick={clear}>Clear filters</button></div>
+      </div>
+      <div className="fr-table-scroll" role="region" aria-label="Filtered activity events" tabIndex="0"><table className={compact ? 'fr-compact' : ''}><thead><tr><th>Date and time</th><th>Activity</th><th>Record</th><th>Person</th><th><span className="fr-visually-hidden">Details</span></th></tr></thead><tbody>
+        {rows.map(event => <tr key={event.id}><td><time dateTime={event.at}>{event.date}</time></td><td><span className="fr-activity-kind">{event.kind}</span></td><td><span dangerouslySetInnerHTML={{ __html: event.actionHtml }}/>{event.orderId && <small className="fr-activity-order">Work order · <span dangerouslySetInnerHTML={{ __html: event.orderHtml }}/></small>}</td><td>{event.actor}</td><td><button className="fr-open-button" aria-label={`Details for ${event.kind} at ${event.date}`} onClick={click => { returnFocus.current = click.currentTarget; setSelected(event); }}><ArrowUpRight size={18}/></button></td></tr>)}
+      </tbody></table>{!rows.length && <div className="fr-empty">No activity matches the current filters.</div>}</div>
+      <footer><span aria-live="polite">{rows.length} of {events.length} activity events</span><span><Check size={13}/> Read-only record view</span></footer>
+    </section>
+    <ActivityDrawer event={selected} onClose={closeDetails} onOpenOrder={onOpenOrder} returnFocus={returnFocus}/>
+  </div>;
+}
+
 let root = null;
 let rootElement = null;
 window.FlightReact = {
@@ -656,6 +736,14 @@ window.FlightReact = {
       rootElement = element;
     }
     flushSync(() => root.render(<TraceSearch state={state} MES={MES} initialQuery={initialQuery} onSearch={onSearch} onReport={onReport} onRoute={onRoute}/>));
+  },
+  renderActivity(element, events, onOpenOrder) {
+    if (!root || rootElement !== element) {
+      if (root) root.unmount();
+      root = createRoot(element);
+      rootElement = element;
+    }
+    flushSync(() => root.render(<ActivityLog events={events} onOpenOrder={onOpenOrder}/>));
   },
   unmount() { if (root) { root.unmount(); root = null; rootElement = null; } }
 };
