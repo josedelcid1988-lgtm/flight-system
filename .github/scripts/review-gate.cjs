@@ -1,5 +1,7 @@
 'use strict';
 
+const crypto = require('node:crypto');
+
 function latestBy(items, timestamp) {
   return [...items].sort((left, right) => Date.parse(timestamp(right) || 0) - Date.parse(timestamp(left) || 0))[0] || null;
 }
@@ -17,7 +19,17 @@ function jinxApproved(reviews, login, headSha) {
   });
 }
 
-function claudeApproved(comments, headSha, mainSha) {
+function isIndependentReviewer(login, authorLogin) {
+  return Boolean(login && authorLogin && login.toLowerCase() !== authorLogin.toLowerCase());
+}
+
+function descriptionSha256(pull) {
+  return crypto.createHash('sha256')
+    .update(JSON.stringify([pull?.title || '', pull?.body || '']), 'utf8')
+    .digest('hex');
+}
+
+function claudeApproved(comments, headSha, mainSha, descriptionSha) {
   const latest = latestBy(
     comments.filter(comment => comment.user?.login === 'claude[bot]' && comment.user?.type === 'Bot'),
     comment => comment.created_at,
@@ -28,11 +40,14 @@ function claudeApproved(comments, headSha, mainSha) {
   while (lines.length && /^---+$/.test(lines.at(-1))) lines.pop();
   return lines.includes(`PR head SHA reviewed: ${headSha}`) &&
     lines.includes(`Main SHA reviewed against: ${mainSha}`) &&
+    lines.includes(`PR description SHA-256 reviewed: ${descriptionSha}`) &&
     lines.at(-1) === 'Claude verdict: OK to merge';
 }
 
 function isImportantFinding(body) {
-  return (body || '').split(/\r?\n/).some(line => {
+  const text = typeof body === 'string' ? body : body?.body || '';
+  if (/\bP1(?:\s+Badge)?\b/i.test(text.slice(0, 500))) return true;
+  return text.split(/\r?\n/).some(line => {
     const normalized = line
       .replace(/^\s*(?:(?:>\s*)|(?:[-*+]\s+)|(?:\d+[.)]\s+))+/, '')
       .replace(/^[*_`]+/, '')
@@ -40,6 +55,11 @@ function isImportantFinding(body) {
       .replace(/^[*_`]+/, '');
     return /^Important(?:[*_`]+)?\s*:/i.test(normalized);
   });
+}
+
+function isEligiblePullRequest(pull, mainSha, behindBy) {
+  return Boolean(pull && pull.state === 'open' && !pull.draft && pull.base?.ref === 'main' &&
+    pull.mergeable === true && mainSha && pull.base?.sha === mainSha && behindBy === 0);
 }
 
 function hasUnresolvedImportant(threads) {
@@ -72,9 +92,12 @@ function latestCiSucceeded(runs, pullNumber, headSha) {
 module.exports = {
   claudeApproved,
   changedFilesComplete,
+  descriptionSha256,
   hasProtectedAutoMergeChange,
   hasUnresolvedImportant,
+  isIndependentReviewer,
   isImportantFinding,
+  isEligiblePullRequest,
   jinxApproved,
   latestCiSucceeded,
 };

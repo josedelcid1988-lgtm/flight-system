@@ -103,14 +103,16 @@ jobs:
               if (!pull || pull.state !== 'open' || pull.draft || pull.base.ref !== 'main') {
                 return { ok: false, message: 'Only open, ready-for-review PRs targeting main are eligible.' };
               }
-              if (pull.user?.login?.toLowerCase() === jinxLogin.toLowerCase()) {
+              if (!gateSignals.isIndependentReviewer(jinxLogin, pull.user?.login)) {
                 return { ok: false, message: 'Jinx’s approval identity must be a dedicated account separate from the PR author.' };
               }
 
               const headSha = pull.head.sha;
               const mainSha = (await github.rest.repos.getBranch({ owner, repo, branch: 'main' })).data.commit.sha;
               const comparison = await github.rest.repos.compareCommits({ owner, repo, base: mainSha, head: headSha });
-              if (comparison.data.behind_by !== 0) return { ok: false, message: 'The PR branch is behind current main; update it and obtain new head-bound approvals.' };
+              if (!gateSignals.isEligiblePullRequest(pull, mainSha, comparison.data.behind_by)) {
+                return { ok: false, message: 'The PR is not mergeable against the current main SHA; update it and obtain fresh head-bound approvals.' };
+              }
 
               const changedFiles = await github.paginate(github.rest.pulls.listFiles, {
                 owner, repo, pull_number: pull.number, per_page: 100,
@@ -125,8 +127,9 @@ jobs:
               const comments = await github.paginate(github.rest.issues.listComments, {
                 owner, repo, issue_number: pull.number, per_page: 100,
               });
-              if (!gateSignals.claudeApproved(comments, headSha, mainSha)) {
-                return { ok: false, message: 'The latest claude[bot] summary must approve this exact PR head and current main SHA.' };
+              const descriptionSha = gateSignals.descriptionSha256(pull);
+              if (!gateSignals.claudeApproved(comments, headSha, mainSha, descriptionSha)) {
+                return { ok: false, message: 'The latest claude[bot] summary must approve this exact PR head, current main SHA, and PR title/description.' };
               }
 
               const reviews = await github.paginate(github.rest.pulls.listReviews, {
