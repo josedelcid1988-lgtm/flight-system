@@ -4,7 +4,7 @@
 **Branch:** `flight-v82-datum-port`  
 **Build:** `v82`
 
-**Status:** implementation remains in progress. The workspace snapshot authorization bypass is closed, and refused local edits now have an account-bound, tab-scoped recovery download. Legacy command coverage, several requested feature ports and the remaining design migration are still open. The local ZIPs were rebuilt from the current tree but remain integration-review packages, not production approval.
+**Status:** implementation remains in progress. The workspace snapshot authorization bypass is closed, and refused local edits now have an account-bound, tab-scoped recovery download. Legacy command coverage, several requested feature ports and the remaining design migration are still open. The local ZIPs were rebuilt from the current tree for integration review; they are not production approval.
 
 ## Included
 
@@ -16,7 +16,7 @@
 - Browser captures and a short interaction recording under `artifacts/design/`.
 - ATP operations require a baseline version and commit tied to an HTTPS repository on any host. Missing links are refused, and migrated legacy unlinked ATP operations require remediation before buy-off.
 
-The approved React design is implemented on the Flight Control Hangar and work-order drawer, the
+The approved React design is implemented on the Flight Control Hangar, work-order queue and work-order drawer, the
 Flight Plan planned-order queue, Kanban, MRP forecast, Big Three, project/milestone planning and
 dispatch, and Flight Maneuver Quality Hangar plus NC Intake, Corrective Actions, Material Review
 Board and Problem Reports queues. Search, NC escape/source filters, density and current metrics use
@@ -35,7 +35,7 @@ Control workflows beyond the Hangar and Flight Maneuver full detail screens stil
 | 6. System-level QMS | Partial | Signed audits/findings, supplier approvals, certifications, quality-study values/verdicts, and controlled document revisions with attached, hashed files and separate author/reviewer/releaser credentials. AI governance adds DG-01 to DG-04 and SOP-750-007 drafts, a DG-01 job description template, a 13-entry AI risk register, hash-chained action evidence, a signed ISO/IEC 42001 export, and model-setting controls that verify a named secret exists on the server. `test_qms_records*`, `test_qms_documents*`, `test_qms_governance*` cover the current paths. | DG procedures remain drafts until three-person document release. Model execution is deliberately unavailable; the model setting is configuration evidence only. The ISO export is an evidence extract, not certification of an AI management system. |
 | 7. Skills | Partial | Twelve Flight-only deterministic draft categories are allowlisted. The engine records input/output hashes and reasons, deduplicates repeated trigger/input pairs, supports signed reviewer and different-person acceptance steps, and refuses any draft that still contains `[confirm]` scaffolds. It does not mutate target production records. QA Manager/Master Access can configure signed triggers. The master WI draft has a Form 3 plan editor with a SHA-256 manifest, and FAIR seeding copies planned characteristics. SPC calculates I-MR control limits, common stability signals and capability from numeric readings. MSA calculates average-and-range repeatability, reproducibility, gage R&R, percent variation and distinct categories for balanced crossed studies. `test_qms_skills.mjs` and `test_form3_plan_ui.mjs` cover these paths. | Other requested skill outputs remain conservative templates rather than the full Datum per-skill analysis algorithms. Triggers are authorized run definitions and are not yet wired to every business event. More ported Datum fixtures remain. Model execution is unavailable. |
 | 8. Prints and floor | Partial | Record extracts, print/export logs, build stamps, server sync status, the existing helicopter lifecycle bar, a companion progress ring, an opt-in screen wake lock, and a coarse-pointer bounded whole-number picker with touch adjustment, accessible step controls and min/max enforcement. FAIR Forms 1, 2, and 3 each start on a new printed page, table headers repeat, and the signature block appears only on Form 1. `test_v74.mjs`, `test_floor_ui.mjs`, and `test_floor_picker_ui.mjs` cover print layout, wake-lock consent, helicopter preservation and picker behavior. | Verify the generated picker against representative in-app quantity fields on iOS and Android hardware. No extra vendor library was needed for current work. |
-| 9. Verify and package | Partial | CI jobs, 63-suite local and mirror runs with zero skips, realistic legacy-workspace migration with `verifyManifests`, browser captures, source packaging and mirror-chain verification. The React Flight Plan Kanban and MRP forecast have focused browser checks for record-derived lanes and summaries, selection handoff, density, responsive layout and reduced motion. The source, production and demo archives are rebuilt and verified for integration review. These artifacts do not imply that the open phases are complete. | PostgreSQL target checks, all requested phases, and production authorization are still required before release approval. Rebuild the ZIPs after any further source change. |
+| 9. Verify and package | Partial | CI jobs, 64-suite local and mirror runs with zero skips, realistic legacy-workspace migration with `verifyManifests`, browser captures, source packaging and mirror-chain verification. The React Flight Plan Kanban and MRP forecast have focused browser checks for record-derived lanes and summaries, selection handoff, density, responsive layout and reduced motion. The source, production and demo archives are rebuilt and verified for integration review. These artifacts do not imply that the open phases are complete. | PostgreSQL target checks, all requested phases, and production authorization are still required before release approval. Rebuild the ZIPs after any further source change. |
 
 The phase list above is the original requested scope, not a claim that phases 2 through 8 are complete.
 
@@ -62,10 +62,10 @@ check. Persistent storage and tested backups are required.
 
 ## Verification status
 
-The current local run (16:00:03 to 16:05:49 UTC) and mirror run (16:05:52 to 16:11:41 UTC) on
-September 27, 2026 each passed 63 of 63 suites, including `qa_full` with 310 checks and zero skips.
-Both tested index stamp
-`3d718ce1868b7b1c389a5e3703aad9b100333edb25331aa8b63a405c9345d1a4`; the mirror run stored 17,544
+The current local run (17:13:25 to 17:19:11 UTC) and mirror run (17:19:14 to 17:25:03 UTC) on
+September 27, 2026 each passed 64 of 64 suites, including `qa_full` with 310 checks and `qa_multi`
+with 161 checks. Both runs had zero skips and tested index stamp
+`48342b28496510abe133cfdfccd46974a78bfb52dfb0789feae2d00a761effab`; the mirror run stored 17,545
 records with an intact chain. These runs include browser checks that server refusals on both the MES
 action and legacy snapshot paths restore the committed workspace. Both runs include FAIR print
 layout checks and an authorized 8130-9 AQI browser signature persisted through its audited server action,
@@ -77,13 +77,13 @@ configuration coverage, Test/Conformity sub-code coverage, Operations Manager an
 role boundaries, optional MRB training-tier vote gates, malformed stamp CSV refusal checks, QMS
 record export settings and retry controls, and signed audits, supplier approvals, certifications and
 quality verdicts. The access page also surfaces critical capabilities held by fewer than two active
-accounts. The machine-path scan, React build check, and recorded browser flows passed. Full details are in
+accounts. The machine-path scan, React build check, and recorded browser flows passed. The Flight Control work-order queue passed focused browser checks for live records, search, compact density, Escape-close drawer behavior, full-page workflow routing, responsive tablet scrolling, and exact preservation of the existing helicopter progress markup. A 1920px browser check confirmed all eight columns fit without horizontal overflow under reduced-motion settings. Captures are `flight-control-orders-1440.png`, `flight-control-orders-1920.png`, and `flight-control-orders-tablet.png`. Full details are in
 [`TEST-RESULTS-v82.md`](docs/TEST-RESULTS-v82.md). PostgreSQL integration is configured in CI; it was not
 run against a locally provisioned database during this handoff.
 
 ## Design verification
 
-The React Hangar uses current Flight records for its queue, search, open/all filter, density control, open holds and work-order drawer. The React Flight Plan page renders the blocker-ranked Big Three, work-center dispatch, project/milestone planning and planned-order queue; existing FlightPlan actions remain authoritative. The React Flight Maneuver Quality Hangar uses current CAR, MRB, NC and SPR records, with search, type filter, density control, accessible detail drawer and navigation into the full legacy workflows. Keyboard Escape closes drawers and restores focus. Captures and browser suites cover desktop/tablet layouts, search, filters, density, focus, reduced motion, Flight Maneuver records, and the protected Skyryse helicopter imagery.
+The React Hangar uses current Flight records for its queue, search, open/all filter, density control, open holds and work-order drawer. The React Flight Control work-order queue keeps the existing record sorting, filters, priority commands and table summary, formats Created and Due dates as Month Day, Year, adds a record drawer and density control, and routes complex work into the existing full-page MES workflow. It preserves the full helicopter progress markup and binding; the focused browser test compares it against the existing engine output. The detail drawer closes before handing the record to the existing full-page route action. The React Flight Plan page renders the blocker-ranked Big Three, work-center dispatch, project/milestone planning and planned-order queue; existing FlightPlan actions remain authoritative. The React Flight Maneuver Quality Hangar uses current CAR, MRB, NC and SPR records, with search, type filter, density control, accessible detail drawer and navigation into the full legacy workflows. Keyboard Escape closes drawers and restores focus. Captures and browser suites cover desktop/tablet layouts, search, filters, density, focus, reduced motion, Flight Maneuver records, and the protected Skyryse helicopter imagery.
 
 React now renders the Flight Maneuver Quality Hangar, NC Intake, Corrective Actions, Material Review
 Board and Problem Reports queues from current records. NC Intake retains the Escapes filter and

@@ -105,6 +105,66 @@ function Hangar({ state, MES, onOpen }) {
   </div>;
 }
 
+function WorkOrderQueue({ state, MES, rows: sourceRows, initial, callbacks, onOpen }) {
+  const [query, setQuery] = useState(initial.search || '');
+  const [status, setStatus] = useState(initial.status || 'All');
+  const [site, setSite] = useState(initial.site || 'All');
+  const [aircraft, setAircraft] = useState(initial.aircraft || 'All');
+  const [flagged, setFlagged] = useState(initial.flagged === true);
+  const [compact, setCompact] = useState(() => { try { return localStorage.getItem(densityKey) === 'compact'; } catch { return false; } });
+  const [selected, setSelected] = useState(null);
+  const searchRef = useRef(null);
+  useEffect(() => {
+    const shortcut = event => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); searchRef.current?.focus(); } };
+    window.addEventListener('keydown', shortcut);
+    return () => window.removeEventListener('keydown', shortcut);
+  }, []);
+  const notifyFilters = next => callbacks?.onFilters?.(next);
+  const matchStatus = item => status === 'All' || item.record.status === status || (status === 'Blocked' && item.held);
+  const rows = sourceRows.filter(item => {
+    const order = item.record;
+    const searchable = [order.id, order.title, order.partNumber, order.status, order.pedigree, order.aircraft, MES.orderSite(order)].map(asText).join(' ').toLowerCase();
+    return matchStatus(item) && (site === 'All' || MES.orderSite(order) === site) && (aircraft === 'All' || order.aircraft === aircraft) && (!flagged || item.flagged) && searchable.includes(query.trim().toLowerCase());
+  });
+  const density = () => setCompact(value => { const next = !value; try { localStorage.setItem(densityKey, next ? 'compact' : 'comfortable'); } catch {} return next; });
+  const setSearch = value => { setQuery(value); notifyFilters({ search: value }); };
+  const setStatusFilter = value => { setStatus(value); notifyFilters({ status: value }); };
+  const setSiteFilter = value => { setSite(value); notifyFilters({ site: value }); };
+  const setAircraftFilter = value => { setAircraft(value); notifyFilters({ aircraft: value }); };
+  const setFlagFilter = value => { setFlagged(value); notifyFilters({ flagged: value }); };
+  const clearFilters = () => { setSearch(''); setStatusFilter('All'); setSiteFilter('All'); setAircraftFilter('All'); setFlagFilter(false); callbacks?.onClear?.(); };
+  return <div className="flight-react fr-order-page">
+    <div className="fr-page-heading"><div><span className="fr-eyebrow">FLIGHT CONTROL</span><h1>{initial.title || 'All work orders'}<span>.</span></h1>{initial.wiFilter && <p className="fr-order-filter-note">Cloned from <strong>{initial.wiFilter.id}</strong>{initial.wiFilter.revision ? ` Rev ${initial.wiFilter.revision}` : ' · all revisions'} <button className="fr-text-action" data-action="wi-filter-clear">Show all work orders</button></p>}</div><div className="fr-order-heading-actions" dangerouslySetInnerHTML={{ __html: initial.createButton }}/></div>
+    <section className="fr-queue" aria-labelledby="fr-orders-heading">
+      <div className="fr-queue-heading"><div className="fr-section-heading"><h2 id="fr-orders-heading">Work orders</h2><span className="fr-count">{String(rows.length).padStart(2, '0')}</span></div>
+        <div className="fr-controls"><label className="fr-search"><Search size={16}/><input id="order-search" ref={searchRef} type="search" aria-label="Search work orders" value={query} onChange={event => setSearch(event.target.value)} placeholder="Search orders"/><kbd>⌘ K</kbd></label>
+          <label className="fr-filter-select"><span className="fr-visually-hidden">Work order status</span><select aria-label="Work order status" value={status} onChange={event => setStatusFilter(event.target.value)}>{['All', 'Blocked', 'Draft', 'Kitting', 'Building', 'Quality', 'Closed'].map(value => <option key={value}>{value}</option>)}</select></label>
+          <label className="fr-filter-select"><span className="fr-visually-hidden">Site</span><select aria-label="Work order site" value={site} onChange={event => setSiteFilter(event.target.value)}>{['All', ...MES.SITES].map(value => <option key={value}>{value}</option>)}</select></label>
+          <label className="fr-filter-select"><span className="fr-visually-hidden">Aircraft</span><select aria-label="Work order aircraft" value={aircraft} onChange={event => setAircraftFilter(event.target.value)}>{['All', ...MES.AIRCRAFT].map(value => <option key={value}>{value}</option>)}</select></label>
+          <label className="fr-order-flag"><input type="checkbox" checked={flagged} onChange={event => setFlagFilter(event.target.checked)}/> Flagged</label>
+          <button className="fr-density" aria-pressed={compact} onClick={density}><SlidersHorizontal size={15}/>{compact ? 'Comfortable' : 'Compact'}</button>
+        </div>
+      </div>
+      <div className="fr-order-table-summary" dangerouslySetInnerHTML={{ __html: callbacks?.summary?.(rows.length) || '' }}/>
+      <div className="fr-table-scroll table-wrap" role="region" aria-label="Work orders table" tabIndex="0">
+        <table className={`fr-order-table${compact ? ' fr-compact' : ''}`}><thead><tr dangerouslySetInnerHTML={{ __html: initial.headers.join('') }}/></thead><tbody>{rows.map(item => { const order = item.record; return <tr key={order.id} className={`${item.held ? 'hold-row' : ''} ${item.aog ? 'aog-row' : ''}`} data-order-row={order.id}>
+          <td><button className="fr-record-link" onClick={() => setSelected(order)}><strong>{order.id}</strong>{order.fai?.required && <span className="fr-fai-tag">FAI</span>}</button></td>
+          <td><strong className="fr-mono">{order.partNumber} / Rev {order.revision}</strong><small>{titleOf(order)}</small>{order.aircraft && <small className="fr-mono">Aircraft {order.aircraft}</small>}{item.superseded && <small className="fr-revision-warning">Superseded revision</small>}</td>
+          <td>{item.held ? <><span className="fr-order-blocked">Blocked</span><small>{order.status}{item.engineering ? ' · engineering change' : ''}{item.openTickets ? ` · ${item.openTickets} open NC` : ''}</small></> : <><span className="fr-status"><i/>{order.status}</span>{item.qaPending && <small>QA approval pending</small>}{item.openTickets ? <small>{item.openTickets} open NC</small> : null}</>}</td>
+          <td className="fr-mono"><time dateTime={item.created}>{displayFlightDate(item.created)}</time></td>
+          <td className={`fr-mono${item.overdue ? ' is-overdue' : ''}`}><time dateTime={order.due || ''}>{displayFlightDate(order.due)}</time></td>
+          <td><div dangerouslySetInnerHTML={{ __html: item.progress }}/></td>
+          <td>{order.pedigree}{order.subcategory && <small>{order.subcategory}</small>}</td>
+          <td><select className={`fr-order-priority ${asText(order.priority).toLowerCase()}`} data-priority-order={order.id} aria-label={`Priority for ${order.id}`} disabled={order.status === 'Closed'} defaultValue={order.priority}>{MES.PRIORITIES.map(value => <option key={value}>{value}</option>)}</select></td>
+        </tr>; })}</tbody></table>
+        {!rows.length && <div className="fr-empty">No matching work orders. Adjust the search or filters.</div>}
+      </div>
+      <footer><span>{rows.length} of {state.orders.length} work orders · {site === 'All' ? 'all sites' : site}</span><span><Check size={13}/> Flight progress and existing MES command gates are preserved</span></footer>
+    </section>
+    <RecordDrawer order={selected} MES={MES} onClose={() => setSelected(null)} onOpen={onOpen}/>
+  </div>;
+}
+
 function BigThree({ state, MES }) {
   const date = new Date().toISOString().slice(0, 10);
   const snap = MES.plannerStatus(state, date);
@@ -367,7 +427,7 @@ function ManeuverDrawer({ item, onClose, onOpen }) {
         <div><dt>Next permitted step</dt><dd>{record.nextStep || 'Open the record to review its current gate.'}</dd></div>
       </dl>
       {record.summary && <p className="fr-mnv-summary">{record.summary}</p>}
-      <button className="fr-primary" onClick={() => { onOpen(record); close(); }}>Open full record <ArrowUpRight size={17}/></button>
+      <button className="fr-primary" onClick={() => { close(); onOpen(record); }}>Open full record <ArrowUpRight size={17}/></button>
     </section>}
   </dialog>;
 }
@@ -444,6 +504,14 @@ window.FlightReact = {
       rootElement = element;
     }
     flushSync(() => root.render(<Hangar state={state} MES={MES} onOpen={onOpen}/>));
+  },
+  renderOrders(element, state, MES, props, onOpen) {
+    if (!root || rootElement !== element) {
+      if (root) root.unmount();
+      root = createRoot(element);
+      rootElement = element;
+    }
+    flushSync(() => root.render(<WorkOrderQueue state={state} MES={MES} rows={props.rows} initial={props.initial} callbacks={props.callbacks} onOpen={onOpen}/>));
   },
   renderPlan(element, state, MES, FlightPlan, onMutation, initialQuery = '', initialStatus = 'All') {
     if (!root || rootElement !== element) {

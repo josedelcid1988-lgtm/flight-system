@@ -12,6 +12,7 @@ const reactSource = fs.readFileSync(new URL('../src/react/flight-ui.jsx', import
 assert.match(index, /href=\"assets\/flight-ui\.css\"/);
 assert.match(index, /src=\"assets\/flight-ui\.js\"/);
 assert.match(index, /window\.FlightReact\.renderHangar\(/);
+assert.match(index, /window\.FlightReact\.renderOrders\(/);
 assert.match(index, /window\.FlightReact\.renderPlan\(/);
 assert.match(index, /window\.FlightReact\.renderPlanKanban\(/);
 assert.match(index, /window\.FlightReact\.renderPlanForecast\(/);
@@ -19,6 +20,8 @@ assert.match(index, /window\.FlightReact\.renderManeuver\(/);
 assert.match(index, /innerHTML=legacyMarkup/);
 assert.doesNotMatch(index, /renderHangar\(\$\('#main'\)/);
 assert.match(bundle, /renderHangar/);
+assert.match(bundle, /renderOrders/);
+assert.match(reactSource, /function WorkOrderQueue/);
 assert.match(bundle, /renderPlan/);
 assert.match(bundle, /renderPlanKanban/);
 assert.match(bundle, /renderPlanForecast/);
@@ -43,6 +46,7 @@ assert.match(fonts, /@font-face/);
 assert.match(demo, /id=\"flight-react-bundle\"/);
 assert.match(demo, /href=\"assets\/flight-ui\.css\"/);
 assert.match(demo, /window\.FlightReact\.renderHangar\(/);
+assert.match(demo, /window\.FlightReact\.renderOrders\(/);
 assert.match(demo, /window\.FlightReact\.renderPlan\(/);
 assert.match(demo, /innerHTML=legacyMarkup/);
 assert.doesNotMatch(demo, /renderHangar\(\$\('#main'\)/);
@@ -53,4 +57,4 @@ for (const file of ['React-MIT.txt', 'React-DOM-MIT.txt', 'Scheduler-MIT.txt', '
 
 const build = spawnSync(process.execPath, ['tools/build-react.mjs', '--check'], { encoding: 'utf8' });
 assert.equal(build.status, 0, build.stdout + build.stderr);
-console.log('React build: 45 checks, all passed');
+console.log('React build: 49 checks, all passed');
