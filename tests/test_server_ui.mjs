@@ -54,7 +54,9 @@ try {
   const snapshotWrites = (await server.store.auditRows(1000)).filter(row => row.action === 'workspace-put');
   assert.equal(snapshotWrites.length, snapshotCountBeforeActions, 'record edits do not fall back to another full-workspace write');
   for (const action of ['containNC', 'effectivenessCheck', 'pfmeaSafetyBuyoff']) assert.equal(typeof server.host.resolveAction(`FlightManeuver.${action}`), 'function', `the server accepts ${action} through its authorized action boundary`);
+  assert.equal(typeof server.host.resolveAction('MES.pruneExpiredNotices'), 'function', 'the server accepts expired announcement cleanup through its authorized action boundary');
   assert.deepEqual(await page.evaluate(() => ['containNC', 'effectivenessCheck', 'pfmeaSafetyBuyoff'].map(name => FlightManeuver[name].__serverCommandWrapped === true)), [true, true, true], 'the browser queues all three non-prefix-named quality commands for the server');
+  assert.equal(await page.evaluate(() => MES.pruneExpiredNotices.__serverCommandWrapped === true), true, 'the browser routes background expired-announcement cleanup to the server');
 
   const supportChange = await page.evaluate(() => {
     window.__authSaved = false;

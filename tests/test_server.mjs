@@ -259,7 +259,7 @@ try {
   });
   await check('workspace action API refuses exported read and migration helpers', async () => {
     const before = server.store.getDoc('default');
-    for (const name of ['MES.editOrderOperation','MES.reviseMasterWI','MES.pushATPSoftware','MES.acknowledgeNotice','MES.pingAssignment','MES.icalImport','MES.aqiSign8130_9','MES.checkConformity','MES.notifyCertification','MES.qaReviewMasterWI','MES.noteDemoBypassRemoved','FlightManeuver.containNC','FlightManeuver.effectivenessCheck','FlightManeuver.pfmeaSafetyBuyoff']) {
+    for (const name of ['MES.editOrderOperation','MES.reviseMasterWI','MES.pushATPSoftware','MES.acknowledgeNotice','MES.pingAssignment','MES.icalImport','MES.aqiSign8130_9','MES.checkConformity','MES.notifyCertification','MES.qaReviewMasterWI','MES.noteDemoBypassRemoved','MES.pruneExpiredNotices','FlightManeuver.containNC','FlightManeuver.effectivenessCheck','FlightManeuver.pfmeaSafetyBuyoff']) {
       assert.equal(typeof server.host.resolveAction(name), 'function', `${name} is an authorized engine command`);
     }
     assert.equal(server.host.resolveAction('MES.icalExport'), null, 'calendar export stays a read and is not exposed as a mutation command');
@@ -269,6 +269,19 @@ try {
       assert.equal(result.status, 404, `${name} must not be remotely callable`);
     }
     assert.equal(server.store.getDoc('default').etag, before.etag, 'rejected requests leave the shared workspace unchanged');
+  });
+  await check('expired announcement cleanup preserves pinned, recent, and undated records', async () => {
+    const old = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+    const state = { notices: [
+      { id: 'old', at: old, pinned: false },
+      { id: 'pinned', at: old, pinned: true },
+      { id: 'recent', at: new Date().toISOString(), pinned: false },
+      { id: 'undated', at: 'unrecognized', pinned: false }
+    ] };
+    const result = server.host.MES.pruneExpiredNotices(state);
+    assert.equal(result.ok, true);
+    assert.equal(result.removed, 1);
+    assert.deepEqual(state.notices.map(item => item.id), ['pinned', 'recent', 'undated']);
   });
   await check('model adapter secret is confirmed only on the server and governance export is QMS-gated', async () => {
     const doc = server.store.getDoc('default');

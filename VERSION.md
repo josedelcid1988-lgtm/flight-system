@@ -61,12 +61,12 @@ the tree.
 | Item | Value |
 | --- | --- |
 | Build | v82 |
-| index.html SHA-256, as stamped in the file | `2bcac2bf1604d19e6e8bec95b4dba8cbacf567554cf49fabb8b64add0b5db28c` |
-| index.html file SHA-256 | `10724703a313d0fd2f5954108fbd4cc88c0ed4b00551b68a5bcb53aa0c430b76` |
-| demo.html file SHA-256 | `6bffa43779f7aca8fa8b58a787221d11d02a7309896b5161c352c7e7b07c15d9` |
+| index.html SHA-256, as stamped in the file | `01d90a45b4df25584ade8405f3e97c7d9e722f8918feef8006c27661c0183676` |
+| index.html file SHA-256 | `84a008414a73e3614f87108e5708585120994203805ee7cc1799f95121c96a7a` |
+| demo.html file SHA-256 | `3826c0abbd18d9a0a246fef3ddb1392c287b0c9379be78614e632546721de4d7` |
 | Suites run | 2026-09-27 |
-| Mirror off | 66 of 66 pass |
-| Mirror on | 66 of 66 pass; the mirror received 17546 records, chain intact |
+| Mirror off | 67 of 67 pass |
+| Mirror on | 67 of 67 pass; the mirror received 17545 records, chain intact |
 | Skips | none |
 
 The stamped SHA-256 is the hash of `index.html` with its own `fs-build-sha256` field set to
@@ -116,6 +116,7 @@ values are plain hashes of the files as committed.
 | test_qms_records |  | pass | pass |
 | test_qms_records_ui |  | pass | pass |
 | test_qms_skills |  | pass | pass |
+| test_react_activity_ui |  | pass | pass |
 | test_react_build |  | pass | pass |
 | test_react_maneuver_ui |  | pass | pass |
 | test_react_orders_ui |  | pass | pass |
