@@ -48,6 +48,9 @@ jobs:
           npm ci
           npx playwright install --with-deps chromium
 
+      - name: Install PostgreSQL 16 client tools for backup and restore verification
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client-16
+
       - name: React bundle, local assets, and production integration are current
         run: npm run build:react -- --check
 

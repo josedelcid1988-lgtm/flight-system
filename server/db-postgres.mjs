@@ -98,7 +98,7 @@ function makeStore(pool, query, inTransaction, connectionString) {
       await query('INSERT INTO documents (tenant,json,etag,revision,updated_at,updated_by) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (tenant) DO UPDATE SET json=EXCLUDED.json,etag=EXCLUDED.etag,revision=EXCLUDED.revision,updated_at=EXCLUDED.updated_at,updated_by=EXCLUDED.updated_by', [tenant, value, etag, revision, now(), by || null]);
       return etag;
     },
-    async accounts() { return (await query('SELECT username,display_name,salt,hash,role,roles,created_at,created_by,sso FROM accounts ORDER BY created_at')).rows.map(mapAccount); },
+    async accounts() { return (await query('SELECT username,display_name,salt,hash,role,roles,profile,created_at,created_by,sso FROM accounts ORDER BY created_at')).rows.map(mapAccount); },
     async account(username) { return (await store.accounts()).find(a => a.username === username) || null; },
     async upsertAccount(a) {
       const roles = Array.isArray(a.roles) && a.roles.length ? [...new Set(a.roles)] : [a.role];
@@ -164,7 +164,16 @@ function makeStore(pool, query, inTransaction, connectionString) {
     async evidenceList() { const rows = (await query('SELECT id FROM evidence ORDER BY uploaded_at')).rows; return Promise.all(rows.map(r => store.evidenceMeta(r.id))); },
     async putEvidence(e) { await query('INSERT INTO evidence (id,sha256,size,mime,file_name,uploaded_by,uploaded_at,bytes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [e.id,e.sha256,e.size,e.mime,e.fileName||null,e.uploadedBy,now(),e.bytes]); return store.evidenceMeta(e.id); },
     async supersedeEvidence(id, by, reason) { await query('UPDATE evidence SET superseded_by=$1,superseded_at=$2,superseded_reason=$3 WHERE id=$4 AND superseded_by IS NULL', [by,now(),reason,id]); return store.evidenceMeta(id); },
-    async backup(destination) { return new Promise((resolve, reject) => { const child = spawn('pg_dump', ['--format=custom', '--file', destination], { env: { ...process.env, PGDATABASE: connectionString }, stdio: 'ignore' }); child.once('error', reject); child.once('exit', (code, signal) => code === 0 ? resolve(0) : reject(new Error(`pg_dump failed (${signal || code}). Install PostgreSQL client tools and verify database access.`))); }); },
+    async backup(destination) {
+      return new Promise((resolve, reject) => {
+        const child = spawn('pg_dump', ['--format=custom', '--file', destination, '--dbname', connectionString], { stdio: 'ignore' });
+        child.once('error', reject);
+        child.once('exit', (code, signal) => {
+          if (code === 0) resolve(0);
+          else reject(new Error(`pg_dump failed (${signal || code}). Install PostgreSQL client tools and verify database access.`));
+        });
+      });
+    },
     async audit(username, action, detail) { if (inTransaction) return appendAudit(username, action, detail); return store.transaction(tx => tx.audit(username, action, detail)); },
     async auditRows(limit = 200) { return (await query('SELECT id,at,username,action,detail,prev_hash AS "prevHash",hash FROM audit ORDER BY id DESC LIMIT $1', [limit])).rows.map(r => ({ ...r, id: Number(r.id) })); },
     async verifyAudit() {

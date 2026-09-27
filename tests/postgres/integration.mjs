@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createServer } from '../../server/server.mjs';
+import { openPostgres } from '../../server/db-postgres.mjs';
 
 const connectionString = process.env.FLIGHT_DATABASE_URL;
 if (!connectionString) throw new Error('FLIGHT_DATABASE_URL is required for the PostgreSQL integration check.');
@@ -52,9 +54,12 @@ try {
   const pgProfile = { ...login.json.account, extraRoles: ['quality'], roleTraining: { quality: { code: 'QA-101' } }, grants: { 'push-software': { trainingCode: 'SW-101' } }, grantHistory: [{ authority: 'push-software', action: 'granted', reason: 'Current training is on file.', hash: 'b'.repeat(64) }], supportAccess: true };
   const profileWrite = await call('/auth/accounts', { method: 'PUT', token, body: { users: [pgProfile] } });
   assert.equal(profileWrite.status, 200, profileWrite.text);
-  assert.deepEqual(server.store.account('pg-admin').grantHistory, pgProfile.grantHistory);
-  assert.deepEqual(server.store.account('pg-admin').roleTraining, pgProfile.roleTraining);
-  assert.equal(server.store.account('pg-admin').supportAccess, true);
+  const persistedProfile = await server.store.account('pg-admin');
+  assert.deepEqual(persistedProfile.grantHistory, pgProfile.grantHistory);
+  assert.deepEqual(persistedProfile.roleTraining, pgProfile.roleTraining);
+  assert.deepEqual(persistedProfile.grants, pgProfile.grants);
+  assert.deepEqual(persistedProfile.extraRoles, pgProfile.extraRoles);
+  assert.equal(persistedProfile.supportAccess, true);
   console.log('ok PostgreSQL authority, training, support, and grant history persistence');
 
   for (const setting of [
@@ -110,6 +115,37 @@ try {
   const download = await fetch(base + `/evidence/${evidenceId}`, { headers: { Authorization: `Bearer ${token}` } });
   assert.deepEqual(Buffer.from(await download.arrayBuffer()), bytes);
   console.log('ok PostgreSQL evidence bytes round-trip with SHA-256');
+
+  const backupPath = path.join(exportDir, 'flight-postgres.dump');
+  const restoreDatabase = `flight_restore_${randomUUID().replaceAll('-', '')}`;
+  const adminUrl = new URL(connectionString);
+  adminUrl.pathname = '/postgres';
+  const restoreUrl = new URL(connectionString);
+  restoreUrl.pathname = `/${restoreDatabase}`;
+  const { Pool } = await import('pg');
+  const adminPool = new Pool({ connectionString: adminUrl.href });
+  let restoredStore;
+  const runPgTool = (command, args) => new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: 'inherit' });
+    child.once('error', reject);
+    child.once('exit', (code, signal) => code === 0 ? resolve() : reject(new Error(`${command} failed (${signal || code}).`)));
+  });
+  try {
+    assert.equal(await server.store.backup(backupPath), 0);
+    assert.ok(fs.statSync(backupPath).size > 0, 'pg_dump produced a non-empty custom-format archive');
+    await adminPool.query(`CREATE DATABASE "${restoreDatabase}"`);
+    await runPgTool('pg_restore', ['--exit-on-error', '--no-owner', '--dbname', restoreUrl.href, backupPath]);
+    restoredStore = await openPostgres(restoreUrl.href);
+    const restoredProfile = await restoredStore.account('pg-admin');
+    assert.deepEqual(restoredProfile.grants, pgProfile.grants);
+    assert.deepEqual(restoredProfile.grantHistory, pgProfile.grantHistory);
+    assert.equal(restoredProfile.supportAccess, true);
+    console.log('ok PostgreSQL custom-format backup restores account authority profile');
+  } finally {
+    await restoredStore?.close();
+    await adminPool.query(`DROP DATABASE IF EXISTS "${restoreDatabase}"`).catch(() => {});
+    await adminPool.end();
+  }
 } finally {
   await server.closeAsync();
   fs.rmSync(exportDir,{recursive:true,force:true});
