@@ -183,16 +183,18 @@ MES action. Initialization normalizes the master WI library, planning records,
 blockers, and signed-in profile before storage.
 
 **Remaining.** Some legacy UI field edits still optimistically save to the
-local browser copy. The server refuses to share those edits unless they map to
-a server MES action. This prevents a shared-record bypass but can leave a user
-with an unshared local edit until reload. Finish command coverage and improve
-the pending/refusal UX before multi-user production use. See
+local browser copy. A definite HTTP refusal now reloads the committed shared
+workspace and discards the unaccepted local change. A transport failure is
+uncertain, so the browser preserves the local copy, marks it unconfirmed, and
+checks the server before sending later writes after connectivity returns. This
+prevents a shared-record bypass but does not replace complete command coverage.
+Finish that coverage before multi-user production use. See
 [`docs/SECURITY_REVIEW-v82.md`](docs/SECURITY_REVIEW-v82.md).
 
-**Status.** Whole-workspace mutation is blocked and covered by server and
-browser checks. Command coverage is incomplete, so do not expose this server
-as an authoritative production system until remaining workflows are converted
-and refusal tests pass.
+**Status.** Whole-workspace mutation is blocked; action and legacy snapshot
+refusal reconciliation are covered by browser checks. Command coverage remains
+incomplete, so do not expose this server as an authoritative production system
+until remaining workflows are converted and refusal tests pass.
 
 ## 13. Local save can precede server confirmation (open)
 

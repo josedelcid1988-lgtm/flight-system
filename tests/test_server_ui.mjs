@@ -115,6 +115,52 @@ try {
   const escalationWorkspace = await (await fetch(`http://127.0.0.1:${port}/api/workspace`, { headers: { Authorization: `Bearer ${token}` } })).json();
   assert.ok(escalationWorkspace.planner.calendar.escalations.length > 0, 'the server persists escalation to QA follow-up');
 
+  const refusalCheck = await page.evaluate(() => {
+    const order = state.orders.find(item => item.status === 'Building');
+    if (!order) throw new Error('No Building order is available for the server refusal check.');
+    const previous = order.priority, next = previous === 'AOG' ? 'Normal' : 'AOG';
+    const api = window.skServer.api.bind(window.skServer);
+    window.__rejectNextPriorityAction = true;
+    window.skServer.api = async (path, options) => {
+      if (window.__rejectNextPriorityAction && String(path).includes('/workspace/actions/MES.setPriority')) {
+        window.__rejectNextPriorityAction = false;
+        return { status: 403, json: { error: 'Controlled server refusal check' } };
+      }
+      return api(path, options);
+    };
+    const result = MES.setPriority(state, order.id, next);
+    if (!result.ok) throw new Error(result.message);
+    save();
+    return { id: order.id, previous, next };
+  });
+  await page.waitForFunction(() => window.skServer?.sync?.status === 'error', null, { timeout: 10000 });
+  await page.waitForFunction(({ id, previous }) => state.orders.find(item => item.id === id)?.priority === previous, refusalCheck, { timeout: 10000 });
+  const refusalServerWorkspace = await (await fetch(`http://127.0.0.1:${port}/api/workspace`, { headers: { Authorization: `Bearer ${token}` } })).json();
+  assert.equal(refusalServerWorkspace.orders.find(item => item.id === refusalCheck.id)?.priority, refusalCheck.previous, 'a definite server refusal discards the unaccepted client edit and reloads the committed record');
+  assert.match(await page.locator('#flight-server-sync').getAttribute('title'), /refused/i, 'the sync status explains the refusal after reconciliation');
+
+  const snapshotRefusal = await page.evaluate(() => {
+    const order = state.orders.find(item => item.status === 'Building');
+    if (!order) throw new Error('No Building order is available for the snapshot refusal check.');
+    const previous = order.priority, next = previous === 'AOG' ? 'Normal' : 'AOG';
+    const api = window.skServer.api.bind(window.skServer);
+    window.__rejectNextWorkspaceSnapshot = true;
+    window.skServer.api = async (path, options) => {
+      if (window.__rejectNextWorkspaceSnapshot && path === '/workspace' && options?.method === 'PUT') {
+        window.__rejectNextWorkspaceSnapshot = false;
+        return { status: 403, json: { error: 'Controlled snapshot refusal check' } };
+      }
+      return api(path, options);
+    };
+    order.priority = next;
+    save();
+    return { id: order.id, previous, next };
+  });
+  await page.waitForFunction(({ id, previous }) => state.orders.find(item => item.id === id)?.priority === previous, snapshotRefusal, { timeout: 10000 });
+  const snapshotRefusalWorkspace = await (await fetch(`http://127.0.0.1:${port}/api/workspace`, { headers: { Authorization: `Bearer ${token}` } })).json();
+  assert.equal(snapshotRefusalWorkspace.orders.find(item => item.id === snapshotRefusal.id)?.priority, snapshotRefusal.previous, 'a refused legacy snapshot reloads the server record instead of leaving an unshared edit on screen');
+  assert.match(await page.locator('#flight-server-sync').getAttribute('title'), /refused/i, 'the snapshot refusal remains visible after server reconciliation');
+
   const evidenceCheck = await page.evaluate(async () => {
     const order = state.orders.find(item => item.status === 'Building' && item.operations.some(operation => !operation.done));
     const operation = order?.operations.find(item => !item.done);

@@ -60,13 +60,13 @@ the tree.
 
 | Item | Value |
 | --- | --- |
-| Build | v81 |
-| index.html SHA-256, as stamped in the file | `457883805723baee50ae7a8494edd63b3dc47ddbeb1e1c59c6b5c17fc99f5413` |
-| index.html file SHA-256 | `d3b65b3d6da8b0fe6af83ce0c964e8f9ea4645e33d4dd7692bd7ca6fab0216d8` |
-| demo.html file SHA-256 | `f8ed62f7ac9e0aba2184f63cee8ccfbf70abb434d3d20b5aa8d4bddcee300404` |
-| Suites run | 2026-09-26 |
-| Mirror off | 30 of 30 pass |
-| Mirror on | 30 of 30 pass; the mirror received 15007 records, chain intact |
+| Build | v82 |
+| index.html SHA-256, as stamped in the file | `fa70f89827ec564619f5a4ce9aa84b03cf837e5b5a718a5a805d81b13aeda1d7` |
+| index.html file SHA-256 | `9c66982fec26dd1600de32db7465d7bd8296d0bd5b18042ca13c125fa0e9800a` |
+| demo.html file SHA-256 | `203e39789e8b70501221640afd940555b63ffafe7e433944633f11285f10ab80` |
+| Suites run | 2026-09-27 |
+| Mirror off | 61 of 61 pass |
+| Mirror on | 61 of 61 pass; the mirror received 17055 records, chain intact |
 | Skips | none |
 
 The stamped SHA-256 is the hash of `index.html` with its own `fs-build-sha256` field set to
@@ -75,23 +75,54 @@ values are plain hashes of the files as committed.
 
 | Suite | Checks | Mirror off | Mirror on |
 | --- | --- | --- | --- |
+| check_no_machine_paths |  | pass | pass |
+| paths |  | pass | pass |
 | pilot_rehearsal |  | pass | pass |
 | qa_access |  | pass | pass |
 | qa_e2e |  | pass | pass |
-| qa_full | 309 | pass | pass |
+| qa_full | 310 | pass | pass |
 | qa_master |  | pass | pass |
 | qa_multi | 161 | pass | pass |
 | qa_operator |  | pass | pass |
 | qa_ui |  | pass | pass |
 | stable_test |  | pass | pass |
+| test_async_store_calls |  | pass | pass |
+| test_atp_https |  | pass | pass |
 | test_authority |  | pass | pass |
 | test_build_stamp |  | pass | pass |
+| test_calendar_ui |  | pass | pass |
 | test_demo_build |  | pass | pass |
+| test_export_delivery |  | pass | pass |
+| test_export_ui |  | pass | pass |
+| test_floor_picker_ui |  | pass | pass |
+| test_floor_ui |  | pass | pass |
+| test_form3_plan_ui |  | pass | pass |
 | test_frozen_contract |  | pass | pass |
 | test_inspect_own_work |  | pass | pass |
+| test_load_safety |  | pass | pass |
+| test_load_safety_ui |  | pass | pass |
+| test_migration |  | pass | pass |
 | test_mirror |  | pass | pass |
 | test_mrb_seat_caps |  | pass | pass |
 | test_nff_boundary |  | pass | pass |
+| test_operation_subcodes |  | pass | pass |
+| test_planner |  | pass | pass |
+| test_planning |  | pass | pass |
+| test_qms_documents |  | pass | pass |
+| test_qms_documents_ui |  | pass | pass |
+| test_qms_governance |  | pass | pass |
+| test_qms_governance_ui |  | pass | pass |
+| test_qms_records |  | pass | pass |
+| test_qms_records_ui |  | pass | pass |
+| test_qms_skills |  | pass | pass |
+| test_react_build |  | pass | pass |
+| test_react_maneuver_ui |  | pass | pass |
+| test_roles_ops_qs |  | pass | pass |
+| test_server |  | pass | pass |
+| test_server_ui |  | pass | pass |
+| test_source_inspection |  | pass | pass |
+| test_source_inspection_ui |  | pass | pass |
+| test_source_package |  | pass | pass |
 | test_support_access |  | pass | pass |
 | test_v74 |  | pass | pass |
 | test_v75 |  | pass | pass |
