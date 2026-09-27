@@ -24,7 +24,7 @@
 
 ## Verification
 
-- 63 of 63 suites passed in both local and mirror-enabled runs on September 27, 2026. `qa_full` passed 310 checks with zero skips. The mirror stored 17,545 records and its chain remained intact. Both runs used index stamp `391e7ed814b70640bbb7cc023189f4c07aa5116c7282d34954e79e6cd86898aa`; exact suite output is in `tests/suite_results.json` and `tests/suite_results_mirror.json`. The browser suite also verifies an authorized inspector signing FAA 8130-9 through the audited server action route.
+- 63 of 63 suites passed in both local and mirror-enabled runs on September 27, 2026. `qa_full` passed 310 checks with zero skips. The mirror stored 17,544 records and its chain remained intact. Both runs used index stamp `3d718ce1868b7b1c389a5e3703aad9b100333edb25331aa8b63a405c9345d1a4`; exact suite output is in `tests/suite_results.json` and `tests/suite_results_mirror.json`. Browser tests verify an authorized inspector signing FAA 8130-9 through the audited server action route.
 - Browser captures exercise Hangar drawers, open holds, search, density, Flight Plan Kanban and MRP forecast, all four dedicated Flight Maneuver queues, full work order navigation, and the protected helicopter progress visualization. Jira browser verification covers authenticated ECR issue requests and safe replay of a linked ticket.
 - Production, demo, and source ZIPs are rebuilt and checked against the tree for this integration-review package.
 - PostgreSQL integration is configured in CI but was not run against a locally provisioned PostgreSQL database.

@@ -259,7 +259,7 @@ try {
   });
   await check('workspace action API refuses exported read and migration helpers', async () => {
     const before = server.store.getDoc('default');
-    for (const name of ['MES.editOrderOperation','MES.reviseMasterWI','MES.pushATPSoftware','MES.acknowledgeNotice','MES.pingAssignment','MES.icalImport','MES.aqiSign8130_9']) {
+    for (const name of ['MES.editOrderOperation','MES.reviseMasterWI','MES.pushATPSoftware','MES.acknowledgeNotice','MES.pingAssignment','MES.icalImport','MES.aqiSign8130_9','MES.checkConformity','MES.notifyCertification','MES.qaReviewMasterWI','MES.noteDemoBypassRemoved']) {
       assert.equal(typeof server.host.resolveAction(name), 'function', `${name} is an authorized engine command`);
     }
     assert.equal(server.host.resolveAction('MES.icalExport'), null, 'calendar export stays a read and is not exposed as a mutation command');
