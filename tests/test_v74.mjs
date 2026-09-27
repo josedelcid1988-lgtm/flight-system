@@ -62,6 +62,10 @@ step('box 22 signed by a second person',await S(o=>MES.reviewFair(state,o,{pin:'
 step('approve (Skyryse QA)',await S(o=>MES.approveFair(state,o,{pin:''}),O));
 await signIn('quality');
 await valid('fair approved');
+const reviewTamper=await run(o=>{const c=structuredClone(state),f=MES.getOrder(c,o).fair;f.reviewed.manifest.hash=(f.reviewed.manifest.hash[0]==='0'?'1':'0')+f.reviewed.manifest.hash.slice(1);return MES.verifyManifests(c);},O);
+step('tampering with FAIR box 22 manifest is detected',{ok:!reviewTamper.ok&&reviewTamper.failures.some(f=>f.where===O+' FAIR review'),message:JSON.stringify(reviewTamper)});
+const legacyFair=await run(o=>{const c=structuredClone(state),ord=MES.getOrder(c,o),f=ord.fair;delete f.reviewed;const subject={fair:MES.fairId(ord),verified:f.verified.manifest.hash,...(f.approved.manifest.override?{override:f.approved.manifest.override}:{})};f.approved.manifest.hash=MES.sha256(MES.canonical(subject));const upgraded=MES.upgrade(c);return {valid:MES.validate(upgraded),manifests:MES.verifyManifests(upgraded),box22:!!MES.getOrder(upgraded,o).fair.reviewed};},O);
+step('a FAIR approved before box 22 existed still loads and verifies',{ok:legacyFair.valid&&legacyFair.manifests.ok&&!legacyFair.box22,message:JSON.stringify(legacyFair)});
 await run(o=>{selectedId=o;view='order';tab='quality';render();},O); await p.waitForTimeout(300);
 step('the FAIR shows Form 1, Form 2, Form 3 and Review and sign as separate pages',{ok:await run(()=>{const tabs=[...document.querySelectorAll('#fair-panel [data-fair-page]')].map(b=>b.textContent.trim());const shown=[...document.querySelectorAll('#fair-panel .fair-page')].filter(x=>!x.hidden).length;return tabs.length===4&&/Form 1/.test(tabs[0])&&/Form 3/.test(tabs[2])&&shown===1;}),message:'pages'});
 step('choosing Form 3 shows only Form 3',{ok:await run(()=>{document.querySelector('#fair-panel [data-fair-page="3"]').click();const shown=[...document.querySelectorAll('#fair-panel .fair-page')].filter(x=>!x.hidden);return shown.length===1&&shown[0].id==='fair-page-3';}),message:'form 3'});

@@ -63,6 +63,8 @@ ok('an operation requires its callout trainings and any ticked training',JSON.st
 // ---------------- training records ----------------
 const past=await run(()=>MES.recordTraining(structuredClone(state),{account:'priv',code:'TORQUE',expires:'2020-01-01'}));
 ok('an expired training record is refused',!past.ok&&/future/.test(past.message),JSON.stringify(past));
+const selfTraining=await run(f=>MES.recordTraining(structuredClone(state),{account:'pqm',code:'TORQUE',expires:f}),future(1));
+ok('a QA Manager cannot record their own training',!selfTraining.ok&&selfTraining.message==='Nobody records their own training. Another QA Manager or Master Access account must do it.',JSON.stringify(selfTraining));
 const rec=await run(f=>MES.recordTraining(state,{account:'priv',code:'TORQUE',expires:f,note:'LMS certificate'}),future(1));
 ok('the QA Manager records a training for a person',rec.ok&&await run(()=>MES.trainingCurrentFor(state,'priv','TORQUE').ok),JSON.stringify(rec));
 
@@ -115,6 +117,8 @@ ok('Master Access holds no granted authority until granted',await run(()=>{sessi
 
 // ---------------- extra roles ----------------
 await as('pqm');
+const selfRoles=await run(()=>skAuth.setRoles('pqm',['qm','qe'],'Covers incoming inspection on nights.','TORQUE'));
+ok('a QA Manager cannot change their own roles',!selfRoles.ok&&selfRoles.message==='Nobody changes their own roles. Another QA Manager or Master Access account must do it.',JSON.stringify(selfRoles));
 const noRoleTraining=await run(()=>skAuth.setRoles('ttech',['technician','qe'],'Covers incoming inspection on nights.',''));
 ok('adding a role without a qualifying training is refused',!noRoleTraining.ok&&/expands/.test(noRoleTraining.message),JSON.stringify(noRoleTraining));
 await run(f=>{MES.recordTraining(state,{account:'ttech',code:'TORQUE',expires:f});save();},future(1));

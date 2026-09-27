@@ -29,8 +29,10 @@ try {
     const granted=skAuth.GRANTED;
     for (const cap of caps.filter(c=>!granted.includes(c))) assert(skAuth.can(cap), 'Missing Master capability: '+cap);
     for (const cap of granted) assert(!skAuth.can(cap), 'Master Access holds '+cap+' without a grant');
-    { const r=MES.recordTraining(state,{account:'master-test',code:'ESD',expires:'2031-12-31',note:'test setup'}); assert(r.ok,r.message); assert(save(),'training record saved');
-      const k='skyryse-mes-auth-v1',a=JSON.parse(localStorage.getItem(k)),u=a.users.find(x=>x.username==='master-test');u.grants={};
+    { const k='skyryse-mes-auth-v1',sk='skyryse-mes-session-v1',a=JSON.parse(localStorage.getItem(k)),master=a.users.find(x=>x.username==='master-test'),recorder={...master,username:'qa-recorder',displayName:'Independent QA',role:'qm',grants:{},extraRoles:[]};a.users.push(recorder);localStorage.setItem(k,JSON.stringify(a));
+      sessionStorage.setItem(sk,'qa-recorder');const training=MES.recordTraining(state,{account:'master-test',code:'ESD',expires:'2031-12-31',note:'test setup'});assert(training.ok,training.message);
+      sessionStorage.setItem(sk,'master-test');a.users=a.users.filter(x=>x.username!=='qa-recorder');localStorage.setItem(k,JSON.stringify(a));assert(save(),'independently recorded training saved');
+      const u=a.users.find(x=>x.username==='master-test');u.grants={};
       for (const cap of granted) u.grants[cap]={by:{name:'Second QA Manager',credentialId:'ACCT-qm2',account:'qm2'},at:new Date().toISOString(),reason:'Test setup grant',trainingCode:'ESD',hash:''};
       localStorage.setItem(k,JSON.stringify(a)); }
     for (const cap of caps) assert(skAuth.can(cap), 'Missing Master capability after grants: '+cap);

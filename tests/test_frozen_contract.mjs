@@ -44,11 +44,15 @@ const SOD=[
   ['an AQI self-signature is recorded on the signature and in the manifest',"...(selfSigned ? { selfSigned: true } : {}), manifest: signManifest(state, 'FAA Form 8130-9 Signature of Certifier",1],
   ['Development NFF never gets a conformity package, 8130-9 or 8130-3',"if (o && o.pedigree === NFF) return nffBlock('it cannot have an LRU conformity package, an 8130-9 statement of conformity or an 8130-3');",1],
   ['Development NFF never goes into a Production or Development order',"if (child && child.pedigree === NFF && parent.pedigree !== NFF) return nffBlock(",1],
+  ['a Development NFF source unit cannot start a non-NFF master-WI order',"const built = state.orders.find(o => o.id === sourceUnit.orderId); if (built && built.pedigree === NFF && input.pedigree !== NFF) return nffBlock(",2],
   ['Development NFF is never an FAI order and never carries a FAIR',"if (order.pedigree === NFF) return { error: nffBlock('it cannot be an FAI order or carry a FAIR').message };",1],
   ['Development NFF pedigree is one way',"if (order.pedigree === NFF) return nffBlock('its pedigree cannot be changed; build a new order at the pedigree you need');",1],
   ['the own-work exception is Development NFF only',"const OWN_WORK_EXEMPT_PEDIGREES = Object.freeze(['Development NFF']);",1],
   ['inspection needs the inspection grant on every inspection operation',"const stepsDenied = (operation, what) => isInspectionOp(operation) ? (can('inspect-steps') ? null :",1],
   ['nobody grants their own authority',"if(u.username===me.username)return {ok:false,message:'Nobody grants or revokes their own authority.",1],
+  ['nobody changes their own roles',"if(u.username===me.username)return {ok:false,message:'Nobody changes their own roles. Another QA Manager or Master Access account must do it.'};",1],
+  ['own-row More roles control is hidden',"isQM&&u.username!==me.username?' <button type=\"button\" class=\"btn quiet small\" data-roles-user=\"'+esc(u.username)+'\">More roles</button>':'')",1],
+  ['nobody records their own training',"signedIn && signedIn.account === account) return fail('Nobody records their own training.",1],
   ['a grant needs a current training record',"if(!trainingOk(u,trainingCode))return {ok:false,message:u.displayName+' has no current '+trainingCode+' training record. Record the training first, then grant.'};",1],
   ['grant-only authorities are never part of a role',"var GRANTED=['inspect-steps','mrb-quality','mrb-me','mrb-eng','mrb-cert','conformity','aqi-sign'];",1],
   ['the person who recorded a disposition cannot approve it (work order NC and stock NC)',"=== actor(state).credentialId) return fail('Separation of duties: the person who recorded the disposition cannot approve it.');",2],
@@ -59,6 +63,8 @@ const SOD=[
   ['nobody inspects their own work: step check',"if (checked) { const own = ownWorkRefusal(state, order, operation); if (own) return own; }",1],
   ['the person who verified a FAIR cannot sign box 22',"    if (fair.verified && fair.verified.by && by.credentialId === fair.verified.by.credentialId) return fail('The FAI reviewer in box 22 is a second person.",1],
   ['the Skyryse QA approval of a FAIR waits for box 22',"    if (!plain(fair.reviewed)) return fail('Box 22 is not signed.",1],
+  ['a FAIR review manifest is recomputed',"recheck(`${order.id} FAIR review`, fair.reviewed.manifest, reviewSubject);",1],
+  ['the FAIR approval manifest chains the box 22 hash',"reviewed: fair.reviewed.manifest.hash",2],
 ];
 for(const [label,text,count] of SOD) has(label,text,count);
 
