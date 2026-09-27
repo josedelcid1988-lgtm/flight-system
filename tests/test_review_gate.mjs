@@ -23,6 +23,7 @@ const jinxReview = {
   body: 'Jinx verdict: No blockers\nReviewed head ' + head,
 };
 assert.equal(jinxApproved([jinxReview], 'jinx-reviewer', head), true);
+assert.equal(jinxApproved([{ ...jinxReview, body: '**Jinx verdict:** No blockers\n\nReviewed by Jinx (Muse AI)' }], 'jinx-reviewer', head), true, 'markdown-emphasized Jinx verdict is accepted');
 assert.equal(jinxApproved([jinxReview], 'jinx-reviewer', 'c'.repeat(40)), false, 'stale Jinx SHA refuses');
 assert.equal(jinxApproved([{ ...jinxReview, state: 'APPROVED' }], 'jinx-reviewer', head), false, 'wrong Jinx review state refuses');
 assert.equal(jinxApproved([{ ...jinxReview, body: 'No blockers in the first pass; still investigating.' }], 'jinx-reviewer', head), false, 'ambiguous Jinx wording refuses');

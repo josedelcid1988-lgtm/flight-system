@@ -11,7 +11,10 @@ function jinxApproved(reviews, login, headSha) {
     review => review.submitted_at,
   );
   if (!latest || latest.state !== 'COMMENTED' || latest.commit_id !== headSha) return false;
-  return /^\s*(?:Jinx verdict:\s*)?No blockers(?: remain| found)?\s*\.?\s*$/im.test(latest.body || '');
+  return (latest.body || '').split(/\r?\n/).some(line => {
+    const normalized = line.replace(/[*_`]/g, '').trim();
+    return /^(?:Jinx verdict:\s*)?No blockers(?: remain| found)?\s*\.?$/i.test(normalized);
+  });
 }
 
 function claudeApproved(comments, headSha, mainSha) {
