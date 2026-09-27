@@ -20,6 +20,20 @@ jobs:
   suites:
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: flight
+          POSTGRES_PASSWORD: flight_test_password
+          POSTGRES_DB: flight_system
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U flight -d flight_system"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -39,6 +53,11 @@ jobs:
 
       - name: Build stamp is current (index.html carries VERSION.md build and its own SHA-256)
         run: node tools/stamp-build.mjs --check
+
+      - name: PostgreSQL storage integration
+        env:
+          FLIGHT_DATABASE_URL: postgresql://flight:flight_test_password@localhost:5432/flight_system
+        run: npm run test:postgres
 
       - name: Demo build and fixtures are current
         run: node tools/build-demo.mjs --check

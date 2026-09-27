@@ -42,29 +42,49 @@ export function createHost(indexPath) {
     vm.runInContext(blocks[key], context, { filename: `index.html#${key}` });
   }
   const { MES, FlightPlan, FlightManeuver, MESPrint, __roles: roles } = sandbox;
-  const roleOf = account => roles.ROLES.some(role => role.key === account.role) ? account.role : 'general';
-  const rolesOf = account => {
-    const assigned = Array.isArray(account && account.roles) ? account.roles.filter(key => roles.ROLES.some(role => role.key === key)) : [];
-    const valid = [...new Set(assigned)];
-    if (!valid.length) valid.push(roleOf(account));
+  const rolesOf = (account, state) => {
+    const primary = roles.ROLES.some(role => role.key === (account && account.role)) ? account.role : 'general';
+    const standard = (Array.isArray(account && account.roles) ? account.roles : [primary]).filter(key => roles.ROLES.some(role => role.key === key));
+    const valid = [...new Set([primary, ...standard])];
+    for (const key of (Array.isArray(account && account.extraRoles) ? account.extraRoles : [])) {
+      if (!roles.ROLES.some(role => role.key === key) || valid.includes(key)) continue;
+      const code = account.roleTraining && account.roleTraining[key] && account.roleTraining[key].code;
+      if (trainingCurrent(state, account, code)) valid.push(key);
+    }
     return valid;
   };
-  const capsOf = account => [...new Set(rolesOf(account).flatMap(key => roles.ROLE_CAPS[key] || roles.EVERYONE))];
-  const shimFor = account => account ? {
+  const trainingCurrent = (state, account, code) => {
+    if (!state || !account || !code || typeof MES.trainingCurrentFor !== 'function') return false;
+    try { return MES.trainingCurrentFor(state, account.username, code).ok === true; } catch { return false; }
+  };
+  const grantedCaps = ['conformity', 'aqi-sign'];
+  const roleOf = (account, state) => { const assigned = rolesOf(account, state); return assigned.includes('admin') ? 'admin' : assigned.includes('qm') ? 'qm' : assigned.includes('qs') ? 'qs' : assigned[0]; };
+  const capsOf = (account, state) => {
+    const held = new Set(rolesOf(account, state).flatMap(key => roles.ROLE_CAPS[key] || roles.EVERYONE).filter(cap => !grantedCaps.includes(cap)));
+    for (const cap of grantedCaps) {
+      const grant = account && account.grants && account.grants[cap];
+      const eligible = rolesOf(account, state).some(key => (roles.ROLE_CAPS[key] || roles.EVERYONE).includes(cap));
+      if (eligible && grant && !grant.revokedAt && trainingCurrent(state, account, grant.trainingCode)) held.add(cap);
+    }
+    return [...held];
+  };
+  const shimFor = (account, state) => account ? {
     ROLES: roles.ROLES,
-    can: cap => capsOf(account).includes(cap),
+    can: cap => capsOf(account, state).includes(cap),
     roleCan: (role, cap) => (Array.isArray(role) ? role : [role]).some(key => (roles.ROLE_CAPS[key] || roles.EVERYONE).includes(cap)),
-    role: () => roleOf(account),
-    user: () => ({ username: account.username, displayName: account.displayName, role: roleOf(account), roles: rolesOf(account) }),
+    role: () => roleOf(account, state),
+    user: () => ({ username: account.username, displayName: account.displayName, role: roleOf(account, state), roles: rolesOf(account, state), supportAccess: account.supportAccess === true }),
     users: () => [],
     actor: () => {
-      const role = roles.ROLES.find(item => item.key === roleOf(account));
-      return { name: account.displayName, role: role ? role.profileRole : 'General user', roles: rolesOf(account), credentialId: `ACCT-${account.username}`, account: account.username, accountRole: roleOf(account) };
+      const role = roles.ROLES.find(item => item.key === roleOf(account, state));
+      return { name: account.displayName, role: role ? role.profileRole : 'General user', roles: rolesOf(account, state), credentialId: `ACCT-${account.username}`, account: account.username, accountRole: roleOf(account, state), supportAccess: account.supportAccess === true };
     }
+    ,
+    supportAccess: () => account.supportAccess === true
   } : null;
-  function withAccount(account, fn) {
+  function withAccount(account, fn, state) {
     const before = sandbox.skAuth;
-    sandbox.skAuth = shimFor(account);
+    sandbox.skAuth = shimFor(account, state);
     try { return fn(); } finally { sandbox.skAuth = before; }
   }
   function resolve(name) {
@@ -73,5 +93,14 @@ export function createHost(indexPath) {
     const owner = owners[namespace];
     return owner && typeof owner[functionName] === 'function' && !functionName.startsWith('_') ? owner[functionName] : null;
   }
-  return { MES, FlightPlan, FlightManeuver, MESPrint, roles, withAccount, resolve, html, capsOf, roleOf, rolesOf };
+  // The HTTP action route is a mutation boundary. Only engine functions that the browser
+  // classifies as commands may be invoked there; getters, migration helpers and signature
+  // primitives must never become remotely callable just because they are exported on MES.
+  const actionName = /^(?:run|add|update|remove|delete|create|complete|close|issue|approve|reject|sign|mark|assign|advance|resolve|disposition|request|release|record|submit|start|stop|review|accept|return|void|reopen|split|move|link|verify|raise|cancel|withdraw|incorporate|peer|roll|set|save|store|open|finish|grant|revoke|capture|attach|detach|quarantine|repair|replace|send|change|configure|stamp|buyoff|log|tick|decide|vote|reset|publish|apply|import|reinspect|firm|convert|carry|propose|escalate|select)/i;
+  const actionExclude = new Set(['repair','signManifest','verifyManifests','stampCheck','stampRegister','stampRegisterCsv','stampCredential','stampHolderFor','ticketAttachments','openProcessECRs','syncAssignments','buyoffCredential','ensure','seedDemoRecords']);
+  function resolveAction(name) {
+    const functionName = String(name).split('.').at(-1);
+    return actionName.test(functionName) && !actionExclude.has(functionName) ? resolve(name) : null;
+  }
+  return { MES, FlightPlan, FlightManeuver, MESPrint, roles, withAccount, resolve, resolveAction, html, capsOf, roleOf, rolesOf };
 }

@@ -1,8 +1,8 @@
 # Known issues
 
-There are no open issues. Every entry names the cause, what was done about it,
-and the test that now covers it. Entries are numbered in the order they were found and are never
-renumbered. Closed entries stay here as the record of what changed and why.
+Entries are numbered in the order they were found and are never renumbered. Closed entries stay here
+as the record of what changed and why. Open entries remain release blockers until their fixes and
+refusal tests are complete.
 
 ## 1. Two `qa_full` checks skipped on every run since the fork (closed)
 
@@ -155,22 +155,6 @@ inspection, including of work they did, because a rejection only raises an NC
 and cannot release product. It is documented with the rules in
 `docs/HANDOVER.md` section 2.
 
-## 11. `qa_multi` failed six 1440 px render checks on a loaded machine (closed)
-
-**Cause.** The first CI run failed `qa_multi` with the order, mnv-board and
-trace views unable to find their records; it passed locally and in the
-mirror-on run on the same machine. Running three copies at once alongside
-`qa_full` reproduced it locally. The demo overlay wrote the sample workspace
-at the end of the page and then reloaded, but the app had already set
-`window.__ready` on the first, empty load. On a busy machine the harness saw
-`__ready`, waited its fixed 1.2 s, and ran while the reload was still under
-way, against an empty workspace.
-
-**Fix.** The demo head script (D-3) writes the sample workspace before the app
-reads storage, so the first open is already populated and never reloads; the
-overlay's reload stays only as a fallback. No test was changed. Under the same
-load `qa_multi` passes six runs out of six. `tools/run-suites.mjs` now prints a
-failing suite's FAIL lines to the console, so a CI log says what failed.
 
 ## 11. `qa_multi` failed six 1440 px render checks on a loaded machine (closed)
 
@@ -188,3 +172,36 @@ reads storage, so the first open is already populated and never reloads; the
 overlay's reload stays only as a fallback. No test was changed. Under the same
 load `qa_multi` passes six runs out of six. `tools/run-suites.mjs` now prints a
 failing suite's FAIL lines to the console, so a CI log says what failed.
+
+## 12. Shared-workspace snapshots are blocked after initialization (mitigated)
+
+**Fix.** `PUT /workspace` now initializes an empty database once. Afterward,
+changed snapshots are refused for every account, including QA Manager and
+Master Access, and the refusal is audited. A byte-equivalent manager snapshot
+with the current ETag is a no-op only. Mutations must use an authorized server
+MES action. Initialization normalizes the master WI library, planning records,
+blockers, and signed-in profile before storage.
+
+**Remaining.** Some legacy UI field edits still optimistically save to the
+local browser copy. The server refuses to share those edits unless they map to
+a server MES action. This prevents a shared-record bypass but can leave a user
+with an unshared local edit until reload. Finish command coverage and improve
+the pending/refusal UX before multi-user production use. See
+[`docs/SECURITY_REVIEW-v82.md`](docs/SECURITY_REVIEW-v82.md).
+
+**Status.** Whole-workspace mutation is blocked and covered by server and
+browser checks. Command coverage is incomplete, so do not expose this server
+as an authoritative production system until remaining workflows are converted
+and refusal tests pass.
+
+## 13. Local save can precede server confirmation (open)
+
+**Cause.** Browser changes are saved locally and sent to the server
+asynchronously. A local success therefore does not prove the shared server
+accepted the change.
+
+**Mitigation.** The status indicator now shows a pending server save and
+distinguishes server success, offline, conflict, and refusal. The server
+command migration in issue 12 should make server-backed actions report success
+only after the server commits. See
+[`docs/SECURITY_REVIEW-v82.md`](docs/SECURITY_REVIEW-v82.md).

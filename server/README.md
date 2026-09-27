@@ -1,6 +1,6 @@
 # Flight System server components
 
-The main authenticated MES server is `server/server.mjs` and is documented in `docs/BACKEND_CONTRACT.md`. The optional append-only persistence mirror is in `server/mirror/`:
+The main authenticated MES server is `server/server.mjs`; SQLite and PostgreSQL setup, backups, and the PostgreSQL integration check are documented in [`docs/DATABASES.md`](../docs/DATABASES.md). The older optional append-only browser persistence mirror is in `server/mirror/`:
 
 A small Node server that keeps a durable, tamper-evident copy of everything the app commits. It is a
 mirror, not a replacement: the app keeps working from the browser's `localStorage`, validates and

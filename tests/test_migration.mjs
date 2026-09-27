@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { inspectMigration } from '../tools/migrate-browser.mjs';
+import { applyMigration, inspectMigration } from '../tools/migrate-browser.mjs';
 import { createHost } from '../server/mes-host.mjs';
 
 const host = createHost(new URL('../index.html', import.meta.url).pathname);
@@ -30,4 +30,8 @@ assert.equal(host.MES.validate(migration.state), true);
 assert.equal(host.MES.verifyManifests(migration.state).ok, true);
 assert.throws(() => inspectMigration({ workspace: '{broken' }, host), /not valid JSON/);
 assert.throws(() => inspectMigration({ workspace: { version: -4 } }, host), /failed Flight System validation/);
-console.log('migration: 12 checks, all passed');
+const incomplete = structuredClone(migration);
+incomplete.report.evidence.missingMedia = [{ id: 'EV-missing-recording', size: 42 }];
+await assert.rejects(() => applyMigration(incomplete, {}), /42|linked recording/);
+assert.equal(incomplete.users.length, migration.users.length, 'media preflight refuses before account import');
+console.log('migration: 14 checks, all passed');

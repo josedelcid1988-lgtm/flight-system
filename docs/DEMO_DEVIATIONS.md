@@ -45,7 +45,7 @@ Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-2
 | D-5 | Data | Separate workspace storage key | The demo never reads or overwrites a production workspace kept in the same browser. The production key stays frozen. | 1 |
 | D-6 | Roles | Full capabilities for accounts that are not pilot seats | A solo walk-through can run every workflow. Pilot seats keep their real role. | 1 |
 | D-7 | Roles | Access management for accounts that are not pilot seats | Anyone walking the demo can add accounts and change roles. Pilot seats keep their real role. | 1 |
-| D-8 | Roles | QA Manager only settings open to accounts that are not pilot seats | The SDS book, the stamp register, stamp changes, the stamp CSV import, training requirements and training records can be exercised by the full-access accounts. | 6 |
+| D-8 | Roles | QA Manager only settings open to accounts that are not pilot seats | The SDS book, the stamp register, stamp changes, the stamp CSV import, training requirements and training records can be exercised by the full-access accounts. | 4 |
 | D-9 | Roles | Use for Dev approval open to accounts that are not pilot seats | Use for Dev needs a QA Manager in production; the full-access demo accounts can approve it. | 2 |
 | D-10 | Roles | Every MRB seat for accounts that are not pilot seats | One person can walk a board to its decision. Pilot seats vote only the seats their role holds. | 1 |
 | D-11 | Limits | Work order limit 250 | Holds the 150-order regression dataset with room to create more. | 1 |

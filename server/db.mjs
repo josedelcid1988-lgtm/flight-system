@@ -7,7 +7,7 @@ export function openDb(path) {
   db.exec(`
     PRAGMA journal_mode = WAL;
     CREATE TABLE IF NOT EXISTS documents (tenant TEXT PRIMARY KEY, json TEXT NOT NULL, etag TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, updated_by TEXT);
-    CREATE TABLE IF NOT EXISTS accounts (username TEXT PRIMARY KEY, display_name TEXT NOT NULL, salt TEXT NOT NULL, hash TEXT NOT NULL, role TEXT NOT NULL, created_at TEXT NOT NULL, created_by TEXT, sso INTEGER NOT NULL DEFAULT 0, roles TEXT NOT NULL DEFAULT '[]');
+    CREATE TABLE IF NOT EXISTS accounts (username TEXT PRIMARY KEY, display_name TEXT NOT NULL, salt TEXT NOT NULL, hash TEXT NOT NULL, role TEXT NOT NULL, created_at TEXT NOT NULL, created_by TEXT, sso INTEGER NOT NULL DEFAULT 0, roles TEXT NOT NULL DEFAULT '[]', profile TEXT NOT NULL DEFAULT '{}');
     CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, username TEXT NOT NULL, issued_at TEXT NOT NULL, last_seen TEXT NOT NULL);
     -- Failed sign-ins and lockouts survive a restart; only an audited unlock or the lock's end clears them.
     CREATE TABLE IF NOT EXISTS lockouts (username TEXT PRIMARY KEY, fails INTEGER NOT NULL DEFAULT 0, locked_until INTEGER NOT NULL DEFAULT 0, last_failed_at TEXT);
@@ -17,14 +17,23 @@ export function openDb(path) {
     CREATE TABLE IF NOT EXISTS evidence (id TEXT PRIMARY KEY, sha256 TEXT NOT NULL, size INTEGER NOT NULL, mime TEXT NOT NULL, file_name TEXT, uploaded_by TEXT NOT NULL, uploaded_at TEXT NOT NULL, bytes BLOB NOT NULL, superseded_by TEXT, superseded_at TEXT, superseded_reason TEXT);
     -- Closed work orders moved out of the live document. Same file, same backup. Rows are never deleted.
     CREATE TABLE IF NOT EXISTS archive (order_id TEXT PRIMARY KEY, json TEXT NOT NULL, sha256 TEXT NOT NULL, schema INTEGER NOT NULL, part_number TEXT, serials TEXT NOT NULL, lots TEXT NOT NULL, parts TEXT NOT NULL, title TEXT, closed_at TEXT, archived_at TEXT NOT NULL, archived_by TEXT);
-    CREATE TABLE IF NOT EXISTS record_extracts (export_id TEXT PRIMARY KEY, record_type TEXT NOT NULL, record_id TEXT NOT NULL, kind TEXT NOT NULL, exported_at TEXT NOT NULL, exported_by TEXT NOT NULL, sha256 TEXT NOT NULL, summary TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS record_extracts (export_id TEXT PRIMARY KEY, sequence INTEGER NOT NULL DEFAULT 0, record_type TEXT NOT NULL, record_id TEXT NOT NULL, kind TEXT NOT NULL, exported_at TEXT NOT NULL, exported_by TEXT NOT NULL, sha256 TEXT NOT NULL, summary TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS record_extracts_record ON record_extracts (record_type, record_id, exported_at);
     CREATE TRIGGER IF NOT EXISTS record_extracts_no_update BEFORE UPDATE ON record_extracts BEGIN SELECT RAISE(ABORT, 'record extracts are append-only'); END;
     CREATE TRIGGER IF NOT EXISTS record_extracts_no_delete BEFORE DELETE ON record_extracts BEGIN SELECT RAISE(ABORT, 'record extracts are append-only'); END;
+    CREATE TABLE IF NOT EXISTS record_export_settings (record_type TEXT PRIMARY KEY, enabled INTEGER NOT NULL, destination_kind TEXT NOT NULL, destination TEXT NOT NULL, token_setting TEXT, naming_pattern TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT NOT NULL, rationale TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS record_export_jobs (id TEXT PRIMARY KEY, record_type TEXT NOT NULL, record_id TEXT NOT NULL, export_id TEXT NOT NULL UNIQUE, sha256 TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, destination_kind TEXT NOT NULL, destination TEXT NOT NULL, token_setting TEXT, naming_pattern TEXT NOT NULL, created_at TEXT NOT NULL, created_by TEXT NOT NULL, updated_at TEXT NOT NULL, last_error TEXT, UNIQUE(record_type, record_id));
+    CREATE INDEX IF NOT EXISTS record_export_jobs_status ON record_export_jobs (status, created_at);
+    CREATE TABLE IF NOT EXISTS record_export_log (id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL, at TEXT NOT NULL, attempt INTEGER NOT NULL, status TEXT NOT NULL, detail TEXT);
+    CREATE TRIGGER IF NOT EXISTS record_export_log_no_update BEFORE UPDATE ON record_export_log BEGIN SELECT RAISE(ABORT, 'record export log is append-only'); END;
+    CREATE TRIGGER IF NOT EXISTS record_export_log_no_delete BEFORE DELETE ON record_export_log BEGIN SELECT RAISE(ABORT, 'record export log is append-only'); END;
     CREATE TABLE IF NOT EXISTS skill_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, username TEXT, skill TEXT NOT NULL, input TEXT, output TEXT, status TEXT NOT NULL);
   `);
+  const extractColumns = new Set(db.prepare('PRAGMA table_info(record_extracts)').all().map(row => row.name));
+  if (!extractColumns.has('sequence')) db.exec('ALTER TABLE record_extracts ADD COLUMN sequence INTEGER NOT NULL DEFAULT 0');
   const accountColumns = new Set(db.prepare('PRAGMA table_info(accounts)').all().map(row => row.name));
   if (!accountColumns.has('roles')) db.exec("ALTER TABLE accounts ADD COLUMN roles TEXT NOT NULL DEFAULT '[]'");
+  if (!accountColumns.has('profile')) db.exec("ALTER TABLE accounts ADD COLUMN profile TEXT NOT NULL DEFAULT '{}'");
   // Preserve the single-role schema while migrating existing accounts to an explicit role list.
   db.exec("UPDATE accounts SET roles = json_array(role) WHERE roles IS NULL OR roles = '' OR roles = '[]'");
   // Upgrade a pre-chain Flight audit table once, preserving every original event.
@@ -55,7 +64,7 @@ export function openDb(path) {
     },
     // Whole-document write with optimistic concurrency. Returns the new etag, or null on a mismatch.
     // Runs fn inside one transaction; rolls back if it throws or returns false.
-    transaction(fn) { db.exec('BEGIN'); try { const r = fn(); if (r === false) { db.exec('ROLLBACK'); return r; } db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; } },
+    async transaction(fn) { db.exec('BEGIN'); try { const r = await fn(this); if (r === false) { db.exec('ROLLBACK'); return r; } db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; } },
     putDoc(tenant, json, expectedEtag, by) {
       const cur = this.getDoc(tenant);
       if (cur && expectedEtag !== undefined && expectedEtag !== null && cur.etag !== expectedEtag) return null;
@@ -64,12 +73,13 @@ export function openDb(path) {
       return etag;
     },
     // ---- accounts ----
-    accounts() { return db.prepare('SELECT username, display_name, salt, hash, role, roles, created_at, created_by, sso FROM accounts ORDER BY created_at').all().map(r => { let roles; try { roles = JSON.parse(r.roles || '[]'); } catch { roles = []; } if (!Array.isArray(roles) || !roles.length) roles = [r.role]; return { username: r.username, displayName: r.display_name, salt: r.salt, hash: r.hash, role: r.role, roles, createdAt: r.created_at, createdBy: r.created_by, sso: !!r.sso }; }); },
+    accounts() { return db.prepare('SELECT username, display_name, salt, hash, role, roles, profile, created_at, created_by, sso FROM accounts ORDER BY created_at').all().map(r => { let roles, profile; try { roles = JSON.parse(r.roles || '[]'); } catch { roles = []; } try { profile = JSON.parse(r.profile || '{}'); } catch { profile = {}; } if (!Array.isArray(roles) || !roles.length) roles = [r.role]; if (!profile || typeof profile !== 'object' || Array.isArray(profile)) profile = {}; return { ...profile, username: r.username, displayName: r.display_name, salt: r.salt, hash: r.hash, role: r.role, roles, createdAt: r.created_at, createdBy: r.created_by, sso: !!r.sso }; }); },
     account(username) { return this.accounts().find(a => a.username === username) || null; },
     upsertAccount(a) {
       const roles = Array.isArray(a.roles) && a.roles.length ? [...new Set(a.roles)] : [a.role];
       const role = roles.includes(a.role) ? a.role : roles[0];
-      db.prepare('INSERT INTO accounts (username, display_name, salt, hash, role, created_at, created_by, sso, roles) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(username) DO UPDATE SET display_name = excluded.display_name, salt = excluded.salt, hash = excluded.hash, role = excluded.role, sso = excluded.sso, roles = excluded.roles').run(a.username, a.displayName, a.salt, a.hash, role, a.createdAt || now(), a.createdBy || null, a.sso ? 1 : 0, JSON.stringify(roles));
+      const profile = { extraRoles: Array.isArray(a.extraRoles) ? a.extraRoles : [], roleTraining: a.roleTraining && typeof a.roleTraining === 'object' && !Array.isArray(a.roleTraining) ? a.roleTraining : {}, grants: a.grants && typeof a.grants === 'object' && !Array.isArray(a.grants) ? a.grants : {}, grantHistory: Array.isArray(a.grantHistory) ? a.grantHistory : [], supportAccess: a.supportAccess === true };
+      db.prepare('INSERT INTO accounts (username, display_name, salt, hash, role, created_at, created_by, sso, roles, profile) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(username) DO UPDATE SET display_name = excluded.display_name, salt = excluded.salt, hash = excluded.hash, role = excluded.role, sso = excluded.sso, roles = excluded.roles, profile = excluded.profile').run(a.username, a.displayName, a.salt, a.hash, role, a.createdAt || now(), a.createdBy || null, a.sso ? 1 : 0, JSON.stringify(roles), JSON.stringify(profile));
     },
     deleteAccount(username) { db.prepare('DELETE FROM accounts WHERE username = ?').run(username); db.prepare('DELETE FROM sessions WHERE username = ?').run(username); },
     // ---- sessions: one active session per account ----
@@ -113,12 +123,24 @@ export function openDb(path) {
     },
     // Stamped downloads and prints are separate append-only history rows so an archived order stays immutable.
     recordExtract(e) {
-      db.prepare('INSERT INTO record_extracts (export_id, record_type, record_id, kind, exported_at, exported_by, sha256, summary) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(e.exportId, e.recordType, e.recordId, e.kind, e.exportedAt || now(), e.exportedBy, e.sha256, JSON.stringify(e.summary || {}));
+      const sequence = db.prepare('SELECT COALESCE(MAX(sequence), 0) + 1 AS n FROM record_extracts').get().n;
+      db.prepare('INSERT INTO record_extracts (export_id, sequence, record_type, record_id, kind, exported_at, exported_by, sha256, summary) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(e.exportId, sequence, e.recordType, e.recordId, e.kind, e.exportedAt || now(), e.exportedBy, e.sha256, JSON.stringify(e.summary || {}));
       return this.extractHistory(e.recordType, e.recordId).find(row => row.exportId === e.exportId);
     },
     extractHistory(recordType, recordId) {
-      return db.prepare('SELECT export_id, record_type, record_id, kind, exported_at, exported_by, sha256, summary FROM record_extracts WHERE record_type = ? AND record_id = ? ORDER BY exported_at, export_id').all(recordType, recordId).map(row => ({ exportId: row.export_id, recordType: row.record_type, recordId: row.record_id, kind: row.kind, exportedAt: row.exported_at, exportedBy: row.exported_by, sha256: row.sha256, summary: JSON.parse(row.summary) }));
+      return db.prepare('SELECT export_id, sequence, record_type, record_id, kind, exported_at, exported_by, sha256, summary FROM record_extracts WHERE record_type = ? AND record_id = ? ORDER BY sequence, exported_at').all(recordType, recordId).map(row => ({ exportId: row.export_id, sequence: row.sequence, recordType: row.record_type, recordId: row.record_id, kind: row.kind, exportedAt: row.exported_at, exportedBy: row.exported_by, sha256: row.sha256, summary: JSON.parse(row.summary) }));
     },
+    exportSettings() { return db.prepare('SELECT record_type, enabled, destination_kind, destination, token_setting, naming_pattern, updated_at, updated_by, rationale FROM record_export_settings ORDER BY record_type').all().map(r => ({ recordType: r.record_type, enabled: !!r.enabled, destinationKind: r.destination_kind, destination: r.destination, tokenSetting: r.token_setting, namingPattern: r.naming_pattern, updatedAt: r.updated_at, updatedBy: r.updated_by, rationale: r.rationale })); },
+    exportSetting(recordType) { return this.exportSettings().find(row => row.recordType === recordType) || null; },
+    putExportSetting(value) { db.prepare('INSERT INTO record_export_settings (record_type, enabled, destination_kind, destination, token_setting, naming_pattern, updated_at, updated_by, rationale) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(record_type) DO UPDATE SET enabled=excluded.enabled,destination_kind=excluded.destination_kind,destination=excluded.destination,token_setting=excluded.token_setting,naming_pattern=excluded.naming_pattern,updated_at=excluded.updated_at,updated_by=excluded.updated_by,rationale=excluded.rationale').run(value.recordType, value.enabled ? 1 : 0, value.destinationKind, value.destination, value.tokenSetting || null, value.namingPattern, now(), value.updatedBy, value.rationale); return this.exportSetting(value.recordType); },
+    queueExportJob(value) { const at = now(); const result = db.prepare('INSERT OR IGNORE INTO record_export_jobs (id,record_type,record_id,export_id,sha256,payload,status,attempts,destination_kind,destination,token_setting,naming_pattern,created_at,created_by,updated_at,last_error) VALUES (?,?,?,?,?,?,\'pending\',0,?,?,?,?,?,?,?,NULL)').run(value.id,value.recordType,value.recordId,value.exportId,value.sha256,value.payload,value.destinationKind,value.destination,value.tokenSetting||null,value.namingPattern,at,value.createdBy,at); return result.changes ? this.exportJob(value.id) : null; },
+    exportJob(id) { const r = db.prepare('SELECT * FROM record_export_jobs WHERE id=?').get(id); return r ? { id:r.id, recordType:r.record_type, recordId:r.record_id, exportId:r.export_id, sha256:r.sha256, payload:r.payload, status:r.status, attempts:r.attempts, destinationKind:r.destination_kind, destination:r.destination, tokenSetting:r.token_setting, namingPattern:r.naming_pattern, createdAt:r.created_at, createdBy:r.created_by, updatedAt:r.updated_at, lastError:r.last_error } : null; },
+    pendingExportJobs(limit = 100) { return db.prepare("SELECT id FROM record_export_jobs WHERE status='pending' ORDER BY created_at LIMIT ?").all(limit).map(r => this.exportJob(r.id)); },
+    exportJobs(limit = 200) { return db.prepare('SELECT id FROM record_export_jobs ORDER BY created_at DESC LIMIT ?').all(limit).map(r => this.exportJob(r.id)); },
+    updateExportJob(id, { status, detail = null }) { db.exec('BEGIN IMMEDIATE'); try { const job = this.exportJob(id); if (!job) { db.exec('ROLLBACK'); return null; } const attempts = job.attempts + 1; db.prepare('UPDATE record_export_jobs SET status=?,attempts=?,updated_at=?,last_error=? WHERE id=?').run(status, attempts, now(), detail, id); db.prepare('INSERT INTO record_export_log (job_id,at,attempt,status,detail) VALUES (?,?,?,?,?)').run(id, now(), attempts, status, detail); db.exec('COMMIT'); return this.exportJob(id); } catch (error) { db.exec('ROLLBACK'); throw error; } },
+    retryExportJob(id, by) { db.exec('BEGIN IMMEDIATE'); try { const job = this.exportJob(id); if (!job) { db.exec('ROLLBACK'); return null; } db.prepare("UPDATE record_export_jobs SET status='pending',attempts=0,updated_at=?,last_error=NULL WHERE id=?").run(now(), id); db.prepare("INSERT INTO record_export_log (job_id,at,attempt,status,detail) VALUES (?,?,0,'queued',?)").run(now(), id, `Manual retry requested by ${by}.`); db.exec('COMMIT'); return this.exportJob(id); } catch (error) { db.exec('ROLLBACK'); throw error; } },
+    exportLog(jobId, limit = 100) { return db.prepare('SELECT job_id,at,attempt,status,detail FROM record_export_log WHERE job_id=? ORDER BY id DESC LIMIT ?').all(jobId,limit); },
+    pendingExportCount() { return db.prepare("SELECT COUNT(*) AS c FROM record_export_jobs WHERE status IN ('pending','retrying','failed')").get().c; },
     // ---- evidence ----
     evidenceMeta(id) {
       const r = db.prepare('SELECT id, sha256, size, mime, file_name, uploaded_by, uploaded_at, superseded_by, superseded_at, superseded_reason FROM evidence WHERE id = ?').get(id);

@@ -45,7 +45,7 @@ try {
     const opId=template.operations.find(x=>!x.done).id;
     function setup(type='Technician') {
       const s=structuredClone(base),o=MES.getOrder(s,template.id),op=o.operations.find(x=>x.id===opId);
-      op.buyoffType=type;op.requiresTooling=false;op.requiresRecording=false;op.evidence=[];op.callouts=[];delete op.fodLevel;delete op.grounding;op.classification='Manufacturing';op.steps=[{id:'step-master',title:'Review work',instruction:'Review the work before buy-off.'}];op.stepChecks={};
+      op.buyoffType=type;op.requiresTooling=false;op.requiresRecording=false;op.evidence=[];op.callouts=[];delete op.fodLevel;delete op.grounding;op.classification='Manufacturing';op.topLevelType='Manufacturing';op.subCode='';op.steps=[{id:'step-master',title:'Review work',instruction:'Review the work before buy-off.'}];op.stepChecks={};
       assert(MES.validate(s),'Fixture for '+type+' is valid: '+JSON.stringify(MES.diagnose(s)));
       return {s,o,op};
     }
@@ -129,7 +129,7 @@ try {
     assert.equal(await page.evaluate(()=>state.profile.role),'System Administrator');
     assert.match(await page.locator('#profile-preview').innerText(),/Master Access override/);
     assert.match(await page.locator('.steps-complete').innerText(),/Master Access override/);
-    assert.match(await page.locator('.access-panel [role=status]').innerText(),/Saved: master-test now has Master Access/);
+    assert.match(await page.locator('.access-panel [role=status]').filter({hasText:/Saved: master-test now has Master Access/}).innerText(),/Saved: master-test now has Master Access/);
     if(process.env.FLIGHT_QA_SCREENSHOTS){await mkdir(process.env.FLIGHT_QA_SCREENSHOTS,{recursive:true});await page.screenshot({path:process.env.FLIGHT_QA_SCREENSHOTS+'/role-switch-'+width+'.png',animations:'disabled'});}
     await role.selectOption('qm');
   }

@@ -3,13 +3,14 @@
 For the in-house developer and IT, 30 September 2026. Build id and file hashes: `VERSION.md`. What
 changed for this handover: `CHANGELOG.md`. Known limits: `KNOWN-ISSUES.md`.
 
-This repository is complete on its own. Nothing is fetched at run time, there are no submodules, and the
-app has no build step: `index.html` is the product.
+This repository contains the app, its build tools, the authenticated server, and its test suites. The
+browser experience is served from `index.html`; a local build bundles the React Hangar from
+`src/react/flight-ui.jsx` into `assets/flight-ui.js`. There are no runtime CDN dependencies.
 
 ## 1. What it is
 
 Flight System is the manufacturing execution and quality system for flight hardware built under AS9100D
-and on the FAA 14 CFR Part 21 path. One self-contained HTML file carries three modules:
+and on the FAA 14 CFR Part 21 path. Its modules are:
 
 | Module | What it does |
 | --- | --- |
@@ -23,15 +24,13 @@ page and print says DEMO, NOT FOR ACCEPTANCE.
 
 ### How it holds data
 
-The workspace lives in the browser's `localStorage` under `skyryse-mes-work-order-v1`; accounts live
-under `skyryse-mes-auth-v1`. Every change goes through the engine (`window.MES`), which validates the
-whole workspace after the change and rolls the change back if the result would be invalid.
-`MES.validate(state)` answers yes or no; `MES.diagnose(state)` says what is wrong. A record therefore
-cannot be left half-written: the write either produces a valid workspace or does not happen.
-
-The optional persistence mirror (section 6) keeps a durable, tamper-evident copy on a server. It never
-changes how the app validates or stores; with the mirror off (the shipped default) nothing leaves the
-browser.
+Without server mode, the workspace and accounts live in browser storage. With server mode, the app
+hydrates a shared workspace from the authenticated Node server and mirrors accepted writes to local
+storage for recovery. The MES engine validates browser changes; the server also validates workspace
+shape and evidence and exposes role-gated action endpoints. **Known release blocker:** the browser
+still sends whole-workspace writes, and that route does not yet authorize each changed record by role.
+Do not use the authenticated server as the production system of record until all mutating screens use
+server-side MES actions. Details are in [`SECURITY_REVIEW-v82.md`](SECURITY_REVIEW-v82.md).
 
 ## 2. The rules and why they exist
 
@@ -94,7 +93,9 @@ changes.
 | `index.html` | The production app. |
 | `demo.html` | The demo build. Generated; never edit by hand. |
 | `assets/` | Landing photographs. |
-| `server/` | The persistence mirror server (section 6). |
+| `src/react/flight-ui.jsx`, `assets/flight-ui.*` | React Hangar source, generated JavaScript, and styling. |
+| `server/` | Authenticated MES server, SQLite/PostgreSQL stores, and optional append-only mirror. |
+| `docs/DATABASES.md` | On-prem setup, database selection, backup, and PostgreSQL checks. |
 | `tools/stamp-build.mjs` | Writes the build id and the SHA-256 of `index.html` into its head. |
 | `tools/build-demo.mjs`, `tools/demo/` | Builds `demo.html` and the demo test fixtures from `index.html`. |
 | `tools/role-matrix.mjs` | Writes `docs/ROLE_MATRIX.md` from the role table in `index.html`. |
@@ -135,14 +136,17 @@ Line numbers drift with every change, so find a block by its anchor.
 The console is a useful map too: `Object.keys(MES)`, `Object.keys(FlightManeuver)`,
 `Object.keys(FlightPlan)`.
 
-## 6. The persistence mirror server
+## 6. Server storage
 
-`server/` holds a small Node server on the built-in SQLite (WAL mode, no dependencies, Node 22.13 or
-later). The app sends each validated write to it. The server stores records append-only in a SHA-256
-hash chain with signature manifests in their own table, refuses every update and delete with triggers,
-verifies the chain on request, exports JSON and CSV, returns the full history of any record, and takes
-daily backups with retention. It never receives password or PIN hashes. Settings, API, backups, the
-restore procedure and the restore test are in `server/README.md`.
+`server/server.mjs` is the authenticated MES server. It serves the app, enforces account sessions and
+roles, runs MES actions, and stores the shared workspace, evidence, archive and audit history. SQLite
+(WAL mode) is the default; PostgreSQL is available with `FLIGHT_DATABASE_URL`. Both backends use the
+same async store contract. Setup, backup and PostgreSQL integration instructions are in
+[`docs/DATABASES.md`](DATABASES.md).
+
+`server/mirror/` is a separate optional browser mirror. It keeps its append-only client write log and
+does not replace the authenticated MES server. Its protocol and restore checks are documented in
+[`server/README.md`](../server/README.md).
 
 ## 7. Integration seams
 
@@ -152,7 +156,7 @@ with manual handoffs and IT connects each system without changing the rules.
 | System | Seam | Today | To connect |
 | --- | --- | --- | --- |
 | **Okta** (identity) | `window.SK_IDENTITY` in `sk-identity`: `provider: 'okta'`, `issuer`, `clientId`, group-to-role map. OpenID Connect authorization code flow with PKCE. | Local accounts; the first account becomes the access administrator. | Create the Okta SPA app and groups, fill the values, map groups to the roles in `docs/ROLE_MATRIX.md`. |
-| **Hosting** (AWS or on-prem) | None in the app: it is one static file plus `assets/`. | Opened from disk or a file share. | AWS: an S3 bucket behind CloudFront with the Okta sign-in in front; on-prem: any internal static web server. Host the mirror server beside it on a machine with backed-up storage and set `SK_MIRROR.url`. |
+| **Hosting** (cloud or on-prem) | `server/server.mjs` serves the app and authenticated API. | SQLite on a local/private server; PostgreSQL is optional. | Follow `docs/DATABASES.md`, put the service behind TLS and an internal reverse proxy, and resolve security issue 12 before authoritative production use. |
 | **NetSuite** (via an MCP bridge) | `window.SK_INTEGRATIONS.mode = 'mcp'` and `endpoint`; `window.skIntegrations.netsuite` posts to `/netsuite/item-availability`, `/netsuite/purchase-requisition` and `/netsuite/assembly-build`. | `mode: 'local'`: stock comes from the embedded snapshot, and postings are exported as CSV (`MES.netsuiteCsv`) and marked posted by hand. | Stand up the bridge (it holds the NetSuite credentials; the app never does), set `mode` and `endpoint`; the returned reference is recorded on the order. |
 | **Jira** | `SK_INTEGRATIONS.jira` and the bridge route `/jira/issue`. | SPRs, SCARs and design ECRs queue on the Quality Hangar and the key is typed in. | Point the bridge at Jira; the app records the key and receives status. |
 | **PDM** (SolidWorks) | `SK_INTEGRATIONS.pdm`. | ECO numbers and drawing links are recorded by hand on the design ECR and the WI. | A bridge route for released revisions and ECOs. |
@@ -162,9 +166,10 @@ with manual handoffs and IT connects each system without changing the rules.
 
 ## 8. Working on it
 
-- Change `index.html`, then run `node tools/stamp-build.mjs` and `node tools/build-demo.mjs`, and commit
-  all of them. A change to a role or capability also needs `node tools/role-matrix.mjs`.
-- Keep it one file: no external scripts, CDN links or build tooling for the app.
+- Change `index.html` or `src/react/flight-ui.jsx`, then run `node tools/build-react.mjs`,
+  `node tools/stamp-build.mjs`, `node tools/build-demo.mjs`, and commit the generated files. A change
+  to a role or capability also needs `node tools/role-matrix.mjs`.
+- Keep browser assets self-hosted: no CDN runtime scripts or external fonts.
 - A new rule needs a test for the rule and for its refusal path.
 - A demo relaxation is a new entry in `tools/demo/deviations.mjs`, appended at the end so existing `D-n`
   ids stay stable.
@@ -178,7 +183,7 @@ node tools/run-suites.mjs --mirror   # every suite, mirror on
 ```
 
 `TESTING.md` lists every suite and what it covers. A suite fails on a failed check, a page error or a
-skip not explained in `tests/allowed_skips.json`. There are no skips: every check runs.
+skip not explained in `tests/allowed_skips.json`. There are no unexplained skips.
 
 CI (`.github/workflows/ci.yml`) runs on every pull request and push to `main`. It checks that the build
 stamp, demo build, role matrix and release record are current, then runs every suite with the mirror
@@ -203,11 +208,11 @@ off and on. The results are kept as a run artifact.
 | Item | Owner | Date |
 | --- | --- | --- |
 | Okta app and groups, mapped to the roles in `docs/ROLE_MATRIX.md` | IT | 30 Sep 2026 |
-| Persistence server host and backup location | IT | 14 Oct 2026 |
+| Persistence server host and backup location, after security issue 12 is resolved | IT | 14 Oct 2026 |
 | Backup restore test on the chosen host (`server/restore-test.mjs`) | IT | 14 Oct 2026 |
 | NetSuite MCP bridge | IT | 14 Oct 2026 |
 | Stamp register and training records (holders into the SKY placeholders or by CSV import, PINs, training requirements with their QMS references, training records, then the authority grants) | QA Manager | 2 Oct 2026 |
 
-The stamp register and the people in the sample data that ship with the app are fictional placeholders.
+Security issues 12 and 13 in `KNOWN-ISSUES.md` remain open. The stamp register and the people in the sample data that ship with the app are fictional placeholders.
 The real register is entered in the Organization view before production use. There are no open
-issues; `KNOWN-ISSUES.md` records what was found and fixed.
+issues; `KNOWN-ISSUES.md` records what was found, fixed, and remains open.

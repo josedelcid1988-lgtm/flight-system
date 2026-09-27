@@ -68,7 +68,25 @@ const request = async (base, route, { method = 'GET', token, body, raw = false, 
   return { status: response.status, json, etag: response.headers.get('etag') };
 };
 
-async function applyMigration(migration, env = process.env) {
+export async function applyMigration(migration, env = process.env) {
+  // Preflight every recording before changing accounts or server state. A failed media
+  // check must leave the destination untouched, not half-migrated.
+  if (migration.report.evidence.missingMedia.length) {
+    throw new Error(`Migration is incomplete: ${migration.report.evidence.missingMedia.length} linked recording(s) have no exported bytes. Export them from the browser that holds them, then run the dry-run again.`);
+  }
+  const preparedMedia = new Map();
+  const linkedEvidence = new Map(migration.state.orders.flatMap(order => (order.operations || []).flatMap(operation => (operation.evidence || []).map(entry => [entry.id, entry]))));
+  for (const [id, item] of Object.entries(migration.media)) {
+    const evidence = linkedEvidence.get(id);
+    if (!evidence) continue;
+    const encoded = typeof item === 'string' ? item : item.base64;
+    if (typeof encoded !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) throw new Error(`Media ${id} must contain valid base64 bytes.`);
+    const bytes = Buffer.from(encoded, 'base64');
+    if (!bytes.length || bytes.length !== evidence.size) throw new Error(`Media ${id} has ${bytes.length} bytes, expected ${evidence.size}.`);
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    if (evidence.sha256 && evidence.sha256 !== sha256) throw new Error(`Media ${id} does not match its recorded SHA-256.`);
+    preparedMedia.set(id, { bytes, sha256, mime: item.mimeType || evidence.mimeType, fileName: item.fileName || evidence.fileName || 'recording' });
+  }
   const base = String(env.FLIGHT_MIGRATION_URL || '').replace(/\/$/, '');
   const username = String(env.FLIGHT_MIGRATION_USERNAME || '');
   const password = String(env.FLIGHT_MIGRATION_PASSWORD || '');
@@ -83,21 +101,13 @@ async function applyMigration(migration, env = process.env) {
   const accountResult = await request(base, '/auth/accounts', { method: 'PUT', token, body: { users: migration.users } });
   if (accountResult.status !== 200) throw new Error(`Workspace is still unchanged. Account import failed: ${accountResult.json?.error || accountResult.status}`);
 
-  for (const [id, item] of Object.entries(migration.media)) {
+  for (const [id, media] of preparedMedia) {
     const evidence = migration.state.orders.flatMap(order => (order.operations || []).flatMap(operation => operation.evidence || [])).find(entry => entry.id === id);
     if (!evidence) continue;
-    const encoded = typeof item === 'string' ? item : item.base64;
-    if (typeof encoded !== 'string') throw new Error(`Media ${id} must contain base64 bytes.`);
-    const bytes = Buffer.from(encoded, 'base64');
-    if (!bytes.length || bytes.length !== evidence.size) throw new Error(`Media ${id} has ${bytes.length} bytes, expected ${evidence.size}.`);
-    const sha256 = createHash('sha256').update(bytes).digest('hex');
-    if (evidence.sha256 && evidence.sha256 !== sha256) throw new Error(`Media ${id} does not match its recorded SHA-256.`);
-    const mime = item.mimeType || evidence.mimeType;
-    const fileName = encodeURIComponent(item.fileName || evidence.fileName || 'recording');
-    const uploaded = await request(base, `/evidence/${encodeURIComponent(id)}`, { method: 'POST', token, raw: true, body: bytes, headers: { 'Content-Type': mime, 'X-Evidence-Sha256': sha256, 'X-Evidence-Name': fileName } });
-    if (![200, 201].includes(uploaded.status) || uploaded.json?.sha256 !== sha256) throw new Error(`Media ${id} upload failed: ${uploaded.json?.error || uploaded.status}.`);
-    evidence.sha256 = sha256;
-    evidence.stored = { where: 'server', at: uploaded.json.uploadedAt, sha256 };
+    const uploaded = await request(base, `/evidence/${encodeURIComponent(id)}`, { method: 'POST', token, raw: true, body: media.bytes, headers: { 'Content-Type': media.mime, 'X-Evidence-Sha256': media.sha256, 'X-Evidence-Name': encodeURIComponent(media.fileName) } });
+    if (![200, 201].includes(uploaded.status) || uploaded.json?.sha256 !== media.sha256) throw new Error(`Media ${id} upload failed: ${uploaded.json?.error || uploaded.status}.`);
+    evidence.sha256 = media.sha256;
+    evidence.stored = { where: 'server', at: uploaded.json.uploadedAt, sha256: media.sha256 };
   }
 
   if (!migration.state || !migration.report.valid) throw new Error('The workspace did not pass the dry-run checks.');

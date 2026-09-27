@@ -61,8 +61,11 @@ async function mirrorFixtures() {
   const mirror = createMirror({ dbPath: path.join(tmp, 'mirror.sqlite'), backupDir: path.join(tmp, 'backups'), port: 0, backupEveryMinutes: 0 });
   const addr = await mirror.listen();
   const url = `http://127.0.0.1:${addr.port}`;
-  const dir = path.join(tmp, 'fixtures');
-  fs.mkdirSync(dir);
+  // Mirror fixtures keep the repository's tests/fixtures depth because their relative
+  // application assets resolve through ../../assets/ from that location.
+  const dir = path.join(tmp, 'tests', 'fixtures');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.cpSync(path.join(ROOT, 'assets'), path.join(tmp, 'assets'), { recursive: true });
   for (const f of fs.readdirSync(path.join(TESTS, 'fixtures')).filter(f => f.endsWith('.html'))) {
     const html = fs.readFileSync(path.join(TESTS, 'fixtures', f), 'utf8');
     if (!html.includes('<head>')) throw new Error(`${f} has no <head> to add the mirror setting to.`);

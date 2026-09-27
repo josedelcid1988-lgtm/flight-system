@@ -27,6 +27,8 @@ const D='Demo';
 let {p,errs}=await newPage();
 await stripStorage(p);
 const t0=Date.now();await signIn(p,'demo','master');const loadMs=Date.now()-t0;
+const dateFormats=await run(p,()=>[date('2026-09-26T19:13:00.000Z'),buyoffDate('2026-09-26T19:13:00.000Z')]);
+add(D,'Date format','Dates show the full month, day and year',dateFormats.every(value=>value.startsWith('September 26, 2026')),dateFormats.join(' | '));
 const ds=await run(p,()=>({valid:MES.validate(state),orders:state.orders.length,byStatus:state.orders.reduce((a,o)=>{a[o.status]=(a[o.status]||0)+1;return a},{}),plan:(state.plannedOrders||[]).length,mnv:Object.fromEntries(Object.entries(state.maneuver).filter(([k,v])=>Array.isArray(v)).map(([k,v])=>[k,v.length])),keys:Object.keys(state.maneuver),ecr:(state.ecrRequests||[]).length,ecrIds:(state.ecrRequests||[]).map(e=>e.id),stamps:(state.stamps||[]).length,users:skAuth.users().map(u=>u.username+':'+u.role),tickets:state.orders.reduce((n,o)=>n+o.tickets.length,0),serials:(state.serialLog||[]).length,role:skAuth.role(),user:skAuth.user().username,v2:state.maneuver.__ticketsV2}));
 add(D,'Load','Demo workspace loads, signs in as master and validates',ds.valid&&ds.user==='master',`load ${loadMs} ms, role ${ds.role}`);
 add(D,'Load','No page or console errors at load',errs.length===0,errs.join(' | '));
