@@ -73,8 +73,8 @@ below exist for AS9100 and 14 CFR reasons; do not "simplify" them away.
 
 ## Reviewing and merging
 
-Every pull request is reviewed by Claude (`.github/workflows/claude-review.yml`,
-standard in `REVIEW.md`) and by Jinx. The merging agent (Codex) merges a pull
+Every pull request is reviewed by Claude (a routine, set up in
+`docs/CLAUDE_REVIEW_ROUTINE.md`, standard in `REVIEW.md`) and by Jinx. The merging agent (Codex) merges a pull
 request only when all of these hold on its current head commit:
 
 1. CI (`CI / suites`) is green.
