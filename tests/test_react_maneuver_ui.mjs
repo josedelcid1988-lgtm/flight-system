@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 
-const fixture = new URL('./fixtures/demo_qa150_publish.html', import.meta.url).href;
+const fixture = process.env.FS_FIXTURES_DIR
+  ? new URL('demo_qa150_publish.html', new URL(process.env.FS_FIXTURES_DIR.endsWith('/') ? process.env.FS_FIXTURES_DIR : `${process.env.FS_FIXTURES_DIR}/`, 'file:///')).href
+  : new URL('./fixtures/demo_qa150_publish.html', import.meta.url).href;
 const browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
 try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 960 } });
@@ -53,9 +55,15 @@ try {
   assert.equal(await page.locator('.fr-queue tbody tr').count(), 0);
   await page.goto(fixture);
   await page.waitForFunction(() => window.__ready === true);
-  await page.evaluate(() => { view = 'mnv-home'; render(); });
+  // The full-page handoff below is specifically a CAR workflow. The Hangar's
+  // mixed queue is due-date sorted, so its first record is not guaranteed to
+  // be a CAR when fixtures or the current date change.
+  await page.evaluate(() => { view = 'mnv-cars'; render(); });
+  await page.getByRole('heading', { name: 'Corrective Actions.' }).waitFor();
   await page.locator('.fr-maneuver').waitFor();
-  await page.locator('.fr-queue tbody tr .fr-record-link').first().click();
+  const carRow = page.locator('.fr-queue tbody tr').filter({ hasText: 'CAR-1001' });
+  await carRow.waitFor();
+  await carRow.locator('.fr-record-link').click();
   await page.locator('.fr-drawer[open]').waitFor();
   await page.getByRole('button', { name: 'Open full record' }).click();
   await page.locator('body[data-view="mnv-car"]').waitFor();

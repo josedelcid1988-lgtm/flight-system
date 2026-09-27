@@ -183,11 +183,13 @@ MES action. Initialization normalizes the master WI library, planning records,
 blockers, and signed-in profile before storage.
 
 **Remaining.** Some legacy UI field edits still optimistically save to the
-local browser copy. A definite HTTP refusal now reloads the committed shared
-workspace and discards the unaccepted local change. A transport failure is
+local browser copy. A definite HTTP refusal now saves an account-bound,
+tab-scoped unconfirmed recovery copy before reloading the committed shared
+workspace. The operator can download it for manual reconciliation; there is no
+automatic import path. A transport failure is
 uncertain, so the browser preserves the local copy, marks it unconfirmed, and
-checks the server before sending later writes after connectivity returns. This
-prevents a shared-record bypass but does not replace complete command coverage.
+checks the server before sending later writes after connectivity returns. This prevents a shared-workspace bypass and reduces accidental loss, but does
+not replace complete command coverage.
 Finish that coverage before multi-user production use. See
 [`docs/SECURITY_REVIEW-v82.md`](docs/SECURITY_REVIEW-v82.md).
 

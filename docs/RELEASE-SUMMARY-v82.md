@@ -4,13 +4,13 @@
 
 ## Implemented in this package
 
-- SQLite and PostgreSQL server stores, account sessions, workspace ETags, append-only audit, evidence, archive, export delivery and browser workspace migration.
+- SQLite and PostgreSQL server stores, account sessions, workspace ETags, append-only audit, evidence, archive, export delivery, browser workspace migration and download-only recovery for server-refused local edits.
 - Locally bundled React Hangar with live records, search, filters, density control, open holds and an accessible record drawer.
 - React Flight Plan queue and Big Three with blocker-driven tasks and FlightPlan actions.
 - React Flight Plan Kanban and MRP forecast with live planned orders, status lanes, demand/shortage summaries, compact density and responsive layout.
 - React Flight Maneuver Quality Hangar with live CAR, MRB, NC and SPR metrics and queue, search, record-type filtering, compact density, accessible detail drawer and links into the existing gated workflows.
 - Dedicated React NC Intake, Corrective Actions, Material Review Board and Problem Reports queues; NC Intake retains escape and work-order/stock-source filtering.
-- Planning, capacity, work-center hierarchy, labor clocks, milestones, maintenance and several related scheduling records.
+- Planning, capacity, work-center hierarchy, owner-aware server-persisted labor clock controls, milestones, maintenance and related scheduling records.
 - Operation sub-code registers, source inspection, locked standard Inspection Step A, and expanded authority, role, training and stamp controls.
 - Signed training completions can retain PDF or image certificates; the trainer manifest binds file name, MIME type, byte size and SHA-256, and the in-app preview checks the stored bytes before opening.
 - QMS export settings and delivery history, signed audit/supplier/certification/quality records, and server-side record actions.
@@ -24,7 +24,7 @@
 
 ## Verification
 
-- 63 of 63 suites passed in both local and sequential mirror runs on September 27, 2026. `qa_full` passed 310 checks with zero skips. The mirror stored 17,053 records and its chain remained intact. Both runs used index stamp `984de8830c6a428a5d5729c10932da8e6b1606df91816eb37c3c0d1aa802bbd5`; exact suite output is in `tests/suite_results.json` and `tests/suite_results_mirror.json`.
+- 63 of 63 suites passed in both local and mirror-enabled runs on September 27, 2026. `qa_full` passed 310 checks with zero skips. The mirror stored 17,545 records and its chain remained intact. Both runs used index stamp `391e7ed814b70640bbb7cc023189f4c07aa5116c7282d34954e79e6cd86898aa`; exact suite output is in `tests/suite_results.json` and `tests/suite_results_mirror.json`. The browser suite also verifies an authorized inspector signing FAA 8130-9 through the audited server action route.
 - Browser captures exercise Hangar drawers, open holds, search, density, Flight Plan Kanban and MRP forecast, all four dedicated Flight Maneuver queues, full work order navigation, and the protected helicopter progress visualization. Jira browser verification covers authenticated ECR issue requests and safe replay of a linked ticket.
 - Production, demo, and source ZIPs are rebuilt and checked against the tree for this integration-review package.
 - PostgreSQL integration is configured in CI but was not run against a locally provisioned PostgreSQL database.
