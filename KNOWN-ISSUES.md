@@ -209,3 +209,19 @@ distinguishes server success, offline, conflict, and refusal. The server
 command migration in issue 12 should make server-backed actions report success
 only after the server commits. See
 [`docs/SECURITY_REVIEW-v82.md`](docs/SECURITY_REVIEW-v82.md).
+
+## 14. Read-only AI log verification was exposed through the action route (closed)
+
+**Cause.** The server action-name filter accepted functions beginning with
+`verify`, so the exported read-only `MES.verifyAIActionLog` verifier was
+classified as a command. It did not mutate the log, but its route should not
+have been remotely callable as a write action.
+
+**Fix.** Excluded `verifyAIActionLog` from both the browser command tracker and
+the server command allowlist. `tests/test_server.mjs` asserts that the action
+resolver excludes it and that a direct action request returns 404 without
+changing the workspace.
+
+**Result.** `test_server.mjs` passes 26 checks. The full local and mirror runs
+after the fix each passed 66 of 66 suites with zero skips. The mirror received
+17,546 records with its chain intact.

@@ -263,7 +263,8 @@ try {
       assert.equal(typeof server.host.resolveAction(name), 'function', `${name} is an authorized engine command`);
     }
     assert.equal(server.host.resolveAction('MES.icalExport'), null, 'calendar export stays a read and is not exposed as a mutation command');
-    for (const name of ['MES.upgrade', 'MES.validate', 'MES.verifyManifests', 'MES.signManifest', 'FlightPlan.status']) {
+    assert.equal(server.host.resolveAction('MES.verifyAIActionLog'), null, 'AI action-log verification stays a read and is not exposed as a mutation command');
+    for (const name of ['MES.upgrade', 'MES.validate', 'MES.verifyManifests', 'MES.verifyAIActionLog', 'MES.signManifest', 'FlightPlan.status']) {
       const result = await api('POST', `/workspace/actions/${name}`, { token, body: { args: [] }, headers: { 'If-Match': before.etag } });
       assert.equal(result.status, 404, `${name} must not be remotely callable`);
     }
