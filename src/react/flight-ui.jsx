@@ -552,6 +552,44 @@ function SerialDrawer({ item, onClose, onTrace, onOpen }) {
   </dialog>;
 }
 
+function TraceSearch({ state, MES, initialQuery, onSearch, onReport, onRoute }) {
+  const [query, setQuery] = useState(initialQuery || '');
+  const [compact, setCompact] = useState(() => { try { return localStorage.getItem(`${densityKey}-trace`) === 'compact'; } catch { return false; } });
+  const result = query.trim() ? MES.traceSearch(state, query.trim()) : null;
+  const density = () => setCompact(value => {
+    const next = !value;
+    try { localStorage.setItem(`${densityKey}-trace`, next ? 'compact' : 'comfortable'); } catch {}
+    return next;
+  });
+  const traceLink = value => <button className="fr-text-action" onClick={() => { setQuery(value); onSearch(value); }}>{value}</button>;
+  const routeLink = (action, attrs, label) => <button className="fr-text-action" onClick={() => onRoute(action, attrs)}>{label}<ArrowUpRight size={13}/></button>;
+  const table = (title, headers, rows, empty) => <section className="fr-trace-section" key={title} aria-label={title}>
+    <div className="fr-section-heading"><h2>{title}</h2><span className="fr-count">{String(rows.length).padStart(2, '0')}</span></div>
+    {rows.length ? <div className="fr-table-scroll" role="region" aria-label={`${title} results`} tabIndex="0"><table className={compact ? 'fr-compact' : ''}><thead><tr>{headers.map(label => <th key={label}>{label}</th>)}</tr></thead><tbody>{rows}</tbody></table></div> : <p className="fr-empty">{empty}</p>}
+  </section>;
+  let sections = [];
+  if (result) {
+    if (result.tool) sections.push(<div className={`fr-trace-alert${result.tool.status === 'In Calibration' ? ' is-ready' : ' is-warning'}`} key="tool"><CircleAlert size={18}/><div><strong>{result.tool.tag} · {result.tool.description}</strong><p>{result.tool.status} · calibration due {displayFlightDate(result.tool.expires)} · {result.tool.location}. {result.tool.status !== 'In Calibration' || result.tool.expires < new Date().toISOString().slice(0, 10) ? 'Review every operation bought off with this tool.' : 'Every operation below was bought off with this tool.'}</p></div></div>);
+    if (result.kind === 'lot' && result.orders.length) sections.push(<div className="fr-trace-alert" key="lot"><Boxes size={18}/><div><strong>{result.query}</strong><p>Stocked from {result.orders.filter(order => order.why.includes('lot')).map(order => <React.Fragment key={order.id}>{routeLink('open-order', { order: order.id }, order.id)} </React.Fragment>)}. Lot serials: {result.serials.map((serial, index) => <React.Fragment key={serial}>{index ? ', ' : ''}{traceLink(serial)}</React.Fragment>)}</p></div></div>);
+    if (result.orders.length) sections.push(table('Work orders', ['Work order', 'Part / rev', 'Pedigree', 'Status', 'Lot', 'Serials', 'Matched because', result.tool ? 'Operations using tool' : 'Closed'], result.orders.map(order => <tr key={order.id}><td>{routeLink('open-order', { order: order.id }, order.id)}</td><td>{order.partNumber} / {order.revision}</td><td>{order.pedigree} · {order.subcategory}</td><td><span className="fr-status">{order.status}</span></td><td>{order.lot ? traceLink(order.lot) : <span className="fr-muted">Not stocked</span>}</td><td>{order.serials.length ? order.serials.map((serial, index) => <React.Fragment key={serial}>{index ? ', ' : ''}{traceLink(serial)}</React.Fragment>) : <span className="fr-muted">None</span>}</td><td>{order.why.join(', ')}</td><td>{result.tool ? order.ops.map(operation => <span key={operation.number}>Op {operation.number} {operation.title}{operation.by ? ` · ${operation.by} · ${displayFlightDate(operation.at)}` : ''}<br/></span>) : order.closedAt ? displayFlightDate(order.closedAt) : 'Open'}</td></tr>), 'No work orders.'));
+    if (result.tickets.length) sections.push(table('NC', ['Ticket', 'Where', 'Title', 'Disposition', 'MRB', 'CAR', 'Status'], result.tickets.map(ticket => <tr key={ticket.id}><td>{ticket.stock ? routeLink('mnv-open-nc', { nc: ticket.id }, ticket.id) : routeLink('mnv-open-ticket', { order: ticket.orderId, ticket: ticket.id }, ticket.id)}</td><td>{ticket.stock ? <>Stock {ticket.serial && <>· {traceLink(ticket.serial)}</>}{ticket.escape ? ' · escape' : ''}</> : routeLink('open-order', { order: ticket.orderId }, ticket.orderId)}</td><td>{ticket.title}</td><td>{ticket.dispo || <span className="fr-muted">Not yet</span>}</td><td>{ticket.mrbId ? routeLink('mnv-open-board', { board: ticket.mrbId }, ticket.mrbId) : ''}</td><td>{ticket.carId ? routeLink('mnv-open-car', { car: ticket.carId }, ticket.carId) : ''}</td><td>{ticket.status}</td></tr>), 'No tickets.'));
+    if (result.mrb.length) sections.push(table('Material Review Board', ['Board', 'Ticket', 'Proposed', 'Status', 'Opened'], result.mrb.map(board => <tr key={board.id}><td>{routeLink('mnv-open-board', { board: board.id }, board.id)}</td><td>{board.ticketId}</td><td>{board.proposed}</td><td>{board.status}</td><td>{displayFlightDate(board.openedAt)}</td></tr>), 'No boards.'));
+    if (result.sprs.length) sections.push(table('Problem reports (SPR)', ['SPR', 'Title', 'Found at', 'Occurred', 'Jira', 'Status'], result.sprs.map(spr => <tr key={spr.id}><td>{routeLink('nav', { view: 'mnv-spr', search: spr.id }, spr.id)}</td><td>{spr.title}</td><td>{spr.foundAt}</td><td>{displayFlightDate(spr.occurred)}</td><td>{spr.jira || ''}</td><td>{spr.status}</td></tr>), 'No problem reports.'));
+    if (result.cars.length) sections.push(table('Corrective actions', ['CAR', 'Title', 'Status', 'Due', 'SCAR'], result.cars.map(car => <tr key={car.id}><td>{routeLink('mnv-open-car', { car: car.id }, car.id)}</td><td>{car.title}</td><td>{car.status}</td><td>{displayFlightDate(car.dueDate)}</td><td>{car.scar || ''}</td></tr>), 'No corrective actions.'));
+    if (result.changes.length) sections.push(table('Change requests', ['Request', 'Type', 'Title', 'Origin', 'ECO', 'Status'], result.changes.map(change => <tr key={change.id}><td>{routeLink('ecr-open', { id: change.id }, change.id)}</td><td>{change.type}</td><td>{change.title}</td><td>{change.origin}</td><td>{change.eco || ''}</td><td>{change.status}</td></tr>), 'No change requests.'));
+    if (result.wis?.length) sections.push(table('Master WI revisions', ['WI', 'Revision', 'Status', 'Orders cloned'], result.wis.map(wi => <tr key={`${wi.id}/${wi.revision}`}><td>{routeLink('wi-open', { wi: wi.id, rev: wi.revision }, wi.id)}</td><td>{wi.revision}</td><td>{wi.status}</td><td>{wi.orders}</td></tr>), ''));
+  }
+  const hasRows = result && ['orders', 'tickets', 'mrb', 'sprs', 'cars', 'changes', 'wis'].some(key => Array.isArray(result[key]) && result[key].length > 0);
+  return <div className="flight-react fr-trace">
+    <div className="fr-page-heading"><div><span className="fr-eyebrow">FLIGHT CONTROL</span><h1>Traceability<span>.</span></h1><p>Search a serial, lot, calibrated tool, master WI or change number.</p></div><div className="fr-workspace">Current Flight System records</div></div>
+    <section className="fr-queue" aria-label="Traceability search">
+      <form className="fr-queue-heading" onSubmit={event => { event.preventDefault(); onSearch(query.trim()); }}><label className="fr-search"><Search size={16}/><input aria-label="Traceability search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Serial, lot, tool tag, WI or change number" autoComplete="off"/></label><div className="fr-controls"><button className="fr-primary" type="submit">Search</button><button className="fr-density" type="button" aria-pressed={compact} onClick={density}><SlidersHorizontal size={15}/>{compact ? 'Comfortable' : 'Compact'}</button></div></form>
+      {result && <><div className="fr-trace-summary"><strong>{result.kind === 'serial' ? 'Serial number' : result.kind === 'lot' ? 'Lot number' : result.kind === 'tool' ? 'Calibrated tool' : result.kind === 'wi' ? 'Master work instruction' : result.kind === 'change' ? 'Change number' : 'Search'} · {result.query}</strong><span>{result.orders.length} work orders · {result.tickets.length} NCs · {result.sprs.length} SPRs · {result.cars.length} CARs · {result.changes.length} changes</span></div>{['serial', 'lot'].includes(result.kind) && <button className="fr-primary fr-trace-report" onClick={() => onReport(result.query)}><FileText size={16}/> Full traceability report</button>}{sections.length ? <div className="fr-trace-sections">{sections}{!hasRows && <div className="fr-empty">No traceability records match that search.</div>}</div> : <div className="fr-empty">No traceability records match that search.</div>}</>}
+      {!result && <div className="fr-empty"><h2>Enter a serial, lot, tool tag, WI or change number</h2><p>Related work orders, quality records and changes will appear here.</p></div>}
+    </section>
+  </div>;
+}
+
 let root = null;
 let rootElement = null;
 window.FlightReact = {
@@ -610,6 +648,14 @@ window.FlightReact = {
       rootElement = element;
     }
     flushSync(() => root.render(<SerialRegister state={state} onTrace={onTrace} onOpen={onOpen}/>));
+  },
+  renderTraceSearch(element, state, MES, initialQuery, onSearch, onReport, onRoute) {
+    if (!root || rootElement !== element) {
+      if (root) root.unmount();
+      root = createRoot(element);
+      rootElement = element;
+    }
+    flushSync(() => root.render(<TraceSearch state={state} MES={MES} initialQuery={initialQuery} onSearch={onSearch} onReport={onReport} onRoute={onRoute}/>));
   },
   unmount() { if (root) { root.unmount(); root = null; rootElement = null; } }
 };

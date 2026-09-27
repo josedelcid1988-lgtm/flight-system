@@ -62,10 +62,10 @@ check. Persistent storage and tested backups are required.
 
 ## Verification status
 
-The current local run (17:54:02 to 17:57:56 UTC) and mirror run (18:02:38 to 18:09:10 UTC) on
-September 27, 2026 each passed 65 of 65 suites, including `qa_full` with 310 checks and `qa_multi`
+The local run (6:32:50 PM to 6:36:42 PM UTC) and mirror run (6:28:33 PM to 6:32:40 PM UTC) on
+September 27, 2026 each passed 66 of 66 suites, including `qa_full` with 310 checks and `qa_multi`
 with 161 checks. Both runs had zero skips and tested index stamp
-`842b9afec82a59a409a3c5bf75d65a837966ca2743ebe27edbcbf952811c1956`; the mirror run stored 17,545
+`2bcac2bf1604d19e6e8bec95b4dba8cbacf567554cf49fabb8b64add0b5db28c`; the mirror run stored 17,546
 records with an intact chain. These runs include browser checks that server refusals on both the MES
 action and legacy snapshot paths restore the committed workspace. Both runs include FAIR print
 layout checks and an authorized 8130-9 AQI browser signature persisted through its audited server action,
@@ -96,14 +96,20 @@ Flight Plan Kanban and MRP forecast now render in React from `FlightPlan` record
 browser test checks status lane counts against the planner, MRP demand summaries against its
 forecast, compact density, selected-order routing, reduced motion, bounded source-order links and tablet rendering; captures
 are `flight-plan-kanban-1440.png`, `flight-plan-mrp-forecast-1440.png` and
-`flight-plan-mrp-forecast-tablet.png`. Flight Control's work-order execution, traceability, serial
-assignment, activity and support workflows, and Flight Maneuver full detail screens still use legacy
-rendering; the approved React migration remains incomplete.
+`flight-plan-mrp-forecast-tablet.png`. Flight Control's work-order execution, detailed trace reports, activity and support workflows, and
+Flight Maneuver full detail screens still use legacy rendering; the approved React migration remains
+incomplete.
 
 The Flight Control serial-number register now uses the shared React queue, search, status filter,
 compact density and accessible details drawer. Its traceability and work-order inventory actions
 continue into the existing Flight routes. Browser verification covers live records, search, density,
 Escape close, focus return and both routes. Capture: `flight-control-serials-1440.png`.
+
+The Flight Control Traceability search and result tables now render in React from `MES.traceSearch`.
+Serial and lot searches retain the complete result categories and existing record routes; the detailed
+serial/lot trace report still uses its established page and print/export engine. Verification covers
+serial and lot search, compact density, full-report handoff and work-order navigation. Capture:
+`flight-control-trace-1440.png`.
 
 ## Release blocker
 

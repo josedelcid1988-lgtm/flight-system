@@ -5,7 +5,7 @@
 ## Implemented in this package
 
 - SQLite and PostgreSQL server stores, account sessions, workspace ETags, append-only audit, evidence, archive, export delivery, browser workspace migration and download-only recovery for server-refused local edits.
-- Locally bundled React Flight Control Hangar, serial-number register and work-order queue with live records, search, filters, compact density, open holds, accessible record drawers, and routes to traceability, work-order inventory and full-page work-order execution.
+- Locally bundled React Flight Control Hangar, serial-number register, Traceability search/results and work-order queue with live records, search, filters, compact density, open holds, accessible record drawers, and routes to trace reports, work-order inventory and full-page work-order execution.
 - React Flight Plan queue and Big Three with blocker-driven tasks and FlightPlan actions.
 - React Flight Plan Kanban and MRP forecast with live planned orders, status lanes, demand/shortage summaries, compact density and responsive layout.
 - React Flight Maneuver Quality Hangar with live CAR, MRB, NC and SPR metrics and queue, search, record-type filtering, compact density, accessible detail drawer and links into the existing gated workflows.
@@ -24,7 +24,7 @@
 
 ## Verification
 
-- 65 of 65 suites passed in both local and mirror-enabled runs on September 27, 2026. `qa_full` passed 310 checks with zero skips. The mirror stored 17,545 records and its chain remained intact. Both runs used index stamp `842b9afec82a59a409a3c5bf75d65a837966ca2743ebe27edbcbf952811c1956`; exact suite output is in `tests/suite_results.json` and `tests/suite_results_mirror.json`. Browser tests verify an authorized inspector signing FAA 8130-9 through the audited server action route.
+- 66 of 66 suites passed in both local (18:32:50 to 18:36:42 UTC) and mirror-enabled (18:28:33 to 18:32:40 UTC) runs on September 27, 2026. `qa_full` passed 310 checks with zero skips. The mirror stored 17,546 records and its chain remained intact. Both runs used index stamp `2bcac2bf1604d19e6e8bec95b4dba8cbacf567554cf49fabb8b64add0b5db28c`; exact suite output is in `tests/suite_results.json` and `tests/suite_results_mirror.json`. Browser tests verify an authorized inspector signing FAA 8130-9 through the audited server action route.
 - Browser captures exercise Hangar drawers, open holds, search, density, Flight Plan Kanban and MRP forecast, all four dedicated Flight Maneuver queues, the Flight Control work-order queue at 1440px, 1920px with reduced motion, and tablet widths; Created and Due use Month Day, Year formatting, full work order navigation, and the protected helicopter progress visualization. Jira browser verification covers authenticated ECR issue requests and safe replay of a linked ticket.
 - Production, demo, and source ZIPs are rebuilt and checked against the tree for this integration-review package.
 - PostgreSQL integration is configured in CI but was not run against a locally provisioned PostgreSQL database.
@@ -32,7 +32,7 @@
 ## Known incomplete work
 
 - Some legacy edits are still browser-local, while unmatched server workspace snapshot writes are refused. The server is not ready to become the sole production system of record until all workflows use authorized server commands.
-- React migration now includes the Flight Control Hangar, serial-number register and work-order queue, Flight Plan queue/Big Three/projects/dispatch/Kanban/MRP forecast, and all four dedicated Flight Maneuver record queues. MRP source links are capped inline with an expandable remainder. Flight Control's work-order execution, traceability, activity and support workflows and Flight Maneuver full detail screens still need the shared React design migration.
+- React migration now includes the Flight Control Hangar, serial-number register, Traceability search/results and work-order queue, Flight Plan queue/Big Three/projects/dispatch/Kanban/MRP forecast, and all four dedicated Flight Maneuver record queues. MRP source links are capped inline with an expandable remainder. Flight Control's work-order execution, detailed trace reports, activity and support workflows and Flight Maneuver full detail screens still need the shared React design migration.
 - Project telemetry is not tied to a planning system. The source had no live Google/Outlook connectors. Flight has a server-side Jira Cloud bridge with durable idempotency and ECR/SPR/SCAR linking; the owner's Jira tenant and service account still need configuration and live deployment verification. Several requested Datum skill modules remain conservative templates, and triggers are not wired to every business event. SPC I-MR control/capability and crossed-study MSA calculations are ported and covered by focused tests. FAIR page-break/repeating-header requirements are implemented and covered by print tests. The touch picker is implemented; hardware verification on iOS and Android remains open. See [`HANDOVER-v82.md`](../HANDOVER-v82.md).
 - The specified Google and Outlook live calendar connectors are not implemented. Datum's source did not include them.
 

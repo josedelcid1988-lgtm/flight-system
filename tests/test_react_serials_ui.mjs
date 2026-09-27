@@ -40,7 +40,7 @@ try {
   await drawer.waitFor();
   await drawer.getByRole('button', { name: 'Open traceability' }).click({ force: true });
   await page.getByRole('heading', { name: 'Traceability' }).waitFor();
-  assert.ok((await page.locator('#trace-q').inputValue()).includes(serial.trim()), 'drawer trace action routes into the existing live trace report');
+  assert.ok((await page.getByRole('textbox', { name: 'Traceability search' }).inputValue()).includes(serial.trim()), 'drawer trace action routes into the React traceability page');
   await page.evaluate(() => { view = 'serials'; render(); });
   await page.getByRole('heading', { name: 'Serial numbers.' }).waitFor();
   const lotButton = page.locator('.fr-serials tbody tr td:nth-child(5) button').first();
@@ -48,7 +48,7 @@ try {
   const lot = (await lotButton.innerText()).trim();
   await lotButton.click();
   await page.getByRole('heading', { name: 'Traceability' }).waitFor();
-  assert.equal(await page.locator('#trace-q').inputValue(), lot, 'lot links open the existing traceability workflow');
+  assert.equal(await page.getByRole('textbox', { name: 'Traceability search' }).inputValue(), lot, 'lot links open the React traceability page');
   await page.evaluate(() => { view = 'serials'; render(); });
   await page.getByRole('heading', { name: 'Serial numbers.' }).waitFor();
   await page.locator('.fr-serials tbody tr').first().locator('.fr-record-link').click();

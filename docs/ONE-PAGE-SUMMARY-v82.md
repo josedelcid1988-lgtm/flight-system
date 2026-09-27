@@ -9,12 +9,12 @@
 - Operation sub-codes, source inspection, role and training controls, stamp handling, signed QMS records and controlled documents.
 - Server-side Jira issue creation for ECR, SPR and SCAR with role checks and durable idempotency.
 - AI governance records and deterministic skill drafts with review and acceptance controls.
-- Approved React design in the Flight Control Hangar, serial-number register and work-order queue; Flight Plan queue, Big Three, projects, dispatch, Kanban and MRP forecast; and Flight Maneuver queues. Skyryse branding and helicopter progress visuals remain.
+- Approved React design in the Flight Control Hangar, serial-number register, Traceability search/results and work-order queue; Flight Plan queue, Big Three, projects, dispatch, Kanban and MRP forecast; and Flight Maneuver queues. Skyryse branding and helicopter progress visuals remain.
 - Floor picker, wake-lock option, sync indicators, FAIR print page rules, full test suite and portable source, production and demo archives.
 
 ## Verification
 
-Both local and mirror runs passed 65 of 65 suites with zero skips. `qa_full` passed 310 checks. The mirror verified 17,545 records with an intact hash chain. Archive creation, source archive CRC, current build outputs and the machine-path scan passed. PostgreSQL was not provisioned locally.
+Both local and mirror runs passed 66 of 66 suites with zero skips. `qa_full` passed 310 checks. The mirror verified 17,546 records with an intact hash chain. Archive creation, source archive CRC, current build outputs and the machine-path scan passed. PostgreSQL was not provisioned locally.
 
 ## Open before production use
 
