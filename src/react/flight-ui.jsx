@@ -307,6 +307,19 @@ function ForecastTable({ title, columns, rows, empty, compact }) {
   </section>;
 }
 
+function ForecastOrderLinks({ orders }) {
+  const visible = orders.slice(0, 3);
+  const remaining = orders.slice(3);
+  const link = id => <button key={id} className="fr-record-link" data-action="plan-open" data-plan={id}>{id}</button>;
+  return <div className="fr-forecast-orders">
+    {visible.map(link)}
+    {remaining.length > 0 && <details className="fr-forecast-orders-more">
+      <summary>+{remaining.length} more</summary>
+      <div>{remaining.map(link)}</div>
+    </details>}
+  </div>;
+}
+
 function PlanForecast({ state, MES, FlightPlan }) {
   const [compact, setCompact] = useState(() => { try { return localStorage.getItem(densityKey) === 'compact'; } catch { return false; } });
   const forecast = FlightPlan.forecast(state), today = new Date().toISOString().slice(0, 10);
@@ -316,7 +329,7 @@ function PlanForecast({ state, MES, FlightPlan }) {
     <div className="fr-page-heading"><div><span className="fr-eyebrow">FLIGHT PLAN</span><h1>MRP forecast<span>.</span></h1></div><button className="fr-density" aria-pressed={compact} onClick={toggleDensity}><SlidersHorizontal size={15}/>{compact ? 'Comfortable' : 'Compact'}</button></div>
     <PlanningNav/>
     <div className="fr-forecast-summary"><div><span>Open planned orders</span><strong>{forecast.open.length}</strong></div><div><span>Component demands</span><strong>{forecast.explosion.length}</strong></div><div><span>Expiring lots</span><strong>{forecast.shelfLife.length}</strong></div><div><span>Non-interchangeable changes</span><strong>{forecast.designChanges.length}</strong></div></div>
-    <ForecastTable title="Component demand" columns={['Component', 'Qty per · demand', 'On hand', 'Short', 'Lead', 'Order by', 'From']} empty="No open planned orders produce component demand." compact={compact} rows={forecast.explosion.map((item, index) => <tr key={`${item.part}/${item.rev}/${index}`}><td><strong className="fr-mono">{item.part} / Rev {item.rev}</strong><small>{item.title}</small></td><td>{item.qtyPer} · {item.qty}</td><td>{item.onHand}</td><td>{item.short ? <span className="fr-status is-error"><i/>{item.short}</span> : <span className="fr-status is-ready"><i/>Covered</span>}</td><td>{item.leadDays} days</td><td className={item.orderBy && item.orderBy < today ? 'fr-overdue-label' : ''}>{date(item.orderBy)}</td><td>{item.orders.map(id => <button key={id} className="fr-record-link" data-action="plan-open" data-plan={id}>{id}</button>)}</td></tr>)}/>
+    <ForecastTable title="Component demand" columns={['Component', 'Qty per · demand', 'On hand', 'Short', 'Lead', 'Order by', 'From']} empty="No open planned orders produce component demand." compact={compact} rows={forecast.explosion.map((item, index) => <tr key={`${item.part}/${item.rev}/${index}`}><td><strong className="fr-mono">{item.part} / Rev {item.rev}</strong><small>{item.title}</small></td><td>{item.qtyPer} · {item.qty}</td><td>{item.onHand}</td><td>{item.short ? <span className="fr-status is-error"><i/>{item.short}</span> : <span className="fr-status is-ready"><i/>Covered</span>}</td><td>{item.leadDays} days</td><td className={item.orderBy && item.orderBy < today ? 'fr-overdue-label' : ''}>{date(item.orderBy)}</td><td><ForecastOrderLinks orders={item.orders}/></td></tr>)}/>
     <ForecastTable title="Lead time from actuals" columns={['Part', 'Runs', 'Average', 'Longest', 'Real closures']} empty="No completed work-order history is available." compact={compact} rows={forecast.leadTime.map(item => <tr key={item.part}><td><strong className="fr-mono">{item.part}</strong></td><td>{item.runs.join(', ')}</td><td>{item.avg} days</td><td>{item.max} days</td><td>{item.real ? <span className="fr-status is-ready"><i/>{item.real}</span> : <span className="fr-muted">Demo history only</span>}</td></tr>)}/>
     <ForecastTable title="First Production FAIR" columns={['Planned order', 'Part / revision', 'Trigger', 'Action']} empty="No open first-Production planned orders need a FAIR plan." compact={compact} rows={forecast.fair.map(item => <tr key={item.id}><td><button className="fr-record-link" data-action="plan-open" data-plan={item.id}>{item.id}</button></td><td>{item.configuration.partNumber} / Rev {item.configuration.partRevision}</td><td>First Production build of this revision</td><td><span className="fr-status"><i/>FAIR planning required</span></td></tr>)}/>
     <ForecastTable title="Shelf life" columns={['Lot', 'Component', 'On hand', 'Expires', 'Open demand', 'Action']} empty="No lots expire in the forecast window." compact={compact} rows={forecast.shelfLife.map(item => <tr key={item.lot}><td><strong className="fr-mono">{item.lot}</strong></td><td>{item.part} / Rev {item.rev}</td><td>{item.onHand}</td><td className={item.daysLeft <= 14 ? 'fr-overdue-label' : ''}>{date(item.expires)} · {item.daysLeft} days</td><td>{item.demand}</td><td>{item.demand ? <span className="fr-status is-error"><i/>Replacement demand</span> : <span className="fr-muted">Quarantine at expiry</span>}</td></tr>)}/>

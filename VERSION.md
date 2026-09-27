@@ -66,7 +66,7 @@ the tree.
 | demo.html file SHA-256 | `ddd04044dd00e4edc53ff36ff487fe62be9a2998d4040442c8ffcd85f74b895b` |
 | Suites run | 2026-09-27 |
 | Mirror off | 63 of 63 pass |
-| Mirror on | 63 of 63 pass; the mirror received 17054 records, chain intact |
+| Mirror on | 63 of 63 pass; the mirror received 17053 records, chain intact |
 | Skips | none |
 
 The stamped SHA-256 is the hash of `index.html` with its own `fs-build-sha256` field set to

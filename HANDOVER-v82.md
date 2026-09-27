@@ -35,7 +35,7 @@ Control workflows beyond the Hangar and Flight Maneuver full detail screens stil
 | 6. System-level QMS | Partial | Signed audits/findings, supplier approvals, certifications, quality-study values/verdicts, and controlled document revisions with attached, hashed files and separate author/reviewer/releaser credentials. AI governance adds DG-01 to DG-04 and SOP-750-007 drafts, a DG-01 job description template, a 13-entry AI risk register, hash-chained action evidence, a signed ISO/IEC 42001 export, and model-setting controls that verify a named secret exists on the server. `test_qms_records*`, `test_qms_documents*`, `test_qms_governance*` cover the current paths. | DG procedures remain drafts until three-person document release. Model execution is deliberately unavailable; the model setting is configuration evidence only. The ISO export is an evidence extract, not certification of an AI management system. |
 | 7. Skills | Partial | Twelve Flight-only deterministic draft categories are allowlisted. The engine records input/output hashes and reasons, deduplicates repeated trigger/input pairs, supports signed reviewer and different-person acceptance steps, and refuses any draft that still contains `[confirm]` scaffolds. It does not mutate target production records. QA Manager/Master Access can configure signed triggers. The master WI draft has a Form 3 plan editor with a SHA-256 manifest, and FAIR seeding copies planned characteristics. SPC calculates I-MR control limits, common stability signals and capability from numeric readings. MSA calculates average-and-range repeatability, reproducibility, gage R&R, percent variation and distinct categories for balanced crossed studies. `test_qms_skills.mjs` and `test_form3_plan_ui.mjs` cover these paths. | Other requested skill outputs remain conservative templates rather than the full Datum per-skill analysis algorithms. Triggers are authorized run definitions and are not yet wired to every business event. More ported Datum fixtures remain. Model execution is unavailable. |
 | 8. Prints and floor | Partial | Record extracts, print/export logs, build stamps, server sync status, the existing helicopter lifecycle bar, a companion progress ring, an opt-in screen wake lock, and a coarse-pointer bounded whole-number picker with touch adjustment, accessible step controls and min/max enforcement. FAIR Forms 1, 2, and 3 each start on a new printed page, table headers repeat, and the signature block appears only on Form 1. `test_v74.mjs`, `test_floor_ui.mjs`, and `test_floor_picker_ui.mjs` cover print layout, wake-lock consent, helicopter preservation and picker behavior. | Verify the generated picker against representative in-app quantity fields on iOS and Android hardware. No extra vendor library was needed for current work. |
-| 9. Verify and package | Partial | CI jobs, 61-suite local and mirror runs with zero skips, realistic legacy-workspace migration with `verifyManifests`, browser captures, source packaging and mirror-chain verification. The React Flight Plan Kanban and MRP forecast have focused browser checks for record-derived lanes and summaries, selection handoff, density, responsive layout and reduced motion. Rebuild packages after the current work and full verification. These are packaged implementation artifacts, not a claim that the open phases are complete. | PostgreSQL target checks, all requested phases, and production authorization are still required before release approval. Rebuild the ZIPs after any further source change. |
+| 9. Verify and package | Partial | CI jobs, 63-suite local and mirror runs with zero skips, realistic legacy-workspace migration with `verifyManifests`, browser captures, source packaging and mirror-chain verification. The React Flight Plan Kanban and MRP forecast have focused browser checks for record-derived lanes and summaries, selection handoff, density, responsive layout and reduced motion. The source, production and demo archives are rebuilt and verified for integration review. These artifacts do not imply that the open phases are complete. | PostgreSQL target checks, all requested phases, and production authorization are still required before release approval. Rebuild the ZIPs after any further source change. |
 
 The phase list above is the original requested scope, not a claim that phases 2 through 8 are complete.
 
@@ -64,7 +64,7 @@ check. Persistent storage and tested backups are required.
 
 The current local and mirror runs on September 27, 2026 each passed 63 of 63 suites, including
 `qa_full` with 310 checks and zero skips. Both tested index stamp
-`984de8830c6a428a5d5729c10932da8e6b1606df91816eb37c3c0d1aa802bbd5`; the mirror run stored 17,054
+`984de8830c6a428a5d5729c10932da8e6b1606df91816eb37c3c0d1aa802bbd5`; the mirror run stored 17,053
 records with an intact chain. These runs include browser checks that server refusals on both the MES
 action and legacy snapshot paths restore the committed workspace. Both runs include FAIR print
 layout checks, React Flight Maneuver queue and dashboard interactions, React Flight Plan Kanban and
@@ -92,7 +92,7 @@ headings, queue identity and terminal-record overdue treatment. Their record dra
 and route into the existing gated full-record workflows, which remain legacy.
 Flight Plan Kanban and MRP forecast now render in React from `FlightPlan` records. The focused
 browser test checks status lane counts against the planner, MRP demand summaries against its
-forecast, compact density, selected-order routing, reduced motion and tablet rendering; captures
+forecast, compact density, selected-order routing, reduced motion, bounded source-order links and tablet rendering; captures
 are `flight-plan-kanban-1440.png`, `flight-plan-mrp-forecast-1440.png` and
 `flight-plan-mrp-forecast-tablet.png`. Flight Control workflows beyond the Hangar and Flight
 Maneuver full detail screens still use legacy rendering; the approved React migration remains
@@ -111,7 +111,8 @@ is not proof of server persistence. See [`SECURITY_REVIEW-v82.md`](docs/SECURITY
 
 ## Package files
 
-- `release/flight-system-v82-source.zip` will contain the whole source tree, server, docs, test code and browser evidence after the remaining phase work is complete.
+- The one-page contents, verification and open-items summary is in [`docs/ONE-PAGE-SUMMARY-v82.md`](docs/ONE-PAGE-SUMMARY-v82.md).
+- `release/flight-system-v82-source.zip` contains the source tree, server, docs, test code and browser evidence for integration review.
 - `release/flight-system-v82.zip` is the static browser deployment package.
 - `release/flight-system-v82-demo.zip` is the marked training/demo package.
 

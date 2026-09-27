@@ -24,15 +24,15 @@
 
 ## Verification
 
-- 63 of 63 suites passed in both local and sequential mirror runs on September 27, 2026. `qa_full` passed 310 checks with zero skips. The mirror stored 17,054 records and its chain remained intact. Both runs used index stamp `984de8830c6a428a5d5729c10932da8e6b1606df91816eb37c3c0d1aa802bbd5`; exact suite output is in `tests/suite_results.json` and `tests/suite_results_mirror.json`.
+- 63 of 63 suites passed in both local and sequential mirror runs on September 27, 2026. `qa_full` passed 310 checks with zero skips. The mirror stored 17,053 records and its chain remained intact. Both runs used index stamp `984de8830c6a428a5d5729c10932da8e6b1606df91816eb37c3c0d1aa802bbd5`; exact suite output is in `tests/suite_results.json` and `tests/suite_results_mirror.json`.
 - Browser captures exercise Hangar drawers, open holds, search, density, Flight Plan Kanban and MRP forecast, all four dedicated Flight Maneuver queues, full work order navigation, and the protected helicopter progress visualization. Jira browser verification covers authenticated ECR issue requests and safe replay of a linked ticket.
-- Production, demo, and source ZIPs will be rebuilt and checked against the tree after the remaining phase work.
+- Production, demo, and source ZIPs are rebuilt and checked against the tree for this integration-review package.
 - PostgreSQL integration is configured in CI but was not run against a locally provisioned PostgreSQL database.
 
 ## Known incomplete work
 
 - Some legacy edits are still browser-local, while unmatched server workspace snapshot writes are refused. The server is not ready to become the sole production system of record until all workflows use authorized server commands.
-- React migration now includes the Flight Control Hangar, Flight Plan queue/Big Three/projects/dispatch/Kanban/MRP forecast, and all four dedicated Flight Maneuver record queues. Other Flight Control screens and Flight Maneuver full detail screens still need the shared React design migration.
+- React migration now includes the Flight Control Hangar, Flight Plan queue/Big Three/projects/dispatch/Kanban/MRP forecast, and all four dedicated Flight Maneuver record queues. MRP source links are capped inline with an expandable remainder. Other Flight Control screens and Flight Maneuver full detail screens still need the shared React design migration.
 - Project telemetry is not tied to a planning system. The source had no live Google/Outlook connectors. Flight has a server-side Jira Cloud bridge with durable idempotency and ECR/SPR/SCAR linking; the owner's Jira tenant and service account still need configuration and live deployment verification. Several requested Datum skill modules remain conservative templates, and triggers are not wired to every business event. SPC I-MR control/capability and crossed-study MSA calculations are ported and covered by focused tests. FAIR page-break/repeating-header requirements are implemented and covered by print tests. The touch picker is implemented; hardware verification on iOS and Android remains open. See [`HANDOVER-v82.md`](../HANDOVER-v82.md).
 - The specified Google and Outlook live calendar connectors are not implemented. Datum's source did not include them.
 
@@ -41,6 +41,7 @@
 Do not approve production use of the authenticated server until the remaining server command coverage, requested feature scope, PostgreSQL target checks, and restore evidence are complete and reviewed by QA and IT. The current branch package is for integration review, not production deployment. PostgreSQL has not been exercised against an actual target database, and not every phase is complete.
 
 See the detailed findings in [`SECURITY_REVIEW-v82.md`](SECURITY_REVIEW-v82.md) and [`KNOWN-ISSUES.md`](../KNOWN-ISSUES.md).
+The one-page handoff summary is in [`ONE-PAGE-SUMMARY-v82.md`](ONE-PAGE-SUMMARY-v82.md).
 
 ## Decisions needed before the September 29 checkpoint
 
