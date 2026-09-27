@@ -1,0 +1,79 @@
+# Review instructions
+
+Flight System is aerospace quality software on the FAA Part 21 Subpart K path
+(AS9100, 14 CFR). Read `AGENTS.md` first: its "Rules that are not negotiable"
+are the review standard here, not style advice. Review against them with the
+rigor of a quality auditor: a finding needs evidence, and a rule weakened in
+silence is worse than a rule that fails loudly.
+
+## What Important (red) means here
+
+Report as Important any change that:
+
+- Weakens separation of duties in `index.html`: an author releasing their own
+  WI, a peer reviewer releasing, a closure requester approving, one person on
+  two MRB seats, anyone inspecting their own work (Development NFF excepted and
+  recorded), the 8130-9 completer giving the AQI signature without the
+  acknowledged warning, or anyone granting inspection, MRB, conformity or AQI
+  authority to themselves or without a current training record.
+- Writes an approval, buy-off or signature record without the person, their
+  credential, the time and the SHA-256 signature manifest, or changes what the
+  manifest covers so older records no longer verify.
+- Lets a write skip `MES.validate` or the rollback on invalid state, or makes
+  validation pass by loosening a rule instead of fixing the data.
+- Renames or reformats a storage key (`skyryse-mes-work-order-v1`,
+  `skyryse-mes-auth-v1`), a form number (F-850-001, F-860-004, AS9102, 8130-9,
+  8130-3) or a record number format.
+- Lets a Development NFF order reach any flight or production path (FAI, FAIR,
+  conformity package, 8130-9, 8130-3, issue or rework into Production).
+- Carries a demo relaxation into the production build, or a demo-only check
+  (such as a demo username test) into `index.html`.
+- Stores a password, PIN or PIN material anywhere it can be read back, or sends
+  any of it through the persistence mirror in `server/`.
+- Adds a network call, CDN link or external script to `index.html` or
+  `demo.html`.
+- Is a plain logic bug that would give an operator or inspector a wrong record,
+  a wrong gate result or lost data.
+
+Report these as Important even when the PR says the change is intended. The
+author then states the reason on the thread; the reviewer does not accept it on
+their behalf.
+
+## Always check
+
+- `demo.html` and `tests/fixtures/*` were not edited by hand. If `index.html`
+  changed, the PR also carries the regenerated `demo.html`, fixtures and build
+  stamp (`node tools/stamp-build.mjs`, then `node tools/build-demo.mjs`). A
+  hand edit to a generated file is Important.
+- Every new or changed rule has a test for the rule and a test for its refusal
+  path (the thing it is supposed to block). A new gate with no refusal test is
+  Important.
+- `tests/test_frozen_contract.mjs` and `tests/allowed_skips.json` were not
+  loosened to make a change pass. Any edit to either is Important unless the PR
+  description names the rule change and why.
+- UI text is plain and specific (what is blocking, what to do next) and has no
+  em dashes. Report text issues as Nit.
+
+## Verification bar
+
+- Behaviour claims need a `file:line` citation in the current source, not an
+  inference from a name.
+- For a separation-of-duties or signature finding, name the role or account
+  that could do the forbidden thing and the steps that get there.
+- If you cannot show the failure, do not post it.
+
+## Do not report
+
+- Anything CI already enforces: the build stamp, demo build, role matrix and
+  release report `--check` steps, and the suite results.
+- Formatting, naming and refactoring preferences. Nit at most, and only in
+  changed lines.
+- Files under `docs/` and `*.md` other than a statement that the PR makes
+  wrong.
+
+## Shape of the review
+
+- Open the summary with one line: `N important, M nits`, or
+  `No blocking issues.` when there are none.
+- At most five Nits per review; count the rest in the summary.
+- After the first review of a PR, post only Important findings on later pushes.
