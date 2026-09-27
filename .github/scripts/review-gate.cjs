@@ -46,7 +46,7 @@ function claudeApproved(comments, headSha, mainSha, descriptionSha) {
 
 function isImportantFinding(body) {
   const text = typeof body === 'string' ? body : body?.body || '';
-  if (/\bP1(?:\s+Badge)?\b/i.test(text.slice(0, 500))) return true;
+  if (/\bP[01](?:\s+Badge)?\b/i.test(text.slice(0, 500))) return true;
   return text.split(/\r?\n/).some(line => {
     const normalized = line
       .replace(/^\s*(?:(?:>\s*)|(?:[-*+]\s+)|(?:\d+[.)]\s+))+/, '')

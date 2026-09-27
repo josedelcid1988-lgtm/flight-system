@@ -64,9 +64,11 @@ assert.equal(isImportantFinding('1. **Important:** CI gate bypass.'), true);
 assert.equal(isImportantFinding('> - **Important:** CI gate bypass.'), true);
 assert.equal(isImportantFinding('**1. Important:** CI gate bypass.'), true);
 assert.equal(isImportantFinding('**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub> Subscribe to ready-for-review events'), true);
+assert.equal(isImportantFinding('**<sub><sub>![P0 Badge](https://img.shields.io/badge/P0-red?style=flat)</sub></sub> Critical merge bypass'), true);
 assert.equal(isImportantFinding('No blocking issues.'), false);
 assert.equal(hasUnresolvedImportant([{ isResolved: false, comments: [{ body: '- **Important:** still open' }] }]), true);
 assert.equal(hasUnresolvedImportant([{ isResolved: false, comments: [{ body: '**![P1 Badge]** still open' }] }]), true);
+assert.equal(hasUnresolvedImportant([{ isResolved: false, comments: [{ body: '**![P0 Badge]** critical issue' }] }]), true, 'P0 review findings block the merge');
 assert.equal(hasUnresolvedImportant([{ isResolved: true, comments: [{ body: 'Important: addressed' }] }]), false);
 
 assert.equal(isEligiblePullRequest(pull, main, 0), true);
