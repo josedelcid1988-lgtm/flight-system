@@ -78,8 +78,9 @@ continues" feel instant; polling every 60 s is the acceptable fallback.
 
 ## 6. Non-goals for v0.1
 
-NetSuite and Jira integration (parked; they attach behind `/workspace/actions` later),
-SSO, audit export, multi-site tenancy. Keep the surface small enough to stand up in a week.
+NetSuite, SSO, audit export and multi-site tenancy. Jira issue creation is implemented as a
+server-managed integration described below. Keep the remaining surface small enough to deploy on a
+private server.
 
 ## 7. Client changes when this lands
 
@@ -110,5 +111,7 @@ ATP operations carry `atp: { repo, baseline: { sha, version }, pushes[] }`. In t
 
 - `state.ecrRequests[]`: `{ id: 'ECR-nnnn', type: 'process'|'design', title, description, reason, partNumber, wiId?, wiRevision?, orderId?, status, requestedBy, at, jira? , incorporatedIn? }`.
 - Process ECRs (how we build) attach to a master WI. Revising the WI flags open process ECRs; checked ones are marked `Incorporating` for the new revision and become `Incorporated` when it is released.
-- Design ECRs (change the design) produce a Jira ECR ticket request (`jira.project`, `issueType`, `summary`, `description`). With a backend: `POST https://<site>.atlassian.net/rest/api/3/issue` with a service account, store the returned key, and move status to `In Jira`. Today the key is recorded by hand.
+- Design ECRs (change the design) produce a Jira issue request (`jira.project`, `issueType`, `summary`, `description`). An authenticated user posts only the ECR type and ID to `/api/jira/issue`. The server reads the canonical payload, checks record authority, sends it to Jira Cloud with a server-held service account, and links the returned key with the MES rule engine. SPR and SCAR records use the same route and their saved payloads.
+- A unique, durable `jira_issue_requests` row is claimed before the outbound request. A completed request returns its saved Jira key on retry. A request with an uncertain result stays pending and is never sent twice automatically; Jira can be searched by its `flight-mes-<type>-<id>` label and reconciled through the existing manual key-link flow. The server refuses requests from roles without the relevant Flight capability.
+- Configure `FLIGHT_JIRA_BASE_URL`, `FLIGHT_JIRA_EMAIL` and `FLIGHT_JIRA_API_TOKEN` on the server only. The page is told only whether all three values are present.
 - Work-order engineering edits (revision, quantity, instructions with QA re-release) remain on `order.engineeringChanges` and are listed in the WI revise flag.

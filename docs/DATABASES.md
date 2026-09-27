@@ -40,3 +40,22 @@ FLIGHT_DATABASE_URL='postgresql://flight:password@localhost:5432/flight_system' 
 ```
 
 The PostgreSQL test is intentionally separate from the SQLite-only local suite runner so it never reports a skip when no PostgreSQL service is available. CI always provides the service and runs the integration test.
+
+## Jira Cloud connector
+
+The authenticated server can send saved ECR, SPR and SCAR records to Jira Cloud. Keep these
+environment variables in the server's secret store:
+
+```bash
+FLIGHT_JIRA_BASE_URL='https://company.atlassian.net'
+FLIGHT_JIRA_EMAIL='flight-service@example.com'
+FLIGHT_JIRA_API_TOKEN='...'
+```
+
+The service account needs permission to browse the referenced Jira projects and create issues. The
+browser receives only whether the connector is configured. It never receives the API token. The
+server reads each issue payload from the shared workspace and writes the returned Jira key back
+through the Flight rule engine. A durable per-record idempotency row is stored in either SQLite or
+PostgreSQL. If Jira may have accepted a create request but the response was lost, Flight refuses to
+send a second request. Search for the `flight-mes-<type>-<id>` label and reconcile the existing issue
+before trying to resolve that pending request.

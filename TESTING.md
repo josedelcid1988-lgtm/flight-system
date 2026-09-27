@@ -76,8 +76,9 @@ failing suite, `tests/suite_<name>.log`. `--only a,b` runs named suites.
 | `node tests/test_mirror.mjs` | The persistence mirror: off by default, on, outage and recovery, idempotent retry, no password or PIN material, tamper detection, backup, restore test and restart on the restored file. |
 | `node tests/test_server.mjs` | SQLite API: scrypt sessions, lockouts, shared ETags, evidence, archive, extracts, exports, engine actions and hash-chained audit. |
 | `node tests/test_server_ui.mjs` | Browser sign-in, shared workspace hydration, a real MES mutation saved to the server, and account-profile round-trip. |
+| `node tests/test_jira_integration.mjs` | Jira Cloud issue creation from canonical ECR/SPR/SCAR records, server-only secrets, caller authorization, saved issue linking, persistent idempotency, restart replay, uncertain-response refusal, and ECR UI flow. |
 | `node tests/test_migration.mjs` | Browser workspace migration dry-run, validation, report and copy verification. |
-| `node tests/postgres/integration.mjs` | PostgreSQL store, account profiles, ETags, archive, exports and immutable histories. Requires a running PostgreSQL service; CI runs it on PostgreSQL 16. |
+| `node tests/postgres/integration.mjs` | PostgreSQL store, account profiles, ETags, archive, exports, Jira idempotency rows and immutable histories. Requires a running PostgreSQL service; CI runs it on PostgreSQL 16. |
 | `node tools/build-react.mjs --check` | Local React bundle and generated demo files are current. |
 | `npm run check:paths` | Fails if repository files include a machine-specific absolute path. |
 

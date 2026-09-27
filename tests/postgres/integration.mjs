@@ -31,6 +31,17 @@ try {
   assert.equal(health.json.product, 'Flight System');
   console.log('ok PostgreSQL schema initializes and health is available');
 
+  const jiraRequestId = `flight-ecr-pg-${randomUUID().toLowerCase()}`;
+  const jiraClaim = await server.store.beginJiraIssueRequest({ idempotencyKey: jiraRequestId, requestSha256: 'a'.repeat(64), recordType: 'ECR', recordId: jiraRequestId, projectKey: 'ECR', createdBy: 'postgres-test' });
+  assert.equal(jiraClaim.inserted, true);
+  assert.equal(jiraClaim.request.status, 'pending');
+  await server.store.completeJiraIssueRequest(jiraRequestId, { key: 'ECR-9001', url: 'https://example.atlassian.net/browse/ECR-9001' });
+  const jiraReplay = await server.store.beginJiraIssueRequest({ idempotencyKey: jiraRequestId, requestSha256: 'a'.repeat(64), recordType: 'ECR', recordId: jiraRequestId, projectKey: 'ECR', createdBy: 'postgres-test' });
+  assert.equal(jiraReplay.inserted, false);
+  assert.equal(jiraReplay.request.status, 'created');
+  assert.equal(jiraReplay.request.issue_key, 'ECR-9001');
+  console.log('ok PostgreSQL Jira idempotency state persists and replays the created issue');
+
   const seed = await call('/auth/accounts', { method: 'PUT', body: { users: [{ username: 'pg-admin', displayName: 'PostgreSQL Admin', role: 'admin', salt: 'test-salt', hash: sha('test-salt', 'pg-test-password-123') }] } });
   assert.equal(seed.status, 200, JSON.stringify(seed.json));
   const login = await call('/auth/session', { method: 'POST', body: { username: 'pg-admin', password: 'pg-test-password-123' } });

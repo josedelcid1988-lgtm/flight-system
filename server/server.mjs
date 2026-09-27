@@ -104,6 +104,15 @@ export function createServer(options = {}) {
   const lifetime = { idleMs: idleMinutes * 60000, maxMs: maxHours * 3600000 };
   const clock = options.clock || (() => Date.now());
   const host = createHost(indexPath);
+  const jira = options.jira || {};
+  const jiraConfig = {
+    baseUrl: String(jira.baseUrl || process.env.FLIGHT_JIRA_BASE_URL || '').replace(/\/$/, ''),
+    email: String(jira.email || process.env.FLIGHT_JIRA_EMAIL || ''),
+    apiToken: String(jira.apiToken || process.env.FLIGHT_JIRA_API_TOKEN || '')
+  };
+  let jiraConfigured = false;
+  try { const u = new URL(jiraConfig.baseUrl); jiraConfigured = !!(jiraConfig.email && jiraConfig.apiToken && u.protocol === 'https:' && /(^|\.)atlassian\.net$/i.test(u.hostname) && !u.username && !u.password && !u.search && !u.hash && (!u.pathname || u.pathname === '/')); } catch {}
+  const jiraFetch = options.jiraFetch || globalThis.fetch;
   if (host.MES.MAX_EVIDENCE_BYTES && host.MES.MAX_EVIDENCE_BYTES > MAX_REQUEST_BYTES) throw new Error(`index.html allows ${host.MES.MAX_EVIDENCE_BYTES} byte recordings but the server's request limit is ${MAX_REQUEST_BYTES}. Raise MAX_REQUEST_BYTES and the proxy's client_max_body_size together.`);
   const log = options.quiet ? () => {} : (...a) => console.log(new Date().toISOString(), ...a);
   const hashReport = async () => { const out = { current: 0, weak: 0, wrapped: 0, sha256: 0, unknown: 0, sso: 0 }; for (const a of await store.accounts()) { if (a.sso) out.sso += 1; else out[hashKind(a.hash)] += 1; } return out; };
@@ -219,7 +228,7 @@ export function createServer(options = {}) {
   const page = async session => {
     const row = await store.getDoc(TENANT);
     // Never embed a workspace in a page response. The app fetches it only after sign-in.
-    const ctx = { api: '/api', etag: null, workspace: null, workspaceAvailable: !!row, auth: { users: (await store.accounts()).map(publicAccount) }, account: session ? publicAccount(session.account) : null, served: new Date().toISOString() };
+    const ctx = { api: '/api', etag: null, workspace: null, workspaceAvailable: !!row, jiraConfigured, auth: { users: (await store.accounts()).map(publicAccount) }, account: session ? publicAccount(session.account) : null, served: new Date().toISOString() };
     const script = `<script id="flight-server">window.FLIGHT_SERVER=${JSON.stringify(ctx).replace(/</g, '\\u003c')};</script>`;
     return host.html.replace('<head>', `<head>${script}`);
   };
@@ -401,6 +410,93 @@ export function createServer(options = {}) {
       // Everything below needs a session.
       const session = await sessionOf(req);
       if (!session) { noSession(res, req); return; }
+
+      // Jira credentials stay on the server. The caller names a Flight record, never an issue
+      // payload; the canonical issue fields are rebuilt from the shared workspace.
+      if (route === '/jira/issue' && m === 'POST') {
+        if (!jiraConfigured) { send(res, 503, { error: 'The server Jira connector is not configured with an HTTPS Atlassian Cloud URL and service credentials.' }); return; }
+        let jiraUrl;
+        try { jiraUrl = new URL(jiraConfig.baseUrl); } catch { send(res, 503, { error: 'The server Jira connector URL is invalid.' }); return; }
+        if (jiraUrl.protocol !== 'https:' || !/(^|\.)atlassian\.net$/i.test(jiraUrl.hostname) || jiraUrl.username || jiraUrl.password || jiraUrl.search || jiraUrl.hash || (jiraUrl.pathname && jiraUrl.pathname !== '/')) { send(res, 503, { error: 'The server Jira connector must use an HTTPS Atlassian Cloud address without a path.' }); return; }
+        const body = await readJson(req), recordType = String(body.recordType || '').toUpperCase(), recordId = String(body.recordId || '').trim();
+        if (!['ECR', 'SPR', 'SCAR'].includes(recordType) || !/^[A-Z0-9-]{3,40}$/.test(recordId)) { send(res, 400, { error: 'Choose a supported Flight Jira record and its record ID.' }); return; }
+        const loaded = await loadState();
+        if (!loaded.state) { send(res, 404, { error: 'The shared workspace is not initialized.' }); return; }
+        if (loaded.problem) { send(res, 422, { error: `The shared workspace cannot be used: ${loaded.problem}` }); return; }
+        const state = loaded.state;
+        let record, issue, capability, linkAction;
+        if (recordType === 'ECR') {
+          record = (state.ecrRequests || []).find(item => item.id === recordId);
+          if (!record || record.type !== 'design') { send(res, 404, { error: 'Design ECR not found.' }); return; }
+          capability = ['edit-wi', 'approve-wo']; linkAction = () => host.MES.linkECRJira(state, record.id, issue.key, issue.url);
+          issue = { project: record.jira?.project || process.env.FLIGHT_JIRA_PROJECT_ECR || '', issueType: record.jira?.issueType || 'Engineering Change Request', summary: record.jira?.summary || record.title, description: record.jira?.description || record.description };
+          if (record.jira?.key) { send(res, 200, { ok: true, duplicate: true, issue: { key: record.jira.key, url: record.jira.url || null }, etag: loaded.etag }); return; }
+        } else if (recordType === 'SPR') {
+          record = (state.maneuver?.sprs || []).find(item => item.id === recordId);
+          if (!record) { send(res, 404, { error: 'Problem report not found.' }); return; }
+          capability = ['raise-nc']; linkAction = () => host.FlightManeuver.linkSPRJira(state, record.id, issue.key, issue.url);
+          try { issue = JSON.parse(record.payload || '{}'); } catch { send(res, 422, { error: 'The problem report Jira payload is invalid.' }); return; }
+          if (record.jira?.key) { send(res, 200, { ok: true, duplicate: true, issue: { key: record.jira.key, url: record.jira.url || null }, etag: loaded.etag }); return; }
+        } else {
+          record = (state.maneuver?.cars || []).find(item => item.id === recordId);
+          if (!record?.scar) { send(res, 404, { error: 'Supplier corrective action not found.' }); return; }
+          capability = ['dispo-nc']; linkAction = () => host.FlightManeuver.linkSCARJira(state, record.id, issue.key, issue.url);
+          try { issue = JSON.parse(record.scar.payload || '{}'); } catch { send(res, 422, { error: 'The supplier corrective action Jira payload is invalid.' }); return; }
+          if (record.scar.jira?.key) { send(res, 200, { ok: true, duplicate: true, issue: { key: record.scar.jira.key, url: record.scar.jira.url || null }, etag: loaded.etag }); return; }
+        }
+        const submittedByCaller = recordType === 'ECR' && record.requestedBy?.credentialId === `ACCT-${session.username}`;
+        if (!submittedByCaller && !host.capsOf(session.account, state).some(cap => capability.includes(cap))) { await store.audit(session.username, 'jira-issue-refused', { recordType, recordId, reason: 'role capability' }); send(res, 403, { error: 'Your role cannot send this record to Jira.' }); return; }
+        const project = String(issue.project || '').trim().toUpperCase(), issueType = String(issue.issueType || '').trim(), summary = String(issue.summary || '').trim(), description = String(issue.description || '').trim();
+        if (!/^[A-Z][A-Z0-9]{1,9}$/.test(project) || !issueType || issueType.length > 80 || !summary || summary.length > 255 || !description || description.length > 10000) { send(res, 422, { error: 'The Flight record needs a Jira project, issue type, summary, and description before it can be sent.' }); return; }
+        const requestSha256 = sha256hex(JSON.stringify({ recordType, recordId, project, issueType, summary, description }));
+        const idempotencyKey = `flight-${recordType.toLowerCase()}-${recordId.toLowerCase()}`;
+        const row = await store.jiraIssueRequest(idempotencyKey);
+        if (row && row.request_sha256 !== requestSha256) { send(res, 409, { error: 'This Flight record already has a Jira request with different content. Reconcile the existing request before changing or resending it.', code: 'JIRA_IDEMPOTENCY_CONFLICT' }); return; }
+        let saved = row;
+        if (!saved) {
+          const begun = await store.beginJiraIssueRequest({ idempotencyKey, requestSha256, recordType, recordId, projectKey: project, createdBy: session.username });
+          saved = begun.request;
+          if (!begun.inserted) {
+            if (saved.request_sha256 !== requestSha256) { send(res, 409, { error: 'A Jira request for this Flight record was started with different content. Reconcile it before changing or resending.', code: 'JIRA_IDEMPOTENCY_CONFLICT' }); return; }
+            if (saved.status !== 'created') { send(res, 409, { error: 'A Jira request is already in progress or has an uncertain result. Check Jira for the Flight record label before retrying; a second issue will not be created.', code: 'JIRA_RESULT_UNKNOWN' }); return; }
+          }
+        }
+        if (saved.status === 'pending' && row) { send(res, 409, { error: 'A Jira request has an uncertain result. Check Jira for the Flight record label before retrying; a second issue will not be created.', code: 'JIRA_RESULT_UNKNOWN' }); return; }
+        if (saved.status === 'pending' && !row) {
+          const label = `flight-mes-${recordType.toLowerCase()}-${recordId.toLowerCase().replace(/[^a-z0-9-]/g, '-')}`;
+          const toAdf = value => ({ type: 'doc', version: 1, content: String(value).split(/\r?\n/).filter(Boolean).map(text => ({ type: 'paragraph', content: [{ type: 'text', text }] })) });
+          const fields = { project: { key: project }, issuetype: { name: issueType }, summary, description: toAdf(description), labels: [label] };
+          let remote;
+          try {
+            remote = await jiraFetch(`${jiraUrl.origin}/rest/api/3/issue`, { method: 'POST', headers: { Authorization: `Basic ${Buffer.from(`${jiraConfig.email}:${jiraConfig.apiToken}`).toString('base64')}`, 'Content-Type': 'application/json', Accept: 'application/json', 'Idempotency-Key': idempotencyKey }, body: JSON.stringify({ fields }), signal: AbortSignal.timeout(15000) });
+          } catch {
+            await store.audit(session.username, 'jira-issue-uncertain', { recordType, recordId, idempotencyKey });
+            send(res, 502, { error: 'Jira did not confirm the result. Check Jira for the Flight record label before retrying; Flight will not send a second create request.', code: 'JIRA_RESULT_UNKNOWN' }); return;
+          }
+          if (!remote.ok) {
+            await store.audit(session.username, 'jira-issue-uncertain', { recordType, recordId, idempotencyKey, responseStatus: remote.status });
+            send(res, 502, { error: 'Jira did not confirm issue creation. Check Jira for the Flight record label before retrying; Flight will not send a second create request.', code: 'JIRA_RESULT_UNKNOWN' }); return;
+          }
+          let created;
+          try { created = await remote.json(); } catch { created = null; }
+          if (!created || !/^[A-Z][A-Z0-9]+-\d+$/.test(String(created.key || ''))) {
+            await store.audit(session.username, 'jira-issue-uncertain', { recordType, recordId, idempotencyKey, responseStatus: remote.status, reason: 'invalid success response' });
+            send(res, 502, { error: 'Jira returned an unrecognized success response. Check Jira for the Flight record label; Flight will not send a second create request.', code: 'JIRA_RESULT_UNKNOWN' }); return;
+          }
+          const issueUrl = `${jiraUrl.origin}/browse/${created.key}`;
+          saved = await store.completeJiraIssueRequest(idempotencyKey, { key: created.key, url: issueUrl });
+          if (!saved) { send(res, 409, { error: 'Jira created the issue, but Flight could not finalize its idempotency record. Keep the Jira key and ask an administrator to reconcile it.', code: 'JIRA_RECONCILIATION_REQUIRED' }); return; }
+          await store.audit(session.username, 'jira-issue-created', { recordType, recordId, issueKey: created.key, idempotencyKey });
+        }
+        issue = { key: saved.issue_key, url: saved.issue_url };
+        const linked = host.withAccount(session.account, linkAction, state);
+        if (!linked?.ok) { await store.audit(session.username, 'jira-link-refused', { recordType, recordId, issueKey: issue.key, reason: linked?.message || 'engine refusal' }); send(res, 422, { error: `Jira issue ${issue.key} exists, but Flight refused the record link: ${linked?.message || 'reload and reconcile the record'}`, code: 'JIRA_RECONCILIATION_REQUIRED' }); return; }
+        const done = await commitState(state, loaded.etag, session.username);
+        if (done.problem) { send(res, 422, { error: `Jira issue ${issue.key} exists, but Flight could not save its record link: ${done.problem}`, code: 'JIRA_RECONCILIATION_REQUIRED' }); return; }
+        if (done.conflict) { send(res, 409, { error: `Jira issue ${issue.key} exists, but the workspace changed before Flight could save the link. Retry this request to finish reconciliation.`, code: 'JIRA_RECONCILIATION_REQUIRED' }); return; }
+        await store.audit(session.username, 'jira-issue-linked', { recordType, recordId, issueKey: issue.key });
+        send(res, 200, { ok: true, issue, message: linked.message, etag: done.etag }); return;
+      }
 
       // -- workspace --
       if (route === '/workspace' && m === 'GET') { const row = await store.getDoc(TENANT); if (!row) { send(res, 404, { error: 'No workspace yet.' }); return; } res.writeHead(200, { 'Content-Type': MIME['.json'], ETag: row.etag, 'Cache-Control': 'no-store' }); res.end(row.json); return; }
