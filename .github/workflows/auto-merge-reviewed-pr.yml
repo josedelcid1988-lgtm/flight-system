@@ -1,0 +1,187 @@
+name: Auto-merge Claude and Jinx approved PRs
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, ready_for_review, reopened]
+  pull_request_review:
+    types: [submitted]
+  check_run:
+    types: [completed]
+  workflow_run:
+    workflows: [CI, Claude PR Review]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: auto-merge-${{ github.event.pull_request.number || github.event.workflow_run.id || github.event.check_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  merge-when-approved:
+    if: >-
+      github.repository == 'josedelcid1988-lgtm/flight-system' &&
+      (github.event_name != 'check_run' ||
+      github.event.check_run.name == 'Claude PR Review') &&
+      (github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify current-head approvals and CI, then merge
+        uses: actions/github-script@v7
+        env:
+          JINX_BOT_LOGIN: ${{ vars.JINX_BOT_LOGIN }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const block = (message) => core.setFailed(`Auto-merge blocked: ${message}`);
+
+            const configuredJinxLogin = process.env.JINX_BOT_LOGIN.trim();
+            if (!configuredJinxLogin) {
+              core.setFailed('JINX_BOT_LOGIN is unset. Cannot verify the repository Jinx approval identity.');
+              return;
+            }
+
+            async function findPullRequest() {
+              if (context.eventName === 'pull_request_target' || context.eventName === 'pull_request_review') {
+                return context.payload.pull_request;
+              }
+              if (context.eventName === 'check_run') {
+                const check = context.payload.check_run;
+                if (check.name !== 'Claude PR Review' || check.conclusion !== 'success') return null;
+                const match = /^(\d+):(\d+):([0-9a-f]{40})$/.exec(check.external_id || '');
+                if (!match || match[3] !== check.head_sha) return null;
+                const source = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: Number(match[1]) });
+                const workflow = await github.rest.actions.getWorkflow({ owner, repo, workflow_id: source.data.workflow_id });
+                if (source.data.name !== 'Claude PR Review' || workflow.data.path !== '.github/workflows/claude-pr-review.yml' ||
+                    source.data.event !== 'pull_request_target' ||
+                    source.data.conclusion !== 'success') return null;
+                const result = await github.rest.pulls.get({ owner, repo, pull_number: Number(match[2]) });
+                return result.data.head.sha === check.head_sha ? result.data : null;
+              }
+              const run = context.payload.workflow_run;
+              if (run.conclusion !== 'success' || !['CI', 'Claude PR Review'].includes(run.name)) {
+                return null;
+              }
+              if (run.name === 'Claude PR Review') {
+                const workflow = await github.rest.actions.getWorkflow({ owner, repo, workflow_id: run.workflow_id });
+                if (workflow.data.path !== '.github/workflows/claude-pr-review.yml' || run.event !== 'pull_request_target') return null;
+                const linked = run.pull_requests || [];
+                let candidates;
+                if (linked.length) {
+                  candidates = [];
+                  for (const item of linked) {
+                    const result = await github.rest.pulls.get({ owner, repo, pull_number: item.number });
+                    if (result.data.state === 'open') candidates.push(result.data);
+                  }
+                } else {
+                  candidates = await github.paginate(github.rest.pulls.list, {
+                    owner, repo, state: 'open', per_page: 100,
+                  });
+                }
+                for (const pull of candidates) {
+                  const checks = await github.paginate(github.rest.checks.listForRef, {
+                    owner, repo, ref: pull.head.sha, filter: 'all', per_page: 100,
+                  });
+                  const exactDecision = checks.some((check) =>
+                    check.name === 'Claude PR Review' && check.head_sha === pull.head.sha &&
+                    check.external_id === `${run.id}:${pull.number}:${pull.head.sha}` && check.conclusion === 'success');
+                  if (exactDecision) return pull;
+                }
+                return null;
+              }
+              if (run.event !== 'pull_request') return null;
+              const linked = run.pull_requests || [];
+              for (const item of linked) {
+                const result = await github.rest.pulls.get({ owner, repo, pull_number: item.number });
+                if (result.data.head.sha === run.head_sha) return result.data;
+              }
+              const candidates = await github.paginate(github.rest.pulls.list, {
+                owner, repo, state: 'open', per_page: 100,
+              });
+              return candidates.find((item) => item.head.sha === run.head_sha) || null;
+            }
+
+            async function reviewState(pull) {
+              if (pull.state !== 'open' || pull.draft) return { ready: false, reason: 'PR is closed or draft' };
+              const sha = pull.head.sha;
+
+              const reviews = await github.paginate(github.rest.pulls.listReviews, {
+                owner, repo, pull_number: pull.number, per_page: 100,
+              });
+              const jinxReviews = reviews
+                .filter((review) => review.user?.login === configuredJinxLogin && review.state !== 'PENDING')
+                .sort((a, b) => Date.parse(b.submitted_at || 0) - Date.parse(a.submitted_at || 0));
+              const latestJinx = jinxReviews[0];
+              if (!latestJinx || latestJinx.state !== 'APPROVED' || latestJinx.commit_id !== sha) {
+                return { ready: false, reason: `no latest APPROVED GitHub review from ${configuredJinxLogin} on ${sha}` };
+              }
+
+              const ciRuns = await github.rest.actions.listWorkflowRuns({
+                owner, repo, workflow_id: 'ci.yml', head_sha: sha, per_page: 100,
+              });
+              const currentCiRuns = ciRuns.data.workflow_runs
+                .filter((run) => run.event === 'pull_request' && run.head_sha === sha)
+                .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+              if (!currentCiRuns.length || currentCiRuns[0].conclusion !== 'success') {
+                return { ready: false, reason: `latest CI run for ${sha} is missing or not successful` };
+              }
+
+              const checks = await github.paginate(github.rest.checks.listForRef, {
+                owner, repo, ref: sha, filter: 'all', per_page: 100,
+              });
+              const matchingChecks = checks
+                .filter((check) => check.name === 'Claude PR Review' && check.head_sha === sha &&
+                  check.app?.slug === 'github-actions' &&
+                  new RegExp(`^\\d+:${pull.number}:${sha}$`).test(check.external_id || ''))
+                .sort((a, b) => Date.parse(b.started_at || b.completed_at || 0) - Date.parse(a.started_at || a.completed_at || 0));
+              const latestClaude = matchingChecks[0];
+              if (!latestClaude || latestClaude.conclusion !== 'success') {
+                return { ready: false, reason: `latest Claude PR Review run for ${sha} is missing or not successful` };
+              }
+              const sourceRunId = Number(latestClaude.external_id.split(':', 1)[0]);
+              const sourceRun = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: sourceRunId });
+              const sourceWorkflow = await github.rest.actions.getWorkflow({ owner, repo, workflow_id: sourceRun.data.workflow_id });
+              if (sourceRun.data.name !== 'Claude PR Review' || sourceWorkflow.data.path !== '.github/workflows/claude-pr-review.yml' ||
+                  sourceRun.data.event !== 'pull_request_target' ||
+                  sourceRun.data.conclusion !== 'success') {
+                return { ready: false, reason: 'Claude approval check is not backed by a successful trusted Claude workflow run' };
+              }
+              return { ready: true, sha };
+            }
+
+            let pull = await findPullRequest();
+            if (!pull) {
+              block('could not associate this event with an open PR at the event head SHA');
+              return;
+            }
+
+            let result = await reviewState(pull);
+            if (!result.ready) {
+              block(result.reason);
+              return;
+            }
+
+            // Re-read the PR and all evidence immediately before the SHA-guarded merge.
+            pull = (await github.rest.pulls.get({ owner, repo, pull_number: pull.number })).data;
+            result = await reviewState(pull);
+            if (!result.ready || result.sha !== pull.head.sha) {
+              block(result.reason || 'PR head changed during verification');
+              return;
+            }
+
+            const merged = await github.rest.pulls.merge({
+              owner,
+              repo,
+              pull_number: pull.number,
+              sha: result.sha,
+              merge_method: 'squash',
+            });
+            if (!merged.data.merged) {
+              core.setFailed(`GitHub refused the SHA-guarded merge: ${merged.data.message || 'unknown reason'}`);
+              return;
+            }
+            core.info(`Merged PR #${pull.number} at verified head ${result.sha}.`);
