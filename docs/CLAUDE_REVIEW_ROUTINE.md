@@ -14,6 +14,7 @@ Defined in `.github/workflows/claude-pr-review.yml`:
   - Pull request synchronize.
   - Pull request ready for review.
   - Pull request reopened.
+  - Pull request edited (description changes also need a fresh verdict).
 - Instructions: read `AGENTS.md` and `REVIEW.md` from `origin/main`, record that main SHA, review the PR head, do not repeat what CI already checks, and post findings with file/line citations plus a SHA-bound verdict as `claude[bot]`.
 
 The action uses the built-in Claude GitHub App authentication for GitHub operations. Do not add its `github_token` input: that would post comments under the token owner's identity instead of `claude[bot]`.
@@ -38,13 +39,14 @@ Use Claude's built-in GitHub App authentication so the summary author is claude[
 
 ## Jinx approval and automatic merge
 
-Defined in `.github/workflows/auto-merge-reviewed-pr.yml`. The current Jinx approval signal is a submitted GitHub pull request review with state `COMMENTED`, `commit_id` equal to the current PR head SHA, and a standalone no-blockers statement (for example, `Jinx verdict: No blockers`, `No blockers remain`, or `No blockers found`). Set the Actions variable `JINX_REVIEWER_LOGIN` to Jinx's exact GitHub login. Ordinary issue comments do not count.
+Defined in `.github/workflows/auto-merge-reviewed-pr.yml`. The current Jinx approval signal is the latest submitted GitHub pull request review with state `COMMENTED`, `commit_id` equal to the current PR head SHA, and a standalone no-blockers statement (for example, `Jinx verdict: No blockers`, `No blockers remain`, or `No blockers found`). Set the Actions variable `JINX_REVIEWER_LOGIN` to Jinx's dedicated GitHub login, distinct from the PR author's login. Reviews from the PR author, issue comments, non-`COMMENTED` states, ambiguous wording, or an older commit fail closed.
 
-The merge gate also requires CI success for that PR head, the latest Claude summary from `claude[bot]` to carry the current PR head SHA and current main SHA with `Claude verdict: OK to merge`, and no unresolved Important review thread. Any new PR commit or a new main commit makes the prior Claude verdict stale. The workflow rechecks the evidence immediately before a SHA-guarded squash merge; if any evidence is missing or ambiguous, it waits without merging.
+The merge gate also requires the newest CI run linked to that PR and exact head SHA to succeed, the latest Claude summary from `claude[bot]` to carry the current PR head SHA and current main SHA with `Claude verdict: OK to merge`, and no unresolved Important review thread. It checks formatted Important labels and refuses to auto-merge changes to `.github/workflows/**`, `.github/scripts/review-gate.cjs`, `tools/run-suites.mjs`, `tests/allowed_skips.json`, `tests/test_frozen_contract.mjs`, or `tests/test_review_gate.mjs`. A five-minute sweep retries after Jinx reviews and thread resolution without running a workflow definition from the PR branch. The workflow rechecks the PR base and all evidence immediately before a SHA-guarded squash merge; if any evidence is missing or ambiguous, it waits without merging.
 
 ## One-time repository setup
 
-- Add the Actions secret `CLAUDE_CODE_OAUTH_TOKEN` with Jose's Claude Code OAuth plan token.
-- Add the Actions variable `JINX_REVIEWER_LOGIN` with the exact GitHub login used by Jinx. This can later change to the dedicated `jinx-reviewer` machine account.
+- Create a GitHub Actions environment named `claude-review`, restrict its deployment branches to `main`, and store `CLAUDE_CODE_OAUTH_TOKEN` as an environment secret. Remove any repository- or organization-level secret with that name; otherwise a same-repository PR workflow could use it to forge a `claude[bot]` verdict. Do not add required reviewers to this environment.
+- Add the Actions variable `JINX_REVIEWER_LOGIN` with Jinx's dedicated GitHub login. It must not be the PR author's login. If Jinx cannot submit its review from an independent account, the merge gate intentionally remains blocked.
 - Protect `main` by requiring the branch to be up to date before merging. This server-side rule closes the race where `main` advances between the workflow's final check and its merge request.
 - Ensure repository Actions settings allow `GITHUB_TOKEN` write permissions for workflows. Keep required CI checks enabled; this workflow does not skip them.
+- Keep CI and test-gate policy files under independent review. The automation refuses to auto-merge changes under `.github/workflows/`, `.github/scripts/review-gate.cjs`, `tools/run-suites.mjs`, `tests/allowed_skips.json`, `tests/test_frozen_contract.mjs`, or `tests/test_review_gate.mjs`. This bootstrap PR changes protected files, so it cannot auto-merge itself.

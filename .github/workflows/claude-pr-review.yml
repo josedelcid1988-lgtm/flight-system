@@ -2,7 +2,7 @@ name: Claude PR Review
 
 on:
   pull_request_target:
-    types: [opened, synchronize, ready_for_review, reopened]
+    types: [opened, synchronize, ready_for_review, reopened, edited]
 
 permissions:
   contents: read
@@ -19,6 +19,9 @@ jobs:
     if: github.repository == 'josedelcid1988-lgtm/flight-system' && github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    environment:
+      name: claude-review
+      deployment: false
     steps:
       - name: Review the pull request with Claude Opus
         uses: anthropics/claude-code-action@756cc22e19660d20e8cc9496b4f242475a7f7790 # v1
