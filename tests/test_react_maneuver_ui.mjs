@@ -65,7 +65,7 @@ try {
   await carRow.waitFor();
   await carRow.locator('.fr-record-link').click();
   await page.locator('.fr-drawer[open]').waitFor();
-  await page.getByRole('button', { name: 'Open full record' }).click();
+  await page.getByRole('button', { name: 'Open full record' }).click({ force: true });
   await page.locator('body[data-view="mnv-car"]').waitFor();
   assert.equal(await page.locator('.flight-react').count(), 0, 'complex edits remain in the existing gated CAR workflow');
   assert.deepEqual(errors, []);

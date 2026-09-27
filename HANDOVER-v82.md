@@ -62,10 +62,10 @@ check. Persistent storage and tested backups are required.
 
 ## Verification status
 
-The current local run (17:13:25 to 17:19:11 UTC) and mirror run (17:19:14 to 17:25:03 UTC) on
-September 27, 2026 each passed 64 of 64 suites, including `qa_full` with 310 checks and `qa_multi`
+The current local run (17:54:02 to 17:57:56 UTC) and mirror run (18:02:38 to 18:09:10 UTC) on
+September 27, 2026 each passed 65 of 65 suites, including `qa_full` with 310 checks and `qa_multi`
 with 161 checks. Both runs had zero skips and tested index stamp
-`48342b28496510abe133cfdfccd46974a78bfb52dfb0789feae2d00a761effab`; the mirror run stored 17,545
+`842b9afec82a59a409a3c5bf75d65a837966ca2743ebe27edbcbf952811c1956`; the mirror run stored 17,545
 records with an intact chain. These runs include browser checks that server refusals on both the MES
 action and legacy snapshot paths restore the committed workspace. Both runs include FAIR print
 layout checks and an authorized 8130-9 AQI browser signature persisted through its audited server action,
@@ -96,9 +96,14 @@ Flight Plan Kanban and MRP forecast now render in React from `FlightPlan` record
 browser test checks status lane counts against the planner, MRP demand summaries against its
 forecast, compact density, selected-order routing, reduced motion, bounded source-order links and tablet rendering; captures
 are `flight-plan-kanban-1440.png`, `flight-plan-mrp-forecast-1440.png` and
-`flight-plan-mrp-forecast-tablet.png`. Flight Control workflows beyond the Hangar and Flight
-Maneuver full detail screens still use legacy rendering; the approved React migration remains
-incomplete.
+`flight-plan-mrp-forecast-tablet.png`. Flight Control's work-order execution, traceability, serial
+assignment, activity and support workflows, and Flight Maneuver full detail screens still use legacy
+rendering; the approved React migration remains incomplete.
+
+The Flight Control serial-number register now uses the shared React queue, search, status filter,
+compact density and accessible details drawer. Its traceability and work-order inventory actions
+continue into the existing Flight routes. Browser verification covers live records, search, density,
+Escape close, focus return and both routes. Capture: `flight-control-serials-1440.png`.
 
 ## Release blocker
 
@@ -114,6 +119,7 @@ is not proof of server persistence. See [`SECURITY_REVIEW-v82.md`](docs/SECURITY
 ## Package files
 
 - The one-page contents, verification and open-items summary is in [`docs/ONE-PAGE-SUMMARY-v82.md`](docs/ONE-PAGE-SUMMARY-v82.md).
+- The optional Claude and Muse AI review brief is [`docs/EXTERNAL-REVIEW-BRIEF-v82.md`](docs/EXTERNAL-REVIEW-BRIEF-v82.md); it makes no claim that either external review has occurred.
 - `release/flight-system-v82-source.zip` contains the source tree, server, docs, test code and browser evidence for integration review.
 - `release/flight-system-v82.zip` is the static browser deployment package.
 - `release/flight-system-v82-demo.zip` is the marked training/demo package.

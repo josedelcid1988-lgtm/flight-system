@@ -9,17 +9,17 @@
 - Operation sub-codes, source inspection, role and training controls, stamp handling, signed QMS records and controlled documents.
 - Server-side Jira issue creation for ECR, SPR and SCAR with role checks and durable idempotency.
 - AI governance records and deterministic skill drafts with review and acceptance controls.
-- Approved React design in the Flight Control Hangar and work-order queue, Flight Plan queue, Big Three, projects, dispatch, Kanban and MRP forecast, plus Flight Maneuver queues. Skyryse branding and helicopter progress visuals remain.
+- Approved React design in the Flight Control Hangar, serial-number register and work-order queue; Flight Plan queue, Big Three, projects, dispatch, Kanban and MRP forecast; and Flight Maneuver queues. Skyryse branding and helicopter progress visuals remain.
 - Floor picker, wake-lock option, sync indicators, FAIR print page rules, full test suite and portable source, production and demo archives.
 
 ## Verification
 
-Both local and mirror runs passed 64 of 64 suites with zero skips. `qa_full` passed 310 checks. The mirror verified 17,545 records with an intact hash chain. Archive creation, source archive CRC, current build outputs and the machine-path scan passed. PostgreSQL was not provisioned locally.
+Both local and mirror runs passed 65 of 65 suites with zero skips. `qa_full` passed 310 checks. The mirror verified 17,545 records with an intact hash chain. Archive creation, source archive CRC, current build outputs and the machine-path scan passed. PostgreSQL was not provisioned locally.
 
 ## Open before production use
 
 - Route remaining legacy edits through authorized server commands; some still save only in browser storage and are refused by the shared server.
-- Complete the React migration for other Flight Control screens and Flight Maneuver full-record workflows.
+- Complete the React migration for remaining Flight Control screens and Flight Maneuver full-record workflows.
 - Finish Datum-specific skill algorithms and connect authorized triggers to all intended business events.
 - Implement and verify Google Calendar and Outlook connectors. The supplied Datum source had no OAuth connector implementation.
 - Configure and verify the owner's Jira tenant and service account. Keep Jira as the source of truth for its tickets.

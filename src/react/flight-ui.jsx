@@ -494,6 +494,64 @@ function ManeuverHangar({ state, FM, view, onOpen }) {
   </div>;
 }
 
+function SerialRegister({ state, onTrace, onOpen }) {
+  const [query, setQuery] = useState('');
+  const [status, setStatus] = useState('All');
+  const [compact, setCompact] = useState(() => { try { return localStorage.getItem(`${densityKey}-serials`) === 'compact'; } catch { return false; } });
+  const [selected, setSelected] = useState(null);
+  const rows = [...(state.serialLog || [])].reverse().filter(item => {
+    const text = [item.serial, item.partNumber, item.revision, item.orderId, item.unit, item.lotNumber].join(' ').toLowerCase();
+    return (status === 'All' || item.status === status) && text.includes(query.trim().toLowerCase());
+  });
+  const density = () => setCompact(value => {
+    const next = !value;
+    try { localStorage.setItem(`${densityKey}-serials`, next ? 'compact' : 'comfortable'); } catch {}
+    return next;
+  });
+  return <div className="flight-react fr-serials">
+    <div className="fr-page-heading"><div><span className="fr-eyebrow">FLIGHT CONTROL</span><h1>Serial numbers<span>.</span></h1></div><div className="fr-workspace">Running serial assignment register</div></div>
+    <section className="fr-queue" aria-labelledby="fr-serial-heading">
+      <div className="fr-queue-heading"><div className="fr-section-heading"><h2 id="fr-serial-heading">Serial number register</h2><span className="fr-count">{String(rows.length).padStart(2, '0')}</span></div>
+        <div className="fr-controls"><label className="fr-search"><Search size={16}/><input aria-label="Search serial numbers" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search serial, part, work order or lot"/></label>
+          <label className="fr-filter-select"><span className="fr-visually-hidden">Serial status</span><select aria-label="Serial status" value={status} onChange={event => setStatus(event.target.value)}>{['All', 'Assigned', 'In build', 'Closed', 'Voided'].map(value => <option key={value}>{value}</option>)}</select></label>
+          <button className="fr-density" aria-pressed={compact} onClick={density}><SlidersHorizontal size={15}/>{compact ? 'Comfortable' : 'Compact'}</button>
+        </div>
+      </div>
+      <div className="fr-table-scroll"><table className={compact ? 'fr-compact' : ''}><thead><tr><th>Serial</th><th>Part / revision</th><th>Work order</th><th>Unit</th><th>Lot</th><th>Status</th><th>Created</th><th>Voided</th></tr></thead><tbody>
+        {rows.map(item => { const lot = item.lotNumber || state.orders.find(order => order.id === item.orderId)?.inventory?.lotNumber || ''; return <tr key={item.serial} data-serial-row={item.serial} className={item.status === 'Voided' ? 'fr-serial-voided' : ''}>
+          <td><button className="fr-record-link" onClick={() => setSelected(item)}><strong>{item.serial}</strong></button></td>
+          <td><strong>{item.partNumber}</strong><small>Rev {item.revision}</small></td>
+          <td><button className="fr-text-action" onClick={() => onOpen(item.orderId)}>{item.orderId}</button></td><td>{item.unit}</td>
+          <td>{lot ? <button className="fr-text-action" onClick={() => onTrace(lot)}>{lot}</button> : <span className="fr-muted">Not stocked</span>}</td>
+          <td><span className={`fr-status${item.status === 'Voided' ? ' is-error' : ''}`}><i/>{item.status}</span></td>
+          <td>{displayFlightDate(item.assignedAt)}</td><td>{item.voidedAt ? <><time>{displayFlightDate(item.voidedAt)}</time><small>{item.voidReason}</small></> : <span className="fr-muted">None</span>}</td>
+        </tr>; })}
+      </tbody></table>{!rows.length && <div className="fr-empty">No serial numbers match the current search and status.</div>}</div>
+      <footer><span>{rows.length} serial records</span><span>Assignment and void history remain in the Flight System record.</span></footer>
+    </section>
+    <SerialDrawer item={selected} onClose={() => setSelected(null)} onTrace={onTrace} onOpen={onOpen}/>
+  </div>;
+}
+
+function SerialDrawer({ item, onClose, onTrace, onOpen }) {
+  const dialog = useRef(null);
+  const returnFocus = useRef(null);
+  useEffect(() => {
+    if (!item) return;
+    returnFocus.current = document.activeElement;
+    const frame = requestAnimationFrame(() => { if (dialog.current && !dialog.current.open) { dialog.current.showModal(); dialog.current.querySelector('[data-close-drawer]')?.focus(); } });
+    return () => cancelAnimationFrame(frame);
+  }, [item]);
+  const close = () => { if (dialog.current?.open) dialog.current.close(); onClose(); queueMicrotask(() => returnFocus.current?.focus?.()); };
+  return <dialog className="fr-drawer" ref={dialog} onCancel={event => { event.preventDefault(); close(); }} onClick={event => { if (event.target === dialog.current) close(); }}>
+    {item && <section className="fr-drawer-panel" aria-labelledby="fr-serial-drawer-title"><div className="fr-drawer-top"><span>FLIGHT CONTROL · SERIAL RECORD</span><button data-close-drawer aria-label="Close serial details" onClick={close}><X size={19}/></button></div>
+      <div className="fr-drawer-icon"><FileText size={23}/></div><h2 id="fr-serial-drawer-title">{item.serial}</h2><p className="fr-drawer-id">{item.status} · {item.partNumber} Rev {item.revision}</p>
+      <dl className="fr-drawer-fields"><div><dt>Work order</dt><dd>{item.orderId}</dd></div><div><dt>Unit</dt><dd>{item.unit}</dd></div><div><dt>Lot</dt><dd>{item.lotNumber || 'Not stocked'}</dd></div><div><dt>Created</dt><dd>{displayFlightDate(item.assignedAt)}</dd></div>{item.voidedAt && <div><dt>Voided</dt><dd>{displayFlightDate(item.voidedAt)} · {item.voidReason}</dd></div>}{item.reworkOrders?.length > 0 && <div><dt>Rework orders</dt><dd>{item.reworkOrders.map(id => <button key={id} className="fr-text-action" onClick={() => { close(); onOpen(id); }}>{id}</button>)}</dd></div>}</dl>
+      <div className="fr-serial-actions"><button className="fr-primary" onClick={() => { close(); onTrace(item.serial); }}>Open traceability <ArrowUpRight size={17}/></button><button className="fr-text-action" onClick={() => { close(); onOpen(item.orderId); }}>Open work order inventory <ArrowUpRight size={15}/></button></div>
+    </section>}
+  </dialog>;
+}
+
 let root = null;
 let rootElement = null;
 window.FlightReact = {
@@ -544,6 +602,14 @@ window.FlightReact = {
       rootElement = element;
     }
     flushSync(() => root.render(<ManeuverHangar state={state} FM={FM} view={view} onOpen={onOpen}/>));
+  },
+  renderSerials(element, state, onTrace, onOpen) {
+    if (!root || rootElement !== element) {
+      if (root) root.unmount();
+      root = createRoot(element);
+      rootElement = element;
+    }
+    flushSync(() => root.render(<SerialRegister state={state} onTrace={onTrace} onOpen={onOpen}/>));
   },
   unmount() { if (root) { root.unmount(); root = null; rootElement = null; } }
 };
