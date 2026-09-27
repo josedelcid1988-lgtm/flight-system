@@ -146,9 +146,9 @@ function BigThree({ state, MES }) {
   </section>;
 }
 
-function PlanBoard({ state, MES, FlightPlan, onMutation }) {
-  const [query, setQuery] = useState('');
-  const [status, setStatus] = useState('All');
+function PlanBoard({ state, MES, FlightPlan, onMutation, initialQuery = '', initialStatus = 'All' }) {
+  const [query, setQuery] = useState(initialQuery);
+  const [status, setStatus] = useState(initialStatus);
   const [compact, setCompact] = useState(() => { try { return localStorage.getItem(densityKey) === 'compact'; } catch { return false; } });
   const rows = FlightPlan.list(state).filter(item => {
     const c = item.configuration || {};
@@ -245,6 +245,82 @@ function PlanBoard({ state, MES, FlightPlan, onMutation }) {
       </tbody></table>{!rows.length && <div className="fr-empty">No planned orders match these filters.</div>}</div>
       <footer><span>{rows.length} planned orders</span><span><Check size={13}/> Records stay linked to their released master WI</span></footer>
     </section>
+  </div>;
+}
+
+function PlanningNav() {
+  return <nav className="fr-planning-nav" aria-label="Flight Plan views">
+    <button data-action="nav" data-view="plan">Planned orders</button>
+    <button data-action="nav" data-view="plan-kanban" aria-current="page">Kanban</button>
+    <button data-action="nav" data-view="plan-forecast">MRP forecast</button>
+  </nav>;
+}
+
+function PlanKanban({ state, MES, FlightPlan }) {
+  const [compact, setCompact] = useState(() => { try { return localStorage.getItem(densityKey) === 'compact'; } catch { return false; } });
+  const all = FlightPlan.list(state);
+  const covered = item => !item.netsuite || item.netsuite.onHand >= item.quantity;
+  const columns = [
+    { title: 'Created', hint: 'Planned, not yet firmed.', rows: all.filter(item => item.status === 'Planned') },
+    { title: 'Pending materials', hint: 'Firm, with a recorded NetSuite shortage.', rows: all.filter(item => item.status === 'Firm' && !covered(item)) },
+    { title: 'Pending work order', hint: 'Firm and covered. Conversion creates the Flight Control work order.', rows: all.filter(item => item.status === 'Firm' && covered(item)) },
+    { title: 'Converted', hint: 'Linked to a Flight Control work order.', rows: all.filter(item => item.status === 'Converted') }
+  ];
+  const displayDate = value => value ? new Date(`${value}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : 'Not scheduled';
+  const toggleDensity = () => setCompact(value => { const next = !value; try { localStorage.setItem(densityKey, next ? 'compact' : 'comfortable'); } catch {} return next; });
+  return <div className="flight-react fr-plan fr-kanban-page">
+    <div className="fr-page-heading"><div><span className="fr-eyebrow">FLIGHT PLAN</span><h1>Kanban<span>.</span></h1></div><button className="fr-primary" data-action="plan-create"><Plus size={16}/> Plan from master WI</button></div>
+    <PlanningNav/>
+    <div className="fr-section-heading fr-kanban-heading"><div><h2>Planned order flow</h2><span className="fr-count">{all.filter(item => item.status !== 'Cancelled').length} active</span></div><button className="fr-density" aria-pressed={compact} onClick={toggleDensity}><SlidersHorizontal size={15}/>{compact ? 'Comfortable' : 'Compact'}</button></div>
+    <div className={`fr-plan-lanes${compact ? ' is-compact' : ''}`}>{columns.map(column => {
+      const rows = column.rows.slice().sort((a, b) => asText(a.needDate).localeCompare(asText(b.needDate)) || asText(a.id).localeCompare(asText(b.id)));
+      return <section className="fr-plan-lane" aria-label={column.title} key={column.title}>
+        <div className="fr-plan-lane-head"><div><h2>{column.title}</h2><p>{column.hint}</p></div><span className="fr-count">{String(rows.length).padStart(2, '0')}</span></div>
+        <div className="fr-plan-lane-cards">{rows.map(item => {
+          const config = item.configuration || {}, shortage = item.netsuite ? Math.max(0, item.quantity - item.netsuite.onHand) : 0, late = FlightPlan.overdue(item);
+          return <article className={`fr-plan-card${late ? ' is-late' : ''}`} key={item.id}>
+            <div className="fr-plan-card-top"><strong className="fr-mono">{item.id}</strong><span className="fr-status"><i/>{item.status}</span></div>
+            <h3>{config.partNumber || 'Part not set'} <small>/ Rev {config.partRevision || 'Unassigned'}</small></h3>
+            <p>{item.masterWI?.id} Rev {item.masterWI?.revision} · {item.masterWI?.title}</p>
+            <div className="fr-plan-card-meta"><span>Qty {item.quantity}</span><time dateTime={item.needDate}>Need {displayDate(item.needDate)}</time></div>
+            {late && <span className="fr-overdue-label">Past need date</span>}
+            {item.netsuite && <p className={shortage ? 'fr-plan-shortage' : 'fr-plan-covered'}>NetSuite on hand {item.netsuite.onHand}{shortage ? ` · short ${shortage}` : ' · covered'}</p>}
+            <div className="fr-plan-card-actions">
+              <button className="fr-text-action" data-action="plan-open" data-plan={item.id}>View details</button>
+              {item.status === 'Planned' && <button className="fr-text-action" data-action="plan-firm" data-plan={item.id}>Firm</button>}
+              {item.status === 'Firm' && <button className="fr-text-action" data-action="plan-convert" data-plan={item.id}>Convert</button>}
+              {['Planned', 'Firm'].includes(item.status) && <button className="fr-text-action is-muted" data-action="plan-cancel" data-plan={item.id}>Cancel</button>}
+              {item.workOrder && <button className="fr-record-link" data-action="open-order" data-order={item.workOrder.id}>{item.workOrder.id}</button>}
+            </div>
+          </article>;
+        })}{!rows.length && <p className="fr-empty">Nothing in this stage.</p>}</div>
+      </section>;
+    })}</div>
+    <p className="fr-muted fr-plan-cancelled">{all.filter(item => item.status === 'Cancelled').length} cancelled planned orders are retained in the record.</p>
+  </div>;
+}
+
+function ForecastTable({ title, columns, rows, empty, compact }) {
+  return <section className="fr-forecast-section" aria-labelledby={`forecast-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}>
+    <div className="fr-section-heading"><div><h2 id={`forecast-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}>{title}</h2><span className="fr-count">{rows.length}</span></div></div>
+    {rows.length ? <div className="fr-table-scroll"><table className={compact ? 'fr-compact' : ''}><thead><tr>{columns.map(column => <th key={column}>{column}</th>)}</tr></thead><tbody>{rows}</tbody></table></div> : <p className="fr-empty">{empty}</p>}
+  </section>;
+}
+
+function PlanForecast({ state, MES, FlightPlan }) {
+  const [compact, setCompact] = useState(() => { try { return localStorage.getItem(densityKey) === 'compact'; } catch { return false; } });
+  const forecast = FlightPlan.forecast(state), today = new Date().toISOString().slice(0, 10);
+  const toggleDensity = () => setCompact(value => { const next = !value; try { localStorage.setItem(densityKey, next ? 'compact' : 'comfortable'); } catch {} return next; });
+  const date = value => value ? new Date(`${value}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : 'Not scheduled';
+  return <div className="flight-react fr-plan fr-forecast-page">
+    <div className="fr-page-heading"><div><span className="fr-eyebrow">FLIGHT PLAN</span><h1>MRP forecast<span>.</span></h1></div><button className="fr-density" aria-pressed={compact} onClick={toggleDensity}><SlidersHorizontal size={15}/>{compact ? 'Comfortable' : 'Compact'}</button></div>
+    <PlanningNav/>
+    <div className="fr-forecast-summary"><div><span>Open planned orders</span><strong>{forecast.open.length}</strong></div><div><span>Component demands</span><strong>{forecast.explosion.length}</strong></div><div><span>Expiring lots</span><strong>{forecast.shelfLife.length}</strong></div><div><span>Non-interchangeable changes</span><strong>{forecast.designChanges.length}</strong></div></div>
+    <ForecastTable title="Component demand" columns={['Component', 'Qty per · demand', 'On hand', 'Short', 'Lead', 'Order by', 'From']} empty="No open planned orders produce component demand." compact={compact} rows={forecast.explosion.map((item, index) => <tr key={`${item.part}/${item.rev}/${index}`}><td><strong className="fr-mono">{item.part} / Rev {item.rev}</strong><small>{item.title}</small></td><td>{item.qtyPer} · {item.qty}</td><td>{item.onHand}</td><td>{item.short ? <span className="fr-status is-error"><i/>{item.short}</span> : <span className="fr-status is-ready"><i/>Covered</span>}</td><td>{item.leadDays} days</td><td className={item.orderBy && item.orderBy < today ? 'fr-overdue-label' : ''}>{date(item.orderBy)}</td><td>{item.orders.map(id => <button key={id} className="fr-record-link" data-action="plan-open" data-plan={id}>{id}</button>)}</td></tr>)}/>
+    <ForecastTable title="Lead time from actuals" columns={['Part', 'Runs', 'Average', 'Longest', 'Real closures']} empty="No completed work-order history is available." compact={compact} rows={forecast.leadTime.map(item => <tr key={item.part}><td><strong className="fr-mono">{item.part}</strong></td><td>{item.runs.join(', ')}</td><td>{item.avg} days</td><td>{item.max} days</td><td>{item.real ? <span className="fr-status is-ready"><i/>{item.real}</span> : <span className="fr-muted">Demo history only</span>}</td></tr>)}/>
+    <ForecastTable title="First Production FAIR" columns={['Planned order', 'Part / revision', 'Trigger', 'Action']} empty="No open first-Production planned orders need a FAIR plan." compact={compact} rows={forecast.fair.map(item => <tr key={item.id}><td><button className="fr-record-link" data-action="plan-open" data-plan={item.id}>{item.id}</button></td><td>{item.configuration.partNumber} / Rev {item.configuration.partRevision}</td><td>First Production build of this revision</td><td><span className="fr-status"><i/>FAIR planning required</span></td></tr>)}/>
+    <ForecastTable title="Shelf life" columns={['Lot', 'Component', 'On hand', 'Expires', 'Open demand', 'Action']} empty="No lots expire in the forecast window." compact={compact} rows={forecast.shelfLife.map(item => <tr key={item.lot}><td><strong className="fr-mono">{item.lot}</strong></td><td>{item.part} / Rev {item.rev}</td><td>{item.onHand}</td><td className={item.daysLeft <= 14 ? 'fr-overdue-label' : ''}>{date(item.expires)} · {item.daysLeft} days</td><td>{item.demand}</td><td>{item.demand ? <span className="fr-status is-error"><i/>Replacement demand</span> : <span className="fr-muted">Quarantine at expiry</span>}</td></tr>)}/>
+    <ForecastTable title="Design changes" columns={['Component', 'Supersedes', 'Old revision stock', 'New revision stock', 'Open demand', 'Buy']} empty="No non-interchangeable design changes affect open demand." compact={compact} rows={forecast.designChanges.map((item, index) => <tr key={`${item.part}/${item.rev}/${index}`}><td><strong className="fr-mono">{item.part} / Rev {item.rev}</strong><small>{item.title}</small></td><td>Rev {item.supersedes}</td><td>{item.oldOnHand} · unavailable</td><td>{item.newOnHand}</td><td>{item.demand}</td><td>{item.buy ? <span className="fr-status is-error"><i/>{item.buy}</span> : <span className="fr-status is-ready"><i/>Covered</span>}</td></tr>)}/>
   </div>;
 }
 
@@ -356,13 +432,29 @@ window.FlightReact = {
     }
     flushSync(() => root.render(<Hangar state={state} MES={MES} onOpen={onOpen}/>));
   },
-  renderPlan(element, state, MES, FlightPlan, onMutation) {
+  renderPlan(element, state, MES, FlightPlan, onMutation, initialQuery = '', initialStatus = 'All') {
     if (!root || rootElement !== element) {
       if (root) root.unmount();
       root = createRoot(element);
       rootElement = element;
     }
-    flushSync(() => root.render(<PlanBoard state={state} MES={MES} FlightPlan={FlightPlan} onMutation={onMutation}/>));
+    flushSync(() => root.render(<PlanBoard state={state} MES={MES} FlightPlan={FlightPlan} onMutation={onMutation} initialQuery={initialQuery} initialStatus={initialStatus}/>));
+  },
+  renderPlanKanban(element, state, MES, FlightPlan) {
+    if (!root || rootElement !== element) {
+      if (root) root.unmount();
+      root = createRoot(element);
+      rootElement = element;
+    }
+    flushSync(() => root.render(<PlanKanban state={state} MES={MES} FlightPlan={FlightPlan}/>));
+  },
+  renderPlanForecast(element, state, MES, FlightPlan) {
+    if (!root || rootElement !== element) {
+      if (root) root.unmount();
+      root = createRoot(element);
+      rootElement = element;
+    }
+    flushSync(() => root.render(<PlanForecast state={state} MES={MES} FlightPlan={FlightPlan}/>));
   },
   renderManeuver(element, state, FM, view, onOpen) {
     if (!root || rootElement !== element) {

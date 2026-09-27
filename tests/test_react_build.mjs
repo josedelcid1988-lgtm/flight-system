@@ -13,11 +13,17 @@ assert.match(index, /href=\"assets\/flight-ui\.css\"/);
 assert.match(index, /src=\"assets\/flight-ui\.js\"/);
 assert.match(index, /window\.FlightReact\.renderHangar\(/);
 assert.match(index, /window\.FlightReact\.renderPlan\(/);
+assert.match(index, /window\.FlightReact\.renderPlanKanban\(/);
+assert.match(index, /window\.FlightReact\.renderPlanForecast\(/);
 assert.match(index, /window\.FlightReact\.renderManeuver\(/);
 assert.match(index, /innerHTML=legacyMarkup/);
 assert.doesNotMatch(index, /renderHangar\(\$\('#main'\)/);
 assert.match(bundle, /renderHangar/);
 assert.match(bundle, /renderPlan/);
+assert.match(bundle, /renderPlanKanban/);
+assert.match(bundle, /renderPlanForecast/);
+assert.match(reactSource, /function PlanKanban/);
+assert.match(reactSource, /function PlanForecast/);
 assert.match(bundle, /renderManeuver/);
 assert.match(reactSource, /function ManeuverHangar/);
 assert.match(reactSource, /Flight Maneuver current record metrics/);
@@ -47,4 +53,4 @@ for (const file of ['React-MIT.txt', 'React-DOM-MIT.txt', 'Scheduler-MIT.txt', '
 
 const build = spawnSync(process.execPath, ['tools/build-react.mjs', '--check'], { encoding: 'utf8' });
 assert.equal(build.status, 0, build.stdout + build.stderr);
-console.log('React build: 39 checks, all passed');
+console.log('React build: 45 checks, all passed');
