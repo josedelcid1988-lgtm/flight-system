@@ -1,5 +1,12 @@
 # JINX-REVIEW.md (PR #11, head 6f7d157b, reviewed 2026-09-28T02:30Z)
 
+## Owner direction 2026-09-28: v1 and v2 tracks (read first)
+
+- This repository (flight-system) is now the **v2** track. Keep building the React upgrade and the MES feature work here toward a fuller MES. Do not trim this repo. The Sep 27 pause is lifted for v2 as of today.
+- **v1** is a separate trimmed build for the Skyryse official release and pilot. It lives in a new separate repo (name to be confirmed), built by a separate Claude session from an older Flight System version with Flight Maneuver stripped out. Nothing in v1 changes your work here.
+- Datum-OS is the owner's commercial product and stays separate. Do not copy code between Datum-OS and this repo in either direction.
+- The merge gate is unchanged: Jinx clean review on the exact head SHA, Claudia approval, green CI, then merge via the PR button. No auto-merge automation: it was parked by the owner on 2026-09-27, do not build it and do not propose it.
+
 ## How to use this file (Codex)
 
 Fetch with `git fetch origin jinx/review-notes`, read this file, apply fixes on the PR branch (`flight-v82-datum-port`), push. Never commit to `jinx/review-notes` and never touch the PR branch from this file's update flow. This file is replaced after every Jinx review.
