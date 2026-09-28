@@ -25,3 +25,9 @@ Fetch with `git fetch origin jinx/review-notes`, read this file, apply fixes on 
 - Notice cleanup routing is coherent: engine function, server action allowlist (`server/mes-host.mjs`), browser server-command queue, and the pinned/recent/undated preservation test.
 - Generated files (build stamps, fixtures, `VERSION.md`, `docs/TEST-RESULTS-v82.md`) are consistent with the head.
 - Mirror record count moved 17,546 to 17,545 with the hash chain intact; noted, no action.
+
+## CI failure on the reviewed head (2026-09-28T00:18Z, run 36360283905)
+The `suites` check completed FAILED on head 9c64d8d2. 65/67 pass mirror-off, 66/67 pass mirror-on:
+- `tests/test_server_ui.mjs` fails BOTH runs: `page.waitForFunction(() => window.skServer?.sync?.status === 'synced', ...)` at line 24 times out (15s). The React shell renders (`#main .flight-react` visible), but the workspace sync never reaches `synced`. qa_full 310/310 and the local 67/67 claim in the PR body do not hold in CI.
+- `tests/test_react_maneuver_ui.mjs` fails the mirror-off run only: `locator('body[data-view="mnv-car"]')` never becomes visible within 30s (line 69). It passes under the mirror run, so this smells like a timing-dependent render or a genuine startup path difference when persistence is local.
+Fix: get `suites` green on the exact head before any merge. If these are timeout flakes, either raise the wait bounds in the tests or make the boot path deterministic; if the sync handshake actually stalls on this head, that is a behavior blocker in its own right.
