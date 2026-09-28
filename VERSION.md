@@ -61,12 +61,12 @@ the tree.
 | Item | Value |
 | --- | --- |
 | Build | v82 |
-| index.html SHA-256, as stamped in the file | `e82fd1d55c75f0e7aba13dce8108379f2f580773ecfdfe453293ef5ee3f350b5` |
-| index.html file SHA-256 | `8e10aacf11e97a324fd5c18ebe05835716e7a749de36f8554bbe0f8a095809f5` |
-| demo.html file SHA-256 | `46f7941e77bebe252311e8a501a1936fbb3b64a435af0244cfca20e6ee666fc0` |
+| index.html SHA-256, as stamped in the file | `24ddee498aa50eab335163cb774d1a2cec38117b834f6886d129f1445e7653c6` |
+| index.html file SHA-256 | `cfe8a0b9dfb5f06f8458e5e037740c4d516cc91c76dcb52d629a6a50df368e81` |
+| demo.html file SHA-256 | `e5a0ac9cfa434fc8af47a928c2e339a7de81427bc5bc5bf642d109bbc755c6f0` |
 | Suites run | 2026-09-28 |
-| Mirror off | 68 of 68 pass |
-| Mirror on | 68 of 68 pass; the mirror received 17590 records, chain intact |
+| Mirror off | 69 of 69 pass |
+| Mirror on | 69 of 69 pass; the mirror received 17598 records, chain intact |
 | Skips | none |
 
 The stamped SHA-256 is the hash of `index.html` with its own `fs-build-sha256` field set to
@@ -103,6 +103,7 @@ values are plain hashes of the files as committed.
 | test_load_safety |  | pass | pass |
 | test_load_safety_ui |  | pass | pass |
 | test_migration |  | pass | pass |
+| test_migration_cli |  | pass | pass |
 | test_mirror |  | pass | pass |
 | test_mrb_seat_caps |  | pass | pass |
 | test_nff_boundary |  | pass | pass |
