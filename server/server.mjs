@@ -405,8 +405,9 @@ export function createServer(options = {}) {
             const reason = String(body.reason || '').trim();
             if (reason.length < 10 || reason.length > 300) return fail(400, 'Give the reason in 10 to 300 characters.');
             const added = list.slice(1).filter(role => !before.includes(role) || before[0] === role);
+            const primaryChanged = before[0] !== list[0];
             const trainingCode = String(body.trainingCode || '').trim().toUpperCase();
-            if (added.length) {
+            if (added.length || primaryChanged) {
               const activeTraining = host.MES.trainingCatalog(state).some(item => item.status === 'Active' && item.code === trainingCode);
               if (!trainingCode || !activeTraining || !host.MES.trainingCurrentFor(state, target.username, trainingCode).ok) return fail(403, `${target.displayName} has no current ${trainingCode || 'selected'} training record. Record the training first.`);
             }
@@ -416,7 +417,7 @@ export function createServer(options = {}) {
             const roleTraining = {};
             for (const role of list.slice(1)) roleTraining[role] = added.includes(role) ? { code: trainingCode, at, by: actor.username } : (target.roleTraining?.[role] || {});
             await tx.upsertAccount({ ...target, role: list[0], roles: [list[0]], extraRoles: list.slice(1), roleTraining, createdAt: target.createdAt, createdBy: target.createdBy });
-            await tx.audit(actor.username, 'role-change', { username: target.username, from: before, to: list, reason, trainingCode: added.length ? trainingCode : null });
+            await tx.audit(actor.username, 'role-change', { username: target.username, from: before, to: list, reason, trainingCode: added.length || primaryChanged ? trainingCode : null });
             message = `${target.displayName}: ${list.join(' + ')}.`;
           } else if (action === 'support') {
             if (!keysFor(actor).includes('admin')) return fail(403, 'Only a Master Access account grants or removes Support Access.');

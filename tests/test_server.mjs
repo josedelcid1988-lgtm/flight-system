@@ -357,6 +357,25 @@ try {
     assert.equal(individualInspection.status, 400, 'inspection cannot be granted individually');
     const individualSeat = await api('POST', '/auth/access', { token: qaToken, body: { action: 'grant', username: 'combined', cap: 'mrb-quality', reason: 'Current Quality MRB seat qualification verified.', trainingCode: 'ESD' } });
     assert.equal(individualSeat.status, 400, 'MRB seats cannot be granted individually');
+
+    const noTrainingAccount = await api('PUT', '/auth/accounts', { token, body: { users: [
+      ...((await api('GET', '/auth/accounts', { token })).json.users),
+      { username: 'primary-swap', displayName: 'Primary Swap', role: 'technician', roles: ['technician'], salt: 'primary-swap-salt', hash: sha('primary-swap-salt', 'primary-swap-pass-123') }
+    ] } });
+    assert.equal(noTrainingAccount.status, 200);
+    const missingPrimaryTraining = await api('POST', '/auth/access', { token, body: { action: 'roles', username: 'primary-swap', roles: ['qe'], reason: 'Assign qualified primary role.' } });
+    assert.equal(missingPrimaryTraining.status, 403);
+    assert.match(missingPrimaryTraining.json.error, /no current selected training record/i);
+    assert.equal(server.store.account('primary-swap').role, 'technician', 'primary-role refusal leaves account unchanged');
+    const primaryTrainingState = server.host.MES.upgrade(JSON.parse(server.store.getDoc('default').json));
+    const primaryTraining = server.host.withAccount(server.store.account('one'), () => server.host.MES.recordTraining(primaryTrainingState, { account: 'primary-swap', code: 'ESD', expires: '2099-12-31', note: 'Primary role change regression.' }), primaryTrainingState);
+    assert.equal(primaryTraining.ok, true);
+    const primaryTrainingDoc = server.store.getDoc('default');
+    assert.ok(server.store.putDoc('default', JSON.stringify(primaryTrainingState), primaryTrainingDoc.etag, 'one'));
+    const primaryChange = await api('POST', '/auth/access', { token, body: { action: 'roles', username: 'primary-swap', roles: ['qe'], reason: 'Assign qualified primary role.', trainingCode: 'ESD' } });
+    assert.equal(primaryChange.status, 200, JSON.stringify(primaryChange.json));
+    assert.equal(server.store.account('primary-swap').role, 'qe');
+
     assert.ok(server.host.capsOf(server.store.account('combined'), state).includes('inspect-steps'));
     assert.ok(server.host.capsOf(server.store.account('combined'), state).includes('mrb-quality'));
     const noTrainingUser = await api('PUT', '/auth/accounts', { token, body: { users: [{ username: 'untrained', displayName: 'Untrained User', role: 'qe', roles: ['qe'], salt: 'untrained-salt', hash: sha('untrained-salt', 'untrained-pass-123') }] } });
