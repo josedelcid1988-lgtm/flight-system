@@ -1,4 +1,4 @@
-<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v82"><meta name="fs-build-sha256" content="d5443641f92719f0cbecccc380dc557af76bc93d8192103adfd5ff1e4bc85867"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><!-- FLIGHT REACT ASSETS BEGIN -->
+<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v82"><meta name="fs-build-sha256" content="19cac11717d4fd983a20541cdd0c32ae2d3162ddab396cebf069a48220c465d0"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><!-- FLIGHT REACT ASSETS BEGIN -->
 <link rel="stylesheet" href="assets/flight-ui-fonts.css">
 <link rel="stylesheet" href="assets/flight-ui.css">
 <link rel="stylesheet" href="assets/flight-plan-react.css">
@@ -12065,6 +12065,12 @@ function mediaError(message) { const el = $('#media-error'); if (el) { el.textCo
 function mediaStatus(message) { if ($('#media-status')) $('#media-status').textContent = message; }
 function mediaCommit(next) {
   if (storageBlocked) throw Error('Saved workspace is unavailable or changed in another tab. Reload before making changes; download any unsaved recording first.');
+  // Same rule as save(): nothing is persisted, pushed or mirrored unless the workspace is valid. Callers pass a
+  // clone, so refusing here leaves the live workspace exactly as it was.
+  if (!MES.validate(next)) {
+    const repaired = MES.repair(next);
+    if (!repaired.ok) throw Error(`Change not saved: it would leave this workspace in an invalid state. ${repaired.blocker ? repaired.blocker.detail : ''}`.trim());
+  }
   try { localStorage.setItem(KEY, JSON.stringify(next)); } catch (_) { throw Error('Changes could not be saved. Free browser storage and retry; download any unsaved recording first.'); }
   state = next; lastSaved = structuredClone(next);
   pushWorkspace();
@@ -12344,7 +12350,7 @@ function commitDiscussion(change) {
   const next = structuredClone(state), result = change(next);
   if (!result.ok) throw Error(result.message);
   // Reuse the evidence flow's atomic storage commit: retain the draft if saving fails.
-  try { mediaCommit(next); } catch (_) { throw Error('Your change could not be saved. Copy your draft and free browser storage before retrying.'); }
+  try { mediaCommit(next); } catch (error) { throw Error(/^Change not saved:/.test(error.message) ? `${error.message} Copy your draft before retrying.` : 'Your change could not be saved. Copy your draft and free browser storage before retrying.'); }
   return result;
 }
 
