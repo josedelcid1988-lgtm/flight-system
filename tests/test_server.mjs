@@ -327,6 +327,10 @@ try {
     const forgedNewAccount = await api('PUT', '/auth/accounts', { token, body: { users: [{ username: 'forged-admin', displayName: 'Forged Admin', role: 'technician', roles: ['technician', 'admin'], salt: 'forged-salt', hash: sha('forged-salt', 'forged-pass-123') }] } });
     assert.equal(forgedNewAccount.status, 403, 'new accounts cannot carry multiple client-selected roles');
     assert.equal(server.store.account('forged-admin'), null);
+    const untrainedInspector = await api('PUT', '/auth/accounts', { token, body: { users: [{ username: 'untrained-inspector', displayName: 'Untrained Inspector', role: 'qe', roles: ['qe'], salt: 'inspector-salt', hash: sha('inspector-salt', 'inspector-pass-123') }] } });
+    assert.equal(untrainedInspector.status, 403, 'new inspection and MRB role accounts require a current workspace training record');
+    assert.match(untrainedInspector.json.error, /requires a current training record/i);
+    assert.equal(server.store.account('untrained-inspector'), null);
     assert.deepEqual(server.store.account('combined').extraRoles, []);
     assert.deepEqual(server.store.account('combined').grants, {});
     assert.equal(server.store.account('combined').supportAccess, false);
@@ -339,8 +343,15 @@ try {
     assert.ok(server.store.putDoc('default', JSON.stringify(state), row.etag, 'one'));
     const qaPassword = 'qa-manager-pass-123';
     const accounts = await api('GET', '/auth/accounts', { token });
-    const qaCreated = await api('PUT', '/auth/accounts', { token, body: { users: [...accounts.json.users, { username: 'qa-manager', displayName: 'QA Manager', role: 'qm', roles: ['qm'], salt: '', hash: await makeHash(qaPassword) }] } });
+    const qaCreated = await api('PUT', '/auth/accounts', { token, body: { users: [...accounts.json.users, { username: 'qa-manager', displayName: 'QA Manager', role: 'general', roles: ['general'], salt: '', hash: await makeHash(qaPassword) }] } });
     assert.equal(qaCreated.status, 200, JSON.stringify(qaCreated.json));
+    const qaTrainingState = server.host.MES.upgrade(JSON.parse(server.store.getDoc('default').json));
+    const qaTraining = server.host.withAccount(server.store.account('one'), () => server.host.MES.recordTraining(qaTrainingState, { account: 'qa-manager', code: 'ESD', expires: '2099-12-31', note: 'QA Manager role assignment regression.' }), qaTrainingState);
+    assert.equal(qaTraining.ok, true);
+    const qaTrainingDoc = server.store.getDoc('default');
+    assert.ok(server.store.putDoc('default', JSON.stringify(qaTrainingState), qaTrainingDoc.etag, 'one'));
+    const qaRole = await api('POST', '/auth/access', { token, body: { action: 'roles', username: 'qa-manager', roles: ['qm'], reason: 'Assign trained QA Manager role.', trainingCode: 'ESD' } });
+    assert.equal(qaRole.status, 200, JSON.stringify(qaRole.json));
     const qaSession = await api('POST', '/auth/session', { body: { username: 'qa-manager', password: qaPassword } });
     assert.equal(qaSession.status, 200);
     const qaToken = qaSession.json.token;
@@ -378,8 +389,7 @@ try {
 
     assert.ok(server.host.capsOf(server.store.account('combined'), state).includes('inspect-steps'));
     assert.ok(server.host.capsOf(server.store.account('combined'), state).includes('mrb-quality'));
-    const noTrainingUser = await api('PUT', '/auth/accounts', { token, body: { users: [{ username: 'untrained', displayName: 'Untrained User', role: 'qe', roles: ['qe'], salt: 'untrained-salt', hash: sha('untrained-salt', 'untrained-pass-123') }] } });
-    assert.equal(noTrainingUser.status, 200);
+    await server.store.upsertAccount({ username: 'untrained', displayName: 'Untrained User', role: 'qe', roles: ['qe'], extraRoles: [], roleTraining: {}, grants: {}, grantHistory: [], supportAccess: false, salt: 'untrained-salt', hash: sha('untrained-salt', 'untrained-pass-123'), createdAt: new Date().toISOString(), createdBy: 'test' });
     const missing = await api('POST', '/auth/access', { token: qaToken, body: { action: 'grant', username: 'untrained', cap: 'conformity', reason: 'Testing missing training refusal.', trainingCode: 'ESD' } });
     assert.equal(missing.status, 403);
     assert.match(missing.json.error, /no current ESD training record/i);
@@ -397,14 +407,22 @@ try {
     const current = await api('GET', '/auth/accounts', { token });
     const withSupervisor = await api('PUT', '/auth/accounts', { token, body: { users: [
       ...current.json.users,
-      { username: 'supervisor', displayName: 'Quality Supervisor', role: 'qs', roles: ['qs'], salt: 'supervisor-salt', hash: sha('supervisor-salt', 'supervisor-pass-123') }
+      { username: 'supervisor', displayName: 'Quality Supervisor', role: 'general', roles: ['general'], salt: 'supervisor-salt', hash: sha('supervisor-salt', 'supervisor-pass-123') }
     ] } });
     assert.equal(withSupervisor.status, 200);
+    const supervisorTrainingState = server.host.MES.upgrade(JSON.parse(server.store.getDoc('default').json));
+    const supervisorTraining = server.host.withAccount(server.store.account('one'), () => server.host.MES.recordTraining(supervisorTrainingState, { account: 'supervisor', code: 'ESD', expires: '2099-12-31', note: 'Quality Supervisor role assignment regression.' }), supervisorTrainingState);
+    assert.equal(supervisorTraining.ok, true);
+    const supervisorTrainingDoc = server.store.getDoc('default');
+    assert.ok(server.store.putDoc('default', JSON.stringify(supervisorTrainingState), supervisorTrainingDoc.etag, 'one'));
+    const supervisorRole = await api('POST', '/auth/access', { token, body: { action: 'roles', username: 'supervisor', roles: ['qs'], reason: 'Assign trained Quality Supervisor role.', trainingCode: 'ESD' } });
+    assert.equal(supervisorRole.status, 200, JSON.stringify(supervisorRole.json));
     const signedIn = await api('POST', '/auth/session', { body: { username: 'supervisor', password: 'supervisor-pass-123' } });
     assert.equal(signedIn.status, 200);
     const qsToken = signedIn.json.token;
+    const supervisorAccounts = await api('GET', '/auth/accounts', { token: qsToken });
     const withRegular = await api('PUT', '/auth/accounts', { token: qsToken, body: { users: [
-      ...withSupervisor.json.users,
+      ...supervisorAccounts.json.users,
       { username: 'floor-user', displayName: 'Floor User', role: 'general', roles: ['general'], salt: 'floor-salt', hash: sha('floor-salt', 'floor-user-pass-123') }
     ] } });
     assert.equal(withRegular.status, 200);

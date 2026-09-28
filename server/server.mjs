@@ -42,6 +42,7 @@ async function verifyPassword(account, password) {
 }
 const publicAccount = a => ({ username: a.username, displayName: a.displayName, role: a.role, roles: Array.isArray(a.roles) && a.roles.length ? [...a.roles] : [a.role], extraRoles: Array.isArray(a.extraRoles) ? [...a.extraRoles] : [], roleTraining: a.roleTraining && typeof a.roleTraining === 'object' && !Array.isArray(a.roleTraining) ? a.roleTraining : {}, grants: a.grants && typeof a.grants === 'object' && !Array.isArray(a.grants) ? a.grants : {}, grantHistory: Array.isArray(a.grantHistory) ? a.grantHistory : [], supportAccess: a.supportAccess === true, createdAt: a.createdAt, createdBy: a.createdBy, sso: a.sso });
 const LOCK_AFTER = 5, LOCK_MS = 5 * 60 * 1000;
+const TRAINING_GATED_ROLE_CAPS = new Set(['inspect-steps', 'mrb-quality', 'mrb-me', 'mrb-eng', 'mrb-cert']);
 // The one request body limit, in bytes. It is sized to the largest evidence upload the engine allows
 // (MES.MAX_EVIDENCE_BYTES, sent as the raw body with no encoding overhead), and it also caps the workspace
 // document. The nginx sample and the IT specification use the same number; tests/test_limits.mjs checks it.
@@ -444,6 +445,7 @@ export function createServer(options = {}) {
           if (!firstRun && !(session && (manages(session.account) || supervises(session.account)))) { send(res, 403, { error: 'Only a Master Access, QA Manager, or Quality Supervisor account can manage accounts.' }); return; }
           if (firstRun && incoming.length !== 1) { send(res, 400, { error: 'The first account is created alone.' }); return; }
           await wrapped;
+          const { state: accountState } = await loadState();
           // Hash before the transaction: new hashes are scrypt from the page; a legacy SHA-256 from an older page is wrapped.
           const prepared = new Map();
           for (const u of incoming) {
@@ -482,6 +484,14 @@ export function createServer(options = {}) {
               else roles = cur ? accountRoles(cur) : ['general'];
               const role = firstRun ? 'admin' : (roles.includes(u.role) ? u.role : (cur && roles.includes(cur.role) ? cur.role : roles[0]));
               const hasHash = prepared.has(u);
+              const requiresTraining = !firstRun && !cur && roles.some(key => (host.roles.ROLE_CAPS[key] || host.roles.EVERYONE).some(cap => TRAINING_GATED_ROLE_CAPS.has(cap)));
+              if (requiresTraining) {
+                const trainingCode = String(u.trainingCode || '').trim().toUpperCase();
+                const activeTraining = accountState && host.MES.trainingCatalog(accountState).some(item => item.status === 'Active' && item.code === trainingCode);
+                if (!trainingCode || !activeTraining || !host.MES.trainingCurrentFor(accountState, username, trainingCode).ok) {
+                  refusal = { status: 403, error: `Account ${username}: a role with inspection or MRB authority requires a current training record. Create the account without that role, record training, then assign the role.` }; return false;
+                }
+              }
               if (!firstRun && supervises(session.account)) {
                 const protectedTarget = cur && accountRoles(cur).some(value => ['qm', 'admin'].includes(value));
                 if (protectedTarget) {
@@ -497,7 +507,7 @@ export function createServer(options = {}) {
               await tx.upsertAccount({ username, displayName: String(u.displayName).trim().slice(0, 60), salt: hasHash ? (newHash.startsWith('scrypt-sha256$') ? u.salt : '') : cur.salt, hash: hasHash ? newHash : cur.hash, role, roles, extraRoles: cur?.extraRoles || [], roleTraining: cur?.roleTraining || {}, grants: cur?.grants || {}, grantHistory: cur?.grantHistory || [], supportAccess: cur?.supportAccess === true, createdAt: cur ? cur.createdAt : new Date().toISOString(), createdBy: cur ? cur.createdBy : (session ? session.username : username), sso: !!u.sso });
               if (cur && hasHash && cur.hash !== newHash && u.hash !== cur.hash) { await tx.audit(session ? session.username : username, 'password-reset', { username }); passwordChanged.push(username); }
               if (cur && (cur.role !== role || JSON.stringify(accountRoles(cur)) !== JSON.stringify(roles))) await tx.audit(session.username, 'role-change', { username, from: accountRoles(cur), to: roles });
-              if (!cur) await tx.audit(session ? session.username : username, 'account-create', { username, role, roles });
+              if (!cur) await tx.audit(session ? session.username : username, 'account-create', { username, role, roles, trainingCode: requiresTraining ? String(u.trainingCode).trim().toUpperCase() : null });
             }
             // Refuse to demote the last manager.
             if (!(await tx.accounts()).some(manages)) { refusal = { status: 409, error: 'At least one QA Manager or Master Access account must remain.' }; return false; }
