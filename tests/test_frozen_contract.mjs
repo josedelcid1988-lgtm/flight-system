@@ -47,10 +47,10 @@ const SOD=[
   ['Development NFF is never an FAI order and never carries a FAIR',"if (order.pedigree === NFF) return { error: nffBlock('it cannot be an FAI order or carry a FAIR').message };",1],
   ['Development NFF pedigree is one way',"if (order.pedigree === NFF) return nffBlock('its pedigree cannot be changed; build a new order at the pedigree you need');",1],
   ['the own-work exception is Development NFF only',"const OWN_WORK_EXEMPT_PEDIGREES = Object.freeze(['Development NFF']);",1],
-  ['inspection is guarded by the Quality role capability on every inspection operation',"const stepsDenied = (operation, what) => isInspectionOp(operation) ? (can('inspect-steps') ? null : fail(`You cannot ${what} on an inspection operation: the Quality role is required.`))",1],
+  ['inspection is role-gated on every inspection operation',"const stepsDenied = (operation, what) => isInspectionOp(operation) ? (can('inspect-steps') ? null : fail(`Your role cannot ${what} on an inspection operation. Ask a QA Manager to assign the Quality role.`))",1],
   ['nobody grants their own authority',"if(u.username===me.username)return {ok:false,message:'Nobody grants or revokes their own authority.",1],
   ['a grant needs a current training record',"if(!trainingOk(u,trainingCode))return {ok:false,message:u.displayName+' has no current '+trainingCode+' training record. Record the training first, then grant.'};",1],
-  ['only conformity and AQI signature remain person-granted authorities',"var GRANTED=['conformity','aqi-sign'];",1],
+  ['only conformity and AQI signatures require named grants',"var GRANTED=['conformity','aqi-sign'];",1],
   ['the person who recorded a disposition cannot approve it (work order NC and stock NC)',"=== actor(state).credentialId) return fail('Separation of duties: the person who recorded the disposition cannot approve it.');",2],
   ['the person who recorded a root cause cannot close the CAR',"if (sameActor(who, car.rootCause.by)) return fail('Separation of duties: the person who recorded the root cause cannot close the request. Use another Quality credential.');",1],
   ['an author of the PFMEA cannot give the Safety Team buy-off',"if (t.rows.some(r => r.by && r.by.credentialId === actor(state).credentialId)) return fail('Separation of duties: an author of the analysis cannot give the Safety Team buy-off.');",1],
@@ -80,7 +80,7 @@ await run(async([AUTH])=>{const a=JSON.parse(localStorage.getItem(AUTH));const s
   const add=(username,displayName,role)=>{if(!a.users.some(u=>u.username===username))a.users.push({username,displayName,salt,hash,role,createdAt:new Date().toISOString(),createdBy:'jdoe'});};
   add('radmin','Rowan Admin','admin');add('kqe','Kai Quality','qe');add('tme','Taylor Engineer','me');localStorage.setItem(AUTH,JSON.stringify(a));},[AUTH]);
 
-ok('Support Access lifts only stamp binding and MRB seat eligibility, never a separation-of-duties rule',await run(()=>JSON.stringify(Object.keys(MES.SUPPORT_RULES).sort())==='["mrb-seat","stamp-binding"]'));
+ok('Support Access lifts stamp binding only; MRB seats and separation of duties cannot be overridden',await run(()=>JSON.stringify(Object.keys(MES.SUPPORT_RULES).sort())==='["stamp-binding"]'));
 
 // Master Access writes a revision; a second Master Access account peer-reviews it.
 await as('jdoe');

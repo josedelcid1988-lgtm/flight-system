@@ -11,11 +11,10 @@ does a thing cannot approve it), and nobody inspects their own work, whatever th
 NFF orders excepted). Support Access is not a role: it is an account flag granted only by Master
 Access, and it lifts two gates for one action with a logged reason (see `docs/HANDOVER.md`).
 
-**Granted authorities.** `conformity`, `aqi-sign` are never part of a role. A role
-marked *eligible* below lets a person receive the authority; a QA Manager or Master Access account then
-grants it to that named person, with a reason and a current training record, and never to themselves.
-Master Access, like everyone, holds none of them until granted. An extra role or a grant pauses while the
-training it cites is not current.
+**Named grants.** `conformity`, `aqi-sign` are never part of a role. A QA Manager
+grants them to another eligible person with a reason and current training. A grant pauses while its
+training is not current. Inspection and MRB seats are role capabilities; optional training tiers for MRB
+dispositions start Off.
 
 ## Roles
 
@@ -26,13 +25,13 @@ training it cites is not current.
 | `technician` | Technician | Assembly technician | Run and buy off operations at the bench (stamp), raise an NC, submit an ECR, view everything. No kitting, inventory, AOG, scheduling or stage changes. |
 | `operator` | Operations | Operations technician | Everything a Technician can, plus kit parts and lots, move units to inventory, assign serials, mark AOG, adjust schedule, advance stages, split quantity. |
 | `ops` | Operations Manager | Operations Manager | Runs the production floor, work orders, assignments, notices, inventory handoffs and planning settings. Records training, sets training requirements on work instructions, and may disposition an NC as Scrap or use a QA-approved standard rework. |
-| `me` | Manufacturing Engineering | Manufacturing Engineer | Everything an Operator can, plus author WIs and WOs, adjust operations, peer-review WIs, and record the NC initial disposition. No QA approvals. |
-| `swe` | Engineering | Engineer | View, raise an NC, submit an ECR, hold the Engineering seat on an MRB, push ATP software to an operation, and accept or reject software pushes. No Manufacturing Engineering functions. |
-| `qe` | Quality | Quality Engineer | All QA and inspection: check off and buy off inspection operations (never on work you performed), approve WO release, sequence changes, ECR/ECO and closure; release WIs after ME peer review; approve NCs after ME disposition; hold the Quality seat on an MRB. |
+| `me` | Manufacturing Engineering | Manufacturing Engineer | Everything an Operator can, plus author WIs and WOs, adjust operations, peer-review WIs, record the NC initial disposition, and hold the Manufacturing Engineering MRB seat. No QA approvals. |
+| `swe` | Engineering | Engineer | View, raise an NC, submit an ECR, hold the Engineering MRB seat, push ATP software to an operation, and accept or reject software pushes. No Manufacturing Engineering functions. |
+| `qe` | Quality | Quality Engineer | Quality approvals and access administration. Inspection and the Quality MRB seat follow this role; nobody inspects their own work. |
 | `safety` | Safety Team | Safety Engineer | View, raise an NC, submit an ECR, and give the final Safety Team buy-off on a PFMEA, which releases a critical safety work instruction. |
 | `cert` | Certification | Certification Engineer | View, raise an NC, submit an ECR, and hold the Certification seat on a Material Review Board for Production FAI and Mfg. work orders. |
-| `qs` | Quality Supervisor | Quality Supervisor | Quality capability set plus account and training administration, organization settings, and floor notices. Can manage standard accounts but cannot manage a QA Manager or Master Access account. |
-| `qm` | QA Manager | Quality Manager | Everything a Quality account can, plus Manufacturing Engineering authoring, the Quality, Manufacturing Engineering and Engineering MRB seats, the Safety Team PFMEA buy-off (never on an analysis they reviewed or wrote), notices and access management. Not the Certification seat. |
+| `qs` | Quality Supervisor | Quality Supervisor | Quality approvals plus account and training administration, organization settings, and floor notices. Inspection and the Quality MRB seat follow the Quality role. Can manage standard accounts but cannot manage a QA Manager or Master Access account. |
+| `qm` | QA Manager | Quality Manager | Quality approvals plus Manufacturing Engineering authoring, the Quality, Manufacturing Engineering and Engineering MRB seats, the Safety Team PFMEA buy-off (never on an analysis they reviewed or wrote), notices and access management. Not the Certification seat. |
 
 ## Capabilities by role
 
@@ -73,7 +72,8 @@ training it cites is not current.
 
 ## MRB seats
 
-A vote in a seat needs the seat's capability, granted to the person. One person holds one seat on a board.
+A vote in a seat needs the corresponding role capability. Optional disposition tiers can add a current
+training check. One person holds one seat on a board.
 
 | Seat | Capability | Roles eligible for it |
 | --- | --- | --- |

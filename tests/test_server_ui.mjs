@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright';
-import { createServer } from '../server/server.mjs';
+import { createServer, makeHash } from '../server/server.mjs';
 
 const server = createServer({ dbPath: ':memory:', host: '127.0.0.1', quiet: true });
 let browser;
@@ -26,6 +26,13 @@ try {
 
   const token = await page.evaluate(() => sessionStorage.getItem('skyryse-mes-server-token-v1'));
   assert.ok(token, 'the browser receives a server-managed session');
+  const qaPassword = 'server-ui-qa-password';
+  await server.store.upsertAccount({ username: 'server-ui-qa', displayName: 'Server UI QA Manager', salt: '', hash: await makeHash(qaPassword), role: 'qm', roles: ['qm'], createdAt: new Date().toISOString(), createdBy: 'server-ui-admin' });
+  const qaLogin = await fetch(`http://127.0.0.1:${port}/api/auth/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'server-ui-qa', password: qaPassword }) });
+  assert.equal(qaLogin.status, 200, await qaLogin.clone().text());
+  const qaToken = (await qaLogin.json()).token;
+  await server.store.upsertAccount({ username: 'support-target', displayName: 'Support Target', salt: '', hash: 'test-only-hash', role: 'general', roles: ['general'], createdAt: new Date().toISOString(), createdBy: 'server-ui-admin' });
+  await page.evaluate(async () => { const response = await window.skServer.api('/auth/accounts'); if (response.ok) window.skServer.context.auth = { users: response.json.users }; });
   const response = await fetch(`http://127.0.0.1:${port}/api/workspace`, { headers: { Authorization: `Bearer ${token}` } });
   assert.equal(response.status, 200, 'first-run sign-in initializes and loads the shared workspace');
   const workspace = await response.json();
@@ -61,11 +68,11 @@ try {
   const supportChange = await page.evaluate(() => {
     window.__authSaved = false;
     window.addEventListener('sk-auth-saved', () => { window.__authSaved = true; }, { once: true });
-    return window.skAuth.setSupportAccess('server-ui-admin', true, 'server UI profile persistence check');
+    return window.skAuth.setSupportAccess('support-target', true, 'server UI profile persistence check');
   });
   assert.equal(supportChange.ok, true);
   await page.waitForFunction(() => window.__authSaved === true);
-  assert.equal(server.store.account('server-ui-admin').supportAccess, true, 'account profile data persists in the server store');
+  assert.equal(server.store.account('support-target').supportAccess, true, 'account profile data persists in the server store');
 
   // Load a valid Building order so this browser-level check exercises the controlled evidence path.
   const fixtureHtml = await readFile(new URL('./fixtures/demo_publish.html', import.meta.url), 'utf8');
@@ -82,6 +89,12 @@ try {
   }
   assert.ok(jsonEnd > jsonStart, 'the portable fixture workspace JSON is balanced');
   const fixture = JSON.parse(fixtureHtml.slice(jsonStart, jsonEnd));
+  // The portable fixture has no unblocked non-inspection Building operation; temporarily clear a pending sequence change for the clock check, then restore it.
+  const clockFixtureOrder = fixture.orders.find(order => order.status === 'Building' && order.operations.find(operation => !operation.done && !server.host.MES.isInspectionOp(operation)) && server.host.MES.pendingSequenceChange(order));
+  assert.ok(clockFixtureOrder, 'the fixture exposes the pending sequence-change condition that blocks its otherwise eligible labor-clock operation');
+  const clockSequenceChange = structuredClone(clockFixtureOrder.sequenceChange);
+  const clockFixtureOrderId = clockFixtureOrder.id;
+  delete clockFixtureOrder.sequenceChange;
   const aqiOrder = fixture.orders.find(order => order.id === 'WO-10002');
   const aqiPackage = aqiOrder?.conformity?.find(item => item.serial === 'FC-200-00001');
   assert.ok(aqiPackage?.form, 'the portable fixture includes a completed 8130-9 for the AQI server-action check');
@@ -100,13 +113,11 @@ try {
   Object.assign(aqiStamp, { account: 'aqi-inspector', name: 'AQI Test Inspector', status: 'Active', expires: '2027-12-31' });
   const pinResult = server.host.withAccount(server.store.account('server-ui-admin'), () => server.host.MES.setStampPin(fixture, aqiStamp.id, '2468', '2468'), fixture);
   assert.equal(pinResult.ok, true, 'the QA manager sets a valid test PIN using the production PIN hashing path');
-  const trainingResult = server.host.withAccount(server.store.account('server-ui-admin'), () => server.host.MES.recordTraining(fixture, { account: 'aqi-inspector', code: 'ESD', expires: '2027-12-31', note: 'Server UI authorization fixture' }), fixture);
+  const trainingResult = server.host.withAccount(server.store.account('server-ui-qa'), () => server.host.MES.recordTraining(fixture, { account: 'aqi-inspector', code: 'ESD', expires: '2027-12-31', note: 'Server UI authorization fixture' }), fixture);
   assert.equal(trainingResult.ok, true, 'the QA manager records current training for the AQI test inspector');
   const adminAccount = server.store.account('server-ui-admin');
-  const grant = { account: 'aqi-inspector', authority: 'aqi-sign', action: 'granted', by: { name: adminAccount.displayName, credentialId: 'ACCT-server-ui-admin', account: 'server-ui-admin' }, at: new Date().toISOString(), reason: 'Current AQI qualification for the server UI integration test', trainingCode: 'ESD' };
-  const grantHash = server.host.MES.sha256(server.host.MES.canonical(grant));
-  const inspectorAccount = { ...adminAccount, username: 'aqi-inspector', displayName: 'AQI Test Inspector', role: 'qe', roles: ['qe'], extraRoles: [], roleTraining: {}, grants: { 'aqi-sign': { by: grant.by, at: grant.at, reason: grant.reason, trainingCode: grant.trainingCode, hash: grantHash } }, grantHistory: [{ ...grant, hash: grantHash }], supportAccess: false, createdBy: 'server-ui-admin' };
-  server.store.upsertAccount(inspectorAccount);
+  const inspectorAccount = { ...adminAccount, username: 'aqi-inspector', displayName: 'AQI Test Inspector', role: 'qe', roles: ['qe'], extraRoles: [], roleTraining: {}, grants: {}, grantHistory: [], supportAccess: false, createdBy: 'server-ui-admin' };
+  await server.store.upsertAccount(inspectorAccount);
   assert.equal(server.host.MES.validate(fixture), true, `the browser fixture remains valid after adding qualified AQI test credentials: ${(server.host.MES.diagnose(fixture) || {}).detail || ''}`);
   assert.ok(server.host.MES.upgrade(fixture).orders.some(order => order.id === aqiOrder.id), 'the server migration retains the AQI package used by this test');
   const buildingOrder = fixture.orders.find(order => order.status === 'Building');
@@ -114,6 +125,8 @@ try {
   const currentWorkspace = server.store.getDoc('default');
   const fixtureEtag = server.store.putDoc('default', JSON.stringify(fixture), currentWorkspace.etag, 'server-ui-test-fixture');
   assert.ok(fixtureEtag, 'the test installs a valid portable Building workspace directly into its isolated test database');
+  const grantResponse = await fetch(`http://127.0.0.1:${port}/api/auth/access`, { method: 'POST', headers: { Authorization: `Bearer ${qaToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'grant', username: 'aqi-inspector', cap: 'aqi-sign', reason: 'Current AQI qualification for the server UI integration test', trainingCode: 'ESD' }) });
+  assert.equal(grantResponse.status, 200, await grantResponse.text());
   const installed = JSON.parse(server.store.getDoc('default').json);
   assert.ok(installed.orders.some(order => order.id === aqiOrder.id && order.conformity?.some(part => part.serial === aqiPackage.serial)), `the database installs the AQI package: ${installed.orders.map(order => order.id).join(', ')}`);
   await page.evaluate(() => loadServerWorkspace());
@@ -160,8 +173,8 @@ try {
   await page.evaluate(() => loadServerWorkspace());
   await page.waitForFunction(() => window.skServer?.sync?.status === 'synced', null, { timeout: 15000 });
   const clockTarget = await page.evaluate(() => {
-    const order = state.orders.find(item => item.status === 'Building' && item.operations.find(operation => !operation.done) && !item.operations.find(operation => !operation.done).clock);
-    const operation = order?.operations.find(item => !item.done);
+    const order = state.orders.find(item => { const operation = item.status === 'Building' ? item.operations[currentIndex(item)] : null; return operation && !operation.done && !operation.clock && !MES.isInspectionOp(operation) && !MES.engineeringChange(item) && !MES.pendingSequenceChange(item); });
+    const operation = order?.operations[currentIndex(order)];
     if (!order || !operation) throw new Error('No current Building operation is available for the labor clock check.');
     selectedId = order.id; selectedOp = operation.id; tab = 'operations'; view = 'order'; render();
     return { orderId: order.id, operationId: operation.id };
@@ -175,6 +188,11 @@ try {
   }, { port, token, ...clockTarget }, { timeout: 15000 });
   const clockActions = (await server.store.auditRows(1000)).filter(row => row.action === 'action').map(row => JSON.parse(row.detail).action);
   assert.ok(clockActions.includes('MES.clockOnOperation'), 'starting a labor clock uses the authorized server command and stores the actor');
+  const currentClockDoc = server.store.getDoc('default'), restoredClockState = JSON.parse(currentClockDoc.json);
+  restoredClockState.orders.find(order => order.id === clockFixtureOrderId).sequenceChange = clockSequenceChange;
+  assert.ok(server.store.putDoc('default', JSON.stringify(restoredClockState), currentClockDoc.etag, 'server-ui-test-fixture'), 'the pending sequence-change fixture is restored after the clock scenario');
+  await page.evaluate(() => loadServerWorkspace());
+  await page.waitForFunction(() => window.skServer?.sync?.status === 'synced', null, { timeout: 15000 });
   await page.evaluate(() => { view = 'plan'; render(); });
   await page.locator('#big3-heading').waitFor();
   assert.equal(await page.locator('[data-action="big3-create"]').count(), 1, `Flight Plan offers the actual user's daily priority plan`);

@@ -96,39 +96,39 @@ await as('priv');
 const resumed=await run(n=>{const st=state.stamps.find(s=>s.number===n);return MES.stampCheck({name:st.name,credentialId:MES.stampCredential(st)});},extra.r.number);
 ok('it resumes once the retraining is recorded, without reissuing',resumed.ok,JSON.stringify(resumed));
 
-// ---------------- grants ----------------
+// ---------------- role capabilities and named grants ----------------
 await as('pqm');
-const seatRoles=await run(()=>({quality:skAuth.roleCan('qe','mrb-quality'),engineering:skAuth.roleCan('qe','mrb-eng'),ordinaryInspection:skAuth.roleCan('qe','inspect-steps'),mrbSeatGranted:skAuth.GRANTED.some(c=>c.startsWith('mrb-'))}));
-ok('MRB seats and ordinary inspection come from role capabilities, not person grants',seatRoles.quality&&!seatRoles.engineering&&seatRoles.ordinaryInspection&&!seatRoles.mrbSeatGranted,JSON.stringify(seatRoles));
+const seatRoles=await run(()=>({qualityEligible:skAuth.roleCan('qe','mrb-quality'),engineeringEligible:skAuth.roleCan('qe','mrb-eng'),inspectionEligible:skAuth.roleCan('qe','inspect-steps'),inspectionActive:skAuth.can('inspect-steps'),seatActive:skAuth.can('mrb-quality'),granted:skAuth.GRANTED.slice()}));
+ok('Quality role directly carries inspection and Quality MRB capabilities',seatRoles.qualityEligible&&!seatRoles.engineeringEligible&&seatRoles.inspectionEligible&&seatRoles.inspectionActive&&seatRoles.seatActive&&!seatRoles.granted.includes('mrb-quality'),JSON.stringify(seatRoles));
 const inspectionGrant=await run(()=>skAuth.setGrant('kqe','inspect-steps',true,'Qualified inspector per QP-7.2.','ESD'));
-ok('ordinary inspection is a Quality role capability, not an individual grant',!inspectionGrant.ok&&/not granted individually/.test(inspectionGrant.message),JSON.stringify(inspectionGrant));
+ok('inspection cannot be converted into an individual grant',!inspectionGrant.ok&&/not granted individually/.test(inspectionGrant.message),JSON.stringify(inspectionGrant));
 const noTraining=await run(()=>skAuth.setGrant('kqe','conformity',true,'Qualified for conformity work.','ESD'));
 ok('a grant without a current training record is refused',!noTraining.ok&&/no current ESD training/.test(noTraining.message),JSON.stringify(noTraining));
 await run(f=>{MES.recordTraining(state,{account:'kqe',code:'ESD',expires:f});save();},future(1));
 const grant=await run(()=>skAuth.setGrant('kqe','conformity',true,'Qualified for conformity work.','ESD'));
 const selfGrant=await run(()=>skAuth.setGrant('pqm','aqi-sign',true,'I would like to sign my own AQI record.','ESD'));
 const inelig=await run(()=>skAuth.setGrant('ttech','aqi-sign',true,'Technician should sign the AQI.','ESD'));
-ok('a QA Manager grants eligible conformity authority to a person with current training',grant.ok,JSON.stringify(grant));
+ok('a QA Manager grants conformity to a person with current training',grant.ok,JSON.stringify(grant));
 ok('nobody grants their own authority',!selfGrant.ok&&/Nobody grants or revokes their own/.test(selfGrant.message),JSON.stringify(selfGrant));
 ok('an authority outside the person\'s roles is refused',!inelig.ok&&/holds no role/.test(inelig.message),JSON.stringify(inelig));
 await as('kqe');
-ok('the Quality role holds ordinary inspection without an individual grant',await run(()=>skAuth.can('inspect-steps')));
+ok('the Quality role carries inspection and MRB authority without individual grants',await run(()=>skAuth.can('inspect-steps')&&skAuth.can('mrb-quality')));
 ok('the QA Manager granted person holds trained conformity authority',await run(()=>skAuth.can('conformity')));
 const qeGrant=await run(()=>skAuth.setGrant('priv','conformity',true,'Peer grant attempt.','TORQUE'));
 ok('a Quality engineer cannot grant authorities',!qeGrant.ok,JSON.stringify(qeGrant));
 await as('pqm');
 await run(()=>{MES.saveTraining(state,{code:'ESD',qmsDoc:'QP-6.4',qmsRev:'B',reason:'ESD procedure revised; retraining required.',retrain:true});save();});
 await as('kqe');
-ok('conformity authority pauses when its training needs renewal',await run(()=>!skAuth.can('conformity')&&skAuth.can('inspect-steps')));
+ok('only conformity pauses when its grant training needs renewal',await run(()=>!skAuth.can('conformity')&&skAuth.can('inspect-steps')&&skAuth.can('mrb-quality')));
 await as('pqm');
 await run(f=>{MES.recordTraining(state,{account:'kqe',code:'ESD',expires:f});save();},future(1));
 await as('kqe');
-ok('the MRB grant resumes when the training is renewed',await run(()=>skAuth.can('conformity')&&skAuth.can('inspect-steps')));
+ok('conformity resumes when its grant training is renewed',await run(()=>skAuth.can('conformity')&&skAuth.can('inspect-steps')&&skAuth.can('mrb-quality')));
 await as('pqm');
 const revoke=await run(()=>skAuth.setGrant('kqe','conformity',false,'Moved to supplier quality.'));
 await as('kqe');
-ok('a QA Manager revokes conformity authority, and it is kept in the history',revoke.ok&&await run(()=>!skAuth.can('conformity')&&skAuth.can('inspect-steps'))&&await run(()=>JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.find(u=>u.username==='kqe').grantHistory.length===2),JSON.stringify(revoke));
-ok('Master Access holds no granted authority until granted',await run(()=>{sessionStorage.setItem('skyryse-mes-session-v1','jdoe');const r=skAuth.GRANTED.every(c=>!skAuth.can(c));return r;}));
+ok('a QA Manager revokes conformity authority while role capabilities remain active',revoke.ok&&await run(()=>!skAuth.can('conformity')&&skAuth.can('inspect-steps')&&skAuth.can('mrb-quality'))&&await run(()=>JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.find(u=>u.username==='kqe').grantHistory.filter(x=>x.authority==='conformity').length===2),JSON.stringify(revoke));
+ok('Master Access receives role-based inspection and MRB capabilities without named grants',await run(()=>{sessionStorage.setItem('skyryse-mes-session-v1','jdoe');return ['inspect-steps','mrb-quality','mrb-me','mrb-eng','mrb-cert'].every(c=>skAuth.can(c))&&!skAuth.can('conformity')&&!skAuth.can('aqi-sign');}));
 
 // ---------------- extra roles ----------------
 await as('pqm');

@@ -49,11 +49,10 @@ does a thing cannot approve it), and nobody inspects their own work, whatever th
 NFF orders excepted). Support Access is not a role: it is an account flag granted only by Master
 Access, and it lifts two gates for one action with a logged reason (see \`docs/HANDOVER.md\`).
 
-**Granted authorities.** ${GRANTED.map(c => `\`${c}\``).join(', ')} are never part of a role. A role
-marked *eligible* below lets a person receive the authority; a QA Manager or Master Access account then
-grants it to that named person, with a reason and a current training record, and never to themselves.
-Master Access, like everyone, holds none of them until granted. An extra role or a grant pauses while the
-training it cites is not current.
+**Named grants.** ${GRANTED.map(c => `\`${c}\``).join(', ')} are never part of a role. A QA Manager
+grants them to another eligible person with a reason and current training. A grant pauses while its
+training is not current. Inspection and MRB seats are role capabilities; optional training tiers for MRB
+dispositions start Off.
 
 ## Roles
 
@@ -68,7 +67,8 @@ ${rows}
 
 ## MRB seats
 
-A vote in a seat needs the seat's capability, granted to the person. One person holds one seat on a board.
+A vote in a seat needs the corresponding role capability. Optional disposition tiers can add a current
+training check. One person holds one seat on a board.
 
 | Seat | Capability | Roles eligible for it |
 | --- | --- | --- |

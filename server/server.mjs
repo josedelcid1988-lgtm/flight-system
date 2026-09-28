@@ -51,6 +51,7 @@ const tooLarge = () => Object.assign(new Error(`The request is larger than the $
 const EVIDENCE_TYPES = ['video/webm', 'video/mp4', 'video/quicktime'];
 const EVIDENCE_ID = /^EV-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EXPORT_RECORD_TYPES = Object.freeze(['work-order', 'fair', '8130-9', 'nc-idr', 'car', 'mrb', 'stamp', 'training', 'pfmea']);
+const GRANTED_AUTHORITY_CAPS = Object.freeze(['conformity', 'aqi-sign']);
 // Every recording the document names, with where it sits and whether its operation is signed.
 const evidenceRefs = state => (state && Array.isArray(state.orders) ? state.orders : []).flatMap(o => (o.operations || []).flatMap(op => (op.evidence || []).map(e => ({ orderId: o.id, opId: op.id, done: !!op.done, signed: !!(op.done && op.buyoff && (op.buyoff.evidenceIds || []).includes(e.id)), e }))));
 export function finalizedRecords(state) {
@@ -343,6 +344,95 @@ export function createServer(options = {}) {
         // Sign-out ends every session the account holds.
         if (m === 'DELETE') { const t = tokenOf(req); if (t) { const s = await store.session(t, { touch: false }); await store.closeSession(t); if (s && s.username) { const n = await store.closeSessionsOf(s.username); await store.audit(s.username, 'signout', { sessionsEnded: n + 1 }); } } res.writeHead(204); res.end(); return; }
       }
+      if (route === '/auth/access' && m === 'POST') {
+        const session = await sessionOf(req);
+        if (!session) { noSession(res, req); return; }
+        const body = await readJson(req), action = String(body.action || ''), username = String(body.username || '').trim().toLowerCase();
+        let refusal = null, message = '';
+        await store.transaction(async tx => {
+          await tx.lockAuthority();
+          const actor = await tx.account(session.username), target = await tx.account(username);
+          const row = await tx.getDoc(TENANT);
+          let state = null;
+          if (row) {
+            const parsed = JSON.parse(row.json);
+            state = host.MES.upgrade(structuredClone(parsed));
+            if (!state || !host.MES.validate(state)) state = null;
+          }
+          const keysFor = account => account && state ? host.rolesOf(account, state) : accountRoles(account);
+          const isManager = account => keysFor(account).some(role => ['qm', 'admin'].includes(role));
+          const isQAManager = account => keysFor(account).includes('qm');
+          const isSupervisor = account => !isManager(account) && keysFor(account).includes('qs');
+          const fail = (status, error) => { refusal = { status, error }; return false; };
+          if (!actor || !target) return fail(404, 'The account was not found. Reload the account list and try again.');
+          if (action === 'grant' || action === 'revoke') {
+            if (!isQAManager(actor)) return fail(403, 'Only a QA Manager grants or revokes individually granted authorities.');
+            if (!GRANTED_AUTHORITY_CAPS.includes(body.cap)) return fail(400, 'That authority is not granted individually.');
+            if (target.username === actor.username) return fail(403, 'Nobody grants or revokes their own authority. Another QA Manager must do it.');
+            if (isSupervisor(actor) && accountRoles(target).some(role => ['qm', 'admin'].includes(role))) return fail(403, 'A Quality Supervisor cannot change authorities for a QA Manager or Master Access account.');
+            const reason = String(body.reason || '').trim();
+            if (reason.length < 10 || reason.length > 300) return fail(400, 'Give the reason in 10 to 300 characters.');
+            const on = action === 'grant';
+            if (on) {
+              if (!state) return fail(409, 'The shared workspace is missing or invalid. Current training cannot be verified.');
+              const eligible = keysFor(target).some(role => (host.roles.ROLE_CAPS[role] || host.roles.EVERYONE).includes(body.cap));
+              if (!eligible) return fail(403, `${target.displayName} has no active role that qualifies for this authority.`);
+              const trainingCode = String(body.trainingCode || '').trim().toUpperCase();
+              const activeTraining = host.MES.trainingCatalog(state).some(item => item.status === 'Active' && item.code === trainingCode);
+              if (!trainingCode || !activeTraining || !host.MES.trainingCurrentFor(state, target.username, trainingCode).ok) return fail(403, `${target.displayName} has no current ${trainingCode || 'selected'} training record. Record the training first.`);
+              if (target.grants?.[body.cap] && !target.grants[body.cap].revokedAt && host.MES.trainingCurrentFor(state, target.username, target.grants[body.cap].trainingCode).ok) { message = 'Already granted.'; return true; }
+            } else if (!target.grants?.[body.cap] || target.grants[body.cap].revokedAt) { message = 'Not granted.'; return true; }
+            const at = new Date(clock()).toISOString();
+            const by = { name: actor.displayName, credentialId: `ACCT-${actor.username}`, account: actor.username };
+            const record = { account: target.username, authority: body.cap, action: on ? 'granted' : 'revoked', by, at, reason, ...(on ? { trainingCode: String(body.trainingCode).trim().toUpperCase() } : {}) };
+            const hash = sha256hex(host.MES.canonical(record));
+            const grants = { ...(target.grants || {}) };
+            const grantHistory = [...(Array.isArray(target.grantHistory) ? target.grantHistory : []), { ...record, hash }].slice(-200);
+            if (on) grants[body.cap] = { by, at, reason, trainingCode: record.trainingCode, hash };
+            else grants[body.cap] = { ...grants[body.cap], revokedAt: at, revokedBy: by, revokeReason: reason };
+            await tx.upsertAccount({ ...target, grants, grantHistory });
+            await tx.audit(actor.username, on ? 'authority-granted' : 'authority-revoked', { username: target.username, authority: body.cap, reason, trainingCode: on ? record.trainingCode : null, manifest: hash });
+            message = `${on ? 'Granted' : 'Revoked'} ${body.cap} ${on ? 'to' : 'from'} ${target.displayName}.`;
+          } else if (action === 'roles') {
+            if (!isManager(actor) && !isSupervisor(actor)) return fail(403, 'Only a Master Access, QA Manager, or Quality Supervisor account can manage roles.');
+            if (!state) return fail(409, 'The shared workspace is missing or invalid. Current training cannot be verified.');
+            const before = accountRoles(target), isQS = isSupervisor(actor);
+            if (isQS && before.some(role => ['qm', 'admin'].includes(role))) return fail(403, 'A Quality Supervisor cannot change a QA Manager or Master Access account.');
+            if (isQS && target.username === actor.username) return fail(403, 'A Quality Supervisor cannot change their own roles.');
+            const list = Array.isArray(body.roles) ? [...new Set(body.roles.map(String))] : [];
+            if (!list.length || list.some(role => !host.roles.ROLES.some(item => item.key === role))) return fail(400, 'Choose one or more listed roles.');
+            if (isQS && list.some(role => ['qm', 'admin'].includes(role))) return fail(403, 'A Quality Supervisor cannot assign QA Manager or Master Access.');
+            const reason = String(body.reason || '').trim();
+            if (reason.length < 10 || reason.length > 300) return fail(400, 'Give the reason in 10 to 300 characters.');
+            const added = list.slice(1).filter(role => !before.includes(role) || before[0] === role);
+            const trainingCode = String(body.trainingCode || '').trim().toUpperCase();
+            if (added.length) {
+              const activeTraining = host.MES.trainingCatalog(state).some(item => item.status === 'Active' && item.code === trainingCode);
+              if (!trainingCode || !activeTraining || !host.MES.trainingCurrentFor(state, target.username, trainingCode).ok) return fail(403, `${target.displayName} has no current ${trainingCode || 'selected'} training record. Record the training first.`);
+            }
+            const currentManagerCount = (await tx.accounts()).filter(account => keysFor(account).some(role => ['qm', 'admin'].includes(role))).length;
+            if (isManager(target) && !list.some(role => ['qm', 'admin'].includes(role)) && currentManagerCount < 2) return fail(409, 'At least one QA Manager or Master Access account must remain.');
+            const at = new Date(clock()).toISOString();
+            const roleTraining = {};
+            for (const role of list.slice(1)) roleTraining[role] = added.includes(role) ? { code: trainingCode, at, by: actor.username } : (target.roleTraining?.[role] || {});
+            await tx.upsertAccount({ ...target, role: list[0], roles: [list[0]], extraRoles: list.slice(1), roleTraining, createdAt: target.createdAt, createdBy: target.createdBy });
+            await tx.audit(actor.username, 'role-change', { username: target.username, from: before, to: list, reason, trainingCode: added.length ? trainingCode : null });
+            message = `${target.displayName}: ${list.join(' + ')}.`;
+          } else if (action === 'support') {
+            if (!keysFor(actor).includes('admin')) return fail(403, 'Only a Master Access account grants or removes Support Access.');
+            if (target.username === actor.username) return fail(403, 'A Master Access account cannot grant Support Access to itself.');
+            const reason = String(body.reason || '').trim();
+            if (reason.length < 10 || reason.length > 500) return fail(400, 'Give the reason in 10 to 500 characters.');
+            const supportAccess = body.on === true;
+            await tx.upsertAccount({ ...target, supportAccess, createdAt: target.createdAt, createdBy: target.createdBy });
+            await tx.audit(actor.username, supportAccess ? 'support-grant' : 'support-revoke', { username: target.username, reason });
+            message = `Support Access ${supportAccess ? 'granted to' : 'removed from'} ${target.username}.`;
+          } else return fail(400, 'Choose a supported access change.');
+          return true;
+        });
+        if (refusal) { send(res, refusal.status, { error: refusal.error }); return; }
+        send(res, 200, { users: (await store.accounts()).map(publicAccount), message }); return;
+      }
       if (route === '/auth/accounts') {
         if (m === 'GET') { if (!await sessionOf(req)) { noSession(res, req); return; } send(res, 200, { users: (await store.accounts()).map(publicAccount) }); return; }
         if (m === 'PUT') {
@@ -369,6 +459,18 @@ export function createServer(options = {}) {
               const username = String(u.username || '').trim().toLowerCase();
               if (!/^[a-z0-9._-]{3,40}$/.test(username) || !String(u.displayName || '').trim()) { refusal = { status: 400, error: `Account ${username || '(blank)'}: username is 3 to 40 characters and the name is required.` }; return false; }
               const cur = existing.find(x => x.username === username);
+              if (cur) {
+                const changed = (Object.hasOwn(u, 'role') && u.role !== cur.role) ||
+                  (Object.hasOwn(u, 'roles') && JSON.stringify(u.roles) !== JSON.stringify(cur.roles)) ||
+                  (Object.hasOwn(u, 'extraRoles') && JSON.stringify(u.extraRoles) !== JSON.stringify(cur.extraRoles || [])) ||
+                  (Object.hasOwn(u, 'roleTraining') && JSON.stringify(u.roleTraining) !== JSON.stringify(cur.roleTraining || {})) ||
+                  (Object.hasOwn(u, 'grants') && JSON.stringify(u.grants) !== JSON.stringify(cur.grants || {})) ||
+                  (Object.hasOwn(u, 'grantHistory') && JSON.stringify(u.grantHistory) !== JSON.stringify(cur.grantHistory || [])) ||
+                  (Object.hasOwn(u, 'supportAccess') && (u.supportAccess === true) !== (cur.supportAccess === true));
+                if (changed) { refusal = { status: 403, error: `Account ${username}: access changes must use the server-authorized access route.` }; return false; }
+              } else if ((Array.isArray(u.roles) && u.roles.length > 1) || (Array.isArray(u.extraRoles) && u.extraRoles.length) || (u.roleTraining && Object.keys(u.roleTraining).length) || (u.grants && Object.keys(u.grants).length) || (Array.isArray(u.grantHistory) && u.grantHistory.length) || u.supportAccess === true) {
+                refusal = { status: 403, error: `Account ${username}: new accounts cannot bring client-supplied expanded access, grants, or Support Access.` }; return false;
+              }
               let roles;
               if (firstRun) roles = ['admin'];
               else if (Array.isArray(u.roles)) {
@@ -391,7 +493,7 @@ export function createServer(options = {}) {
               }
               if (!cur && !hasHash) { refusal = { status: 400, error: `Account ${username} needs a password.` }; return false; }
               const newHash = hasHash ? prepared.get(u) : null;
-              await tx.upsertAccount({ username, displayName: String(u.displayName).trim().slice(0, 60), salt: hasHash ? (newHash.startsWith('scrypt-sha256$') ? u.salt : '') : cur.salt, hash: hasHash ? newHash : cur.hash, role, roles, extraRoles: Array.isArray(u.extraRoles) ? u.extraRoles : cur?.extraRoles, roleTraining: u.roleTraining && typeof u.roleTraining === 'object' ? u.roleTraining : cur?.roleTraining, grants: u.grants && typeof u.grants === 'object' ? u.grants : cur?.grants, grantHistory: Array.isArray(u.grantHistory) ? u.grantHistory : cur?.grantHistory, supportAccess: Object.hasOwn(u, 'supportAccess') ? u.supportAccess === true : cur?.supportAccess === true, createdAt: cur ? cur.createdAt : new Date().toISOString(), createdBy: cur ? cur.createdBy : (session ? session.username : username), sso: !!u.sso });
+              await tx.upsertAccount({ username, displayName: String(u.displayName).trim().slice(0, 60), salt: hasHash ? (newHash.startsWith('scrypt-sha256$') ? u.salt : '') : cur.salt, hash: hasHash ? newHash : cur.hash, role, roles, extraRoles: cur?.extraRoles || [], roleTraining: cur?.roleTraining || {}, grants: cur?.grants || {}, grantHistory: cur?.grantHistory || [], supportAccess: cur?.supportAccess === true, createdAt: cur ? cur.createdAt : new Date().toISOString(), createdBy: cur ? cur.createdBy : (session ? session.username : username), sso: !!u.sso });
               if (cur && hasHash && cur.hash !== newHash && u.hash !== cur.hash) { await tx.audit(session ? session.username : username, 'password-reset', { username }); passwordChanged.push(username); }
               if (cur && (cur.role !== role || JSON.stringify(accountRoles(cur)) !== JSON.stringify(roles))) await tx.audit(session.username, 'role-change', { username, from: accountRoles(cur), to: roles });
               if (!cur) await tx.audit(session ? session.username : username, 'account-create', { username, role, roles });

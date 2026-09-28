@@ -19,22 +19,25 @@ try {
   for (const [id, value] of Object.entries({ 'sk-displayname': 'Master Test', 'sk-username': 'master-test', 'sk-password': password, 'sk-confirm': password })) await page.locator('#' + id).fill(value);
   await page.locator('#sk-login-submit').click();
   await page.waitForFunction(() => !document.getElementById('sk-boot'));
-  const result = await page.evaluate(fixture => {
+  const result = await page.evaluate(async fixture => {
     const assert = (condition, message) => { if (!condition) throw Error(message); };
     const check = r => { assert(r.ok, r.message); return r; };
     const setRole = role => { const k='skyryse-mes-auth-v1', a=JSON.parse(localStorage.getItem(k));a.users.find(u=>u.username==='master-test').role=role;localStorage.setItem(k,JSON.stringify(a)); };
-    const caps=['view','raise-nc','submit-ecr','operate','operate-steps','split','request-pedigree','approve-pedigree','edit-wi','peer-review-wi','create-wo','adjust-wo','dispo-nc','push-software','assign-work','accept-software','safety-buyoff','mrb-cert','approve-wo','approve-wi','approve-nc','post-notice','manage-access'];
-    // Inspection, the MRB seats, conformity work and the AQI signature are granted to a person, never part of a
-    // role: Master Access holds none of them until a QA Manager grants them against a current training record.
+    const caps=['view','raise-nc','submit-ecr','operate','operate-steps','split','request-pedigree','approve-pedigree','edit-wi','peer-review-wi','create-wo','adjust-wo','dispo-nc','push-software','assign-work','accept-software','safety-buyoff','inspect-steps','mrb-quality','mrb-me','mrb-eng','mrb-cert','approve-wo','approve-wi','approve-nc','post-notice','manage-access'];
+    // Inspection and MRB seats follow role capabilities. Only conformity and AQI are named grants.
     const granted=skAuth.GRANTED;
     for (const cap of caps.filter(c=>!granted.includes(c))) assert(skAuth.can(cap), 'Missing Master capability: '+cap);
     for (const cap of granted) assert(!skAuth.can(cap), 'Master Access holds '+cap+' without a grant');
-    { const r=MES.recordTraining(state,{account:'master-test',code:'ESD',expires:'2031-12-31',note:'test setup'}); assert(r.ok,r.message); assert(save(),'training record saved');
-      const k='skyryse-mes-auth-v1',a=JSON.parse(localStorage.getItem(k)),u=a.users.find(x=>x.username==='master-test');u.grants={};
-      for (const cap of granted) u.grants[cap]={by:{name:'Second QA Manager',credentialId:'ACCT-qm2',account:'qm2'},at:new Date().toISOString(),reason:'Test setup grant',trainingCode:'ESD',hash:''};
-      localStorage.setItem(k,JSON.stringify(a)); }
+    { const k='skyryse-mes-auth-v1',a=JSON.parse(localStorage.getItem(k)),salt='00112233445566778899aabbccddeeff';
+      const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(salt+':test-qm2')))].map(x=>x.toString(16).padStart(2,'0')).join('');
+      a.users.push({username:'test-qm2',displayName:'Test QA Manager',salt,hash,role:'qm',createdAt:new Date().toISOString(),createdBy:'master-test'});localStorage.setItem(k,JSON.stringify(a));
+      sessionStorage.setItem('skyryse-mes-session-v1','test-qm2');
+      const r=MES.recordTraining(state,{account:'master-test',code:'ESD',expires:'2031-12-31',note:'test setup'}); assert(r.ok,r.message);
+      for (const cap of granted) { const grant=skAuth.setGrant('master-test',cap,true,'Test setup grant.','ESD'); assert(grant.ok,grant.message); }
+      const latest=JSON.parse(localStorage.getItem(k));latest.users=latest.users.filter(user=>user.username!=='test-qm2');localStorage.setItem(k,JSON.stringify(latest));
+      assert(save(),'training and QA Manager grant records saved');sessionStorage.setItem('skyryse-mes-session-v1','master-test'); }
     for (const cap of caps) assert(skAuth.can(cap), 'Missing Master capability after grants: '+cap);
-    assert(FlightManeuver.seatsForRole('admin').length===4,'All MRB role choices');
+    assert(FlightManeuver.seatsForRole('admin').length===4,'Master Access holds all four role-based MRB seats');
     const base=structuredClone(fixture);
     // Exercise the production engine with a saved sample, not the demo engine.
     base.profile={name:'Unassigned Test',role:'System Administrator',credentialId:'ACCT-unassigned'};

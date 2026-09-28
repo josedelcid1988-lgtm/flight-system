@@ -1,5 +1,11 @@
 # Changelog
 
+## Current branch corrections
+
+- Inspection and MRB seats now follow role capabilities in production and demo; only conformity and AQI require named, current-training grants. MRB disposition training tiers remain optional and off by default.
+- Server-side grant routes reject attempts to grant inspection or MRB seat capabilities individually.
+- Support Access only lifts stamp binding for one operation; its documentation now matches the enforced rule.
+
 What changed in Flight System, newest first. The build id is set in `VERSION.md`; the release record at
 the end of `VERSION.md` names the exact files and the suite results for the build. Storage keys, form
 numbers and record number formats have not changed in any entry below.

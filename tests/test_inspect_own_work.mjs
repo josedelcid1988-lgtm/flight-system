@@ -1,9 +1,9 @@
-// Item 5: nobody inspects their own work. Inspection (inspect-steps) is granted to a person by a QA Manager
-// against a current training record; the grants below are that setup. Anyone who performed a build operation
+// Item 5: nobody inspects their own work. The Quality role provides inspect-steps; the test adds it as a
+// trained extra role for the Support Access account. Anyone who performed a build operation
 // an inspection covers is refused that inspection: no role is exempt and no override lifts it, Master Access
 // and Support Access included. Development NFF orders are the one exception, and it is recorded.
 import {chromium} from 'playwright';
-import {grantAuthorities} from './lib/grants.mjs';
+import {assignTestRoles} from './lib/roles.mjs';
 const TESTS=decodeURI(new URL('.',import.meta.url).pathname);
 const FIXTURES=process.env.FS_FIXTURES_DIR?process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):TESTS+'fixtures/';
 const PROD='file://'+FIXTURES+'publish.html';
@@ -25,8 +25,8 @@ await run(async([AUTH])=>{const a=JSON.parse(localStorage.getItem(AUTH));const s
 
 // Quality stamp for the independent inspector, issued by Master Access.
 await as('jdoe');
-const granted=await grantAuthorities(p,{mhale:['inspect-steps'],qinsp:['inspect-steps'],qbuild:['inspect-steps'],rsup:['inspect-steps']},{extraRoles:{rsup:['qe']}});
-ok('setup: a QA Manager grants inspection to each inspector against a training record',granted===true,String(granted));
+const assigned=await assignTestRoles(p,{rsup:['qe']});
+ok('setup: the Support Access account also holds the Quality role after training',assigned===true,String(assigned));
 const stamp=await run(()=>{const r=MES.issueStamp(state,{number:'QI-77',name:'Quinn Inspector',department:'Quality',buyoffType:'Quality',account:'qinsp',expires:'2029-01-01'});if(!r.ok)return r.message;const st=state.stamps.find(s=>s.number==='QI-77');st.account='qinsp';const pin=MES.setStampPin(state,st.id,'2468','2468');if(!pin.ok)return pin.message;save();return true;});
 ok('an independent Quality inspector holds a Quality stamp with a PIN',stamp===true,String(stamp));
 

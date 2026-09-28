@@ -65,7 +65,8 @@ export function openDb(path) {
     },
     // Whole-document write with optimistic concurrency. Returns the new etag, or null on a mismatch.
     // Runs fn inside one transaction; rolls back if it throws or returns false.
-    async transaction(fn) { db.exec('BEGIN'); try { const r = await fn(this); if (r === false) { db.exec('ROLLBACK'); return r; } db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; } },
+    async transaction(fn) { db.exec('BEGIN IMMEDIATE'); try { const r = await fn(this); if (r === false) { db.exec('ROLLBACK'); return r; } db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; } },
+    async lockAuthority() {},
     putDoc(tenant, json, expectedEtag, by) {
       const cur = this.getDoc(tenant);
       if (cur && expectedEtag !== undefined && expectedEtag !== null && cur.etag !== expectedEtag) return null;

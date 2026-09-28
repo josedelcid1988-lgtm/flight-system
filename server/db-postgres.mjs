@@ -85,6 +85,11 @@ function makeStore(pool, query, inTransaction, connectionString) {
         throw error;
       } finally { client.release(); }
     },
+    async lockAuthority() {
+      if (!inTransaction) throw new Error('Authority changes require a database transaction.');
+      await query('SELECT pg_advisory_xact_lock(hashtext($1))', ['account-authority']);
+      await query('SELECT pg_advisory_xact_lock(hashtext($1))', ['default']);
+    },
     async getDoc(tenant = 'default') {
       const row = (await query('SELECT json, etag, revision, updated_at, updated_by FROM documents WHERE tenant = $1', [tenant])).rows[0];
       return row ? { json: row.json, etag: row.etag, revision: Number(row.revision), updatedAt: row.updated_at, updatedBy: row.updated_by } : null;

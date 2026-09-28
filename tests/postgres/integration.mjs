@@ -51,9 +51,8 @@ try {
   const token = login.json.token;
   console.log('ok PostgreSQL account, scrypt upgrade, and session persistence');
 
-  const pgProfile = { ...login.json.account, extraRoles: ['quality'], roleTraining: { quality: { code: 'QA-101' } }, grants: { 'push-software': { trainingCode: 'SW-101' } }, grantHistory: [{ authority: 'push-software', action: 'granted', reason: 'Current training is on file.', hash: 'b'.repeat(64) }], supportAccess: true };
-  const profileWrite = await call('/auth/accounts', { method: 'PUT', token, body: { users: [pgProfile] } });
-  assert.equal(profileWrite.status, 200, profileWrite.text);
+  const pgProfile = { ...await server.store.account('pg-admin'), extraRoles: ['quality'], roleTraining: { quality: { code: 'QA-101' } }, grants: { 'push-software': { trainingCode: 'SW-101' } }, grantHistory: [{ authority: 'push-software', action: 'granted', reason: 'Current training is on file.', hash: 'b'.repeat(64) }], supportAccess: true };
+  await server.store.upsertAccount(pgProfile);
   const persistedProfile = await server.store.account('pg-admin');
   assert.deepEqual(persistedProfile.grantHistory, pgProfile.grantHistory);
   assert.deepEqual(persistedProfile.roleTraining, pgProfile.roleTraining);

@@ -19,8 +19,8 @@ try {
   assert.equal(await page.evaluate(()=>skAuth.role()),'admin');
   for(const cap of ['manage-access','safety-buyoff','approve-wi','approve-wo','approve-nc','operate-steps'])
     assert.equal(await page.evaluate(cap=>skAuth.can(cap),cap),true);
-  // Inspection and MRB seats are role capabilities; conformity and the AQI signature still need a trained grant.
-  for(const cap of ['mrb-cert','inspect-steps'])
+  // Master Access receives role-based inspection and MRB capabilities; conformity and AQI remain named grants.
+  for(const cap of ['inspect-steps','mrb-quality','mrb-me','mrb-eng','mrb-cert'])
     assert.equal(await page.evaluate(cap=>skAuth.can(cap),cap),true);
   for(const cap of ['conformity','aqi-sign'])
     assert.equal(await page.evaluate(cap=>skAuth.can(cap),cap),false);

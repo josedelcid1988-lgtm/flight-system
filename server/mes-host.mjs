@@ -2,6 +2,7 @@
 // maintain a second implementation of Flight's gates.
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { createHash } from 'node:crypto';
 import { webcrypto } from 'node:crypto';
 
 const SCRIPT_RE = /<script(?:\s+id="([^"]*)")?>([\s\S]*?)<\/script>/g;
@@ -58,13 +59,22 @@ export function createHost(indexPath) {
     try { return MES.trainingCurrentFor(state, account.username, code).ok === true; } catch { return false; }
   };
   const grantedCaps = ['conformity', 'aqi-sign'];
+  const grantValid = (account, cap, grant) => {
+    if (!account || !grant || grant.revokedAt || !grant.by || grant.by.account === account.username ||
+        grant.by.credentialId !== `ACCT-${grant.by.account}` || !String(grant.by.name || '').trim() ||
+        !Number.isFinite(Date.parse(grant.at || '')) || String(grant.reason || '').trim().length < 10 || !grant.trainingCode ||
+        !/^[0-9a-f]{64}$/.test(String(grant.hash || ''))) return false;
+    const record = { account: account.username, authority: cap, action: 'granted', by: grant.by, at: grant.at, reason: grant.reason, trainingCode: grant.trainingCode };
+    const expected = createHash('sha256').update(MES.canonical(record)).digest('hex');
+    return grant.hash === expected;
+  };
   const roleOf = (account, state) => { const assigned = rolesOf(account, state); return assigned.includes('admin') ? 'admin' : assigned.includes('qm') ? 'qm' : assigned.includes('qs') ? 'qs' : assigned[0]; };
   const capsOf = (account, state) => {
     const held = new Set(rolesOf(account, state).flatMap(key => roles.ROLE_CAPS[key] || roles.EVERYONE).filter(cap => !grantedCaps.includes(cap)));
     for (const cap of grantedCaps) {
       const grant = account && account.grants && account.grants[cap];
       const eligible = rolesOf(account, state).some(key => (roles.ROLE_CAPS[key] || roles.EVERYONE).includes(cap));
-      if (eligible && grant && !grant.revokedAt && trainingCurrent(state, account, grant.trainingCode)) held.add(cap);
+      if (eligible && grantValid(account, cap, grant) && trainingCurrent(state, account, grant.trainingCode)) held.add(cap);
     }
     return [...held];
   };

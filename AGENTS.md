@@ -47,9 +47,11 @@ below exist for AS9100 and 14 CFR reasons; do not "simplify" them away.
    requester of a closure cannot approve it, one person holds one MRB seat, and
    nobody inspects their own work (Development NFF orders excepted, and recorded).
    The person who completes an 8130-9 may give the AQI signature only after an
-   acknowledged warning, recorded on the signature. Inspection, MRB seats,
-   conformity work and the AQI signature are granted to named people by a QA
-   Manager against a current training record, never to themselves. The demo
+   acknowledged warning, recorded on the signature. Ordinary inspection is
+   role-gated. MRB seats follow role capability, with optional current-training
+   disposition tiers off by default. Conformity work and the AQI signature are
+   granted to named people by a QA Manager against current training, never to
+   themselves. The demo
    build lifts these; the production build must not.
    `tests/test_frozen_contract.mjs` fails if one changes.
 2. Every approval and buy-off writes a record with the person, their credential,

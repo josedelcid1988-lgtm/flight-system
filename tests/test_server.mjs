@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { Readable, Writable } from 'node:stream';
 import os from 'node:os';
 import path from 'node:path';
-import { createServer, MAX_REQUEST_BYTES } from '../server/server.mjs';
+import { createServer, makeHash, MAX_REQUEST_BYTES } from '../server/server.mjs';
 
 let checks = 0;
 const check = async (name, fn) => {
@@ -278,10 +278,21 @@ try {
       { id: 'recent', at: new Date().toISOString(), pinned: false },
       { id: 'undated', at: 'unrecognized', pinned: false }
     ] };
-    const result = server.host.MES.pruneExpiredNotices(state);
+    const result = server.host.withAccount(server.store.account('one'), () => server.host.MES.pruneExpiredNotices(state), state);
     assert.equal(result.ok, true);
     assert.equal(result.removed, 1);
     assert.deepEqual(state.notices.map(item => item.id), ['pinned', 'recent', 'undated']);
+    const deniedState = structuredClone(state);
+    const deniedResult = server.host.withAccount({ username: 'read-only', displayName: 'Read-only user', role: 'general' }, () => server.host.MES.pruneExpiredNotices(deniedState), deniedState);
+    assert.equal(deniedResult.ok, false, 'the engine refuses cleanup without the post-notice capability');
+    assert.equal(deniedState.notices.length, state.notices.length, 'a refused cleanup leaves every notice intact');
+    server.store.upsertAccount({ username: 'read-only', displayName: 'Read-only user', role: 'general', roles: ['general'], salt: 'readonly-salt', hash: sha('readonly-salt', 'read-only-pass-123'), createdBy: 'one' });
+    const readOnly = await api('POST', '/auth/session', { body: { username: 'read-only', password: 'read-only-pass-123' } });
+    assert.equal(readOnly.status, 200);
+    const current = server.store.getDoc('default');
+    const routeDenied = await api('POST', '/workspace/actions/MES.pruneExpiredNotices', { token: readOnly.json.token, body: { args: [] }, headers: { 'If-Match': current.etag } });
+    assert.equal(routeDenied.status, 403, 'a view-only account cannot trigger shared notice deletion');
+    assert.equal(server.store.getDoc('default').etag, current.etag, 'a refused server cleanup leaves the workspace unchanged');
   });
   await check('model adapter secret is confirmed only on the server and governance export is QMS-gated', async () => {
     const doc = server.store.getDoc('default');
@@ -303,25 +314,65 @@ try {
     } finally { delete process.env.FLIGHT_TEST_MODEL_KEY; }
   });
 
-  await check('multi-role accounts and authority history survive server account writes', async () => {
-    const grantHistory = [{ authority: 'push-software', action: 'granted', at: '2026-09-26T12:00:00.000Z', reason: 'Current training is on file.', hash: 'a'.repeat(64) }];
-    const result = await api('PUT', '/auth/accounts', { token, body: { users: [
-      { username: 'combined', displayName: 'Combined role account', role: 'technician', roles: ['technician', 'operator'], extraRoles: ['quality'], roleTraining: { quality: { code: 'QA-101' } }, grants: { 'push-software': { trainingCode: 'SW-101' } }, grantHistory, supportAccess: true, salt: 'combined-salt', hash: sha('combined-salt', 'combined-pass-123') }
+  await check('bulk account writes reject client-supplied roles, grants, training and Support Access', async () => {
+    const created = await api('PUT', '/auth/accounts', { token, body: { users: [
+      { username: 'combined', displayName: 'Combined role account', role: 'technician', roles: ['technician'], salt: 'combined-salt', hash: sha('combined-salt', 'combined-pass-123') }
     ] } });
-    assert.equal(result.status, 200);
-    const account = server.store.account('combined');
-    assert.deepEqual(account.roles, ['technician', 'operator']);
-    assert.deepEqual(result.json.users.find(user => user.username === 'combined').roles, ['technician', 'operator']);
-    const capabilities = server.host.capsOf(account);
-    assert.ok(capabilities.includes('operate-steps'));
-    assert.ok(capabilities.includes('operate'));
-    assert.ok(!capabilities.includes('create-wo'));
-    assert.deepEqual(account.extraRoles, ['quality']);
-    assert.deepEqual(account.roleTraining, { quality: { code: 'QA-101' } });
-    assert.deepEqual(account.grants, { 'push-software': { trainingCode: 'SW-101' } });
-    assert.deepEqual(account.grantHistory, grantHistory);
-    assert.equal(account.supportAccess, true);
-    assert.deepEqual(result.json.users.find(user => user.username === 'combined').grantHistory, grantHistory);
+    assert.equal(created.status, 200);
+    const forged = await api('PUT', '/auth/accounts', { token, body: { users: [{ ...created.json.users[0], extraRoles: ['qe'], roleTraining: { qe: { code: 'ESD' } }, grants: { 'aqi-sign': { trainingCode: 'ESD', hash: 'a'.repeat(64) } }, grantHistory: [{ authority: 'aqi-sign', action: 'granted', hash: 'a'.repeat(64) }], supportAccess: true }] } });
+    assert.equal(forged.status, 403);
+    assert.match(forged.json.error, /server-authorized access route/i);
+    const forgedPrimaryList = await api('PUT', '/auth/accounts', { token, body: { users: [{ ...created.json.users[0], roles: ['technician', 'admin'] }] } });
+    assert.equal(forgedPrimaryList.status, 403, 'bulk account writes cannot add an untrained second role');
+    const forgedNewAccount = await api('PUT', '/auth/accounts', { token, body: { users: [{ username: 'forged-admin', displayName: 'Forged Admin', role: 'technician', roles: ['technician', 'admin'], salt: 'forged-salt', hash: sha('forged-salt', 'forged-pass-123') }] } });
+    assert.equal(forgedNewAccount.status, 403, 'new accounts cannot carry multiple client-selected roles');
+    assert.equal(server.store.account('forged-admin'), null);
+    assert.deepEqual(server.store.account('combined').extraRoles, []);
+    assert.deepEqual(server.store.account('combined').grants, {});
+    assert.equal(server.store.account('combined').supportAccess, false);
+  });
+  await check('server access grants require a named eligible account, current training and a hashed authority record', async () => {
+    const row = server.store.getDoc('default'), state = server.host.MES.upgrade(JSON.parse(row.json));
+    const training = server.host.withAccount(server.store.account('one'), () => server.host.MES.recordTraining(state, { account: 'combined', code: 'ESD', expires: '2099-12-31', note: 'Server authority route regression.' }), state);
+    assert.equal(training.ok, true);
+    assert.equal(server.host.MES.validate(state), true);
+    assert.ok(server.store.putDoc('default', JSON.stringify(state), row.etag, 'one'));
+    const qaPassword = 'qa-manager-pass-123';
+    const accounts = await api('GET', '/auth/accounts', { token });
+    const qaCreated = await api('PUT', '/auth/accounts', { token, body: { users: [...accounts.json.users, { username: 'qa-manager', displayName: 'QA Manager', role: 'qm', roles: ['qm'], salt: '', hash: await makeHash(qaPassword) }] } });
+    assert.equal(qaCreated.status, 200, JSON.stringify(qaCreated.json));
+    const qaSession = await api('POST', '/auth/session', { body: { username: 'qa-manager', password: qaPassword } });
+    assert.equal(qaSession.status, 200);
+    const qaToken = qaSession.json.token;
+    const self = await api('POST', '/auth/access', { token: qaToken, body: { action: 'grant', username: 'qa-manager', cap: 'conformity', reason: 'Testing self-grant refusal.', trainingCode: 'ESD' } });
+    assert.equal(self.status, 403);
+    assert.match(self.json.error, /Nobody grants or revokes their own authority/);
+    const expanded = await api('POST', '/auth/access', { token, body: { action: 'roles', username: 'combined', roles: ['technician', 'qe'], reason: 'Qualified role assignment.', trainingCode: 'ESD' } });
+    assert.equal(expanded.status, 200, JSON.stringify(expanded.json));
+    assert.deepEqual(server.store.account('combined').extraRoles, ['qe']);
+    assert.ok(server.host.capsOf(server.store.account('combined'), state).includes('approve-wo'));
+    assert.ok(server.host.capsOf(server.store.account('combined'), state).includes('inspect-steps'), 'Quality role carries inspection capability');
+    assert.ok(server.host.capsOf(server.store.account('combined'), state).includes('mrb-quality'), 'Quality role carries its MRB seat');
+    const individualInspection = await api('POST', '/auth/access', { token: qaToken, body: { action: 'grant', username: 'combined', cap: 'inspect-steps', reason: 'Current inspection qualification verified.', trainingCode: 'ESD' } });
+    assert.equal(individualInspection.status, 400, 'inspection cannot be granted individually');
+    const individualSeat = await api('POST', '/auth/access', { token: qaToken, body: { action: 'grant', username: 'combined', cap: 'mrb-quality', reason: 'Current Quality MRB seat qualification verified.', trainingCode: 'ESD' } });
+    assert.equal(individualSeat.status, 400, 'MRB seats cannot be granted individually');
+    assert.ok(server.host.capsOf(server.store.account('combined'), state).includes('inspect-steps'));
+    assert.ok(server.host.capsOf(server.store.account('combined'), state).includes('mrb-quality'));
+    const noTrainingUser = await api('PUT', '/auth/accounts', { token, body: { users: [{ username: 'untrained', displayName: 'Untrained User', role: 'qe', roles: ['qe'], salt: 'untrained-salt', hash: sha('untrained-salt', 'untrained-pass-123') }] } });
+    assert.equal(noTrainingUser.status, 200);
+    const missing = await api('POST', '/auth/access', { token: qaToken, body: { action: 'grant', username: 'untrained', cap: 'conformity', reason: 'Testing missing training refusal.', trainingCode: 'ESD' } });
+    assert.equal(missing.status, 403);
+    assert.match(missing.json.error, /no current ESD training record/i);
+    const grant = await api('POST', '/auth/access', { token: qaToken, body: { action: 'grant', username: 'combined', cap: 'conformity', reason: 'Current ESD qualification verified.', trainingCode: 'ESD' } });
+    assert.equal(grant.status, 200, JSON.stringify(grant.json));
+    const account = server.store.account('combined'), history = account.grantHistory.at(-1);
+    assert.ok(server.host.capsOf(account, state).includes('conformity'));
+    assert.equal(history.by.account, 'qa-manager');
+    assert.equal(history.by.credentialId, 'ACCT-qa-manager');
+    assert.equal(history.trainingCode, 'ESD');
+    assert.match(history.hash, /^[0-9a-f]{64}$/);
+    assert.equal(history.hash, createHash('sha256').update(server.host.MES.canonical(Object.fromEntries(Object.entries(history).filter(([key]) => key !== 'hash')))).digest('hex'));
   });
   await check('Quality Supervisor can manage ordinary accounts but cannot grant or alter elevated access', async () => {
     const current = await api('GET', '/auth/accounts', { token });
@@ -338,20 +389,22 @@ try {
       { username: 'floor-user', displayName: 'Floor User', role: 'general', roles: ['general'], salt: 'floor-salt', hash: sha('floor-salt', 'floor-user-pass-123') }
     ] } });
     assert.equal(withRegular.status, 200);
-    const assignment = await api('PUT', '/auth/accounts', { token: qsToken, body: { users: withRegular.json.users.map(user => user.username === 'floor-user' ? { ...user, role: 'qm', roles: ['qm'] } : user) } });
+    const assignment = await api('POST', '/auth/access', { token: qsToken, body: { action: 'roles', username: 'floor-user', roles: ['qm'], reason: 'Testing elevated role refusal.' } });
     assert.equal(assignment.status, 403);
     assert.match(assignment.json.error, /cannot assign QA Manager/i);
     const adminName = await api('PUT', '/auth/accounts', { token: qsToken, body: { users: withRegular.json.users.map(user => user.username === 'one' ? { ...user, displayName: 'Changed Master' } : user) } });
     assert.equal(adminName.status, 403);
     assert.match(adminName.json.error, /cannot change a QA Manager or Master Access/i);
-    const selfRole = await api('PUT', '/auth/accounts', { token: qsToken, body: { users: withRegular.json.users.map(user => user.username === 'supervisor' ? { ...user, role: 'general', roles: ['general'] } : user) } });
+    const selfRole = await api('POST', '/auth/access', { token: qsToken, body: { action: 'roles', username: 'supervisor', roles: ['general'], reason: 'Testing self role refusal.' } });
     assert.equal(selfRole.status, 403);
     assert.match(selfRole.json.error, /cannot change their own roles/i);
     assert.equal(server.host.roleOf(server.store.account('supervisor')), 'qs');
     assert.equal(server.store.account('floor-user').role, 'general');
   });
-  await check('expanded roles and individually granted authority require current training on the shared workspace', async () => {
-    const account = { username: 'trained-user', displayName: 'Trained user', role: 'technician', roles: ['technician'], extraRoles: ['qe'], roleTraining: { qe: { code: 'ESD' } }, grants: { 'mrb-quality': { trainingCode: 'ESD' } } };
+  await check('expanded roles and named authority grants require current training on the shared workspace', async () => {
+    const at = '2026-09-26T12:00:00.000Z', by = { name: 'Quality Manager', credentialId: 'ACCT-one', account: 'one' };
+    const record = { account: 'trained-user', authority: 'conformity', action: 'granted', by, at, reason: 'Current training verified.', trainingCode: 'ESD' };
+    const account = { username: 'trained-user', displayName: 'Trained user', role: 'technician', roles: ['technician'], extraRoles: ['qe'], roleTraining: { qe: { code: 'ESD' } }, grants: { conformity: { by, at, reason: record.reason, trainingCode: 'ESD', hash: createHash('sha256').update(server.host.MES.canonical(record)).digest('hex') } } };
     const state = JSON.parse(server.store.getDoc('default').json);
     const definition = server.host.MES.trainingCatalog(state).find(item => item.code === 'ESD' && item.status === 'Active');
     assert.ok(definition, 'fixture training ESD should be active');
@@ -360,13 +413,15 @@ try {
     state.trainingRecords.push(fixtureRecord);
     assert.ok(server.host.capsOf(account).includes('operate-steps'));
     assert.ok(!server.host.capsOf(account).includes('approve-wo'), 'extra role is inactive without workspace training');
+    assert.ok(!server.host.capsOf(account).includes('conformity'), 'the named grant is inactive without workspace training');
     const active = server.host.capsOf(account, state);
     assert.ok(active.includes('approve-wo'));
     assert.ok(active.includes('mrb-quality'));
+    assert.ok(active.includes('conformity'));
     fixtureRecord.expires = '2000-01-01';
     const expired = server.host.capsOf(account, state);
     assert.ok(!expired.includes('approve-wo'));
-    assert.ok(!expired.includes('mrb-quality'));
+    assert.ok(!expired.includes('conformity'));
   });
   await check('audit includes sign-in and refused action records', async () => {
     const result = await api('GET', '/audit', { token });
