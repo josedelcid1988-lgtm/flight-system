@@ -53,7 +53,9 @@ below exist for AS9100 and 14 CFR reasons; do not "simplify" them away.
    seats follow role capability, with optional current-training
    disposition tiers off by default. Conformity work and the AQI signature are
    granted to named people by a QA Manager against current training, never to
-   themselves. The demo
+   themselves. Nobody changes their own roles, records their own training, or
+   issues, assigns or changes their own stamp (suspending or retiring it is
+   allowed); the browser engine and the server both refuse the self-target. The demo
    build lifts these; the production build must not.
    `tests/test_frozen_contract.mjs` fails if one changes.
 2. Every approval and buy-off writes a record with the person, their credential,

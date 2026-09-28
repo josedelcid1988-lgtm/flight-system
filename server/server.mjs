@@ -106,6 +106,9 @@ export function createServer(options = {}) {
   const lifetime = { idleMs: idleMinutes * 60000, maxMs: maxHours * 3600000 };
   const clock = options.clock || (() => Date.now());
   const host = createHost(indexPath);
+  // Expanded roles, named grants and new trained accounts all cite a training: it must be an active catalog
+  // entry and the person must hold a current record of it on the shared workspace.
+  const trainingQualifies = (state, username, code) => !!state && !!code && host.MES.trainingCatalog(state).some(item => item.status === 'Active' && item.code === code) && host.MES.trainingCurrentFor(state, username, code).ok;
   const jira = options.jira || {};
   const jiraConfig = {
     baseUrl: String(jira.baseUrl || process.env.FLIGHT_JIRA_BASE_URL || '').replace(/\/$/, ''),
@@ -379,8 +382,7 @@ export function createServer(options = {}) {
               const eligible = keysFor(target).some(role => (host.roles.ROLE_CAPS[role] || host.roles.EVERYONE).includes(body.cap));
               if (!eligible) return fail(403, `${target.displayName} has no active role that qualifies for this authority.`);
               const trainingCode = String(body.trainingCode || '').trim().toUpperCase();
-              const activeTraining = host.MES.trainingCatalog(state).some(item => item.status === 'Active' && item.code === trainingCode);
-              if (!trainingCode || !activeTraining || !host.MES.trainingCurrentFor(state, target.username, trainingCode).ok) return fail(403, `${target.displayName} has no current ${trainingCode || 'selected'} training record. Record the training first.`);
+              if (!trainingQualifies(state, target.username, trainingCode)) return fail(403, `${target.displayName} has no current ${trainingCode || 'selected'} training record. Record the training first.`);
               if (target.grants?.[body.cap] && !target.grants[body.cap].revokedAt && host.MES.trainingCurrentFor(state, target.username, target.grants[body.cap].trainingCode).ok) { message = 'Already granted.'; return true; }
             } else if (!target.grants?.[body.cap] || target.grants[body.cap].revokedAt) { message = 'Not granted.'; return true; }
             const at = new Date(clock()).toISOString();
@@ -399,7 +401,7 @@ export function createServer(options = {}) {
             if (!state) return fail(409, 'The shared workspace is missing or invalid. Current training cannot be verified.');
             const before = accountRoles(target), isQS = isSupervisor(actor);
             if (isQS && before.some(role => ['qm', 'admin'].includes(role))) return fail(403, 'A Quality Supervisor cannot change a QA Manager or Master Access account.');
-            if (isQS && target.username === actor.username) return fail(403, 'A Quality Supervisor cannot change their own roles.');
+            if (target.username === actor.username) return fail(403, 'Nobody changes their own roles. Another QA Manager or Master Access account must do it.');
             const list = Array.isArray(body.roles) ? [...new Set(body.roles.map(String))] : [];
             if (!list.length || list.some(role => !host.roles.ROLES.some(item => item.key === role))) return fail(400, 'Choose one or more listed roles.');
             if (isQS && list.some(role => ['qm', 'admin'].includes(role))) return fail(403, 'A Quality Supervisor cannot assign QA Manager or Master Access.');
@@ -409,8 +411,7 @@ export function createServer(options = {}) {
             const primaryChanged = before[0] !== list[0];
             const trainingCode = String(body.trainingCode || '').trim().toUpperCase();
             if (added.length || primaryChanged) {
-              const activeTraining = host.MES.trainingCatalog(state).some(item => item.status === 'Active' && item.code === trainingCode);
-              if (!trainingCode || !activeTraining || !host.MES.trainingCurrentFor(state, target.username, trainingCode).ok) return fail(403, `${target.displayName} has no current ${trainingCode || 'selected'} training record. Record the training first.`);
+              if (!trainingQualifies(state, target.username, trainingCode)) return fail(403, `${target.displayName} has no current ${trainingCode || 'selected'} training record. Record the training first.`);
             }
             const currentManagerCount = (await tx.accounts()).filter(account => keysFor(account).some(role => ['qm', 'admin'].includes(role))).length;
             if (isManager(target) && !list.some(role => ['qm', 'admin'].includes(role)) && currentManagerCount < 2) return fail(409, 'At least one QA Manager or Master Access account must remain.');
@@ -487,8 +488,7 @@ export function createServer(options = {}) {
               const requiresTraining = !firstRun && !cur && roles.some(key => (host.roles.ROLE_CAPS[key] || host.roles.EVERYONE).some(cap => TRAINING_GATED_ROLE_CAPS.has(cap)));
               if (requiresTraining) {
                 const trainingCode = String(u.trainingCode || '').trim().toUpperCase();
-                const activeTraining = accountState && host.MES.trainingCatalog(accountState).some(item => item.status === 'Active' && item.code === trainingCode);
-                if (!trainingCode || !activeTraining || !host.MES.trainingCurrentFor(accountState, username, trainingCode).ok) {
+                if (!trainingQualifies(accountState, username, trainingCode)) {
                   refusal = { status: 403, error: `Account ${username}: a role with inspection or MRB authority requires a current training record. Create the account without that role, record training, then assign the role.` }; return false;
                 }
               }

@@ -155,6 +155,36 @@ await run(()=>{MES.saveTraining(state,{code:'TORQUE',qmsDoc:'QP-7.2',qmsRev:'E',
 await as('ttech');
 ok('an extra role pauses when its training needs renewal',await run(()=>!skAuth.can('approve-nc')&&skAuth.can('operate-steps')&&skAuth.rolesOf('ttech',true).includes('qe')));
 
+// ---------------- nobody grants themselves authority ----------------
+// Roles, training records and stamps are each a way to hold inspection or MRB authority, so the person they would
+// qualify can never be the person who records them. Each refusal is checked next to the same act done for someone else.
+await as('pqm');
+const selfRoles=await run(()=>{const before=skAuth.rolesOf('pqm',true);const r=skAuth.setRoles('pqm',['qm','qe'],'Covering incoming inspection this week.','TORQUE');return {r,before,after:skAuth.rolesOf('pqm',true)};});
+ok('a QA Manager cannot change their own roles',!selfRoles.r.ok&&/Nobody changes their own roles/.test(selfRoles.r.message)&&JSON.stringify(selfRoles.before)===JSON.stringify(selfRoles.after),JSON.stringify(selfRoles));
+const ownRow=await run(()=>{const wrap=document.createElement('div');wrap.innerHTML=skAuth.accessHtml();const row=[...wrap.querySelectorAll('.access-panel tbody tr')].find(tr=>tr.querySelector('small')?.textContent.trim()==='pqm');return {own:!!row?.querySelector('[data-role-user],[data-roles-user]'),other:!!wrap.querySelector('[data-roles-user="kqe"]')};});
+ok('the access table offers role changes for other accounts but not your own',!ownRow.own&&ownRow.other,JSON.stringify(ownRow));
+const selfTraining=await run(f=>{const n=state.trainingRecords.length;const r=MES.recordTraining(state,{account:'pqm',code:'TORQUE',expires:f});return {r,added:state.trainingRecords.length-n};},future(1));
+ok('a QA Manager cannot record their own training',!selfTraining.r.ok&&/Nobody records their own training/.test(selfTraining.r.message)&&selfTraining.added===0,JSON.stringify(selfTraining));
+const selfStamp=await run(f=>{const n=state.stamps.filter(s=>s.account==='pqm').length;const r=MES.issueStamp(state,{name:'Parker Manager',buyoffType:'Quality',account:'pqm',expires:f});return {r,held:state.stamps.filter(s=>s.account==='pqm').length-n,inspect:skAuth.can('inspect-steps')};},future());
+ok('a QA Manager cannot issue a stamp to their own account',!selfStamp.r.ok&&/Nobody issues a stamp to their own account/.test(selfStamp.r.message)&&selfStamp.held===0&&!selfStamp.inspect,JSON.stringify(selfStamp));
+const selfAssign=await run(()=>{const st=state.stamps.find(s=>MES.isPlaceholderStamp(s)&&!s.account);const r=MES.updateStamp(state,st.id,{account:'pqm'});return {r,account:st.account};});
+ok('a QA Manager cannot assign an existing stamp to their own account',!selfAssign.r.ok&&/Nobody assigns a stamp to their own account/.test(selfAssign.r.message)&&selfAssign.account!=='pqm',JSON.stringify(selfAssign));
+await as('sqs');
+const qsSelfTraining=await run(f=>MES.recordTraining(state,{account:'sqs',code:'TORQUE',expires:f}),future(1));
+ok('a Quality Supervisor cannot record their own training',!qsSelfTraining.ok&&/Nobody records their own training/.test(qsSelfTraining.message),JSON.stringify(qsSelfTraining));
+const qsOther=await run(f=>{const r=MES.recordTraining(state,{account:'pqm',code:'TORQUE',expires:f});if(r.ok)save();return r;},future(1));
+ok('a Quality Supervisor records training for someone else',qsOther.ok,JSON.stringify(qsOther));
+await as('jdoe');
+const adminSelf=await run(f=>({roles:skAuth.setRoles('jdoe',['admin','qe'],'Master Access covering inspection.','TORQUE'),stamp:MES.issueStamp(state,{name:'Jordan Doe',buyoffType:'Quality',account:'jdoe',expires:f}),training:MES.recordTraining(state,{account:'jdoe',code:'TORQUE',expires:f})}),future());
+ok('Master Access cannot change its own roles, issue itself a stamp or record its own training',!adminSelf.roles.ok&&!adminSelf.stamp.ok&&!adminSelf.training.ok,JSON.stringify(adminSelf));
+const otherStamp=await run(f=>{const r=MES.issueStamp(state,{name:'Parker Manager',buyoffType:'Quality',account:'pqm',expires:f});if(r.ok)save();return r;},future());
+ok('Master Access issues a stamp to the QA Manager',otherStamp.ok,JSON.stringify(otherStamp));
+await as('pqm');
+const ownStampEdit=await run(()=>{const st=state.stamps.find(s=>s.account==='pqm'&&s.status==='Active');const extend=MES.updateStamp(state,st.id,{expires:'2099-12-31'}),retype=MES.updateStamp(state,st.id,{buyoffType:'Technician'}),expires=st.expires;const suspend=MES.updateStamp(state,st.id,{status:'Suspended'});if(suspend.ok)save();return {extend,retype,suspend,expires,status:st.status};});
+ok('a stamp holder cannot extend or change their own stamp',!ownStampEdit.extend.ok&&/Nobody changes their own stamp/.test(ownStampEdit.extend.message)&&!ownStampEdit.retype.ok&&ownStampEdit.expires!=='2099-12-31',JSON.stringify(ownStampEdit));
+ok('a stamp holder may suspend their own stamp',ownStampEdit.suspend.ok&&ownStampEdit.status==='Suspended',JSON.stringify(ownStampEdit));
+ok('state valid after the self-grant refusals',await run(()=>MES.validate(state)));
+
 // ---------------- stamp PINs with scrypt ----------------
 ok('scrypt matches the RFC 7914 test vector',await run(()=>MES.scryptHex('password','NaCl',1024,8,16,64)==='fdbabe1c9d3472007856e7190d01e9fe7c6ad7cbc8237830e77376634b3731622eaf30d92e22a3886ff109279d9830dac727afb94a83ee6d8360cbdfa2cc0640'));
 await as('pqm');

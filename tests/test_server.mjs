@@ -410,6 +410,38 @@ try {
     assert.match(history.hash, /^[0-9a-f]{64}$/);
     assert.equal(history.hash, createHash('sha256').update(server.host.MES.canonical(Object.fromEntries(Object.entries(history).filter(([key]) => key !== 'hash')))).digest('hex'));
   });
+  await check('nobody grants themselves roles, training or a stamp through the server', async () => {
+    // The access route and the MES action route both run under the caller's session authority. Each way to hold
+    // inspection or MRB authority refuses the caller as its own target, and a refused action leaves the workspace unchanged.
+    const qaToken = (await api('POST', '/auth/session', { body: { username: 'qa-manager', password: 'qa-manager-pass-123' } })).json.token;
+    const rolesBefore = JSON.stringify(server.host.rolesOf(server.store.account('qa-manager')));
+    const selfRoles = await api('POST', '/auth/access', { token: qaToken, body: { action: 'roles', username: 'qa-manager', roles: ['qm', 'qe'], reason: 'Testing self role refusal.', trainingCode: 'ESD' } });
+    assert.equal(selfRoles.status, 403, JSON.stringify(selfRoles.json));
+    assert.match(selfRoles.json.error, /Nobody changes their own roles/);
+    assert.equal(JSON.stringify(server.host.rolesOf(server.store.account('qa-manager'))), rolesBefore, 'a refused self role change leaves the account unchanged');
+    const adminSelfRoles = await api('POST', '/auth/access', { token, body: { action: 'roles', username: 'one', roles: ['admin', 'qe'], reason: 'Testing Master Access self role refusal.', trainingCode: 'ESD' } });
+    assert.equal(adminSelfRoles.status, 403, JSON.stringify(adminSelfRoles.json));
+    assert.match(adminSelfRoles.json.error, /Nobody changes their own roles/);
+    const act = async (name, args) => api('POST', `/workspace/actions/${name}`, { token: qaToken, body: { args }, headers: { 'If-Match': server.store.getDoc('default').etag } });
+    const docBefore = server.store.getDoc('default');
+    const selfTraining = await act('MES.recordTraining', [{ account: 'qa-manager', code: 'ESD', expires: '2099-12-31', note: 'Testing self training refusal.' }]);
+    assert.equal(selfTraining.status, 403, JSON.stringify(selfTraining.json));
+    assert.match(selfTraining.json.error, /Nobody records their own training/);
+    const selfStamp = await act('MES.issueStamp', [{ name: 'QA Manager', buyoffType: 'Quality', account: 'qa-manager', expires: '2099-12-31' }]);
+    assert.equal(selfStamp.status, 403, JSON.stringify(selfStamp.json));
+    assert.match(selfStamp.json.error, /Nobody issues a stamp to their own account/);
+    const otherStamp = (server.host.MES.upgrade(JSON.parse(server.store.getDoc('default').json)).stamps || []).find(stamp => stamp.account !== 'qa-manager');
+    assert.ok(otherStamp, 'the workspace has a stamp held by someone else');
+    const selfAssign = await act('MES.updateStamp', [otherStamp.id, { account: 'qa-manager' }]);
+    assert.equal(selfAssign.status, 403, JSON.stringify(selfAssign.json));
+    assert.match(selfAssign.json.error, /Nobody assigns a stamp to their own account/);
+    assert.equal(server.store.getDoc('default').etag, docBefore.etag, 'refused self-target actions do not change the shared workspace');
+    assert.ok(!server.host.capsOf(server.store.account('qa-manager'), server.host.MES.upgrade(JSON.parse(server.store.getDoc('default').json))).includes('inspect-steps'), 'the QA Manager holds no inspection authority after the refusals');
+    const refusals = (await server.store.auditRows(1000)).filter(row => row.action === 'action-refused').map(row => JSON.parse(row.detail).action);
+    for (const name of ['MES.recordTraining', 'MES.issueStamp', 'MES.updateStamp']) assert.ok(refusals.includes(name), `${name} refusal is audited`);
+    const otherTraining = await act('MES.recordTraining', [{ account: 'combined', code: 'ESD', expires: '2099-12-31', note: 'Training recorded for another person.' }]);
+    assert.equal(otherTraining.status, 200, JSON.stringify(otherTraining.json));
+  });
   await check('Quality Supervisor can manage ordinary accounts but cannot grant or alter elevated access', async () => {
     const current = await api('GET', '/auth/accounts', { token });
     const withSupervisor = await api('PUT', '/auth/accounts', { token, body: { users: [
@@ -441,7 +473,7 @@ try {
     assert.match(adminName.json.error, /cannot change a QA Manager or Master Access/i);
     const selfRole = await api('POST', '/auth/access', { token: qsToken, body: { action: 'roles', username: 'supervisor', roles: ['general'], reason: 'Testing self role refusal.' } });
     assert.equal(selfRole.status, 403);
-    assert.match(selfRole.json.error, /cannot change their own roles/i);
+    assert.match(selfRole.json.error, /Nobody changes their own roles/);
     assert.equal(server.host.roleOf(server.store.account('supervisor')), 'qs');
     assert.equal(server.store.account('floor-user').role, 'general');
   });

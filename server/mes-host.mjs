@@ -70,7 +70,8 @@ export function createHost(indexPath) {
   };
   const roleOf = (account, state) => { const assigned = rolesOf(account, state); return assigned.includes('admin') ? 'admin' : assigned.includes('qm') ? 'qm' : assigned.includes('qs') ? 'qs' : assigned[0]; };
   const capsOf = (account, state) => {
-    const held = new Set(rolesOf(account, state).flatMap(key => roles.ROLE_CAPS[key] || roles.EVERYONE).filter(cap => !grantedCaps.includes(cap) && (cap !== 'inspect-steps' || typeof MES.hasValidInspectionStamp === 'function' && MES.hasValidInspectionStamp(state, account && account.username))));
+    const stamped = typeof MES.hasValidInspectionStamp === 'function' && MES.hasValidInspectionStamp(state, account && account.username);
+    const held = new Set(rolesOf(account, state).flatMap(key => roles.ROLE_CAPS[key] || roles.EVERYONE).filter(cap => !grantedCaps.includes(cap) && (cap !== 'inspect-steps' || stamped)));
     for (const cap of grantedCaps) {
       const grant = account && account.grants && account.grants[cap];
       const eligible = rolesOf(account, state).some(key => (roles.ROLE_CAPS[key] || roles.EVERYONE).includes(cap));
