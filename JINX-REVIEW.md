@@ -6,15 +6,18 @@ Fetch with `git fetch origin jinx/review-notes`, read this file, apply fixes on 
 
 ## Blockers (fix these, then CI, then ask for re-review)
 
-1. Primary role swap needs no training. `server/server.mjs`, POST /auth/access `roles` action: `added` is computed from `list.slice(1)` (extra roles only), so changing the primary role (for example technician to qe) requires no training record. Now that the qe role directly confers inspect-steps and mrb-quality, a manager can hand out inspection and MRB authority with no training evidence. Owner confirmed the fix (Jose, 2026-09-27): require a current training record when the primary role changes (treat a changed primary like an added role).
-2. RESOLVED by owner decision (Jose, 2026-09-27): QE role carries MRB and Inspection as role capabilities, model confirmed. New requirement from Jose: inspection authority must be gated via a stamp requirement. Implement: qe keeps inspect-steps and mrb-quality in ROLE_CAPS, but inspect-steps is active only when the account holds a valid inspection stamp (credential/training record), enforced server-side at POST /auth/access and everywhere inspect-steps is checked. MRB authority (mrb-quality) follows the standard training requirement. Master Access no longer granting conformity or aqi-sign stands.
+1. RESOLVED by owner decision (Jose, 2026-09-27): QE role carries MRB and Inspection as role capabilities, model confirmed. New requirement from Jose: inspection authority must be gated via a stamp requirement. Implement: qe keeps inspect-steps and mrb-quality in ROLE_CAPS, but inspect-steps is active only when the account holds a valid inspection stamp (credential/training record), enforced server-side at POST /auth/access and everywhere inspect-steps is checked. MRB authority (mrb-quality) follows the standard training requirement. Master Access no longer granting conformity or aqi-sign stands.
 
 ## Do-not-merge checklist
 
-- [ ] Blocker 1 fixed (primary role change requires training, or documented as intended)
+- [x] Blocker 1 deferred by owner (Jose, 2026-09-27): primary role change requiring a training record is a future change, not a merge blocker
 - [x] Blocker 2: Jose confirmed the role-capability authority model (2026-09-27); inspection gated by stamp requirement (implementation pending)
 - [ ] CI `suites` green on the final head (in progress on a6208d94 at review time; previous head failed mirror-off 65/67 and mirror-on 66/67)
 - [ ] Claudia approves
+
+## Future changes (owner-deferred, not blocking)
+
+- Primary role swap needs no training: `server/server.mjs`, POST /auth/access `roles` action computes `added` from `list.slice(1)` (extra roles only), so changing the primary role (for example technician to qe) requires no training record. Now that the qe role directly confers inspect-steps and mrb-quality, a manager can hand out inspection and MRB authority with no training evidence. Owner decision (Jose, 2026-09-27): defer to a future change; require a current training record when the primary role changes (treat a changed primary like an added role).
 
 ## Non-blocking notes worth fixing now
 
