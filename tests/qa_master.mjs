@@ -119,33 +119,52 @@ try {
     return {types:MES.BUYOFF_TYPES,order:o.id,op:op.id};
   },fixture);
   assert.match(await page.locator('.steps-complete').innerText(),/Master Access override/);
-  // Role changes must refresh the open dialog and underlying buy-off without reload.
+  // Nobody changes their own roles: your own row has no role control, and a forged one is refused.
   await page.getByRole('button',{name:'Your credentials',exact:true}).click();
+  assert.equal(await page.locator('[data-role-user="master-test"],[data-roles-user="master-test"]').count(),0,'No role control on your own row');
+  const forged=await page.evaluate(()=>{const sel=document.createElement('select');sel.dataset.roleUser='master-test';sel.innerHTML='<option value="general">General</option>';document.body.appendChild(sel);sel.value='general';sel.dispatchEvent(new Event('change',{bubbles:true}));sel.remove();return {role:skAuth.role(),toast:document.querySelector('#toast p')?.textContent||'',direct:skAuth.setRoles('master-test',['general'],'Testing self role refusal.','')};});
+  assert.equal(forged.role,'admin','A forged own-row role control is refused');
+  assert.match(forged.toast,/Nobody changes their own roles/);
+  assert.match(forged.direct.message,/Nobody changes their own roles/);
+  // A role change made by another manager refreshes the open dialog and the underlying buy-off without reload.
+  await page.evaluate(async()=>{const k='skyryse-mes-auth-v1',a=JSON.parse(localStorage.getItem(k)),salt='00112233445566778899aabbccddeeff';const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(salt+':peer-admin')))].map(x=>x.toString(16).padStart(2,'0')).join('');if(!a.users.some(u=>u.username==='peer-admin'))a.users.push({username:'peer-admin',displayName:'Peer Admin',salt,hash,role:'admin',createdAt:new Date().toISOString(),createdBy:'master-test'});localStorage.setItem(k,JSON.stringify(a));});
+  const as=async user=>{await page.evaluate(user=>{sessionStorage.setItem('skyryse-mes-session-v1',user);window.dispatchEvent(new Event('sk-auth'));},user);await page.waitForTimeout(200);await page.evaluate(()=>profileDialog());};
+  const setPeerRole=peerRole=>page.evaluate(peerRole=>{const k='skyryse-mes-auth-v1',a=JSON.parse(localStorage.getItem(k));a.users.find(u=>u.username==='peer-admin').role=peerRole;localStorage.setItem(k,JSON.stringify(a));},peerRole);
+  const storedRole=()=>page.evaluate(()=>JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.find(u=>u.username==='master-test').role);
   const role=page.locator('[data-role-user="master-test"]');
+  await as('peer-admin');
   await role.selectOption('qm');
+  assert.match(await page.locator('.access-panel [role=status]').filter({hasText:/Saved: master-test now has/}).innerText(),/Saved: master-test now has/);
+  await as('master-test');
   assert.equal(await page.evaluate(()=>skAuth.role()),'qm');
   assert.match(await page.locator('#profile-preview').innerText(),/Quality Manager/);
   assert.match(await page.locator('.steps-complete').innerText(),/Buy-off blocked/);
-  await role.selectOption('general');
-  assert.equal(await role.inputValue(),'qm','Last access manager cannot be removed');
   for(const width of [1440,390]) {
     await page.setViewportSize({width,height:1000});
+    await as('peer-admin');
     await role.selectOption('admin');
+    assert.match(await page.locator('.access-panel [role=status]').filter({hasText:/Saved: master-test now has Master Access/}).innerText(),/Saved: master-test now has Master Access/);
+    await as('master-test');
     assert.equal(await page.evaluate(()=>skAuth.role()),'admin');
     assert.equal(await page.evaluate(()=>state.profile.role),'System Administrator');
     assert.match(await page.locator('#profile-preview').innerText(),/Master Access override/);
     assert.match(await page.locator('.steps-complete').innerText(),/Master Access override/);
-    assert.match(await page.locator('.access-panel [role=status]').filter({hasText:/Saved: master-test now has Master Access/}).innerText(),/Saved: master-test now has Master Access/);
     if(process.env.FLIGHT_QA_SCREENSHOTS){await mkdir(process.env.FLIGHT_QA_SCREENSHOTS,{recursive:true});await page.screenshot({path:process.env.FLIGHT_QA_SCREENSHOTS+'/role-switch-'+width+'.png',animations:'disabled'});}
+    await as('peer-admin');
     await role.selectOption('qm');
   }
-  // A stale control cannot grant access after the signed-in account loses authority.
-  await page.evaluate(()=>{const k='skyryse-mes-auth-v1',a=JSON.parse(localStorage.getItem(k));a.users[0].role='general';localStorage.setItem(k,JSON.stringify(a));});
+  // A stale control cannot change access after the signed-in account loses authority.
+  await setPeerRole('general');
   await role.selectOption('admin');
-  assert.equal(await page.evaluate(()=>skAuth.role()),'general');
-  await page.evaluate(()=>{const k='skyryse-mes-auth-v1',a=JSON.parse(localStorage.getItem(k));a.users[0].role='qm';localStorage.setItem(k,JSON.stringify(a));});
-  await page.evaluate(()=>{if(!MES.hasValidInspectionStamp(state,'master-test')){const stamp=MES.issueStamp(state,{name:'Master Test',buyoffType:'Quality',account:'master-test',expires:'2031-12-31'});if(!stamp.ok)throw Error(stamp.message);save();}if(!MES.hasValidInspectionStamp(state,'master-test'))throw Error('Master Test does not hold a current assigned Quality inspection stamp.');});
+  assert.equal(await storedRole(),'qm','A manager who lost authority cannot use a stale role control');
+  await setPeerRole('admin');
+  await as('peer-admin');
   await role.selectOption('admin');
+  assert.equal(await storedRole(),'admin');
+  await as('master-test');
+  // The stamp is issued by the second Master Access account: nobody issues a stamp to themselves.
+  await page.evaluate(()=>{if(!MES.hasValidInspectionStamp(state,'master-test')){sessionStorage.setItem('skyryse-mes-session-v1','peer-admin');const stamp=MES.issueStamp(state,{name:'Master Test',buyoffType:'Quality',account:'master-test',expires:'2031-12-31'});sessionStorage.setItem('skyryse-mes-session-v1','master-test');if(!stamp.ok)throw Error(stamp.message);save();}if(!MES.hasValidInspectionStamp(state,'master-test'))throw Error('Master Test does not hold a current assigned Quality inspection stamp.');});
+  await page.evaluate(()=>profileDialog());
   await page.locator('#profile-form button[type=submit]').click();
   assert.equal(await page.locator('#operation-form input[name=stampNumber]').count(),0);
   if(await page.locator('#operation-form input[name=stdInspection]').count()) await page.locator('#operation-form input[name=stdInspection]').check();

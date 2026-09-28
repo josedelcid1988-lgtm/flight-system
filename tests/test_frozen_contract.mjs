@@ -51,6 +51,7 @@ const SOD=[
   ['inspection capability requires a valid assigned Quality stamp',"function hasValidInspectionStamp(state, username, at = new Date().toISOString())",1],
   ['nobody grants their own authority',"if(u.username===me.username)return {ok:false,message:'Nobody grants or revokes their own authority.",1],
   ['nobody changes their own roles',"if(username===me.username)return {ok:false,message:'Nobody changes their own roles. Another QA Manager or Master Access account must do it.'};",1],
+  ['nobody changes their own primary role from the access table',"if(u.username===me.username){sel.value=primaryRole(u);say('Nobody changes their own roles.",1],
   ['nobody records their own training',"if (account === signedInAccount()) return fail('Nobody records their own training.",1],
   ['nobody issues a stamp to their own account',"if (account && account === signedInAccount()) return fail('Nobody issues a stamp to their own account.",1],
   ['nobody assigns a stamp to their own account',"return fail('Nobody assigns a stamp to their own account.",1],
