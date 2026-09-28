@@ -271,6 +271,20 @@ try {
     assert.match(action.json.error, /role|permission|cannot/i);
     assert.equal(admin.role, 'admin');
   });
+  await check('a CAR raised from an MRB board is linked to the board by the server action', async () => {
+    const before = server.store.getDoc('default'), stored = JSON.parse(before.json);
+    const board = (stored.maneuver?.mrb || [])[0];
+    assert.ok(board, 'the workspace has an MRB board');
+    const due = new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10);
+    const input = { title: 'Board corrective action', description: 'Raised from the MRB board.', sourceType: 'NC', severity: 'Minor', dueDate: due, mrbId: board.id };
+    const missing = await api('POST', '/workspace/actions/FlightManeuver.raiseCAR', { token, body: { args: [{ ...input, mrbId: 'MRB-9999' }] }, headers: { 'If-Match': before.etag } });
+    assert.equal(missing.status, 403, JSON.stringify(missing.json));
+    assert.match(missing.json.error, /MRB board this corrective action was raised from was not found/);
+    const raised = await api('POST', '/workspace/actions/FlightManeuver.raiseCAR', { token, body: { args: [input] }, headers: { 'If-Match': before.etag } });
+    assert.equal(raised.status, 200, JSON.stringify(raised.json));
+    const after = JSON.parse(server.store.getDoc('default').json);
+    assert.equal(after.maneuver.mrb.find(item => item.id === board.id).carId, raised.json.result.id, 'the shared workspace records the board-to-CAR link with the CAR');
+  });
   await check('workspace action API refuses exported read and migration helpers', async () => {
     const before = server.store.getDoc('default');
     for (const name of ['MES.editOrderOperation','MES.reviseMasterWI','MES.pushATPSoftware','MES.acknowledgeNotice','MES.pingAssignment','MES.icalImport','MES.aqiSign8130_9','MES.checkConformity','MES.notifyCertification','MES.qaReviewMasterWI','MES.noteDemoBypassRemoved','MES.pruneExpiredNotices','FlightManeuver.containNC','FlightManeuver.effectivenessCheck','FlightManeuver.pfmeaSafetyBuyoff']) {
@@ -524,7 +538,10 @@ try {
     assert.equal(result.json.rows[0].hash.length, 64);
   });
   await check('the manager can unlock an account with a reason and audit record', async () => {
-    for (let i = 0; i < 5; i += 1) await api('POST', '/auth/session', { body: { username: 'basic', password: 'wrong' } });
+    // Wrong passwords sent at the same time still count one each: the counter is a single atomic write.
+    const guesses = await Promise.all(Array.from({ length: 5 }, () => api('POST', '/auth/session', { body: { username: 'basic', password: 'wrong' } })));
+    assert.ok(guesses.every(result => result.status === 401), JSON.stringify(guesses.map(result => result.status)));
+    assert.equal((await server.store.auditRows(1000)).filter(row => row.action === 'lockout' && row.username === 'basic').length, 1, 'five concurrent failures lock the account exactly once');
     assert.equal((await api('POST', '/auth/session', { body: { username: 'basic', password: 'basic-pass-123' } })).status, 423);
     const result = await api('POST', '/auth/unlock', { token, body: { username: 'basic', reason: 'Verified with the person.' } });
     assert.equal(result.status, 200);

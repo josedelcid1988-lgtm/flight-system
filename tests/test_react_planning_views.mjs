@@ -72,6 +72,34 @@ try {
   await page.screenshot({ path: new URL('../artifacts/design/final/flight-plan-mrp-forecast-tablet.png', import.meta.url).pathname });
   await page.locator('.fr-planning-nav').getByRole('button', { name: 'Kanban', exact: true }).click();
   await page.getByRole('heading', { name: 'Kanban.' }).waitFor();
+  // A project created from the React Plan forms is saved: it is still there after a reload.
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.evaluate(() => { view = 'plan'; render(); });
+  const projectForm = page.locator('.fr-project-forms form').filter({ has: page.getByRole('heading', { name: 'New WBS project' }) });
+  await projectForm.waitFor();
+  const projectName = `Persisted plan ${Date.now()}`;
+  await projectForm.locator('[name=name]').fill(projectName);
+  await projectForm.locator('[name=dueDate]').fill(new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10));
+  await projectForm.locator('button[type=submit]').click();
+  await page.waitForFunction(name => (state.projectPlan?.projects || []).some(item => item.name === name), projectName);
+  await page.reload();
+  await page.waitForFunction(() => window.__ready === true);
+  assert.equal(await page.evaluate(name => (state.projectPlan?.projects || []).some(item => item.name === name), projectName), true, 'a React Plan project survives a reload');
+  // The Hangar milestone-risk button opens the milestone's own work order, not the first one in the workspace.
+  const milestoneOrder = await page.evaluate(name => {
+    const project = state.projectPlan.projects.find(item => item.name === name);
+    const target = state.orders.filter(order => order.status !== 'Closed')[1];
+    const due = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10);
+    const result = MES.addProjectMilestone(state, { title: 'Hangar risk open check', projectId: project.id, dueDate: due, mustStart: true, workOrderId: target.id });
+    if (!result.ok) throw new Error(result.message);
+    save(); view = 'home'; selectedId = null; render();
+    return { id: target.id, first: state.orders[0].id };
+  }, projectName);
+  assert.notEqual(milestoneOrder.id, milestoneOrder.first, 'the milestone points at a work order other than the first');
+  const riskRow = page.locator('.fr-milestone-watch-row').filter({ hasText: 'Hangar risk open check' });
+  await riskRow.getByRole('button', { name: 'Open work order' }).click();
+  await page.waitForFunction(() => view === 'order');
+  assert.equal(await page.evaluate(() => selectedId), milestoneOrder.id, 'the milestone opens its linked work order');
   assert.deepEqual(errors, []);
   await context.close();
   console.log('React Flight Plan Kanban and MRP forecast render live records, expose density and retain structured planning views.');

@@ -42,7 +42,7 @@ async function verifyPassword(account, password) {
 }
 const publicAccount = a => ({ username: a.username, displayName: a.displayName, role: a.role, roles: Array.isArray(a.roles) && a.roles.length ? [...a.roles] : [a.role], extraRoles: Array.isArray(a.extraRoles) ? [...a.extraRoles] : [], roleTraining: a.roleTraining && typeof a.roleTraining === 'object' && !Array.isArray(a.roleTraining) ? a.roleTraining : {}, grants: a.grants && typeof a.grants === 'object' && !Array.isArray(a.grants) ? a.grants : {}, grantHistory: Array.isArray(a.grantHistory) ? a.grantHistory : [], supportAccess: a.supportAccess === true, createdAt: a.createdAt, createdBy: a.createdBy, sso: a.sso });
 const LOCK_AFTER = 5, LOCK_MS = 5 * 60 * 1000;
-const TRAINING_GATED_ROLE_CAPS = new Set(['inspect-steps', 'mrb-quality', 'mrb-me', 'mrb-eng', 'mrb-cert']);
+export const TRAINING_GATED_ROLE_CAPS = new Set(['inspect-steps', 'mrb-quality', 'mrb-me', 'mrb-eng', 'mrb-cert']);
 // The one request body limit, in bytes. It is sized to the largest evidence upload the engine allows
 // (MES.MAX_EVIDENCE_BYTES, sent as the raw body with no encoding overhead), and it also caps the workspace
 // document. The nginx sample and the IT specification use the same number; tests/test_limits.mjs checks it.
@@ -186,7 +186,7 @@ export function createServer(options = {}) {
   const supervises = account => !manages(account) && accountRoles(account).includes('qs');
   // Lockouts are kept in SQLite, so a restart does not clear a brute-force lockout.
   const lockedFor = async username => { const f = await store.lockout(username); return f.until > Date.now() ? Math.ceil((f.until - Date.now()) / 60000) : 0; };
-  const noteFailure = async username => { const f = await store.lockout(username); let n = f.fails + 1, until = f.until; if (n >= LOCK_AFTER) { until = Date.now() + LOCK_MS; n = 0; await store.audit(username, 'lockout', { minutes: LOCK_MS / 60000 }); } await store.setLockout(username, n, until); return { n, until }; };
+  const noteFailure = async username => { const r = await store.noteFailedSignin(username, LOCK_AFTER, Date.now() + LOCK_MS); if (r.locked) await store.audit(username, 'lockout', { minutes: LOCK_MS / 60000 }); return { n: r.fails, until: r.until }; };
 
   // The document as the engine sees it: upgraded, blockers synced, validated. Returns the state or a problem.
   const loadState = async () => { const row = await store.getDoc(TENANT); if (!row) return { state: null, etag: null }; const parsed = JSON.parse(row.json); const state = host.MES.upgrade(structuredClone(parsed)); return { state, etag: row.etag, raw: parsed, problem: state ? null : (host.MES.diagnose(parsed) || {}).detail || 'The document does not match the current record format.' }; };

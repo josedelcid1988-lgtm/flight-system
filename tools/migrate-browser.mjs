@@ -6,9 +6,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { createHost } from '../server/mes-host.mjs';
+import { TRAINING_GATED_ROLE_CAPS } from '../server/server.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const HEX64 = /^[0-9a-f]{64}$/i;
+// Every recording the workspace links, including ones removed from an operation: removal quarantines the metadata
+// and keeps the bytes, so an archive export can still include it.
+const linkedEvidence = state => (state.orders || []).flatMap(order => (order.operations || []).flatMap(operation => [...(operation.evidence || []), ...(operation.quarantinedEvidence || [])]));
 const decode = (value, label) => {
   if (typeof value === 'string') { try { return JSON.parse(value); } catch { throw new Error(`${label} is not valid JSON.`); } }
   if (value && typeof value === 'object') return value;
@@ -30,9 +34,16 @@ export function inspectMigration(input, host = createHost(path.join(ROOT, 'index
   }
   const manifests = host.MES.verifyManifests(state);
   if (!manifests.ok) throw new Error(`Signature manifest verification found ${manifests.failures.length} damaged manifest(s).`);
-  const evidence = (state.orders || []).flatMap(order => (order.operations || []).flatMap(operation => (operation.evidence || []).map(item => ({ id: item.id, size: item.size, mimeType: item.mimeType, sha256: item.sha256 || null }))));
+  const evidence = linkedEvidence(state).map(item => ({ id: item.id, size: item.size, mimeType: item.mimeType, sha256: item.sha256 || null }));
   const mediaSource = source.media && typeof source.media === 'object' ? source.media : {};
   const missingMedia = evidence.filter(item => !mediaSource[item.id]).map(({ id, size }) => ({ id, size }));
+  // The server creates an account whose role carries inspection or MRB authority only when it cites a current training
+  // record for that person in the shared workspace. Cite one from the migrated workspace; name anyone who has none.
+  const activeCodes = host.MES.trainingCatalog(state).filter(item => item.status === 'Active').map(item => item.code);
+  const rolesOf = user => Array.isArray(user.roles) && user.roles.length ? user.roles : [user.role || 'general'];
+  const gated = user => rolesOf(user).some(role => (host.roles.ROLE_CAPS[role] || host.roles.EVERYONE).some(cap => TRAINING_GATED_ROLE_CAPS.has(cap)));
+  const users = auth.users.map(user => { const code = activeCodes.find(item => host.MES.trainingCurrentFor(state, String(user.username || '').toLowerCase(), item).ok); return code && gated(user) ? { ...user, trainingCode: code } : user; });
+  const needsTraining = users.filter(user => gated(user) && !user.trainingCode && user.role !== 'admin' && !rolesOf(user).includes('admin')).map(user => user.username);
   const multipleRoles = auth.users.filter(user => Array.isArray(user.roles) && user.roles.length > 1).map(user => user.username);
   let planned = 0;
   try { planned = host.FlightPlan.list(state).length; } catch {}
@@ -56,10 +67,12 @@ export function inspectMigration(input, host = createHost(path.join(ROOT, 'index
     warnings: [
       ...(manifests.legacy ? [`${manifests.legacy} pre-existing signature manifest(s) have no stored subject and cannot be cryptographically recomputed.`] : []),
       ...(missingMedia.length ? [`${missingMedia.length} IndexedDB recording(s) are absent from the export. Their metadata and signatures will be preserved, but their bytes cannot be migrated.`] : []),
+      ...(needsTraining.length ? [`These accounts hold a role with inspection or MRB authority but have no current training record in the workspace, so the server will not create them: ${needsTraining.join(', ')}. Record their training, export again, or migrate them with a role that does not carry that authority.`] : []),
       ...(multipleRoles.length ? [`These accounts carry multiple roles. The server preserves each assigned role: ${multipleRoles.join(', ')}.`] : [])
     ]
   };
-  return { report, state, users: auth.users, media: mediaSource };
+  report.accounts.needsTraining = needsTraining;
+  return { report, state, users, media: mediaSource };
 }
 
 const request = async (base, route, { method = 'GET', token, body, raw = false, headers = {} } = {}) => {
@@ -74,10 +87,11 @@ export async function applyMigration(migration, env = process.env) {
   if (migration.report.evidence.missingMedia.length) {
     throw new Error(`Migration is incomplete: ${migration.report.evidence.missingMedia.length} linked recording(s) have no exported bytes. Export them from the browser that holds them, then run the dry-run again.`);
   }
+  if (migration.report.accounts.needsTraining?.length) throw new Error(`Migration is incomplete: ${migration.report.accounts.needsTraining.join(', ')} hold a role with inspection or MRB authority but have no current training record. Resolve them, then run the dry-run again.`);
   const preparedMedia = new Map();
-  const linkedEvidence = new Map(migration.state.orders.flatMap(order => (order.operations || []).flatMap(operation => (operation.evidence || []).map(entry => [entry.id, entry]))));
+  const evidenceById = new Map(linkedEvidence(migration.state).map(entry => [entry.id, entry]));
   for (const [id, item] of Object.entries(migration.media)) {
-    const evidence = linkedEvidence.get(id);
+    const evidence = evidenceById.get(id);
     if (!evidence) continue;
     const encoded = typeof item === 'string' ? item : item.base64;
     if (typeof encoded !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) throw new Error(`Media ${id} must contain valid base64 bytes.`);
@@ -98,11 +112,8 @@ export async function applyMigration(migration, env = process.env) {
   if (current.status === 200) throw new Error('The server already has a workspace. This tool will not overwrite it. Back it up and choose an approved merge path first.');
   if (current.status !== 404) throw new Error(current.json?.error || 'Could not read the target workspace.');
 
-  const accountResult = await request(base, '/auth/accounts', { method: 'PUT', token, body: { users: migration.users } });
-  if (accountResult.status !== 200) throw new Error(`Workspace is still unchanged. Account import failed: ${accountResult.json?.error || accountResult.status}`);
-
   for (const [id, media] of preparedMedia) {
-    const evidence = migration.state.orders.flatMap(order => (order.operations || []).flatMap(operation => operation.evidence || [])).find(entry => entry.id === id);
+    const evidence = linkedEvidence(migration.state).find(entry => entry.id === id);
     if (!evidence) continue;
     const uploaded = await request(base, `/evidence/${encodeURIComponent(id)}`, { method: 'POST', token, raw: true, body: media.bytes, headers: { 'Content-Type': media.mime, 'X-Evidence-Sha256': media.sha256, 'X-Evidence-Name': encodeURIComponent(media.fileName) } });
     if (![200, 201].includes(uploaded.status) || uploaded.json?.sha256 !== media.sha256) throw new Error(`Media ${id} upload failed: ${uploaded.json?.error || uploaded.status}.`);
@@ -114,7 +125,11 @@ export async function applyMigration(migration, env = process.env) {
   const afterManifestCheck = createHost(path.join(ROOT, 'index.html')).MES.verifyManifests(migration.state);
   if (!afterManifestCheck.ok) throw new Error(`Workspace manifest verification failed after media migration (${afterManifestCheck.failures.length} invalid manifest(s)).`);
   const saved = await request(base, '/workspace', { method: 'PUT', token, body: migration.state, headers: current.etag ? { 'If-Match': current.etag } : {} });
-  if (saved.status !== 204) throw new Error(`Account import completed, but workspace migration failed: ${saved.json?.error || saved.status}.`);
+  if (saved.status !== 204) throw new Error(`Recordings were uploaded, but the workspace migration failed and no accounts were imported: ${saved.json?.error || saved.status}.`);
+  // Accounts go in after the workspace: an account whose role carries inspection or MRB authority is created only
+  // against the training record it cites, and those records arrive with the workspace.
+  const accountResult = await request(base, '/auth/accounts', { method: 'PUT', token, body: { users: migration.users } });
+  if (accountResult.status !== 200) throw new Error(`The workspace was migrated, but the account import failed: ${accountResult.json?.error || accountResult.status}. Fix the accounts named in the error and import them again; the workspace does not need to be migrated again.`);
   return { status: 'applied', etag: saved.etag, accountsImported: migration.users.length, evidenceUploaded: Object.keys(migration.media).length };
 }
 

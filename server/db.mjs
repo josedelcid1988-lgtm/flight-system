@@ -22,7 +22,7 @@ export function openDb(path) {
     CREATE TRIGGER IF NOT EXISTS record_extracts_no_update BEFORE UPDATE ON record_extracts BEGIN SELECT RAISE(ABORT, 'record extracts are append-only'); END;
     CREATE TRIGGER IF NOT EXISTS record_extracts_no_delete BEFORE DELETE ON record_extracts BEGIN SELECT RAISE(ABORT, 'record extracts are append-only'); END;
     CREATE TABLE IF NOT EXISTS record_export_settings (record_type TEXT PRIMARY KEY, enabled INTEGER NOT NULL, destination_kind TEXT NOT NULL, destination TEXT NOT NULL, token_setting TEXT, naming_pattern TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT NOT NULL, rationale TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS record_export_jobs (id TEXT PRIMARY KEY, record_type TEXT NOT NULL, record_id TEXT NOT NULL, export_id TEXT NOT NULL UNIQUE, sha256 TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, destination_kind TEXT NOT NULL, destination TEXT NOT NULL, token_setting TEXT, naming_pattern TEXT NOT NULL, created_at TEXT NOT NULL, created_by TEXT NOT NULL, updated_at TEXT NOT NULL, last_error TEXT, UNIQUE(record_type, record_id));
+    CREATE TABLE IF NOT EXISTS record_export_jobs (id TEXT PRIMARY KEY, record_type TEXT NOT NULL, record_id TEXT NOT NULL, export_id TEXT NOT NULL UNIQUE, sha256 TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, destination_kind TEXT NOT NULL, destination TEXT NOT NULL, token_setting TEXT, naming_pattern TEXT NOT NULL, created_at TEXT NOT NULL, created_by TEXT NOT NULL, updated_at TEXT NOT NULL, last_error TEXT, UNIQUE(record_type, record_id, sha256));
     CREATE INDEX IF NOT EXISTS record_export_jobs_status ON record_export_jobs (status, created_at);
     CREATE TABLE IF NOT EXISTS record_export_log (id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL, at TEXT NOT NULL, attempt INTEGER NOT NULL, status TEXT NOT NULL, detail TEXT);
     CREATE TABLE IF NOT EXISTS jira_issue_requests (idempotency_key TEXT PRIMARY KEY, request_sha256 TEXT NOT NULL, record_type TEXT NOT NULL, record_id TEXT NOT NULL, project_key TEXT NOT NULL, status TEXT NOT NULL, issue_key TEXT, issue_url TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by TEXT NOT NULL);
@@ -30,6 +30,20 @@ export function openDb(path) {
     CREATE TRIGGER IF NOT EXISTS record_export_log_no_delete BEFORE DELETE ON record_export_log BEGIN SELECT RAISE(ABORT, 'record export log is append-only'); END;
     CREATE TABLE IF NOT EXISTS skill_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, username TEXT, skill TEXT NOT NULL, input TEXT, output TEXT, status TEXT NOT NULL);
   `);
+  // One export per finalized version: a reopened and re-finalized record has new content and is exported again. A
+  // database made before this keyed jobs on the record alone; rebuild that table once, keeping every job.
+  const jobsSql = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'record_export_jobs'").get()?.sql || '';
+  if (/UNIQUE\(record_type, record_id\)/.test(jobsSql)) {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.exec(`CREATE TABLE record_export_jobs_v2 (id TEXT PRIMARY KEY, record_type TEXT NOT NULL, record_id TEXT NOT NULL, export_id TEXT NOT NULL UNIQUE, sha256 TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, destination_kind TEXT NOT NULL, destination TEXT NOT NULL, token_setting TEXT, naming_pattern TEXT NOT NULL, created_at TEXT NOT NULL, created_by TEXT NOT NULL, updated_at TEXT NOT NULL, last_error TEXT, UNIQUE(record_type, record_id, sha256));
+        INSERT INTO record_export_jobs_v2 SELECT id, record_type, record_id, export_id, sha256, payload, status, attempts, destination_kind, destination, token_setting, naming_pattern, created_at, created_by, updated_at, last_error FROM record_export_jobs;
+        DROP TABLE record_export_jobs;
+        ALTER TABLE record_export_jobs_v2 RENAME TO record_export_jobs;
+        CREATE INDEX IF NOT EXISTS record_export_jobs_status ON record_export_jobs (status, created_at);`);
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+  }
   const extractColumns = new Set(db.prepare('PRAGMA table_info(record_extracts)').all().map(row => row.name));
   if (!extractColumns.has('sequence')) db.exec('ALTER TABLE record_extracts ADD COLUMN sequence INTEGER NOT NULL DEFAULT 0');
   const accountColumns = new Set(db.prepare('PRAGMA table_info(accounts)').all().map(row => row.name));
@@ -107,6 +121,7 @@ export function openDb(path) {
     closeSessionsOf(username, exceptToken = null) { return db.prepare('DELETE FROM sessions WHERE username = ? AND token IS NOT ?').run(username, exceptToken).changes; },
     // ---- failed sign-ins and lockouts ----
     lockout(username) { const r = db.prepare('SELECT username, fails, locked_until, last_failed_at FROM lockouts WHERE username = ?').get(username); return r ? { username: r.username, fails: r.fails, until: r.locked_until, lastFailedAt: r.last_failed_at } : { username, fails: 0, until: 0, lastFailedAt: null }; },
+    noteFailedSignin(username, limit, lockUntil) { const r = db.prepare('INSERT INTO lockouts (username, fails, locked_until, last_failed_at) VALUES (?, CASE WHEN 1 >= ? THEN 0 ELSE 1 END, CASE WHEN 1 >= ? THEN ? ELSE 0 END, ?) ON CONFLICT(username) DO UPDATE SET fails = CASE WHEN lockouts.fails + 1 >= ? THEN 0 ELSE lockouts.fails + 1 END, locked_until = CASE WHEN lockouts.fails + 1 >= ? THEN ? ELSE lockouts.locked_until END, last_failed_at = excluded.last_failed_at RETURNING fails, locked_until').get(username, limit, limit, lockUntil, now(), limit, limit, lockUntil); return { fails: r.fails, until: r.locked_until, locked: r.locked_until === lockUntil }; },
     setLockout(username, fails, until) { db.prepare('INSERT INTO lockouts (username, fails, locked_until, last_failed_at) VALUES (?, ?, ?, ?) ON CONFLICT(username) DO UPDATE SET fails = excluded.fails, locked_until = excluded.locked_until, last_failed_at = excluded.last_failed_at').run(username, fails, until, now()); },
     clearLockout(username) { return db.prepare('DELETE FROM lockouts WHERE username = ?').run(username).changes > 0; },
     lockouts(at = Date.now()) { return db.prepare('SELECT username, fails, locked_until, last_failed_at FROM lockouts WHERE locked_until > ? ORDER BY locked_until DESC').all(at).map(r => ({ username: r.username, until: new Date(r.locked_until).toISOString(), lastFailedAt: r.last_failed_at })); },

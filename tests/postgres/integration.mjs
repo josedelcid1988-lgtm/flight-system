@@ -49,7 +49,11 @@ try {
   const login = await call('/auth/session', { method: 'POST', body: { username: 'pg-admin', password: 'pg-test-password-123' } });
   assert.equal(login.status, 200, JSON.stringify(login.json));
   const token = login.json.token;
-  console.log('ok PostgreSQL account, scrypt upgrade, and session persistence');
+  const lockUntil = Date.now() + 300000;
+  const failures = await Promise.all(Array.from({ length: 5 }, () => server.store.noteFailedSignin('pg-race-user', 5, lockUntil)));
+  assert.equal(failures.filter(item => item.locked).length, 1, 'five concurrent failed sign-ins lock the account exactly once');
+  assert.equal((await server.store.lockout('pg-race-user')).until, lockUntil, 'the PostgreSQL failed sign-in counter is not lost under concurrency');
+  console.log('ok PostgreSQL account, scrypt upgrade, session persistence, and atomic failed sign-in counting');
 
   const pgProfile = { ...await server.store.account('pg-admin'), extraRoles: ['quality'], roleTraining: { quality: { code: 'QA-101' } }, grants: { 'push-software': { trainingCode: 'SW-101' } }, grantHistory: [{ authority: 'push-software', action: 'granted', reason: 'Current training is on file.', hash: 'b'.repeat(64) }], supportAccess: true };
   await server.store.upsertAccount(pgProfile);
@@ -104,6 +108,16 @@ try {
   assert.equal((await server.store.exportLog(fairJob.id,10)).length,3);
   await assert.rejects(server.store._query('UPDATE record_export_log SET detail=$1 WHERE job_id=$2', ['tampered', fairJob.id]), /append-only/);
   await assert.rejects(server.store._query('DELETE FROM record_export_log WHERE job_id=$1', [fairJob.id]), /append-only/);
+  // Print and download extract history is append-only in PostgreSQL too.
+  const extractId = (await server.store._query('SELECT export_id FROM record_extracts LIMIT 1')).rows[0]?.export_id;
+  assert.ok(extractId, 'the export queue recorded an extract');
+  await assert.rejects(server.store._query('UPDATE record_extracts SET exported_by=$1 WHERE export_id=$2', ['tampered', extractId]), /record extracts are append-only/);
+  await assert.rejects(server.store._query('DELETE FROM record_extracts WHERE export_id=$1', [extractId]), /record extracts are append-only/);
+  // One job per finalized version: a record reopened and finalized again with new content is exported again.
+  const pgVersion = (sha, id) => ({ id, recordType: 'fair', recordId: 'FAIR-PG-REOPENED', exportId: `EXT-${id}`, sha256: sha, payload: '{}', destinationKind: 'folder', destination: exportDir, tokenSetting: null, namingPattern: '{recordType}-{recordId}-{exportId}.json', createdBy: 'postgres-test' });
+  assert.ok(await server.store.queueExportJob(pgVersion('c'.repeat(64), 'JOB-PGREOPEN000000000001')));
+  assert.equal(await server.store.queueExportJob(pgVersion('c'.repeat(64), 'JOB-PGREOPEN000000000002')), null, 'the same final content is not exported twice');
+  assert.ok(await server.store.queueExportJob(pgVersion('d'.repeat(64), 'JOB-PGREOPEN000000000003')), 'a re-finalized version with new content is exported again');
   console.log('ok PostgreSQL final-record queue, post-commit folder delivery, and retry history');
 
   const evidenceId = `EV-${randomUUID()}`;

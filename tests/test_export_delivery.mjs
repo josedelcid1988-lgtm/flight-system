@@ -113,8 +113,25 @@ try {
   assert.ok(leakLog.length >= 1, 'the refused delivery is logged');
   assert.ok(leakLog.every(row => /is not bound to this destination in FLIGHT_EXPORT_CREDENTIALS\. Nothing was sent\./.test(row.detail || '')), JSON.stringify(server.store.exportLog(leak.id, 10)));
   delete process.env.FLIGHT_EXPORT_LEAK_CHECK;
+  // One job per finalized version: a record reopened and finalized again has new content and gets its own export.
+  const version = (sha, id) => ({ id, recordType: 'fair', recordId: 'FAIR-REOPENED', exportId: `EXT-${id}`, sha256: sha, payload: '{}', destinationKind: 'folder', destination: outDir, tokenSetting: null, namingPattern: '{recordType}-{recordId}-{exportId}.json', createdBy: 'export-admin' });
+  assert.ok(server.store.queueExportJob(version('c'.repeat(64), 'JOB-REOPEN0000000000000001')), 'the first final version is queued');
+  assert.equal(server.store.queueExportJob(version('c'.repeat(64), 'JOB-REOPEN0000000000000002')), null, 'the same final content is not exported twice');
+  assert.ok(server.store.queueExportJob(version('d'.repeat(64), 'JOB-REOPEN0000000000000003')), 'a re-finalized version with new content is exported again');
   assert.equal(server.store.verifyAudit().ok, true);
   console.log('record export delivery: folder writes, content hashes, queue history, and three-attempt HTTPS failure passed');
+  // A database made before per-version export jobs is rebuilt on open, keeping its jobs.
+  const { DatabaseSync } = await import('node:sqlite');
+  const { openDb } = await import('../server/db.mjs');
+  const legacyPath = path.join(outDir, 'legacy.sqlite');
+  const legacy = new DatabaseSync(legacyPath);
+  legacy.exec(`CREATE TABLE record_export_jobs (id TEXT PRIMARY KEY, record_type TEXT NOT NULL, record_id TEXT NOT NULL, export_id TEXT NOT NULL UNIQUE, sha256 TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, destination_kind TEXT NOT NULL, destination TEXT NOT NULL, token_setting TEXT, naming_pattern TEXT NOT NULL, created_at TEXT NOT NULL, created_by TEXT NOT NULL, updated_at TEXT NOT NULL, last_error TEXT, UNIQUE(record_type, record_id));
+    INSERT INTO record_export_jobs VALUES ('JOB-LEGACY', 'fair', 'FAIR-OLD', 'EXT-LEGACY', '${'e'.repeat(64)}', '{}', 'delivered', 1, 'folder', '/tmp', NULL, '{recordId}-{exportId}.json', '2026-09-01T00:00:00.000Z', 'legacy', '2026-09-01T00:00:00.000Z', NULL);`);
+  legacy.close();
+  const migrated = openDb(legacyPath);
+  assert.equal(migrated.exportJob('JOB-LEGACY').status, 'delivered', 'the legacy job survives the rebuild');
+  assert.ok(migrated.queueExportJob({ id: 'JOB-LEGACY-V2', recordType: 'fair', recordId: 'FAIR-OLD', exportId: 'EXT-LEGACY-V2', sha256: 'f'.repeat(64), payload: '{}', destinationKind: 'folder', destination: '/tmp', tokenSetting: null, namingPattern: '{recordId}-{exportId}.json', createdBy: 'legacy' }), 'a migrated database accepts a new final version of the same record');
+  migrated.close();
 } finally {
   await server.closeAsync().catch(() => server.store.close());
   fs.rmSync(outDir, { recursive: true, force: true });

@@ -147,6 +147,19 @@ if (calibratedTool) {
   state.profile = savedProfile;
 }
 assert.equal(host.MES.validate(state), true, 'equipment maintenance, return-to-service verification and capacity state pass Flight validation');
+if (calibratedTool) {
+  // The server runs the engine with no page-level workspace, so ATP asset checks must use the workspace they are given.
+  const atpAt = new Date().toISOString();
+  assert.equal(host.MES.atpAssets([{ asset: calibratedTool.tag }], atpAt, state).ok, true, 'a calibrated test asset in service is accepted for an ATP buy-off on the server');
+  const atpService = host.MES.recordMaintenance(state, { assetTag: calibratedTool.tag, type: 'Calibration', description: 'ATP asset recheck' });
+  assert.equal(atpService.ok, true);
+  const refusedAsset = host.MES.atpAssets([{ asset: calibratedTool.tag }], atpAt, state);
+  assert.equal(refusedAsset.ok, false, 'a test asset under open maintenance in the given workspace is refused');
+  assert.match(refusedAsset.message, /^Test asset /);
+  state.profile = { ...savedProfile, name: 'Tool Verifier', credentialId: 'TOOL-VERIFIER' };
+  assert.equal(host.MES.closeMaintenance(state, atpService.id, 'Calibration recheck completed').ok, true);
+  state.profile = savedProfile;
+}
 const externalOperation = assignedOrder.operations[0];
 externalOperation.classification = host.MES.EXTERNAL_CLASS;
 externalOperation.workCenterId = 'HHR-EXT-TEST';
@@ -179,6 +192,32 @@ if (productionExternal) {
   assert.equal(host.MES.recordExternalReceipt(state, productionExternal.id, op.id, { erpReceipt: 'ERP-RCV-PROD-1', supplierInspectionLot: 'SUP-LOT-PROD-1', inspectionPassed: true }).ok, false, 'Production cannot receive external work without a full inspection reference');
   assert.equal(host.MES.recordExternalReceipt(state, productionExternal.id, op.id, { erpReceipt: 'ERP-RCV-PROD-1', supplierInspectionLot: 'SUP-LOT-PROD-1', inspectionPassed: true, inspectionRef: 'RCV-INSP-01' }).ok, true, 'Production external receipt records ERP receipt, supplier lot and full inspection');
 }
+{
+  // External receiving is an inspection. On the server the stored workspace profile belongs to whoever saved last,
+  // so a signed-in account must hold inspection authority itself: Quality role plus a current stamp assigned to it.
+  const receiving = state.orders.find(order => order.operations.length && !order.operations.some(op => op.externalReceipt) && order.id !== assignedOrder.id);
+  assert.ok(receiving, 'the fixture has another order for the account-bound receiving check');
+  const op = receiving.operations[0]; op.classification = host.MES.EXTERNAL_CLASS; op.workCenterId = 'HHR-EXT-TEST'; op.externalPO = { number: 'PO-EXT-ACCT-01' }; op.done = false;
+  const input = receiving.pedigree === 'Production' ? { erpReceipt: 'ERP-RCV-ACCT', supplierInspectionLot: 'SUP-LOT-ACCT', inspectionPassed: true, inspectionRef: 'RCV-INSP-ACCT' } : { erpReceipt: 'ERP-RCV-ACCT', supplierInspectionLot: 'SUP-LOT-ACCT', receiptConfirmed: true };
+  state.profile = { ...savedProfile, name: 'Stored Quality Profile', role: 'Quality Engineer', credentialId: 'STORED-QA' };
+  assert.equal(host.MES.isQAProfile(state.profile), true, 'the stored workspace profile is a Quality profile');
+  const general = { username: 'general-user', displayName: 'General User', role: 'general', roles: ['general'] };
+  const inspector = { username: 'qe-inspector', displayName: 'QE Inspector', role: 'qe', roles: ['qe'] };
+  const manager = { username: 'qa-manager-plan', displayName: 'QA Manager', role: 'qm', roles: ['qm'] };
+  const asGeneral = host.withAccount(general, () => host.MES.recordExternalReceipt(state, receiving.id, op.id, input), state);
+  assert.equal(asGeneral.ok, false, 'a General account cannot record external receiving even when the stored profile is Quality');
+  const unstamped = host.withAccount(inspector, () => host.MES.recordExternalReceipt(state, receiving.id, op.id, input), state);
+  assert.equal(unstamped.ok, false, 'a Quality account without an assigned inspection stamp cannot record external receiving');
+  assert.match(unstamped.message, /current inspection stamp/);
+  assert.equal(op.externalReceipt, undefined, 'refused receipts write nothing');
+  const issued = host.withAccount(manager, () => host.MES.issueStamp(state, { name: 'QE Inspector', buyoffType: 'Quality', account: 'qe-inspector', expires: '2099-12-31' }), state);
+  assert.equal(issued.ok, true, issued.message);
+  const received = host.withAccount(inspector, () => host.MES.recordExternalReceipt(state, receiving.id, op.id, input), state);
+  assert.equal(received.ok, true, received.message);
+  assert.equal(op.externalReceipt.by.credentialId, 'ACCT-qe-inspector', 'the receipt is attributed to the signed-in inspector, not the stored profile');
+  assert.equal(host.MES.validate(state), true, 'the account-attributed receipt passes Flight validation');
+  state.profile = savedProfile;
+}
 const buildingOrder = state.orders.find(order => order.status === 'Building' && order.operations.some(item => !item.done));
 if (buildingOrder) {
   const current = buildingOrder.operations.find(item => !item.done);
@@ -200,6 +239,29 @@ if (kitOrder) {
     assert.equal(host.MES.inventoryLots(state, kitMaterial.partNumber).find(item => item.lot === lot.lot).onHand, before - kitMaterial.required, 'kit verification reduces lot on-hand');
     assert.equal(host.MES.setMaterial(state, kitOrder.id, kitMaterial.id, false).ok, true, 'unverifying a kit returns the material to stock');
     assert.equal(host.MES.inventoryLots(state, kitMaterial.partNumber).find(item => item.lot === lot.lot).onHand, before, 'kit unverify reverses its issue');
+    // A lot sized exactly to the kit: issuing drops it to zero on-hand, and unverifying must still return it.
+    const exactLot = 'LOT-KIT-EXACT', otherOrder = state.orders.find(order => order.id !== kitOrder.id && order.status !== 'Closed');
+    assert.equal(host.MES.postInventoryTransaction(state, { type: 'Receive', partNumber: kitMaterial.partNumber, lot: exactLot, quantity: kitMaterial.required, buildClass: lot.buildClass || 'Production', conformityStatus: 'Accepted', conformityRef: 'NS-COC-EXACT', location: kitOrder.site || null, netsuiteRef: 'NS-RECEIPT-EXACT' }).ok, true);
+    const onHand = () => host.MES.inventoryLots(state, kitMaterial.partNumber).find(item => item.lot === exactLot)?.onHand || 0;
+    assert.equal(host.MES.setMaterialLot(state, kitOrder.id, kitMaterial.id, exactLot).ok, true);
+    assert.equal(host.MES.setMaterial(state, kitOrder.id, kitMaterial.id, true).ok, true);
+    assert.equal(onHand(), 0, 'the kit issue takes the whole lot');
+    assert.equal(host.MES.setMaterial(state, kitOrder.id, kitMaterial.id, false).ok, true);
+    assert.equal(onHand(), kitMaterial.required, 'unverifying returns what the order issued even though the lot had reached zero');
+    const returned = host.MES.inventoryLots(state, kitMaterial.partNumber).find(item => item.lot === exactLot);
+    assert.equal(returned.conformityStatus, 'Accepted', 'a return into a depleted lot keeps its conformity status');
+    assert.equal(returned.buildClass, lot.buildClass || 'Production', 'a return into a depleted lot keeps its build class');
+    // Another order takes the whole lot after it was chosen: confirming the kit is refused and nothing is issued.
+    assert.ok(otherOrder, 'the fixture has a second open order');
+    const takeAll = host.MES.postInventoryTransaction(state, { type: 'Issue', partNumber: kitMaterial.partNumber, lot: exactLot, quantity: -kitMaterial.required, orderId: otherOrder.id, location: kitOrder.site || null });
+    assert.equal(takeAll.ok, true, takeAll.message);
+    const ledgerSize = state.inventoryLedger.transactions.length;
+    const unavailable = host.MES.setMaterial(state, kitOrder.id, kitMaterial.id, true);
+    assert.equal(unavailable.ok, false, 'a lot that is no longer available cannot be confirmed');
+    assert.match(unavailable.message, /is no longer available/);
+    assert.equal(kitMaterial.ready, false, 'the refused material stays unconfirmed');
+    assert.equal(state.inventoryLedger.transactions.length, ledgerSize, 'a refused confirmation posts no inventory transaction');
+    assert.equal(host.MES.setMaterialLot(state, kitOrder.id, kitMaterial.id, lot.lot).ok, true, 'another available lot can be chosen instead');
   }
 }
 assert.equal(host.MES.validate(state), true, 'inventory ledger, kit transactions and labor records pass Flight validation');
