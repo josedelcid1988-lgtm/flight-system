@@ -313,6 +313,12 @@ try {
     for (const name of ['MES.editOrderOperation','MES.reviseMasterWI','MES.pushATPSoftware','MES.acknowledgeNotice','MES.pingAssignment','MES.icalImport','MES.aqiSign8130_9','MES.checkConformity','MES.notifyCertification','MES.qaReviewMasterWI','MES.pruneExpiredNotices','FlightManeuver.containNC','FlightManeuver.effectivenessCheck','FlightManeuver.pfmeaSafetyBuyoff']) {
       assert.equal(typeof server.host.resolveAction(name), 'function', `${name} is an authorized engine command`);
     }
+    // The page queues exactly the calls the server accepts: its three allowlist constants mirror the server's.
+    const page = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8'), host = fs.readFileSync(new URL('../server/mes-host.mjs', import.meta.url), 'utf8');
+    const setOf = (source, name) => { const found = new RegExp(`${name}\\s*=\\s*new Set\\((\\[[^\\]]*\\])\\)`).exec(source); assert.ok(found, `${name} is declared`); return JSON.stringify(Function(`return ${found[1]}`)().sort()); };
+    assert.equal(setOf(page, 'serverMutatorExact'), setOf(host, 'actionExact'), 'page and server exact action lists match');
+    assert.equal(setOf(page, 'serverMutatorExclude'), setOf(host, 'actionExclude'), 'page and server excluded action lists match');
+    assert.equal(/const serverMutatorName=(\/\^\(\?:[^/]*\)\/i)/.exec(page)?.[1], /const actionName = (\/\^\(\?:[^/]*\)\/i)/.exec(host)?.[1], 'page and server command-name patterns match');
     assert.equal(server.host.resolveAction('MES.icalExport'), null, 'calendar export stays a read and is not exposed as a mutation command');
     assert.equal(server.host.resolveAction('MES.verifyAIActionLog'), null, 'AI action-log verification stays a read and is not exposed as a mutation command');
     for (const name of ['MES.upgrade', 'MES.validate', 'MES.verifyManifests', 'MES.verifyAIActionLog', 'MES.signManifest', 'FlightPlan.status', 'FlightManeuver.pfmeaFor', 'MES.recordAIAction', 'MES.logSupport', 'MES.noteDemoBypassRemoved']) {
