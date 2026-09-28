@@ -894,7 +894,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   const dbPath = dbOverride || process.env.FLIGHT_DB || path.join(ROOT, 'data', 'flight.sqlite');
   const databaseUrl = arg('database-url', dbOverride ? null : process.env.FLIGHT_DATABASE_URL || null);
   const openCliStore = async () => databaseUrl ? openPostgres(databaseUrl) : openDb(dbPath);
-  const backupTo = arg('backup', null), unlockUser = arg('unlock', null);
+  const backupTo = arg('backup', null), restoreFrom = arg('restore', null), unlockUser = arg('unlock', null);
   if (unlockUser) {
     // node server/server.mjs --db data/datum.sqlite --unlock <username> --reason "..." --by <your name>
     const store = await openCliStore();
@@ -907,6 +907,13 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
     const store = await openCliStore();
     try { const pages = await store.backup(backupTo), count = (await store.evidenceList()).length; await store.close(); console.log(`${databaseUrl ? 'PostgreSQL dump' : 'Backup'} written to ${backupTo}${databaseUrl ? '' : ` (${pages} pages, ${count} evidence items)`}.`); }
     catch (e) { console.error(`Backup failed: ${e.message}`); await store.close(); process.exit(1); }
+  } else if (restoreFrom) {
+    // Offline restore of a pg_dump custom-format archive into the PostgreSQL target.
+    // Stop the server first when restoring into its database.
+    if (!databaseUrl) { console.error('Restore targets PostgreSQL only: pass --database-url <connection string>.'); process.exit(1); }
+    const { restorePostgres } = await import('./db-postgres.mjs');
+    try { await restorePostgres(databaseUrl, restoreFrom); console.log(`Restored ${restoreFrom} into the PostgreSQL database. Start the server normally; it verifies the audit chain on startup and refuses a tampered restore.`); }
+    catch (e) { console.error(`Restore failed: ${e.message}`); process.exit(1); }
   } else {
   const host = arg('host', process.env.FLIGHT_HOST || DEFAULT_HOST);
   const server = createServer({ dbPath, databaseUrl, host });
