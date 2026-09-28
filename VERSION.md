@@ -61,12 +61,12 @@ the tree.
 | Item | Value |
 | --- | --- |
 | Build | v82 |
-| index.html SHA-256, as stamped in the file | `49145a4a4a38fd20399dc5d697b6c238e4f9325828592303ed4fb90ee4134c06` |
-| index.html file SHA-256 | `007759a35c2390ee02cac01ec64af088fc2d6a84f5f4eee79298397cc5dba1ae` |
-| demo.html file SHA-256 | `a5fdfb689d416ef1c450b3110b69765fc20027a652fda84df387c8e6ca8c5a80` |
+| index.html SHA-256, as stamped in the file | `4ae765fd383031dcd7627c12b23eb622e6e66121c38ef9535ea851a0e752ad78` |
+| index.html file SHA-256 | `b519b8e214337b242ae7cf6202c36c3580ef9754246d2cee53c1ef73ba3896a2` |
+| demo.html file SHA-256 | `670fffb920937cbf6aa2bba149eefb2ace230b7a14062db3de9f4055bcc860b5` |
 | Suites run | 2026-09-28 |
-| Mirror off | 67 of 67 pass |
-| Mirror on | 67 of 67 pass; the mirror received 17595 records, chain intact |
+| Mirror off | 68 of 68 pass |
+| Mirror on | 68 of 68 pass; the mirror received 17595 records, chain intact |
 | Skips | none |
 
 The stamped SHA-256 is the hash of `index.html` with its own `fs-build-sha256` field set to
@@ -125,6 +125,7 @@ values are plain hashes of the files as committed.
 | test_react_trace_ui |  | pass | pass |
 | test_roles_ops_qs |  | pass | pass |
 | test_server |  | pass | pass |
+| test_server_first_load |  | pass | pass |
 | test_server_ui |  | pass | pass |
 | test_source_inspection |  | pass | pass |
 | test_source_inspection_ui |  | pass | pass |
