@@ -30,6 +30,38 @@ try {
   assert.equal(refused.storageUnchanged, true, 'nothing is written to browser storage');
   assert.equal(refused.liveUnchanged, true, 'the live workspace is unchanged');
 
+  // A proposed write that repair could "fix" by setting a work order aside is still refused, not repaired.
+  const repairable = await page.evaluate(key => {
+    const stored = localStorage.getItem(key), orders = state.orders.length, next = structuredClone(state);
+    const wi = next.masterWIs.find(item => item.status === 'Released'), day = new Date().toISOString().slice(0, 10);
+    const added = MES.addOrder(next, { masterWI: `${wi.id}|${wi.revision}`, pedigree: 'Production', subcategory: 'Mfg.', site: MES.SITES[0], aircraft: MES.AIRCRAFT[0], quantity: 1, start: day, due: day });
+    if (!added.ok) return { skipped: added.message };
+    MES.getOrder(next, added.id).status = 'Not a status';
+    const repairWouldAccept = MES.repair(structuredClone(next)).ok;
+    let message = null;
+    try { mediaCommit(next); } catch (error) { message = error.message; }
+    return { repairWouldAccept, message, storageUnchanged: localStorage.getItem(key) === stored, ordersKept: state.orders.length === orders };
+  }, KEY);
+  assert.equal(repairable.skipped, undefined, `a work order can be proposed: ${repairable.skipped}`);
+  assert.equal(repairable.repairWouldAccept, true, 'repair would have set the broken order aside and accepted the rest');
+  assert.match(repairable.message || '', /^Change not saved:/, 'an invalid proposal is refused even when repair could accept it');
+  assert.equal(repairable.storageUnchanged && repairable.ordersKept, true, 'nothing is stored and no work order is set aside');
+
+  // Server commands queued by a refused change are dropped; commands from committed changes stay queued.
+  const queue = await page.evaluate(() => {
+    serverActionQueue.splice(0);
+    serverActionQueue.push({ action: 'MES.committedChange', args: [] });
+    markServerCommandsCommitted();
+    serverActionQueue.push({ action: 'MES.refusedChange', args: [] });
+    const next = structuredClone(state);
+    next.masterWIs.find(wi => wi.revision === 'A').operations[0].steps[0].title = '';
+    try { mediaCommit(next); } catch (_) { /* refused */ }
+    const left = serverActionQueue.map(command => command.action);
+    serverActionQueue.splice(0);
+    return left;
+  });
+  assert.equal(JSON.stringify(queue), JSON.stringify(['MES.committedChange']), 'the refused change leaves no server command behind');
+
   const accepted = await page.evaluate(key => {
     const next = structuredClone(state);
     next.masterWIs.find(wi => wi.revision === 'A').title = 'Retitled by the media commit test';
