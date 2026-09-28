@@ -139,7 +139,7 @@ Step check: `{ name, role, credentialId, at, torque? {value, unit, tool}, consum
 
 ### 4.1 Accounts and sessions
 
-- First run creates the first account as **QA Manager**. The QA Manager adds accounts and sets roles from the credentials dialog.
+- First run creates the first account as **Master Access**. On the shared server this needs the first-run setup code printed in the server console (see `docs/DATABASES.md`). Master Access adds accounts and sets roles from the credentials dialog.
 - Passwords: per-user random salt, SHA-256 via `crypto.subtle`. Stored locally.
 - Session is per browser tab (`sessionStorage`). Signing in re-renders the app for that account.
 - "One login at a time across devices" requires the backend (section 12).

@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright';
 import { createServer, makeHash } from '../server/server.mjs';
 
-const server = createServer({ dbPath: ':memory:', host: '127.0.0.1', quiet: true });
+const server = createServer({ dbPath: ':memory:', host: '127.0.0.1', quiet: true, setupCode: 'server-ui-setup-code' });
 let browser;
 let aqiPage;
 try {
@@ -18,6 +18,7 @@ try {
   await page.locator('#sk-username').fill('server-ui-admin');
   await page.locator('#sk-password').fill('server-ui-password');
   await page.locator('#sk-confirm').fill('server-ui-password');
+  await page.locator('#sk-setup').fill('server-ui-setup-code');
   await page.locator('#sk-login-submit').click();
   await page.locator('#sk-boot').waitFor({ state: 'hidden', timeout: 15000 });
   await page.locator('#main .flight-react').waitFor({ timeout: 15000 });

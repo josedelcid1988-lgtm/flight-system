@@ -14,7 +14,8 @@ const check = async (name, fn) => {
 };
 const sha = (salt, password) => createHash('sha256').update(`${salt}:${password}`).digest('hex');
 let now = Date.now();
-const server = createServer({ dbPath: ':memory:', quiet: true, clock: () => now });
+const SETUP_CODE = 'server-test-setup-code';
+const server = createServer({ dbPath: ':memory:', quiet: true, clock: () => now, setupCode: SETUP_CODE });
 const requestHandler = server.listeners('request')[0];
 const base = 'http://flight-system.test/api';
 const request = async (url, { method = 'GET', headers = {}, body } = {}) => {
@@ -68,14 +69,27 @@ try {
     assert.doesNotMatch(html, /"serial":"SN-10009"/);
     assert.doesNotMatch(html, /"hash":/);
   });
+  await check('the first account needs the setup code from the server console', async () => {
+    const first = { username: 'intruder', displayName: 'Network Intruder', role: 'admin', salt: 'salt', hash: sha('salt', 'intruder-pass-123') };
+    for (const setupCode of [undefined, '', 'wrong-code']) {
+      const refused = await api('PUT', '/auth/accounts', { body: { users: [first], ...(setupCode === undefined ? {} : { setupCode }) } });
+      assert.equal(refused.status, 403, JSON.stringify(refused.json));
+      assert.match(refused.json.error, /setup code shown in the server console/);
+    }
+    assert.equal((await server.store.accounts()).length, 0, 'a refused first-run request creates no account');
+    assert.equal((await api('POST', '/auth/session', { body: { username: 'intruder', password: 'intruder-pass-123' } })).status, 401);
+    assert.ok((await server.store.auditRows(100)).some(row => row.action === 'first-account-refused'), 'the refused bootstrap is audited');
+    assert.equal(await server.firstRunSetupCode(), SETUP_CODE, 'the console shows the code while no account exists');
+  });
   await check('first account is created as Master Access', async () => {
-    const result = await api('PUT', '/auth/accounts', { body: { users: [
+    const result = await api('PUT', '/auth/accounts', { body: { setupCode: SETUP_CODE, users: [
       { username: 'one', displayName: 'Flight Admin', role: 'general', salt: 'salt', hash: sha('salt', 'flight-pass-123') }
     ] } });
     assert.equal(result.status, 200);
     assert.equal(result.json.users[0].role, 'admin');
     assert.deepEqual(result.json.users[0].roles, ['admin']);
     assert.equal(result.json.users[0].hash, undefined);
+    assert.equal(await server.firstRunSetupCode(), null, 'the setup code is not shown once the first account exists');
   });
   await check('Operations Manager and Quality Supervisor capabilities match their authority boundaries', async () => {
     const caps = server.host.roles.ROLE_CAPS;

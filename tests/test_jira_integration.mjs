@@ -7,7 +7,7 @@ import { createServer, makeHash } from '../server/server.mjs';
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flight-jira-'));
 let posts = [];
 let server = createServer({
-  dbPath: path.join(dir, 'flight.sqlite'), quiet: true,
+  dbPath: path.join(dir, 'flight.sqlite'), quiet: true, setupCode: 'jira-test-setup-code',
   jira: { baseUrl: 'https://skyryse.atlassian.net', email: 'flight-connector@example.invalid', apiToken: 'test-only-secret' },
   jiraFetch: async (url, options) => {
     const body = JSON.parse(options.body);
@@ -28,7 +28,7 @@ try {
     return { status: response.status, json, etag: response.headers.get('etag') };
   };
   const adminHash = await makeHash('flight-password-test');
-  const created = await api('PUT', '/auth/accounts', { users: [{ username: 'jira-admin', displayName: 'Jira Admin', role: 'admin', salt: '', hash: adminHash }] });
+  const created = await api('PUT', '/auth/accounts', { setupCode: 'jira-test-setup-code', users: [{ username: 'jira-admin', displayName: 'Jira Admin', role: 'admin', salt: '', hash: adminHash }] });
   assert.equal(created.status, 200);
   const login = await api('POST', '/auth/session', { username: 'jira-admin', password: 'flight-password-test' });
   assert.equal(login.status, 200);

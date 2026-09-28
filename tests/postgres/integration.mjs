@@ -10,7 +10,7 @@ import { openPostgres } from '../../server/db-postgres.mjs';
 const connectionString = process.env.FLIGHT_DATABASE_URL;
 if (!connectionString) throw new Error('FLIGHT_DATABASE_URL is required for the PostgreSQL integration check.');
 const sha = (salt, password) => createHash('sha256').update(`${salt}:${password}`).digest('hex');
-const server = createServer({ databaseUrl: connectionString, quiet: true });
+const server = createServer({ databaseUrl: connectionString, quiet: true, setupCode: 'postgres-test-setup-code', exportCredentials: { FLIGHT_PG_TEST_SECRET_UNSET: ['https://example.invalid'] } });
 const exportDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flight-postgres-export-'));
 let address;
 try {
@@ -44,7 +44,7 @@ try {
   assert.equal(jiraReplay.request.issue_key, 'ECR-9001');
   console.log('ok PostgreSQL Jira idempotency state persists and replays the created issue');
 
-  const seed = await call('/auth/accounts', { method: 'PUT', body: { users: [{ username: 'pg-admin', displayName: 'PostgreSQL Admin', role: 'admin', salt: 'test-salt', hash: sha('test-salt', 'pg-test-password-123') }] } });
+  const seed = await call('/auth/accounts', { method: 'PUT', body: { setupCode: 'postgres-test-setup-code', users: [{ username: 'pg-admin', displayName: 'PostgreSQL Admin', role: 'admin', salt: 'test-salt', hash: sha('test-salt', 'pg-test-password-123') }] } });
   assert.equal(seed.status, 200, JSON.stringify(seed.json));
   const login = await call('/auth/session', { method: 'POST', body: { username: 'pg-admin', password: 'pg-test-password-123' } });
   assert.equal(login.status, 200, JSON.stringify(login.json));

@@ -93,6 +93,26 @@ export const DEFAULT_HOST = '0.0.0.0';
 export const SESSION_DEFAULTS = Object.freeze({ idleMinutes: 30, maxHours: 12 });
 const positive = (...values) => { for (const v of values) { const n = Number(v); if (v !== undefined && v !== null && v !== '' && Number.isFinite(n) && n > 0) return n; } return null; };
 
+// HTTPS record exports may only send a credential the server operator bound to that destination.
+// FLIGHT_EXPORT_CREDENTIALS is JSON: {"FLIGHT_EXPORT_TOKEN": ["https://records.example.com"]}. Request data never
+// names an arbitrary environment variable, so no other server secret can be sent anywhere.
+export function parseExportCredentials(value) {
+  if (value === undefined || value === null || value === '') return {};
+  let raw = value;
+  if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch { throw new Error('FLIGHT_EXPORT_CREDENTIALS must be JSON such as {"FLIGHT_EXPORT_TOKEN": ["https://records.example.com"]}.'); } }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('FLIGHT_EXPORT_CREDENTIALS must map each server setting name to a list of HTTPS origins.');
+  const out = {};
+  for (const [name, origins] of Object.entries(raw)) {
+    if (!/^[A-Z][A-Z0-9_]{0,63}$/.test(name) || !Array.isArray(origins) || !origins.length) throw new Error(`FLIGHT_EXPORT_CREDENTIALS: ${name} needs an upper-case setting name and at least one HTTPS origin.`);
+    out[name] = origins.map(origin => {
+      let u; try { u = new URL(String(origin)); } catch { u = null; }
+      if (!u || u.protocol !== 'https:' || u.username || u.password) throw new Error(`FLIGHT_EXPORT_CREDENTIALS: ${name} lists ${origin}, which is not an https origin.`);
+      return u.origin;
+    });
+  }
+  return out;
+}
+
 export function createServer(options = {}) {
   const indexPath = options.indexPath || path.join(ROOT, 'index.html');
   const dbPath = options.dbPath || process.env.FLIGHT_DB || path.join(ROOT, 'data', 'flight.sqlite');
@@ -120,6 +140,12 @@ export function createServer(options = {}) {
   const jiraFetch = options.jiraFetch || globalThis.fetch;
   if (host.MES.MAX_EVIDENCE_BYTES && host.MES.MAX_EVIDENCE_BYTES > MAX_REQUEST_BYTES) throw new Error(`index.html allows ${host.MES.MAX_EVIDENCE_BYTES} byte recordings but the server's request limit is ${MAX_REQUEST_BYTES}. Raise MAX_REQUEST_BYTES and the proxy's client_max_body_size together.`);
   const log = options.quiet ? () => {} : (...a) => console.log(new Date().toISOString(), ...a);
+  const exportCredentials = parseExportCredentials(options.exportCredentials !== undefined ? options.exportCredentials : process.env.FLIGHT_EXPORT_CREDENTIALS);
+  const exportTargetAllowed = (tokenSetting, destination) => { let origin = null; try { origin = new URL(String(destination)).origin; } catch {} return !!origin && !!tokenSetting && Object.hasOwn(exportCredentials, tokenSetting) && exportCredentials[tokenSetting].includes(origin); };
+  // The first account becomes Master Access, so creating it needs a code only the person running the server can
+  // see: FLIGHT_BOOTSTRAP_TOKEN when set, otherwise a random code printed in the server console at startup.
+  const setupCode = String(options.setupCode !== undefined ? options.setupCode : process.env.FLIGHT_BOOTSTRAP_TOKEN || '').trim() || randomBytes(15).toString('base64url');
+  const setupCodeMatches = value => { const given = String(value || '').trim(); if (!given) return false; const a = createHash('sha256').update(given).digest(), b = createHash('sha256').update(setupCode).digest(); return timingSafeEqual(a, b); };
   const hashReport = async () => { const out = { current: 0, weak: 0, wrapped: 0, sha256: 0, unknown: 0, sso: 0 }; for (const a of await store.accounts()) { if (a.sso) out.sso += 1; else out[hashKind(a.hash)] += 1; } return out; };
   // No SHA-256-only password hash is left at rest: each is wrapped in scrypt at startup (and on receipt),
   // and replaced with a plain scrypt hash of the password at that person's next sign-in.
@@ -261,7 +287,8 @@ export function createServer(options = {}) {
       }
       return `Wrote ${filename}`;
     }
-    const token = job.tokenSetting ? process.env[job.tokenSetting] : '';
+    if (!exportTargetAllowed(job.tokenSetting, job.destination)) throw new Error(`Server setting ${job.tokenSetting || '(missing token setting)'} is not bound to this destination in FLIGHT_EXPORT_CREDENTIALS. Nothing was sent.`);
+    const token = process.env[job.tokenSetting] || '';
     if (!token) throw new Error(`Server setting ${job.tokenSetting || '(missing token setting)'} is not configured.`);
     const response = await fetch(job.destination, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, 'Idempotency-Key': job.exportId, 'X-Record-SHA256': job.sha256 }, body: payload, signal: AbortSignal.timeout(15000) });
     if (!response.ok) throw new Error(`HTTPS destination refused the export with ${response.status}: ${(await response.text()).slice(0, 300)}`);
@@ -445,6 +472,7 @@ export function createServer(options = {}) {
           const firstRun = existing.length === 0;
           if (!firstRun && !(session && (manages(session.account) || supervises(session.account)))) { send(res, 403, { error: 'Only a Master Access, QA Manager, or Quality Supervisor account can manage accounts.' }); return; }
           if (firstRun && incoming.length !== 1) { send(res, 400, { error: 'The first account is created alone.' }); return; }
+          if (firstRun && !setupCodeMatches(body.setupCode)) { await store.audit(null, 'first-account-refused', { reason: 'setup code missing or wrong' }); send(res, 403, { error: 'Enter the setup code shown in the server console when it started. The first account becomes Master Access, so it needs that code.' }); return; }
           await wrapped;
           const { state: accountState } = await loadState();
           // Hash before the transaction: new hashes are scrypt from the page; a legacy SHA-256 from an older page is wrapped.
@@ -794,6 +822,7 @@ export function createServer(options = {}) {
           if (destinationKind === 'folder' && !path.isAbsolute(destination)) { send(res, 400, { error: 'Folder destinations must be absolute paths on the server.' }); return; }
           if (destinationKind === 'https') { try { const u = new URL(destination); if (u.protocol !== 'https:' || u.username || u.password || u.search || u.hash) throw new Error(); } catch { send(res, 400, { error: 'HTTPS destinations need an https URL without embedded credentials, query parameters or fragments.' }); return; } }
           if ((destinationKind === 'https' && (!tokenSetting || !/^[A-Z][A-Z0-9_]{0,63}$/.test(tokenSetting))) || (destinationKind === 'folder' && tokenSetting)) { send(res, 400, { error: 'HTTPS destinations require a server setting name such as FLIGHT_EXPORT_TOKEN. Folder destinations do not use a token.' }); return; }
+          if (destinationKind === 'https' && !exportTargetAllowed(tokenSetting, destination)) { send(res, 400, { error: `The server operator has not bound ${tokenSetting} to ${new URL(destination).origin}. Ask them to add it to FLIGHT_EXPORT_CREDENTIALS on the server; only a bound setting is ever sent.` }); return; }
           if (namingPattern.length > 160 || !namingPattern.includes('{exportId}') || !namingPattern.includes('{recordId}') || /[\\/]/.test(namingPattern.replaceAll('{recordType}', '').replaceAll('{recordId}', '').replaceAll('{exportId}', ''))) { send(res, 400, { error: 'The naming pattern must include {recordId} and {exportId}, may include {recordType}, and cannot contain path separators.' }); return; }
           if (rationale.length < 3 || rationale.length > 500) { send(res, 400, { error: 'Enter a change rationale from 3 to 500 characters.' }); return; }
           const oldValue = await store.exportSetting(recordType);
@@ -842,6 +871,8 @@ export function createServer(options = {}) {
   server.store = store; server.host = host; server.ready = storeReady.then(async () => { await wrapped; void drainExports(); });
   // Bind address: behind a reverse proxy, bind 127.0.0.1 so only that proxy can connect.
   server.listenAsync = async (port, host = options.host || process.env.FLIGHT_HOST || DEFAULT_HOST) => { await server.ready; return new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, () => { server.off('error', reject); resolve(server.address().port); }); }); };
+  // The code to show in the server console, or null once the first account exists.
+  server.firstRunSetupCode = async () => { await storeReady; return (await store.accounts()).length ? null : setupCode; };
   server.closeAsync = async () => { await wrapped.catch(() => {}); await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())); await exportDrain?.catch(() => {}); await store.close(); };
   return server;
 }
@@ -871,6 +902,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   server.listenAsync(Number(arg('port', process.env.PORT || 8080)), host).then(port => {
     const a = server.address();
     console.log(`Flight System server listening on ${a.address}:${port} (${a.address === '127.0.0.1' || a.address === '::1' ? 'loopback only: this machine and its reverse proxy' : 'all interfaces: bind 127.0.0.1 with --host behind a reverse proxy'}) (db ${server.store.db.location ? server.store.db.location() : 'sqlite'})`);
+    server.firstRunSetupCode().then(code => { if (code) console.log(`First-run setup code: ${code}\nEnter it on the Set up Master Access screen to create the first account. It is not needed again once that account exists.`); }).catch(() => {});
   }, e => { console.error(`Flight System server could not listen on ${host}: ${e.message}. Check --host names an address on this machine and the port is free.`); process.exit(1); });
   }
 }
