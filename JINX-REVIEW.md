@@ -7,7 +7,7 @@ Fetch with `git fetch origin jinx/review-notes`, read this file, apply fixes on 
 ## Blockers (fix these, then CI, then ask for re-review)
 
 1. Stamp gate for inspect-steps is still not implemented. Jose confirmed (2026-09-27): qe keeps inspect-steps and mrb-quality in ROLE_CAPS, but inspect-steps is active only when the account holds a valid inspection stamp, enforced server-side. The new training gates apply at account creation and role assignment, but `capsOf` in `server/mes-host.mjs` (lines 72-73) still derives inspect-steps from role membership alone. Any existing qe account, or one that legitimately passed the training gate, keeps inspect-steps with no stamp. Implement the stamp check where inspect-steps is computed, not only at the assignment boundary.
-2. CI is not green on de5facb3. The suites run is in_progress; the prior head failed the 'VERSION.md release record matches index.html and demo.html' and 'All suites, mirror on' steps, and the PR body claims 67/67 local, 67/67 mirror, 310/310 qa_full. Re-check after the run completes; mergeable_state is unstable.
+2. CI is not green on de5facb3: the suites check run completed FAILED (exit code 1, completed 2026-09-28T01:55Z; the run annotations name no failing suite, so pull the run logs locally to see which of the 67 failed). The prior head failed the 'VERSION.md release record matches index.html and demo.html' and 'All suites, mirror on' steps, and the PR body claims 67/67 local, 67/67 mirror, 310/310 qa_full. Fix, then re-run; mergeable_state is unstable.
 
 ## Claudia's green light (Flight merge gate)
 
