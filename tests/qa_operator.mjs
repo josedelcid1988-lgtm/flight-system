@@ -118,13 +118,15 @@ try {
   if(process.env.FLIGHT_QA_SCREENSHOTS)await page.screenshot({path:process.env.FLIGHT_QA_SCREENSHOTS+'/release-glow-reduced.png'});
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   for (const route of ['home','plan-home','mnv-home']) {
+    const heading = route === 'home' || route === 'mnv-home' ? '.fr-page-heading h1' : '.page-heading';
     await page.evaluate(v => {view=v;render();}, route);
-    assert.equal(await page.locator('.page-heading').evaluate(e => getComputedStyle(e).animationName), 'fs-heading-arrive');
+    if (route === 'mnv-home') assert.equal(await page.locator('.fr-maneuver').count(), 1);
+    assert.equal(await page.locator(heading).evaluate(e => getComputedStyle(e).animationName), route === 'plan-home' ? 'fs-heading-arrive' : 'none');
     await page.evaluate(() => render());
-    assert.equal(await page.locator('.page-heading').evaluate(e => getComputedStyle(e).animationName), 'none');
+    assert.equal(await page.locator(heading).evaluate(e => getComputedStyle(e).animationName), 'none');
   }
   await page.evaluate(() => {document.documentElement.dataset.fsMotion='off';view='home';render();});
-  assert.equal(await page.locator('.page-heading').evaluate(e => getComputedStyle(e).animationName), 'none');
+  assert.equal(await page.locator('.fr-page-heading h1').evaluate(e => getComputedStyle(e).animationName), 'none');
   assert.deepEqual(errors, []);
   console.log('Operator cue checks passed: current operation, focus, blocked state, reduced motion, mobile, unchanged records.');
 } finally { await browser.close(); }

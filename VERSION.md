@@ -1,6 +1,6 @@
 # Flight System build
 
-build: v81
+build: v82
 released: 2026-09-20
 
 This file is where the product build id is set. `node tools/stamp-build.mjs` copies it
@@ -60,13 +60,13 @@ the tree.
 
 | Item | Value |
 | --- | --- |
-| Build | v81 |
-| index.html SHA-256, as stamped in the file | `457883805723baee50ae7a8494edd63b3dc47ddbeb1e1c59c6b5c17fc99f5413` |
-| index.html file SHA-256 | `d3b65b3d6da8b0fe6af83ce0c964e8f9ea4645e33d4dd7692bd7ca6fab0216d8` |
-| demo.html file SHA-256 | `f8ed62f7ac9e0aba2184f63cee8ccfbf70abb434d3d20b5aa8d4bddcee300404` |
-| Suites run | 2026-09-26 |
-| Mirror off | 30 of 30 pass |
-| Mirror on | 30 of 30 pass; the mirror received 15007 records, chain intact |
+| Build | v82 |
+| index.html SHA-256, as stamped in the file | `d5443641f92719f0cbecccc380dc557af76bc93d8192103adfd5ff1e4bc85867` |
+| index.html file SHA-256 | `6d48828dc28dca67626483316fdf99eb557f74ce1f6f93313cb3b6463368471b` |
+| demo.html file SHA-256 | `1158c211317d9d36b7e48d9130da7f53b1dd3a57bfeecb685a2d800477b689f2` |
+| Suites run | 2026-09-28 |
+| Mirror off | 68 of 68 pass |
+| Mirror on | 68 of 68 pass; the mirror received 17594 records, chain intact |
 | Skips | none |
 
 The stamped SHA-256 is the hash of `index.html` with its own `fs-build-sha256` field set to
@@ -75,23 +75,61 @@ values are plain hashes of the files as committed.
 
 | Suite | Checks | Mirror off | Mirror on |
 | --- | --- | --- | --- |
+| check_no_machine_paths |  | pass | pass |
+| paths |  | pass | pass |
 | pilot_rehearsal |  | pass | pass |
 | qa_access |  | pass | pass |
 | qa_e2e |  | pass | pass |
-| qa_full | 309 | pass | pass |
+| qa_full | 310 | pass | pass |
 | qa_master |  | pass | pass |
 | qa_multi | 161 | pass | pass |
 | qa_operator |  | pass | pass |
 | qa_ui |  | pass | pass |
 | stable_test |  | pass | pass |
+| test_async_store_calls |  | pass | pass |
+| test_atp_https |  | pass | pass |
 | test_authority |  | pass | pass |
 | test_build_stamp |  | pass | pass |
+| test_calendar_ui |  | pass | pass |
 | test_demo_build |  | pass | pass |
+| test_export_delivery |  | pass | pass |
+| test_export_ui |  | pass | pass |
+| test_floor_picker_ui |  | pass | pass |
+| test_floor_ui |  | pass | pass |
+| test_form3_plan_ui |  | pass | pass |
 | test_frozen_contract |  | pass | pass |
 | test_inspect_own_work |  | pass | pass |
+| test_jira_integration |  | pass | pass |
+| test_load_safety |  | pass | pass |
+| test_load_safety_ui |  | pass | pass |
+| test_migration |  | pass | pass |
 | test_mirror |  | pass | pass |
 | test_mrb_seat_caps |  | pass | pass |
 | test_nff_boundary |  | pass | pass |
+| test_operation_subcodes |  | pass | pass |
+| test_planner |  | pass | pass |
+| test_planning |  | pass | pass |
+| test_qms_documents |  | pass | pass |
+| test_qms_documents_ui |  | pass | pass |
+| test_qms_governance |  | pass | pass |
+| test_qms_governance_ui |  | pass | pass |
+| test_qms_records |  | pass | pass |
+| test_qms_records_ui |  | pass | pass |
+| test_qms_skills |  | pass | pass |
+| test_react_activity_ui |  | pass | pass |
+| test_react_build |  | pass | pass |
+| test_react_maneuver_ui |  | pass | pass |
+| test_react_orders_ui |  | pass | pass |
+| test_react_planning_views |  | pass | pass |
+| test_react_serials_ui |  | pass | pass |
+| test_react_trace_ui |  | pass | pass |
+| test_roles_ops_qs |  | pass | pass |
+| test_server |  | pass | pass |
+| test_server_first_load |  | pass | pass |
+| test_server_ui |  | pass | pass |
+| test_source_inspection |  | pass | pass |
+| test_source_inspection_ui |  | pass | pass |
+| test_source_package |  | pass | pass |
 | test_support_access |  | pass | pass |
 | test_v74 |  | pass | pass |
 | test_v75 |  | pass | pass |

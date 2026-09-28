@@ -56,8 +56,8 @@ Two things in that table deserve attention:
 
 First run, before any change: every fixture-based suite died in under two
 seconds. The harnesses had the original author's absolute path
-(`/Users/<user>/projects/flight-system`) baked in and `tests/setpaths.sh`
-only rewrote the older `/home/claude/fc` layout; Playwright also expected a
+(the original developer checkout) baked in and `tests/setpaths.sh`
+only rewrote the older the old build-directory layout layout; Playwright also expected a
 different Chromium build. Neither is a product failure. After fixing the
 script and setting `CHROME_PATH`:
 
@@ -67,7 +67,7 @@ script and setting `CHROME_PATH`:
 | `qa_e2e` | demo (150) | 30 flows, 0 failed | pass |
 | `qa_multi` | demo (150) | 161 pass, 0 fail | pass |
 | `pilot_rehearsal` | demo (150) | pass | pass |
-| `stable_test` | production + demo | 64 checks stable | pass (after removing the `/tmp/auth.json` dependency) |
+| `stable_test` | production + demo | 64 checks stable | pass (after removing the an external temporary auth file dependency) |
 | `test_v74` to `test_v78` | demo (150) | pass | pass |
 | `test_v79` | demo (150) | 1 fail: close-as-Scrap option missing | real demo-build defect, fixed in `index.html` (section 4) |
 | `test_v80`, `v80c`, `v80d`, `v80e`, `v80h` | production / demo | pass | pass |
@@ -118,9 +118,9 @@ build chain is outside this repository.
   `file:` URLs of either slash count, instead of one historical layout.
 - `qa_full`: the demo title assertion expected "Flight System (Demo)"; the
   product says "Flight System Demo". The release zip check pointed at
-  `/mnt/user-data/outputs`, a directory from the container that built v72; it
+  an external artifact-output directory, a directory from the container that built v72; it
   now reports Skip unless `RELEASE_OUTPUT_DIR` is set.
-- `stable_test`: read `/tmp/auth.json`, which never existed in the
+- `stable_test`: read an external temporary auth file, which never existed in the
   repository, and a hard-coded fixture path. It now seeds its own Master
   Access account and resolves fixtures relative to itself.
 - `qa_ui`: clicked a "Next aircraft photograph" button removed in the v80

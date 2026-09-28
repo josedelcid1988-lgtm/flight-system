@@ -11,7 +11,7 @@ const TESTS=decodeURI(new URL('.',import.meta.url).pathname);
 // never the copies run-suites --mirror makes with SK_MIRROR already set.
 const FIXTURES=TESTS+'fixtures/';
 const ROOT=path.resolve(TESTS,'..');
-const {createMirror,sha256,verifyChain,pruneBackups}=await import(path.join(ROOT,'server/server.mjs'));
+const {createMirror,sha256,verifyChain,pruneBackups}=await import(path.join(ROOT,'server/mirror/server.mjs'));
 const PROD='file://'+FIXTURES+'publish.html';
 const STAMP=(h=>({build:h.match(/<meta name="fs-build" content="([^"]*)">/)[1],sha256:h.match(/<meta name="fs-build-sha256" content="([^"]*)">/)[1]}))(fs.readFileSync(FIXTURES+'publish.html','utf8'));
 const fails=[];const ok=(w,c,m='')=>{console.log((c?'  ok   ':'  FAIL ')+w+(c?'':' -> '+m));if(!c)fails.push(w);};
@@ -52,7 +52,7 @@ ok('WAL mode is on',m.db.prepare('PRAGMA journal_mode').get().journal_mode==='wa
 
 // Backup, then restore: the restored copy reproduces the chain exactly.
 const bk=m.backup();
-const rt=spawnSync(process.execPath,[path.join(ROOT,'server/restore-test.mjs'),bk,'--against',dbPath],{encoding:'utf8'});
+const rt=spawnSync(process.execPath,[path.join(ROOT,'server/mirror/restore-test.mjs'),bk,'--against',dbPath],{encoding:'utf8'});
 ok('the restore test passes on a fresh backup and matches the live rows',rt.status===0&&/chain intact/.test(rt.stdout)&&/matches the first 4 of 4/.test(rt.stdout),rt.stdout+rt.stderr);
 {const restored=path.join(tmp,'restored.sqlite');fs.copyFileSync(bk,restored);const m2=createMirror({dbPath:restored,backupDir:path.join(tmp,'b2'),port:0,backupEveryMinutes:0});const a2=await m2.listen();
  const v2=await (await fetch(`http://127.0.0.1:${a2.port}/api/v1/verify`)).json();
@@ -68,7 +68,7 @@ ok('the restore test passes on a fresh backup and matches the live rows',rt.stat
  const tv=verifyChain(db);ok('verify detects a tampered payload and names the first broken row',!tv.ok&&tv.firstBreak.id===2&&/changed after it was written/.test(tv.firstBreak.reason),JSON.stringify(tv));
  db.exec(`UPDATE records SET payload_json='{"id":"WO-2","value":2}', actor='Someone else' WHERE id=2`);
  const tv2=verifyChain(db);ok('verify detects an edited column by the break in the next row',!tv2.ok&&tv2.firstBreak.id===3&&/previous row/.test(tv2.firstBreak.reason),JSON.stringify(tv2));db.close();
- const rt2=spawnSync(process.execPath,[path.join(ROOT,'server/restore-test.mjs'),t],{encoding:'utf8'});ok('the restore test fails on a tampered backup',rt2.status===1&&/BROKEN/.test(rt2.stdout),rt2.stdout);}
+ const rt2=spawnSync(process.execPath,[path.join(ROOT,'server/mirror/restore-test.mjs'),t],{encoding:'utf8'});ok('the restore test fails on a tampered backup',rt2.status===1&&/BROKEN/.test(rt2.stdout),rt2.stdout);}
 await m.close();
 // Token: when set, every endpoint but health needs it.
 {const mt=createMirror({dbPath:path.join(tmp,'tok.sqlite'),backupDir:path.join(tmp,'b3'),port:0,backupEveryMinutes:0,token:'s3cret'});const at=await mt.listen();const u=`http://127.0.0.1:${at.port}/api/v1`;

@@ -47,10 +47,17 @@ const SOD=[
   ['Development NFF is never an FAI order and never carries a FAIR',"if (order.pedigree === NFF) return { error: nffBlock('it cannot be an FAI order or carry a FAIR').message };",1],
   ['Development NFF pedigree is one way',"if (order.pedigree === NFF) return nffBlock('its pedigree cannot be changed; build a new order at the pedigree you need');",1],
   ['the own-work exception is Development NFF only',"const OWN_WORK_EXEMPT_PEDIGREES = Object.freeze(['Development NFF']);",1],
-  ['inspection needs the inspection grant on every inspection operation',"const stepsDenied = (operation, what) => isInspectionOp(operation) ? (can('inspect-steps') ? null :",1],
+  ['inspection is role-gated on every inspection operation',"const stepsDenied = (operation, what) => isInspectionOp(operation) ? (can('inspect-steps') ? null : fail(`A current Quality inspection stamp assigned to your account is required to ${what}. Ask a QA Manager to assign or renew your stamp.`))",1],
+  ['inspection capability requires a valid assigned Quality stamp',"function hasValidInspectionStamp(state, username, at = new Date().toISOString())",1],
   ['nobody grants their own authority',"if(u.username===me.username)return {ok:false,message:'Nobody grants or revokes their own authority.",1],
+  ['nobody changes their own roles',"if(username===me.username)return {ok:false,message:'Nobody changes their own roles. Another QA Manager or Master Access account must do it.'};",1],
+  ['nobody changes their own primary role from the access table',"if(u.username===me.username){sel.value=primaryRole(u);say('Nobody changes their own roles.",1],
+  ['nobody records their own training',"if (account === signedInAccount()) return fail('Nobody records their own training.",1],
+  ['nobody issues a stamp to their own account',"if (account && account === signedInAccount()) return fail('Nobody issues a stamp to their own account.",1],
+  ['nobody assigns a stamp to their own account',"return fail('Nobody assigns a stamp to their own account.",1],
+  ['nobody changes their own stamp beyond suspending or retiring it',"if (me && stamp.account === me && !Object.keys(patch || {}).every(key => key === 'status' && ['Suspended', 'Retired'].includes(patch.status))) return fail('Nobody changes their own stamp.",1],
   ['a grant needs a current training record',"if(!trainingOk(u,trainingCode))return {ok:false,message:u.displayName+' has no current '+trainingCode+' training record. Record the training first, then grant.'};",1],
-  ['grant-only authorities are never part of a role',"var GRANTED=['inspect-steps','mrb-quality','mrb-me','mrb-eng','mrb-cert','conformity','aqi-sign'];",1],
+  ['only conformity and AQI signatures require named grants',"var GRANTED=['conformity','aqi-sign'];",1],
   ['the person who recorded a disposition cannot approve it (work order NC and stock NC)',"=== actor(state).credentialId) return fail('Separation of duties: the person who recorded the disposition cannot approve it.');",2],
   ['the person who recorded a root cause cannot close the CAR',"if (sameActor(who, car.rootCause.by)) return fail('Separation of duties: the person who recorded the root cause cannot close the request. Use another Quality credential.');",1],
   ['an author of the PFMEA cannot give the Safety Team buy-off',"if (t.rows.some(r => r.by && r.by.credentialId === actor(state).credentialId)) return fail('Separation of duties: an author of the analysis cannot give the Safety Team buy-off.');",1],
@@ -62,8 +69,11 @@ const SOD=[
 ];
 for(const [label,text,count] of SOD) has(label,text,count);
 
+// ---- the same self-target refusal on the server access route ----
+{const serverSrc=fs.readFileSync(path.join(ROOT,'server','server.mjs'),'utf8');const text="if (target.username === actor.username) return fail(403, 'Nobody changes their own roles. Another QA Manager or Master Access account must do it.');";const n=serverSrc.split(text).length-1;ok('the server refuses any account changing its own roles',n===1,`found ${n} of: ${text.slice(0,120)}`);}
+
 // ---- what an approval records ----
-has('a signature manifest names the signer, meaning, time, SHA-256 of the record and the build',"return { meaning, at, signer, algorithm: 'SHA-256', hash: sha256(canonical(subject)), authenticated: false, build: buildStamp(),",1);
+has('a signature manifest names the signer, meaning, time, signed subject, SHA-256 and build',"return { meaning, at, signer, algorithm: 'SHA-256', hash: sha256(canonical(subject)), subject: JSON.parse(JSON.stringify(subject)), authenticated: false, build: buildStamp(),",1);
 has('the signer is the signed-in account with its credential',"const signer = acct ? { name: acct.name, role: acct.role, credentialId: acct.credentialId, account: acct.account }",1);
 
 // ---- the production build ----
@@ -80,7 +90,7 @@ await run(async([AUTH])=>{const a=JSON.parse(localStorage.getItem(AUTH));const s
   const add=(username,displayName,role)=>{if(!a.users.some(u=>u.username===username))a.users.push({username,displayName,salt,hash,role,createdAt:new Date().toISOString(),createdBy:'jdoe'});};
   add('radmin','Rowan Admin','admin');add('kqe','Kai Quality','qe');add('tme','Taylor Engineer','me');localStorage.setItem(AUTH,JSON.stringify(a));},[AUTH]);
 
-ok('Support Access lifts only stamp binding and MRB seat eligibility, never a separation-of-duties rule',await run(()=>JSON.stringify(Object.keys(MES.SUPPORT_RULES).sort())==='["mrb-seat","stamp-binding"]'));
+ok('Support Access lifts stamp binding only; MRB seats and separation of duties cannot be overridden',await run(()=>JSON.stringify(Object.keys(MES.SUPPORT_RULES).sort())==='["stamp-binding"]'));
 
 // Master Access writes a revision; a second Master Access account peer-reviews it.
 await as('jdoe');

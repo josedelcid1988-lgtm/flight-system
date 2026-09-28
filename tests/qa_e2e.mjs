@@ -1,15 +1,22 @@
-import {mkdirSync as __mkdirTests} from 'fs';const TESTS=decodeURI(new URL('.',import.meta.url).pathname);const FIXTURES=process.env.FS_FIXTURES_DIR?process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):TESTS+'fixtures/';__mkdirTests(TESTS+'shots',{recursive:true}); // shots and results resolve from this folder; fixtures from FS_FIXTURES_DIR when set (tools/run-suites.mjs --mirror)
+import { mkdirSync as __mkdirTests } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+const TESTS = path.dirname(fileURLToPath(import.meta.url)) + path.sep;
+const FIXTURES = process.env.FS_FIXTURES_DIR
+  ? pathToFileURL(path.resolve(process.env.FS_FIXTURES_DIR) + path.sep).href
+  : new URL('./fixtures/', import.meta.url).href;
+__mkdirTests(path.join(TESTS, 'shots'), { recursive: true }); // Results, helpers and screenshots belong beside this harness.
 // End-to-end QA: every order type and every ticket type driven to closure through the live engines, with
 // ease-of-processing metrics per flow (actions, typed fields, role handoffs, gates).
 import {chromium} from 'playwright'; import fs from 'fs';
 const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{});
 const p=await (await b.newContext({viewport:{width:1440,height:1000}})).newPage();
 const errs=[]; p.on('pageerror',e=>errs.push(e.message));
-async function signIn(u){await p.evaluate(()=>{try{sessionStorage.removeItem('skyryse-mes-session-v1');}catch(e){}}).catch(()=>{});await p.goto('file://'+FIXTURES+'demo_qa150_publish.html');await p.waitForTimeout(900);
+async function signIn(u){await p.evaluate(()=>{try{sessionStorage.removeItem('skyryse-mes-session-v1');}catch(e){}}).catch(()=>{});await p.goto(new URL('demo_qa150_publish.html', FIXTURES).href);await p.waitForTimeout(900);
  await p.evaluate(x=>{const un=document.querySelector('#sk-boot input[name=username]');if(!un)return;const pw=document.querySelector('#sk-boot input[type=password]');un.value=x;un.dispatchEvent(new Event('input',{bubbles:true}));pw.value='demo1234';pw.dispatchEvent(new Event('input',{bubbles:true}));un.closest('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));},u);await p.waitForTimeout(2800);
  await p.evaluate(()=>{window.__T=JSON.parse(localStorage.getItem('qa-e2e-trace')||'[]');});
  await p.evaluate(fs0=>eval(fs0),H);}
-const H=fs.readFileSync(TESTS+'qa_e2e_helpers.js','utf8');
+const H=fs.readFileSync(new URL('./qa_e2e_helpers.js',import.meta.url),'utf8');
 const ALL=[];const phase=async(name,fn)=>{const r=await p.evaluate(fn);console.log(name,JSON.stringify(r).slice(0,400),'orders',await p.evaluate(()=>state.orders.length));const t=await p.evaluate(()=>{save();const t=window.__T.splice(0);return t;});ALL.push(...t);return r;};
 await signIn('demo');
 await p.evaluate(()=>localStorage.setItem('qa-e2e-trace','[]'));await p.evaluate(()=>{window.__T.length=0;});

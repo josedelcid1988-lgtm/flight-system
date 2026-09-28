@@ -18,6 +18,8 @@ await run(()=>{const un=document.querySelector('#sk-boot input[name=username]');
 await p.waitForTimeout(2600);
 ok('these checks run as Master Access',await run(()=>skAuth.role()==='admin'));
 const NFF_RE='not for flight and not for credit';
+ok('a Production lot may be used on a Development NFF order',await run(()=>MES.lotInStock('SR-2401','LOT-2401-0088','Development NFF')));
+ok('a Development NFF lot cannot enter Production or Prototype work',await run(()=>!MES.lotBuildClassAllowed({buildClass:'Development NFF'},'Production')&&!MES.lotBuildClassAllowed({buildClass:'Development NFF'},'Prototype')&&MES.lotBuildClassAllowed({buildClass:'Development NFF'},'Development NFF')));
 
 // Orders from the same released WI: one NFF, one Production, one Development.
 const ids=await run(()=>{const wi=state.masterWIs.find(x=>x.status==='Released');const mk=(pedigree,extra={})=>{const r=MES.addOrder(state,{masterWI:wi.id+'|'+wi.revision,pedigree,subcategory:'Mfg.',quantity:1,aircraft:MES.AIRCRAFT[0],site:MES.SITES[0],...extra});if(!r.ok)throw new Error(pedigree+': '+r.message);return r.id;};

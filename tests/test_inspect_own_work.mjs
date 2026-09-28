@@ -1,9 +1,9 @@
-// Item 5: nobody inspects their own work. Inspection (inspect-steps) is granted to a person by a QA Manager
-// against a current training record; the grants below are that setup. Anyone who performed a build operation
+// Item 5: nobody inspects their own work. The Quality role and an assigned Quality stamp provide inspection;
+// trained extra role for the Support Access account. Anyone who performed a build operation
 // an inspection covers is refused that inspection: no role is exempt and no override lifts it, Master Access
 // and Support Access included. Development NFF orders are the one exception, and it is recorded.
 import {chromium} from 'playwright';
-import {grantAuthorities} from './lib/grants.mjs';
+import {assignTestRoles} from './lib/roles.mjs';
 const TESTS=decodeURI(new URL('.',import.meta.url).pathname);
 const FIXTURES=process.env.FS_FIXTURES_DIR?process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):TESTS+'fixtures/';
 const PROD='file://'+FIXTURES+'publish.html';
@@ -25,10 +25,13 @@ await run(async([AUTH])=>{const a=JSON.parse(localStorage.getItem(AUTH));const s
 
 // Quality stamp for the independent inspector, issued by Master Access.
 await as('jdoe');
-const granted=await grantAuthorities(p,{mhale:['inspect-steps'],qinsp:['inspect-steps'],qbuild:['inspect-steps'],rsup:['inspect-steps']},{extraRoles:{rsup:['qe']}});
-ok('setup: a QA Manager grants inspection to each inspector against a training record',granted===true,String(granted));
+const assigned=await assignTestRoles(p,{rsup:['qe']});
+ok('setup: the Support Access account also holds the Quality role after training',assigned===true,String(assigned));
 const stamp=await run(()=>{const r=MES.issueStamp(state,{number:'QI-77',name:'Quinn Inspector',department:'Quality',buyoffType:'Quality',account:'qinsp',expires:'2029-01-01'});if(!r.ok)return r.message;const st=state.stamps.find(s=>s.number==='QI-77');st.account='qinsp';const pin=MES.setStampPin(state,st.id,'2468','2468');if(!pin.ok)return pin.message;save();return true;});
 ok('an independent Quality inspector holds a Quality stamp with a PIN',stamp===true,String(stamp));
+// Nobody issues a stamp to themselves: jdoe issues the others, and the second Master Access account (mhale) issues jdoe's.
+const additionalStamps=await run(()=>['jdoe','mhale','rsup','qbuild'].map(username=>{const issuer=username==='jdoe'?'mhale':'jdoe';sessionStorage.setItem('skyryse-mes-session-v1',issuer);const r=MES.issueStamp(state,{name:({jdoe:'Jordan Doe',mhale:'Morgan Hale',rsup:'Robin Support',qbuild:'Pat Manager'})[username],buyoffType:'Quality',account:username,expires:'2029-01-01'});sessionStorage.setItem('skyryse-mes-session-v1','jdoe');return r.ok;}));
+ok('Master Access and Support Access also require an assigned inspection stamp',additionalStamps.every(Boolean),JSON.stringify(additionalStamps));
 
 // Two Building orders from the same WI: three build operations, then three inspection operations.
 const [W1,W2]=await run(()=>{const wi=state.masterWIs.find(x=>x.status==='Released');const mk=()=>{const r=MES.addOrder(state,{masterWI:wi.id+'|'+wi.revision,pedigree:'Production',subcategory:'Mfg.',quantity:1,aircraft:MES.AIRCRAFT[0],site:MES.SITES[0]});if(!r.ok)throw new Error(r.message);const o=MES.getOrder(state,r.id);let a=MES.advance(state,r.id);if(!a.ok)throw new Error(a.message);o.materials.forEach(m=>{const l=MES.availableLots(m.partNumber)[0];MES.setMaterialLot(state,r.id,m.id,l?l.lot:'L1');MES.setMaterial(state,r.id,m.id,true);});MES.addKitFile(state,r.id,{name:'kit.pdf',type:'application/pdf',size:10,dataUrl:null});a=MES.advance(state,r.id);if(!a.ok)throw new Error(a.message);return r.id;};const ids=[mk(),mk()];save();return ids;});
@@ -88,7 +91,7 @@ ok('a record without an account is matched by credential and still refused',lega
 
 // ---- a QA Manager who ran a build operation on their own stamp is refused too ----
 await as('jdoe');
-const qmStamp=await run(()=>{const r=MES.issueStamp(state,{number:'TE-78',name:'Pat Manager',department:'Assembly',buyoffType:'Technician',account:'qbuild',expires:'2029-01-01'});if(!r.ok)return r.message;const st=state.stamps.find(s=>s.number==='TE-78');st.account='qbuild';st.training={ESD:{expires:'2029-01-01'},FOD:{expires:'2029-01-01'}};const pin=MES.setStampPin(state,st.id,'1357','1357');save();return pin.ok?true:pin.message;});
+const qmStamp=await run(()=>{const training=MES.recordTraining(state,{account:'qbuild',code:'ESD',expires:'2029-01-01',note:'Additional Technician stamp qualification.'});if(!training.ok)return training.message;const r=MES.issueStamp(state,{number:'TE-78',name:'Pat Manager',department:'Assembly',buyoffType:'Technician',account:'qbuild',trainingCode:'ESD',expires:'2029-01-01'});if(!r.ok)return r.message;const st=state.stamps.find(s=>s.number==='TE-78');st.account='qbuild';const pin=MES.setStampPin(state,st.id,'1357','1357');save();return pin.ok?true:pin.message;});
 await as('qbuild');
 const sel=await run(()=>{const o=MES.profileOptions(state).find(x=>/TE-78/.test(x.label||''));return o?MES.selectProfile(state,o.id).ok:false;});
 const q1=await build(W2,false,'TE-78','1357');

@@ -19,22 +19,28 @@ try {
   for (const [id, value] of Object.entries({ 'sk-displayname': 'Master Test', 'sk-username': 'master-test', 'sk-password': password, 'sk-confirm': password })) await page.locator('#' + id).fill(value);
   await page.locator('#sk-login-submit').click();
   await page.waitForFunction(() => !document.getElementById('sk-boot'));
-  const result = await page.evaluate(fixture => {
+  const result = await page.evaluate(async fixture => {
     const assert = (condition, message) => { if (!condition) throw Error(message); };
     const check = r => { assert(r.ok, r.message); return r; };
     const setRole = role => { const k='skyryse-mes-auth-v1', a=JSON.parse(localStorage.getItem(k));a.users.find(u=>u.username==='master-test').role=role;localStorage.setItem(k,JSON.stringify(a)); };
-    const caps=['view','raise-nc','submit-ecr','operate','operate-steps','split','request-pedigree','approve-pedigree','edit-wi','peer-review-wi','create-wo','adjust-wo','dispo-nc','push-software','assign-work','accept-software','safety-buyoff','mrb-cert','approve-wo','approve-wi','approve-nc','post-notice','manage-access'];
-    // Inspection, the MRB seats, conformity work and the AQI signature are granted to a person, never part of a
-    // role: Master Access holds none of them until a QA Manager grants them against a current training record.
+    const caps=['view','raise-nc','submit-ecr','operate','operate-steps','split','request-pedigree','approve-pedigree','edit-wi','peer-review-wi','create-wo','adjust-wo','dispo-nc','push-software','assign-work','accept-software','safety-buyoff','inspect-steps','mrb-quality','mrb-me','mrb-eng','mrb-cert','approve-wo','approve-wi','approve-nc','post-notice','manage-access'];
+    // Inspection requires an assigned current Quality stamp; MRB seats follow role capabilities. Only conformity and AQI are named grants.
     const granted=skAuth.GRANTED;
-    for (const cap of caps.filter(c=>!granted.includes(c))) assert(skAuth.can(cap), 'Missing Master capability: '+cap);
+    for (const cap of caps.filter(c=>!granted.includes(c)&&c!=='inspect-steps')) assert(skAuth.can(cap), 'Missing Master capability: '+cap);
+    assert(!skAuth.can('inspect-steps'), 'Master Access needs an assigned Quality stamp for inspection');
     for (const cap of granted) assert(!skAuth.can(cap), 'Master Access holds '+cap+' without a grant');
-    { const r=MES.recordTraining(state,{account:'master-test',code:'ESD',expires:'2031-12-31',note:'test setup'}); assert(r.ok,r.message); assert(save(),'training record saved');
-      const k='skyryse-mes-auth-v1',a=JSON.parse(localStorage.getItem(k)),u=a.users.find(x=>x.username==='master-test');u.grants={};
-      for (const cap of granted) u.grants[cap]={by:{name:'Second QA Manager',credentialId:'ACCT-qm2',account:'qm2'},at:new Date().toISOString(),reason:'Test setup grant',trainingCode:'ESD',hash:''};
-      localStorage.setItem(k,JSON.stringify(a)); }
-    for (const cap of caps) assert(skAuth.can(cap), 'Missing Master capability after grants: '+cap);
-    assert(FlightManeuver.seatsForRole('admin').length===4,'All MRB role choices');
+    { const k='skyryse-mes-auth-v1',a=JSON.parse(localStorage.getItem(k)),salt='00112233445566778899aabbccddeeff';
+      const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(salt+':test-qm2')))].map(x=>x.toString(16).padStart(2,'0')).join('');
+      a.users.push({username:'test-qm2',displayName:'Test QA Manager',salt,hash,role:'qm',createdAt:new Date().toISOString(),createdBy:'master-test'});localStorage.setItem(k,JSON.stringify(a));
+      sessionStorage.setItem('skyryse-mes-session-v1','test-qm2');
+      const r=MES.recordTraining(state,{account:'master-test',code:'ESD',expires:'2031-12-31',note:'test setup'}); assert(r.ok,r.message);
+      for (const cap of granted) { const grant=skAuth.setGrant('master-test',cap,true,'Test setup grant.','ESD'); assert(grant.ok,grant.message); }
+      const stamp=MES.issueStamp(state,{name:'Master Test',buyoffType:'Quality',account:'master-test',expires:'2031-12-31'});assert(stamp.ok,stamp.message);
+      const latest=JSON.parse(localStorage.getItem(k));latest.users=latest.users.filter(user=>user.username!=='test-qm2');localStorage.setItem(k,JSON.stringify(latest));
+      assert(save(),'training and QA Manager grant records saved');sessionStorage.setItem('skyryse-mes-session-v1','master-test'); }
+    for (const cap of caps.filter(c=>c!=='inspect-steps')) assert(skAuth.can(cap), 'Missing Master capability after grants: '+cap);
+    assert(skAuth.can('inspect-steps'), 'Master Access inspection activates only after an assigned Quality stamp is recorded');
+    assert(FlightManeuver.seatsForRole('admin').length===4,'Master Access holds all four role-based MRB seats');
     const base=structuredClone(fixture);
     // Exercise the production engine with a saved sample, not the demo engine.
     base.profile={name:'Unassigned Test',role:'System Administrator',credentialId:'ACCT-unassigned'};
@@ -45,7 +51,7 @@ try {
     const opId=template.operations.find(x=>!x.done).id;
     function setup(type='Technician') {
       const s=structuredClone(base),o=MES.getOrder(s,template.id),op=o.operations.find(x=>x.id===opId);
-      op.buyoffType=type;op.requiresTooling=false;op.requiresRecording=false;op.evidence=[];op.callouts=[];delete op.fodLevel;delete op.grounding;op.classification='Manufacturing';op.steps=[{id:'step-master',title:'Review work',instruction:'Review the work before buy-off.'}];op.stepChecks={};
+      op.buyoffType=type;op.requiresTooling=false;op.requiresRecording=false;op.evidence=[];op.callouts=[];delete op.fodLevel;delete op.grounding;op.classification='Manufacturing';op.topLevelType='Manufacturing';op.subCode='';op.steps=[{id:'step-master',title:'Review work',instruction:'Review the work before buy-off.'}];op.stepChecks={};
       assert(MES.validate(s),'Fixture for '+type+' is valid: '+JSON.stringify(MES.diagnose(s)));
       return {s,o,op};
     }
@@ -113,32 +119,52 @@ try {
     return {types:MES.BUYOFF_TYPES,order:o.id,op:op.id};
   },fixture);
   assert.match(await page.locator('.steps-complete').innerText(),/Master Access override/);
-  // Role changes must refresh the open dialog and underlying buy-off without reload.
+  // Nobody changes their own roles: your own row has no role control, and a forged one is refused.
   await page.getByRole('button',{name:'Your credentials',exact:true}).click();
+  assert.equal(await page.locator('[data-role-user="master-test"],[data-roles-user="master-test"]').count(),0,'No role control on your own row');
+  const forged=await page.evaluate(()=>{const sel=document.createElement('select');sel.dataset.roleUser='master-test';sel.innerHTML='<option value="general">General</option>';document.body.appendChild(sel);sel.value='general';sel.dispatchEvent(new Event('change',{bubbles:true}));sel.remove();return {role:skAuth.role(),toast:document.querySelector('#toast p')?.textContent||'',direct:skAuth.setRoles('master-test',['general'],'Testing self role refusal.','')};});
+  assert.equal(forged.role,'admin','A forged own-row role control is refused');
+  assert.match(forged.toast,/Nobody changes their own roles/);
+  assert.match(forged.direct.message,/Nobody changes their own roles/);
+  // A role change made by another manager refreshes the open dialog and the underlying buy-off without reload.
+  await page.evaluate(async()=>{const k='skyryse-mes-auth-v1',a=JSON.parse(localStorage.getItem(k)),salt='00112233445566778899aabbccddeeff';const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(salt+':peer-admin')))].map(x=>x.toString(16).padStart(2,'0')).join('');if(!a.users.some(u=>u.username==='peer-admin'))a.users.push({username:'peer-admin',displayName:'Peer Admin',salt,hash,role:'admin',createdAt:new Date().toISOString(),createdBy:'master-test'});localStorage.setItem(k,JSON.stringify(a));});
+  const as=async user=>{await page.evaluate(user=>{sessionStorage.setItem('skyryse-mes-session-v1',user);window.dispatchEvent(new Event('sk-auth'));},user);await page.waitForTimeout(200);await page.evaluate(()=>profileDialog());};
+  const setPeerRole=peerRole=>page.evaluate(peerRole=>{const k='skyryse-mes-auth-v1',a=JSON.parse(localStorage.getItem(k));a.users.find(u=>u.username==='peer-admin').role=peerRole;localStorage.setItem(k,JSON.stringify(a));},peerRole);
+  const storedRole=()=>page.evaluate(()=>JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.find(u=>u.username==='master-test').role);
   const role=page.locator('[data-role-user="master-test"]');
+  await as('peer-admin');
   await role.selectOption('qm');
+  assert.match(await page.locator('.access-panel [role=status]').filter({hasText:/Saved: master-test now has/}).innerText(),/Saved: master-test now has/);
+  await as('master-test');
   assert.equal(await page.evaluate(()=>skAuth.role()),'qm');
   assert.match(await page.locator('#profile-preview').innerText(),/Quality Manager/);
   assert.match(await page.locator('.steps-complete').innerText(),/Buy-off blocked/);
-  await role.selectOption('general');
-  assert.equal(await role.inputValue(),'qm','Last access manager cannot be removed');
   for(const width of [1440,390]) {
     await page.setViewportSize({width,height:1000});
+    await as('peer-admin');
     await role.selectOption('admin');
+    assert.match(await page.locator('.access-panel [role=status]').filter({hasText:/Saved: master-test now has Master Access/}).innerText(),/Saved: master-test now has Master Access/);
+    await as('master-test');
     assert.equal(await page.evaluate(()=>skAuth.role()),'admin');
     assert.equal(await page.evaluate(()=>state.profile.role),'System Administrator');
     assert.match(await page.locator('#profile-preview').innerText(),/Master Access override/);
     assert.match(await page.locator('.steps-complete').innerText(),/Master Access override/);
-    assert.match(await page.locator('.access-panel [role=status]').innerText(),/Saved: master-test now has Master Access/);
     if(process.env.FLIGHT_QA_SCREENSHOTS){await mkdir(process.env.FLIGHT_QA_SCREENSHOTS,{recursive:true});await page.screenshot({path:process.env.FLIGHT_QA_SCREENSHOTS+'/role-switch-'+width+'.png',animations:'disabled'});}
+    await as('peer-admin');
     await role.selectOption('qm');
   }
-  // A stale control cannot grant access after the signed-in account loses authority.
-  await page.evaluate(()=>{const k='skyryse-mes-auth-v1',a=JSON.parse(localStorage.getItem(k));a.users[0].role='general';localStorage.setItem(k,JSON.stringify(a));});
+  // A stale control cannot change access after the signed-in account loses authority.
+  await setPeerRole('general');
   await role.selectOption('admin');
-  assert.equal(await page.evaluate(()=>skAuth.role()),'general');
-  await page.evaluate(()=>{const k='skyryse-mes-auth-v1',a=JSON.parse(localStorage.getItem(k));a.users[0].role='qm';localStorage.setItem(k,JSON.stringify(a));});
+  assert.equal(await storedRole(),'qm','A manager who lost authority cannot use a stale role control');
+  await setPeerRole('admin');
+  await as('peer-admin');
   await role.selectOption('admin');
+  assert.equal(await storedRole(),'admin');
+  await as('master-test');
+  // The stamp is issued by the second Master Access account: nobody issues a stamp to themselves.
+  await page.evaluate(()=>{if(!MES.hasValidInspectionStamp(state,'master-test')){sessionStorage.setItem('skyryse-mes-session-v1','peer-admin');const stamp=MES.issueStamp(state,{name:'Master Test',buyoffType:'Quality',account:'master-test',expires:'2031-12-31'});sessionStorage.setItem('skyryse-mes-session-v1','master-test');if(!stamp.ok)throw Error(stamp.message);save();}if(!MES.hasValidInspectionStamp(state,'master-test'))throw Error('Master Test does not hold a current assigned Quality inspection stamp.');});
+  await page.evaluate(()=>profileDialog());
   await page.locator('#profile-form button[type=submit]').click();
   assert.equal(await page.locator('#operation-form input[name=stampNumber]').count(),0);
   if(await page.locator('#operation-form input[name=stdInspection]').count()) await page.locator('#operation-form input[name=stdInspection]').check();

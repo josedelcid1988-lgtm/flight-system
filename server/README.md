@@ -1,4 +1,6 @@
-# Flight System persistence mirror
+# Flight System server components
+
+The main authenticated MES server is `server/server.mjs`; SQLite and PostgreSQL setup, backups, and the PostgreSQL integration check are documented in [`docs/DATABASES.md`](../docs/DATABASES.md). The older optional append-only browser persistence mirror is in `server/mirror/`:
 
 A small Node server that keeps a durable, tamper-evident copy of everything the app commits. It is a
 mirror, not a replacement: the app keeps working from the browser's `localStorage`, validates and
@@ -18,7 +20,7 @@ Requires Node 22.13 or later (for `node:sqlite` without a flag).
 ## Run it
 
 ```bash
-node server/server.mjs
+node server/mirror/server.mjs
 ```
 
 Then point the app at it. In `index.html`, in the `sk-mirror` block, set:
@@ -38,8 +40,8 @@ Command line flags win over environment variables, which win over the defaults.
 | --- | --- | --- | --- |
 | `--host` | `FS_MIRROR_HOST` | `127.0.0.1` | Address to listen on. Use `0.0.0.0` only behind the site's reverse proxy or firewall. |
 | `--port` | `FS_MIRROR_PORT` | `8787` | Port. |
-| `--db` | `FS_MIRROR_DB` | `server/data/mirror.sqlite` | The database file. |
-| `--backup-dir` | `FS_MIRROR_BACKUP_DIR` | `server/backups` | Where backups go. Point it at storage on a different machine. |
+| `--db` | `FS_MIRROR_DB` | `server/mirror/data/mirror.sqlite` | The database file. |
+| `--backup-dir` | `FS_MIRROR_BACKUP_DIR` | `server/mirror/backups` | Where backups go. Point it at storage on a different machine. |
 | `--backup-every-minutes` | `FS_MIRROR_BACKUP_EVERY_MINUTES` | `1440` | How often to take a backup; `0` switches the schedule off. |
 | `--backup-keep-days` | `FS_MIRROR_BACKUP_KEEP_DAYS` | `30` | Daily copies kept (the newest copy of each day). |
 | `--token` | `FS_MIRROR_TOKEN` | empty | When set, every endpoint except health needs `Authorization: Bearer <token>`. Set the same token in `SK_MIRROR.token`. |
@@ -79,7 +81,7 @@ consistent copy while the server keeps accepting writes. After each backup it ke
 of each day for `backup-keep-days` days and deletes the rest. Take one on demand with:
 
 ```bash
-node server/server.mjs --backup-now --db /srv/flight-system/mirror.sqlite --backup-dir /mnt/backup-host/flight-system
+node server/mirror/server.mjs --backup-now --db /srv/flight-system/mirror.sqlite --backup-dir <backup-host-directory>
 ```
 
 Put the backup directory on a different machine (a mount from the backup host, or a directory a
@@ -91,7 +93,7 @@ of that disk.
 1. Pick the backup: normally the newest file in the backup directory.
 2. Test it before using it:
    ```bash
-   node server/restore-test.mjs /mnt/backup-host/flight-system/<backup>.sqlite
+   node server/mirror/restore-test.mjs <backup-host-directory>/<backup>.sqlite
    ```
    Exit status 0 means the chain is intact and the append-only triggers are present. Do not restore
    a backup that fails this test; take the previous day's and test that.
@@ -103,7 +105,7 @@ of that disk.
    own. Records the server had confirmed after the backup was taken are in the database you moved
    aside. Before deciding anything about them, compare:
    ```bash
-   node server/restore-test.mjs <backup>.sqlite --against <the database you moved aside>
+   node server/mirror/restore-test.mjs <backup>.sqlite --against <the database you moved aside>
    ```
    This confirms the backup is an exact prefix of the old database and prints how many rows came
    after it. Record the restore and its outcome in the quality system.

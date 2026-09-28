@@ -1,7 +1,6 @@
-// Item 6: MRB seats are capabilities (mrb-quality, mrb-me, mrb-eng, mrb-cert) and a vote checks the
-// seat's capability; the QA Manager holds safety-buyoff and the PFMEA Safety Team buy-off checks it.
+// MRB seats follow role capabilities; optional disposition training tiers are off by default.
+// The QA Manager holds safety-buyoff and the PFMEA Safety Team buy-off checks it.
 import {chromium} from 'playwright';
-import {grantAuthorities} from './lib/grants.mjs';
 const TESTS=decodeURI(new URL('.',import.meta.url).pathname);
 const FIXTURES=process.env.FS_FIXTURES_DIR?process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):TESTS+'fixtures/';
 const PROD='file://'+FIXTURES+'publish.html';
@@ -18,37 +17,40 @@ await run(()=>{const un=document.querySelector('#sk-boot input[name=username]');
 await p.waitForTimeout(2600);
 await run(async([AUTH])=>{const a=JSON.parse(localStorage.getItem(AUTH));const salt='00112233445566778899aabbccddeeff';const hex=b=>[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');const hash=hex(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(salt+':demo1234')));
   const add=(username,displayName,role)=>{if(!a.users.some(u=>u.username===username))a.users.push({username,displayName,salt,hash,role,createdAt:new Date().toISOString(),createdBy:'jdoe'});};
-  add('kqe','Kai Quality','qe');add('tme','Taylor Engineer','me');add('sswe','Sam Software','swe');add('ccert','Cam Cert','cert');add('pqm','Parker Manager','qm');add('lqm','Lee Manager','qm');add('ssafe','Sky Safety','safety');add('ttech','Toni Tech','technician');
+  add('kqe','Kai Quality','qe');add('sqs','Sam Supervisor','qs');add('tme','Taylor Engineer','me');add('sswe','Sam Software','swe');add('ccert','Cam Cert','cert');add('pqm','Parker Manager','qm');add('lqm','Lee Manager','qm');add('ssafe','Sky Safety','safety');add('ttech','Toni Tech','technician');
   localStorage.setItem(AUTH,JSON.stringify(a));},[AUTH]);
 
-// Seats are granted to people by a QA Manager against a current training record; a role makes them eligible.
+// Accounts receive seats directly from their roles, without named grants or training records.
 await as('jdoe');
-const ungranted=await run(()=>{sessionStorage.setItem('skyryse-mes-session-v1','kqe');const r=FlightManeuver.seatsForAccount();sessionStorage.setItem('skyryse-mes-session-v1','jdoe');return r;});
-ok('a Quality account holds no seat until it is granted',ungranted.length===0,JSON.stringify(ungranted));
-const seated=await grantAuthorities(p,{kqe:['mrb-quality'],tme:['mrb-me'],sswe:['mrb-eng'],ccert:['mrb-cert'],pqm:['mrb-quality','mrb-me','mrb-eng'],lqm:['mrb-quality','mrb-me','mrb-eng']});
-ok('setup: the QA Manager grants each seat against a training record',seated===true,String(seated));
-// ---- roles make people eligible for seats ----
-const seats=await run(()=>Object.fromEntries(['qe','me','swe','cert','qm','admin','technician','safety','general'].map(r=>[r,FlightManeuver.seatsForRole(r)])));
+const roleSeats=await run(()=>{const out={};for(const user of ['kqe','tme','sswe','ccert','pqm','sqs']){sessionStorage.setItem('skyryse-mes-session-v1',user);out[user]=FlightManeuver.seatsForAccount();}sessionStorage.setItem('skyryse-mes-session-v1','jdoe');return out;});
+ok('accounts receive MRB seats from their assigned roles',JSON.stringify(roleSeats)===JSON.stringify({kqe:['Quality'],tme:['Manufacturing Engineering'],sswe:['Engineering'],ccert:['Certification'],pqm:['Quality','Manufacturing Engineering','Engineering'],sqs:['Quality']}),JSON.stringify(roleSeats));
+// ---- role capabilities define seat membership ----
+const seats=await run(()=>Object.fromEntries(['qe','qs','me','swe','cert','qm','admin','ops','technician','safety','general'].map(r=>[r,FlightManeuver.seatsForRole(r)])));
 ok('Quality holds the Quality seat only',JSON.stringify(seats.qe)==='["Quality"]',JSON.stringify(seats.qe));
+ok('Quality Supervisor receives the Quality capability set',JSON.stringify(seats.qs)==='["Quality"]',JSON.stringify(seats.qs));
+ok('Operations Manager receives no MRB seat by default',seats.ops.length===0,JSON.stringify(seats.ops));
 ok('Manufacturing Engineering holds its seat only',JSON.stringify(seats.me)==='["Manufacturing Engineering"]',JSON.stringify(seats.me));
 ok('Engineering holds its seat only',JSON.stringify(seats.swe)==='["Engineering"]',JSON.stringify(seats.swe));
 ok('Certification holds the Certification seat only',JSON.stringify(seats.cert)==='["Certification"]',JSON.stringify(seats.cert));
 ok('QA Manager holds Quality, Manufacturing Engineering and Engineering, not Certification',JSON.stringify(seats.qm)==='["Quality","Manufacturing Engineering","Engineering"]',JSON.stringify(seats.qm));
 ok('Master Access holds all four seats',seats.admin.length===4,JSON.stringify(seats.admin));
 ok('Technician, Safety and General hold no seat',[seats.technician,seats.safety,seats.general].every(x=>x.length===0));
-ok('each seat maps to its own capability',await run(()=>JSON.stringify(FlightManeuver.SEAT_CAPS)===JSON.stringify({'Quality':'mrb-quality','Manufacturing Engineering':'mrb-me','Engineering':'mrb-eng','Certification':'mrb-cert'})));
+ok('each seat maps to its own role capability',await run(()=>JSON.stringify(FlightManeuver.SEAT_CAPS)===JSON.stringify({'Quality':'mrb-quality','Manufacturing Engineering':'mrb-me','Engineering':'mrb-eng','Certification':'mrb-cert'})));
+ok('MRB training tiers are off by default',await run(()=>Object.keys(MES.mrbTrainingTiers(state)).length===0));
 
 // A Production Mfg. order convenes a four-seat board (Certification sits on it).
 await as('jdoe');
 const board=await run(()=>{const wi=state.masterWIs.find(x=>x.status==='Released');const r=MES.addOrder(state,{masterWI:wi.id+'|'+wi.revision,pedigree:'Production',subcategory:'Mfg.',quantity:1,aircraft:MES.AIRCRAFT[0],site:MES.SITES[0]});const o=MES.getOrder(state,r.id);MES.advance(state,r.id);o.materials.forEach(m=>{const l=MES.availableLots(m.partNumber)[0];MES.setMaterialLot(state,r.id,m.id,l?l.lot:'L1');MES.setMaterial(state,r.id,m.id,true);});MES.addKitFile(state,r.id,{name:'kit.pdf',type:'application/pdf',size:10,dataUrl:null});MES.advance(state,r.id);
   const op=o.operations[0];MES.createTicket(state,r.id,op.id,{type:'NC',title:'Cosmetic scratch on bracket face',description:'Light surface scratch, no structural effect.',hold:true});const tid=MES.getOrder(state,r.id).tickets.slice(-1)[0].id;MES.dispositionTicket(state,r.id,tid,{decision:'Use as is',note:'Cosmetic only.'});const m=FlightManeuver.openMRB(state,r.id,tid,'Cosmetic scratch, justification attached.');save();return m.ok?{id:m.id,seats:FlightManeuver.get(state,'mrb',m.id).seats}:m.message;});
 ok('the board has four seats',board&&board.seats&&board.seats.length===4,JSON.stringify(board));
+const tierFlow=await run(([id,expires])=>{const c=structuredClone(state);sessionStorage.setItem('skyryse-mes-session-v1','pqm');const config=MES.saveMrbTrainingTiers(c,{'Use as is':'ESD'},'Require current ESD training for this disposition.');c.trainingRecords=(c.trainingRecords||[]).filter(record=>record.account!=='kqe'||record.code!=='ESD');sessionStorage.setItem('skyryse-mes-session-v1','kqe');const blocked=FlightManeuver.voteMRB(c,id,'Quality','Approve','Qualified vote.');sessionStorage.setItem('skyryse-mes-session-v1','pqm');const record=MES.recordTraining(c,{account:'kqe',code:'ESD',expires,note:'Current MRB tier training.'});sessionStorage.setItem('skyryse-mes-session-v1','kqe');const allowed=FlightManeuver.voteMRB(c,id,'Quality','Approve','Qualified vote.');sessionStorage.setItem('skyryse-mes-session-v1','jdoe');return {config,blocked,record,allowed,valid:MES.validate(c)};},[board.id,new Date(Date.now()+365*86400000).toISOString().slice(0,10)]);
+ok('an enabled MRB disposition tier requires current training, and records the qualified vote',tierFlow.config.ok&&!tierFlow.blocked.ok&&/current ESD training/.test(tierFlow.blocked.message)&&tierFlow.record.ok&&tierFlow.allowed.ok&&tierFlow.valid,JSON.stringify(tierFlow));
 const vote=(u,seat)=>run(([id,seat])=>FlightManeuver.voteMRB(structuredClone(state),id,seat,'Approve','Acceptable.'),[board.id,seat]);
 
 // ---- votes check the seat's capability ----
 await as('kqe');
 let r=await vote('kqe','Certification');
-ok('a Quality account cannot take the Certification seat (mrb-cert is checked)',r.ok===false&&/does not hold the Certification seat/.test(r.message),JSON.stringify(r));
+ok('a Quality account cannot take the Certification seat',r.ok===false&&/roles do not include the Certification MRB seat/i.test(r.message),JSON.stringify(r));
 r=await vote('kqe','Quality');ok('a Quality account votes the Quality seat',r.ok===true,JSON.stringify(r));
 await as('ccert');
 r=await vote('ccert','Certification');ok('a Certification account votes the Certification seat',r.ok===true,JSON.stringify(r));
@@ -57,7 +59,7 @@ await as('pqm');
 r=await vote('pqm','Certification');ok('a QA Manager cannot take the Certification seat',r.ok===false&&/Certification/.test(r.message),JSON.stringify(r));
 r=await vote('pqm','Engineering');ok('a QA Manager votes the Engineering seat',r.ok===true,JSON.stringify(r));
 await as('ttech');
-r=await vote('ttech','Quality');ok('a Technician holds no seat',r.ok===false&&/Ask the QA Manager/.test(r.message),JSON.stringify(r));
+r=await vote('ttech','Quality');ok('a Technician holds no seat',r.ok===false&&/Ask a QA Manager to assign the appropriate role/.test(r.message),JSON.stringify(r));
 
 // The check is the capability, not the role name: take mrb-cert away from a Certification account.
 await as('ccert');
@@ -65,7 +67,7 @@ r=await run(([id])=>{const real=skAuth.can;skAuth.can=c=>c==='mrb-cert'?false:re
 ok('without the mrb-cert capability the Certification role is refused the seat',r.ok===false,JSON.stringify(r));
 await as('kqe');
 r=await run(([id])=>{const real=skAuth.can;skAuth.can=c=>c==='mrb-cert'?true:real.call(skAuth,c);try{return FlightManeuver.voteMRB(structuredClone(state),id,'Certification','Approve','x');}finally{skAuth.can=real;}},[board.id]);
-ok('with the mrb-cert capability any account may take the Certification seat',r.ok===true,JSON.stringify(r));
+ok('with an active mrb-cert authority the account may take the Certification seat',r.ok===true,JSON.stringify(r));
 
 // ---- one person one seat still holds ----
 await as('pqm');

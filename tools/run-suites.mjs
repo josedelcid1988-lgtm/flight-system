@@ -15,7 +15,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
@@ -56,13 +56,16 @@ function runOne(file, env) {
 }
 
 async function mirrorFixtures() {
-  const { createMirror, verifyChain } = await import(path.join(ROOT, 'server/server.mjs'));
+  const { createMirror, verifyChain } = await import(path.join(ROOT, 'server/mirror/server.mjs'));
   const tmp = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'fs-suites-mirror-'));
   const mirror = createMirror({ dbPath: path.join(tmp, 'mirror.sqlite'), backupDir: path.join(tmp, 'backups'), port: 0, backupEveryMinutes: 0 });
   const addr = await mirror.listen();
   const url = `http://127.0.0.1:${addr.port}`;
-  const dir = path.join(tmp, 'fixtures');
-  fs.mkdirSync(dir);
+  // Mirror fixtures keep the repository's tests/fixtures depth because their relative
+  // application assets resolve through ../../assets/ from that location.
+  const dir = path.join(tmp, 'tests', 'fixtures');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.cpSync(path.join(ROOT, 'assets'), path.join(tmp, 'assets'), { recursive: true });
   for (const f of fs.readdirSync(path.join(TESTS, 'fixtures')).filter(f => f.endsWith('.html'))) {
     const html = fs.readFileSync(path.join(TESTS, 'fixtures', f), 'utf8');
     if (!html.includes('<head>')) throw new Error(`${f} has no <head> to add the mirror setting to.`);
@@ -72,6 +75,10 @@ async function mirrorFixtures() {
 }
 
 async function main() {
+  const pathCheck = spawnSync(process.execPath, [path.join(ROOT, 'tests/check_no_machine_paths.mjs')], { cwd: ROOT, encoding: 'utf8' });
+  if (pathCheck.stdout) process.stdout.write(pathCheck.stdout);
+  if (pathCheck.stderr) process.stderr.write(pathCheck.stderr);
+  if (pathCheck.status !== 0) process.exit(pathCheck.status || 1);
   const files = fs.readdirSync(TESTS).filter(f => f.endsWith('.mjs') && (!only || only.includes(f.replace(/\.mjs$/, '')))).sort();
   let env = { ...process.env }, m = null;
   if (withMirror) { m = await mirrorFixtures(); env = { ...env, FS_FIXTURES_DIR: m.dir }; console.log(`mirror on: ${m.url}; fixtures ${m.dir}`); }
@@ -86,13 +93,15 @@ async function main() {
     while (queue.length) {
       const file = queue.shift();
       const r = await runOne(file, env);
-      const j = judge(file.replace(/\.mjs$/, ''), r.code, r.out);
+      // Keep generated suite logs portable too: stack traces often include the local checkout path.
+      const output = r.out.split(ROOT).join('<repo>');
+      const j = judge(file.replace(/\.mjs$/, ''), r.code, output);
       results.push(j);
       console.log(`${j.status === 'pass' ? 'PASS' : 'FAIL'}  ${j.name}${j.checks ? ` (${j.checks} checks)` : ''}${j.skips.length ? `, ${j.skips.length} explained skip${j.skips.length > 1 ? 's' : ''}` : ''}${j.problems.length ? `: ${j.problems.join('; ')}` : ''}`);
       if (j.status !== 'pass') {
-        fs.writeFileSync(path.join(TESTS, `suite_${j.name}.log`), r.out);
+        fs.writeFileSync(path.join(TESTS, `suite_${j.name}.log`), output);
         // The failing lines go to the console too, so a CI log says what failed without the artifact.
-        for (const line of r.out.split('\n').filter(l => /^\s*FAIL\b|Error|errors \["/.test(l)).slice(0, 20)) console.log(`      ${j.name}: ${line.trim().slice(0, 400)}`);
+        for (const line of output.split('\n').filter(l => /^\s*FAIL\b|Error|errors \["/.test(l)).slice(0, 20)) console.log(`      ${j.name}: ${line.trim().slice(0, 400)}`);
       }
     }
   }));

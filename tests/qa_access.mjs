@@ -19,11 +19,16 @@ try {
   assert.equal(await page.evaluate(()=>skAuth.role()),'admin');
   for(const cap of ['manage-access','safety-buyoff','approve-wi','approve-wo','approve-nc','operate-steps'])
     assert.equal(await page.evaluate(cap=>skAuth.can(cap),cap),true);
-  // Granted authorities are not part of Master Access: none until a QA Manager grants them.
-  for(const cap of ['mrb-cert','inspect-steps','conformity','aqi-sign'])
+  // Inspection requires a Quality stamp even for Master Access; MRB remains role-based.
+  assert.equal(await page.evaluate(()=>skAuth.can('inspect-steps')),false);
+  for(const cap of ['mrb-quality','mrb-me','mrb-eng','mrb-cert'])
+    assert.equal(await page.evaluate(cap=>skAuth.can(cap),cap),true);
+  for(const cap of ['conformity','aqi-sign'])
     assert.equal(await page.evaluate(cap=>skAuth.can(cap),cap),false);
   assert.equal(await page.evaluate(()=>MES.stampCheck({name:'Unregistered Test',credentialId:'invalid'}).ok),false);
   await page.getByRole('button',{name:'Your credentials',exact:true}).click();
+  assert.match(await page.locator('.access-coverage').innerText(),/Access coverage needs review/);
+  assert.match(await page.locator('.access-coverage').innerText(),/target: at least 2/);
   await page.getByRole('button',{name:'Create Master Access account',exact:true}).click();
   assert.equal(await page.locator('[data-access-add] [name=role]').inputValue(),'admin');
   assert.equal(await page.locator('[data-access-add] [name=username]').inputValue(),'master');

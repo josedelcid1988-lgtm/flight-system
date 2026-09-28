@@ -4,10 +4,11 @@ Read this before changing anything. It is short on purpose.
 
 ## What this is
 
-Skyryse in-house MES, built as a single self-contained HTML file. No backend, no
-network calls, no build step for the app itself. State lives in the browser
-under `localStorage` key `skyryse-mes-work-order-v1`. Accounts live under
-`skyryse-mes-auth-v1`.
+Skyryse in-house MES. The production interface starts in `index.html`; its
+approved React Hangar is built from `src/react/` into local `assets/`. The
+authenticated server in `server/` stores the shared workspace in SQLite by
+default, with PostgreSQL supported. Browser storage remains available for
+standalone and offline use.
 
 One product, three modules, all in the same file:
 - Flight Control: work orders, operations, buy-offs, FAIR, conformity, prints.
@@ -22,10 +23,12 @@ One product, three modules, all in the same file:
   `quality`, `mfgeng`, `operations`, `engineering`) keep their real role. Sign in
   with any demo account and the password demo1234. Every page and print says
   DEMO, NOT FOR ACCEPTANCE.
-- `tests/`: Playwright harnesses and their fixtures. See `TESTING.md`.
+- `src/react/`: reusable React interface components.
+- `assets/`: local production assets, including the bundled React interface.
+- `server/`: authenticated MES API, SQLite/PostgreSQL stores and optional legacy mirror.
+- `tests/`: Playwright and Node harnesses with their fixtures. See `TESTING.md`.
 - `VERSION.md`: where the product build id is set; `tools/stamp-build.mjs` writes it and the
-  SHA-256 of `index.html` into the head of `index.html`. `ACCESS.md`: how the machines
-  and Claude sessions share this repo.
+  SHA-256 of `index.html` into the head of `index.html`.
 
 `demo.html` and the demo test fixtures are generated from `index.html` by
 `node tools/build-demo.mjs`, which applies the numbered deviations in
@@ -44,9 +47,15 @@ below exist for AS9100 and 14 CFR reasons; do not "simplify" them away.
    requester of a closure cannot approve it, one person holds one MRB seat, and
    nobody inspects their own work (Development NFF orders excepted, and recorded).
    The person who completes an 8130-9 may give the AQI signature only after an
-   acknowledged warning, recorded on the signature. Inspection, MRB seats,
-   conformity work and the AQI signature are granted to named people by a QA
-   Manager against a current training record, never to themselves. The demo
+   acknowledged warning, recorded on the signature. Ordinary inspection
+   requires the Quality role and a valid, active Quality inspection stamp
+   assigned to the signed-in account; the server enforces the stamp gate. MRB
+   seats follow role capability, with optional current-training
+   disposition tiers off by default. Conformity work and the AQI signature are
+   granted to named people by a QA Manager against current training, never to
+   themselves. Nobody changes their own roles, records their own training, or
+   issues, assigns or changes their own stamp (suspending or retiring it is
+   allowed); the browser engine and the server both refuse the self-target. The demo
    build lifts these; the production build must not.
    `tests/test_frozen_contract.mjs` fails if one changes.
 2. Every approval and buy-off writes a record with the person, their credential,
@@ -62,11 +71,11 @@ below exist for AS9100 and 14 CFR reasons; do not "simplify" them away.
 
 ## Working on it
 
-- Change `index.html` only, unless the task is about the tests.
-- Keep it one file: no new external scripts, no CDN links, no build tooling.
-- Run the suites in `TESTING.md` before you claim something works. `qa_full.mjs`
-  is the gate: 304 pass, 2 skip, 0 fail. `qa_e2e.mjs` runs 30 flows end to end
-  and must report 0 failed.
+- Keep runtime dependencies local. Do not add CDN dependencies or make the app
+  require an internet connection.
+- Run the suites in `TESTING.md` before you claim something works. `qa_full`
+  must have zero unexplained skips and zero failures. Run the full browser suite
+  for any interface or workflow change.
 - If you add a rule, add a test for it and for the refusal path (the thing it is
   supposed to block).
 - Small, reviewable commits with a message that says what changed and why.

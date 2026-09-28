@@ -120,9 +120,13 @@ function main() {
   let built;
   try {
     const byDataset = {};
-    built = OUTPUTS.map(o => ({ file: o.file, text: byDataset[o.dataset] ??= buildDemo(production, o.dataset) }));
+    built = OUTPUTS.map(o => {
+      let text = byDataset[o.dataset] ??= buildDemo(production, o.dataset);
+      if (o.file.startsWith('tests/fixtures/')) text = text.replace(/((?:src|href)=")assets\//g, '$1../../assets/');
+      return { file: o.file, text };
+    });
   } catch (error) { problems.push(error.message); built = []; }
-  built.push({ file: PRODUCTION_FIXTURE, text: production }, { file: DOC, text: deviationsDoc() });
+  built.push({ file: PRODUCTION_FIXTURE, text: production.replace(/((?:src|href)=")assets\//g, '$1../../assets/') }, { file: DOC, text: deviationsDoc() });
   const sha = t => crypto.createHash('sha256').update(t).digest('hex');
   for (const { file, text } of built) {
     if (check) {

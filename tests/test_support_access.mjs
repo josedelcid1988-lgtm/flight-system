@@ -82,27 +82,26 @@ await as('tme');
 const noSupport=await run(([W2])=>{const c=structuredClone(state);const o=MES.getOrder(c,W2);const op=o.operations[0];(op.steps||[]).forEach(st=>MES.setStepCheck(c,W2,op.id,st.id,true,{}));return MES.completeOperation(c,W2,op.id,'x',{tools:[],noTools:true,standardInspection:true,supportReason:'I would like to skip the stamp please.'});},[W2]);
 ok('an account without Support Access cannot use an override reason',noSupport.ok===false&&/not granted/.test(noSupport.message||''),JSON.stringify(noSupport));
 
-// ---- 6. MRB seat eligibility override; one person one seat still holds ----
+// ---- 6. Support Access cannot grant or substitute for an MRB seat ----
 await as('jdoe');
 const board=await run(([W2])=>{const o=MES.getOrder(state,W2);const op=o.operations.find(x=>!x.done);MES.createTicket(state,W2,op.id,{type:'NC',title:'Cosmetic scratch on bracket face',description:'Light surface scratch, no structural effect.',hold:true});const tid=MES.getOrder(state,W2).tickets.slice(-1)[0].id;MES.dispositionTicket(state,W2,tid,{decision:'Use as is',note:'Cosmetic only.'});const m=FlightManeuver.openMRB(state,W2,tid,'Cosmetic scratch, justification attached.');save();return m.ok?m.id:m.message;},[W2]);
 await as('rsupport');
-const seat=await run(([id])=>{const none=FlightManeuver.voteMRB(structuredClone(state),id,'Quality','Approve','ok');const withR=FlightManeuver.voteMRB(state,id,'Quality','Approve','Acceptable cosmetic.',{supportReason:'Quality seat holder out today; QA Manager asked me to sit.'});const second=FlightManeuver.voteMRB(structuredClone(state),id,'Engineering','Approve','also',{supportReason:'Engineering holder out as well today.'});save();const e=(state.supportLog||[]).find(x=>x.kind==='override'&&x.rule==='mrb-seat');return {none:none.ok,noneMsg:none.message,withR:withR.ok,wMsg:withR.message,second:second.ok,secondMsg:second.message,entry:e,valid:MES.validate(state)};},[board]);
-ok('a seat the role does not hold is refused without a reason',seat.none===false&&/Support Access can override/.test(seat.noneMsg||''),seat.noneMsg);
-ok('Support Access takes the seat with a reason and the override is logged against the board',seat.withR&&!!seat.entry&&seat.entry.recordId===`${board} Quality`,JSON.stringify(seat).slice(0,300));
-ok('one person one seat is not overridable, even with Support Access and a reason',seat.second===false&&/one seat/.test(seat.secondMsg||''),seat.secondMsg);
+const seat=await run(([id])=>{const plain=FlightManeuver.voteMRB(structuredClone(state),id,'Quality','Approve','ok');const withReason=FlightManeuver.voteMRB(structuredClone(state),id,'Quality','Approve','Acceptable cosmetic.',{supportReason:'Quality seat holder out today; QA Manager asked me to sit.'});return {plain:plain.ok,plainMsg:plain.message,withReason:withReason.ok,withReasonMsg:withReason.message,entries:(state.supportLog||[]).filter(x=>x.kind==='override'&&x.recordType==='MRB seat'),valid:MES.validate(state)};},[board]);
+ok('Support Access cannot take a role-based MRB seat, even with a reason',seat.plain===false&&seat.withReason===false&&/roles do not include the Quality MRB seat/.test(seat.withReasonMsg||''),JSON.stringify(seat).slice(0,400));
+ok('refused MRB votes do not create a support override entry',seat.entries.length===0&&seat.valid,JSON.stringify(seat));
 
 // ---- 7. Separation of duties is never overridable ----
 const rules=await run(()=>Object.keys(MES.SUPPORT_RULES));
-ok('only the stamp binding and MRB seat eligibility can be overridden',rules.length===2&&rules.includes('stamp-binding')&&rules.includes('mrb-seat'),rules.join(','));
+ok('only stamp binding can be overridden',rules.length===1&&rules.includes('stamp-binding'),rules.join(','));
 await as('rsupport');
 const sod=await run(([W2])=>{const c=structuredClone(state);const o=MES.getOrder(c,W2);const t=o.tickets.find(t=>t.status==='Open'&&t.dispo);return t?MES.resolveTicket(c,W2,t.id,'Closing it myself.',{supportReason:'Please let me close this one.'}):{ok:false,message:'no ticket'};},[W2]);
 ok('a Support Access account cannot use a reason to approve an NC it may not approve',sod.ok===false,JSON.stringify(sod));
 
 // ---- 8. The log is visible and filterable ----
 await as('kqe');
-const shown=await run(()=>{view='support-log';render();const all=document.querySelectorAll('table.support-log tbody tr').length;const f=document.getElementById('support-filter-form');f.elements.rule.value='mrb-seat';f.elements.rule.dispatchEvent(new Event('change',{bubbles:true}));const filtered=document.querySelectorAll('table.support-log tbody tr').length;const f2=document.getElementById('support-filter-form');f2.elements.rule.value='All';f2.elements.kind.value='notice';f2.elements.kind.dispatchEvent(new Event('change',{bubbles:true}));const notices=document.querySelectorAll('table.support-log tbody tr').length;return {all,filtered,notices,heading:document.querySelector('#main h1')?.textContent};});
-ok('Support overrides view lists every entry',shown.heading==='Support overrides'&&shown.all>=4,JSON.stringify(shown));
-ok('filter by rule narrows to the MRB seat override',shown.filtered===1,JSON.stringify(shown));
+const shown=await run(()=>{view='support-log';render();const all=document.querySelectorAll('table.support-log tbody tr').length;const f=document.getElementById('support-filter-form');f.elements.rule.value='stamp-binding';f.elements.rule.dispatchEvent(new Event('change',{bubbles:true}));const filtered=document.querySelectorAll('table.support-log tbody tr').length;const f2=document.getElementById('support-filter-form');f2.elements.rule.value='All';f2.elements.kind.value='notice';f2.elements.kind.dispatchEvent(new Event('change',{bubbles:true}));const notices=document.querySelectorAll('table.support-log tbody tr').length;return {all,filtered,notices,heading:document.querySelector('#main h1')?.textContent};});
+ok('Support overrides view lists every entry',shown.heading==='Support overrides'&&shown.all>=3,JSON.stringify(shown));
+ok('filter by rule narrows to the stamp binding override',shown.filtered===1,JSON.stringify(shown));
 ok('filter by kind shows the one notice',shown.notices===1,JSON.stringify(shown));
 
 // ---- 9. A tampered log entry is caught by validation ----

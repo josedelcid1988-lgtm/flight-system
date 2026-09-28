@@ -4,9 +4,11 @@ The product build id is set in `VERSION.md` and stamped into `index.html`, with
 the SHA-256 of `index.html`, by `node tools/stamp-build.mjs`. Suite names such as
 `test_v80.mjs` record when that suite was added. They are not the build id.
 
-The app is a single HTML file. The optional persistence mirror in `server/` is
-off by default. Every browser harness drives a real browser against a built
-copy, so a test failure is a real user-visible failure.
+The product page is generated from `index.html`; the React Hangar is bundled
+locally from `src/react/`. `server/server.mjs` provides the authenticated
+shared-storage mode, and `server/mirror/` remains an optional append-only
+mirror. Browser harnesses drive Chromium against the built files or the live
+server, so browser failures are user-visible failures.
 
 ## Setup
 
@@ -52,7 +54,7 @@ failing suite, `tests/suite_<name>.log`. `--only a,b` runs named suites.
 
 | Command | What it covers |
 | --- | --- |
-| `node tests/qa_full.mjs` | 309 checks: engine rules, guards, signature manifest verification, UI flows, rendering at 1440 and 375 px. Expect 309 pass, 0 skip, 0 fail. |
+| `node tests/qa_full.mjs` | 310 checks: engine rules, guards, signature manifest verification, UI flows, rendering at 1440 and 375 px. Current target: 310 pass, 0 skip, 0 fail. |
 | `node tests/qa_e2e.mjs` | 30 end-to-end flows: every order type and every ticket type driven to closure, with actions, typed fields, role handoffs and gates counted per flow. Writes `qa_e2e_results.json`. |
 | `node tests/qa_multi.mjs` | 161 checks across modules (Flight Control, Flight Plan, Flight Maneuver). |
 | `node tests/pilot_rehearsal.mjs` | Three scenarios run through the real pilot accounts. |
@@ -69,9 +71,17 @@ failing suite, `tests/suite_<name>.log`. `--only a,b` runs named suites.
 | `node tests/test_mrb_seat_caps.mjs` | MRB seats and the QA Manager safety buy-off follow capabilities, with the refusal paths. |
 | `node tests/test_build_stamp.mjs` | The build id and index.html SHA-256: the stamp tool, and the stamp on manifests, history events, Support Overrides entries and prints; older unstamped records still verify. |
 | `node tests/test_frozen_contract.mjs` | The frozen contract: storage keys, form numbers and every separation-of-duties rule in the engine, plus the WI author and peer reviewer release refusals. Fails if any of them changes. |
-| `node tests/test_authority.mjs` | Stamp placeholders and SKY numbering, issue, import and export; the training requirements list with QMS references and retraining; person training records; several stamps per person; QA Manager grants and extra roles tied to training (never to oneself, eligible roles only, paused on lapse); stamp PINs with scrypt. |
+| `node tests/test_authority.mjs` | Stamp placeholders and SKY numbering, issue, import and export; the training requirements list with QMS references and retraining; person training records; several stamps per person; conformity and AQI grants plus extra roles tied to training (never to oneself, eligible roles only, paused on lapse); inspection and MRB capabilities follow roles; stamp PINs with scrypt. |
 | `node tests/test_nff_boundary.mjs` | Development NFF stays out of every flight and production path: no FAI or FAIR, no conformity package, 8130-9 or 8130-3, no issue or rework into Production or Development, pedigree one way, first-article slot untouched. |
 | `node tests/test_mirror.mjs` | The persistence mirror: off by default, on, outage and recovery, idempotent retry, no password or PIN material, tamper detection, backup, restore test and restart on the restored file. |
+| `node tests/test_server.mjs` | SQLite API: scrypt sessions, lockouts, shared ETags, evidence, archive, extracts, exports, engine actions and hash-chained audit. |
+| `node tests/test_server_ui.mjs` | Browser sign-in, shared workspace hydration, a real MES mutation saved to the server, and account-profile round-trip. |
+| `node tests/test_server_first_load.mjs` | First sign-in against an uninitialized server on a 6x CPU-throttled page: no record change is sent while the first load is in flight, the workspace initializes and syncs, and a browser workspace that predates the page is still refused until migrated. |
+| `node tests/test_jira_integration.mjs` | Jira Cloud issue creation from canonical ECR/SPR/SCAR records, server-only secrets, caller authorization, saved issue linking, persistent idempotency, restart replay, uncertain-response refusal, and ECR UI flow. |
+| `node tests/test_migration.mjs` | Browser workspace migration dry-run, validation, report and copy verification. |
+| `node tests/postgres/integration.mjs` | PostgreSQL store, account profiles, ETags, archive, exports, Jira idempotency rows and immutable histories. Requires a running PostgreSQL service; CI runs it on PostgreSQL 16. |
+| `node tools/build-react.mjs --check` | Local React bundle and generated demo files are current. |
+| `npm run check:paths` | Fails if repository files include a machine-specific absolute path. |
 
 Each harness prints `FAILS []` or a list, and the browser page errors it saw.
 

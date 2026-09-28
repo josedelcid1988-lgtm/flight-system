@@ -1,8 +1,8 @@
-# Playwright installed per TESTING.md; not part of the app (AGENTS.md: no build tooling).
-node_modules
-/node_modules
-/package.json
-/package-lock.json
+# Dependencies and local browser tooling are not distributed in the source archive.
+node_modules/
+.DS_Store
+.playwright-mcp/
+/dist/
 
 # Mirror server data written by local runs and tests (the server itself is in server/).
 server/data/
