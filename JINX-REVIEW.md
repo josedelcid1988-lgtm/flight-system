@@ -7,12 +7,12 @@ Fetch with `git fetch origin jinx/review-notes`, read this file, apply fixes on 
 ## Blockers (fix these, then CI, then ask for re-review)
 
 1. Primary role swap needs no training. `server/server.mjs`, POST /auth/access `roles` action: `added` is computed from `list.slice(1)` (extra roles only), so changing the primary role (for example technician to qe) requires no training record. Now that the qe role directly confers inspect-steps and mrb-quality, a manager can hand out inspection and MRB authority with no training evidence. Fix: require a current training record when the primary role changes (treat a changed primary like an added role), or record in docs that this is intended.
-2. Owner decision required (Jose, not Codex): inspection and MRB seats are now role capabilities instead of named QA Manager grants. AGENTS.md rule 1, docs/ROLE_MATRIX.md, docs/HANDOVER.md, TESTING.md, the role-matrix generator, and the frozen contract test were all rewritten consistently, so the docs agree with the code. But this is a material change to the documented separation-of-duties control with no recorded owner approval. Do not treat silence as approval; keep this on the do-not-merge checklist until Jose confirms the model. Related: Master Access can no longer grant conformity or aqi-sign (only a QA Manager can).
+2. RESOLVED by owner decision (Jose, 2026-09-27): QE role carries MRB and Inspection as role capabilities, model confirmed. New requirement from Jose: inspection authority must be gated via a stamp requirement. Implement: qe keeps inspect-steps and mrb-quality in ROLE_CAPS, but inspect-steps is active only when the account holds a valid inspection stamp (credential/training record), enforced server-side at POST /auth/access and everywhere inspect-steps is checked. MRB authority (mrb-quality) follows the standard training requirement. Master Access no longer granting conformity or aqi-sign stands.
 
 ## Do-not-merge checklist
 
 - [ ] Blocker 1 fixed (primary role change requires training, or documented as intended)
-- [ ] Blocker 2: Jose confirms the role-capability authority model
+- [x] Blocker 2: Jose confirmed the role-capability authority model (2026-09-27); inspection gated by stamp requirement (implementation pending)
 - [ ] CI `suites` green on the final head (in progress on a6208d94 at review time; previous head failed mirror-off 65/67 and mirror-on 66/67)
 - [ ] Claudia approves
 
