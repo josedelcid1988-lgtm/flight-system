@@ -249,6 +249,13 @@ if (productionExternal) {
   const projects = host.MES.ensureProjects(state);
   const credentials = [find(projects.projects, plan.id).by, find(projects.objectives, goal.id).by, find(projects.milestones, mark.id).by].map(by => by && by.credentialId);
   assert.equal(JSON.stringify(credentials), JSON.stringify(Array(3).fill('ACCT-second-planner')), 'project, objective and milestone name the signed-in account, not the stored profile');
+  // Flight Plan keeps its own history: planned orders name the signed-in person too.
+  const wi = state.masterWIs.find(item => item.status === 'Released');
+  const need = new Date(Date.now() + 21 * 86400000).toISOString().slice(0, 10);
+  const planned = as(() => host.FlightPlan.addPlannedOrder(state, { masterWI: `${wi.id}|${wi.revision}`, partNumber: wi.partNumber, revision: host.MES.partDefinition(wi.partNumber)?.revision, quantity: 1, needDate: need, need, pedigree: 'Production', subcategory: 'Mfg.', aircraft: host.MES.AIRCRAFT[0], site: host.MES.SITES[0], source: 'Attribution test' }));
+  assert.equal(planned.ok, true, planned.message);
+  const po = host.FlightPlan.get(state, planned.id);
+  assert.equal(JSON.stringify([po.createdBy.credentialId, po.history.length > 0 && po.history.every(entry => entry.actor.endsWith('ACCT-second-planner'))]), JSON.stringify(['ACCT-second-planner', true]), 'a planned order and its history name the signed-in account');
   state.profile = savedProfile;
 }
 {

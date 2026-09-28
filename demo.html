@@ -1,4 +1,4 @@
-<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v82"><meta name="fs-build-sha256" content="e82fd1d55c75f0e7aba13dce8108379f2f580773ecfdfe453293ef5ee3f350b5"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><!-- FLIGHT REACT ASSETS BEGIN -->
+<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v82"><meta name="fs-build-sha256" content="24ddee498aa50eab335163cb774d1a2cec38117b834f6886d129f1445e7653c6"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><!-- FLIGHT REACT ASSETS BEGIN -->
 <link rel="stylesheet" href="assets/flight-ui-fonts.css">
 <link rel="stylesheet" href="assets/flight-ui.css">
 <link rel="stylesheet" href="assets/flight-plan-react.css">
@@ -4645,7 +4645,7 @@ const OP_BOM_MAX = 12;
       t.status = 'Resolved'; t.resolution = t.reworkPlan.approval; t.resolvedBy = t.reworkPlan.approvedBy; t.resolvedAt = at;
       record(state, order, `${t.id} closed: QA released the ${t.reworkPlan.decision} operation Op ${opNumber(order, t.reworkPlan.opId)}. Hold lifted.`, 'Quality reviewer');
     });
-    const approver = profileSnapshot(state.profile);
+    const approver = actor(state);
     const entry = rollWorkOrderRevision(state, order, `Operation sequence changed (${pending.entries.length} change${pending.entries.length === 1 ? '' : 's'}).`,
       pending.entries.map(item => `${item.type === 'add' ? 'Added' : item.type === 'remove' ? 'Removed' : 'Edited'} Op ${item.position || ''} ${item.title || ''}`.replace(/\s+/g, ' ').trim()), approver);
     record(state, order, `QA released the updated operation sequence (${pending.entries.length} change${pending.entries.length === 1 ? '' : 's'}) · ${actor(state).name}.${entry ? ` Work order revision rolled to ${woRevLabel(entry.rev)}.` : ''}`);
@@ -4807,7 +4807,7 @@ const OP_BOM_MAX = 12;
       qaClosure: closure ? { at: closure.at, by: closure.actor } : null,
       stockedAt: at, stockedBy: `${actor(state).name} · ${actor(state).credentialId}`, location: input.location, bin: bin || null
     };
-    order.inventory = { lotNumber, stockedAt: at, stockedBy: profileSnapshot(state.profile), location: input.location, bin, quantity: order.quantity, serials, trace, netsuite: { status: 'Ready to post', payload: netsuitePayload(order, lotNumber, serials, input.location, bin, at), postedRef: null } };
+    order.inventory = { lotNumber, stockedAt: at, stockedBy: actor(state), location: input.location, bin, quantity: order.quantity, serials, trace, netsuite: { status: 'Ready to post', payload: netsuitePayload(order, lotNumber, serials, input.location, bin, at), postedRef: null } };
     record(state, order, `Moved to inventory as ${lotNumber}: ${order.quantity} unit${order.quantity === 1 ? '' : 's'} at ${input.location}${bin ? ` bin ${bin}` : ''}. NetSuite posting prepared.`);
     return { ok: true, message: `Stocked as ${lotNumber}. The NetSuite payload is ready to post.` };
   }
@@ -7736,7 +7736,9 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   const dateOnly = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && Number.isFinite(Date.parse(v));
   const today = () => new Date().toISOString().slice(0, 10);
   const snapshot = p => ({ name: p.name, role: p.role, credentialId: p.credentialId });
-  const log = (state, po, action, actor) => { po.history = [...po.history, { at: new Date().toISOString(), action, actor: actor || `${state.profile.name} · ${state.profile.credentialId}` }].slice(-100); };
+  // The signed-in account on a shared server, the device profile only when standalone.
+  const who = state => { const a = root && root.skAuth && root.skAuth.actor && root.skAuth.actor(); return a ? { name: a.name, role: a.role, credentialId: a.credentialId } : snapshot(state.profile); };
+  const log = (state, po, action, actor) => { po.history = [...po.history, { at: new Date().toISOString(), action, actor: actor || `${who(state).name} · ${who(state).credentialId}` }].slice(-100); };
   const wiKey = po => `${po.masterWI.id}|${po.masterWI.revision}`;
   const netsuiteRead = partNumber => ({ snapshotAt: NETSUITE_SNAPSHOT, onHand: MES.NETSUITE_STOCK[partNumber] ? MES.NETSUITE_STOCK[partNumber].reduce((n, lot) => n + lot.onHand, 0) : (DEMO_FINISHED_STOCK[partNumber] || 0) });
   const list = state => Array.isArray(state?.plannedOrders) ? state.plannedOrders : [];
@@ -7772,7 +7774,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
       id: `PO-${number}`, masterWI: { id: wi.id, revision: wi.revision, title: wi.title },
       configuration: { partNumber: wi.partNumber, partRevision: wi.partRevision, pedigree: input.pedigree, subcategory: input.subcategory, site: input.site ?? null, aircraft: input.aircraft },
       quantity: input.quantity, needDate: input.needDate, status: 'Planned', workOrder: null, netsuite: netsuiteRead(wi.partNumber),
-      createdAt: new Date().toISOString(), createdBy: actor ? { name: actor, role: 'Flight Plan', credentialId: 'DEMO' } : snapshot(state.profile), history: []
+      createdAt: new Date().toISOString(), createdBy: actor ? { name: actor, role: 'Flight Plan', credentialId: 'DEMO' } : who(state), history: []
     };
     log(state, po, `Planned from ${MES.wiKey(wi)} · ${wi.partNumber} Rev ${wi.partRevision}. NetSuite on hand ${po.netsuite.onHand} at snapshot ${NETSUITE_SNAPSHOT}.`, actor && `${actor} · DEMO`);
     if (!Array.isArray(state.plannedOrders)) state.plannedOrders = [];
@@ -7819,7 +7821,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     order.plannedOrder = { id: po.id, needDate: po.needDate, convertedAt: at };
     MES.addNote(state, order.id, `Converted from Flight Plan ${po.id}: ${wiKey(po)} · ${c.partNumber} Rev ${c.partRevision} · need date ${po.needDate}.`);
     po.status = 'Converted';
-    po.workOrder = { id: order.id, convertedAt: at, convertedBy: snapshot(state.profile) };
+    po.workOrder = { id: order.id, convertedAt: at, convertedBy: who(state) };
     log(state, po, `Converted to ${order.id} from ${wiKey(po)}.`);
     return { ok: true, message: `${po.id} converted to ${order.id}.`, id: order.id };
   }
