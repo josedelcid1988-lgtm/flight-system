@@ -1,4 +1,4 @@
-# JINX-REVIEW.md (PR #11, head b5447ea4, updated 2026-09-28T20:12Z after CI finished)
+# JINX-REVIEW.md (PR #11, head ebfa69b2f6, updated 2026-09-28T20:55Z after review 5344445530)
 
 ## Owner direction 2026-09-28: v1 and v2 tracks (read first)
 
@@ -11,46 +11,47 @@
 
 Fetch with `git fetch origin jinx/review-notes`, read this file, apply fixes on the PR branch (`flight-v82-datum-port`), push. Never commit to `jinx/review-notes` and never touch the PR branch from this file's update flow. This file is replaced after every Jinx review.
 
-## Blockers (Jinx review 5343782329 on b5447ea4, CI finished 2026-09-28T20:07Z)
+## Blockers (Jinx review 5344445530 on ebfa69b2f6, CI in progress 2026-09-28T20:55Z)
 
-1. **CI FAILED on this exact head.** The `suites` check-run on `b5447ea4` (check-run 109102820651, workflow run 36473938477) completed failure at 2026-09-28T20:07:31Z. Both suite steps ("All suites, mirror off" and "All suites, mirror on") exited 1. In both runs 66 of 67 suites passed; the only failure is `test_server_ui` with a Playwright TimeoutError. All the pre-checks passed (build stamp current, VERSION.md release record matches index.html and demo.html, role matrix current, demo build and fixtures current, PostgreSQL storage integration). This is a PRE-EXISTING failure, not a new regression: the same suite failed the same way in CI on the prior head 6f7d157b (run at 2026-09-28T02:23Z, also 66/67, test_server_ui TimeoutError). The race fix you shipped in this head (action queue chaining behind the in-flight snapshot push) is sound in code and I verified it, but it did not cure the CI timeout, so the real root cause is elsewhere. Next step (Claude, on the PR branch): reproduce `test_server_ui` locally, find which wait times out, fix the root cause, push. Do not merge until this is green; a quarantined suite would need explicit owner sign-off.
-2. **Codex review is still missing.** No Codex review has appeared on this PR (only the bot note that an environment must be created). Per the standing merge gate, Codex's approval is required before Claude merges. Either the environment gets created so its auto-review runs, or the owner says otherwise in chat.
+1. **CI not green on this exact head.** The `suites` check-run on `ebfa69b2f6` was in progress when I reviewed. The previous head `b5447ea4` FAILED suites at 2026-09-28T20:07Z: both mirror steps exited 1, 66 of 67 passed, only `test_server_ui` with a Playwright TimeoutError (pre-existing on 6f7d157b, so not a regression). This head's `1ddc6ee23c` is the root-cause fix for that timeout (see verified-good below) and you report `test_server_ui` now passes 4 of 4 under load locally, but CI has not confirmed it yet. Do not merge until the `suites` check-run on `ebfa69b2f6` completes green. If it still fails, paste the failing step and the timeout line in a comment and keep working on the branch.
+2. **Codex review is still missing.** No Codex review has appeared on this PR. Per the standing merge gate, Codex's approval is required before you merge. Either its environment gets created so its auto-review runs, or the owner says otherwise in chat.
 
-The two previous blockers are RESOLVED in code (details below) and need no further fix work, only green CI confirmation, which is currently blocked on item 1.
+No code blockers remain from my side: Jinx Final approval posted as review 5344446659 on this exact head.
 
 ## Claudia's green light (Flight merge gate)
 
 Claudia (2026-09-27) approves only when all four are fixed on one head:
 1. Training required for new qe accounts (done in de5facb3, still holding)
 2. Inspection stamp gate implemented server-side (done in 6f7d157b, still holding)
-3. CI green: VERSION.md release record matches index.html and demo.html (release record regenerated from full clean runs on this tree; the CI pre-check for this PASSED on b5447ea4)
-4. CI green: all suites, mirror on (FAILED on b5447ea4 at 2026-09-28T20:07Z: test_server_ui TimeoutError, pre-existing from 6f7d157b; fix per blocker 1)
+3. CI green: VERSION.md release record matches index.html and demo.html (verified by Jinx on this head: stamped SHA `4ae765fd...` matches both files; file SHAs `b519b8e2...` and `670fffb9...` recomputed from committed blobs)
+4. CI green: all suites, mirror on (in progress on ebfa69b2f6; was FAILED on b5447ea4 with test_server_ui TimeoutError; root-cause fix in 1ddc6ee23c, see below)
 
 ## Do not merge checklist
 
 - [x] Self-target refusals implemented for role changes, training records, and stamp issuance (browser engine and server actions), verified by tests and frozen contract.
-- [ ] CI suites green on head b5447ea4 (FAILED 2026-09-28T20:07Z, test_server_ui TimeoutError; see blocker 1).
-- [ ] Jinx Final approval comment on the exact head (eyes reaction only so far).
+- [x] First-load sync races fixed in code (index.html:10785, 10830, 10870, 10898, 10901, 10902, mirrored in demo.html and fixtures); new `tests/test_server_first_load.mjs` pins them.
+- [ ] CI suites green on head ebfa69b2f6 (in progress at review time; was the blocker on b5447ea4).
+- [x] Jinx Final approval comment on the exact head (review 5344446659, plus +1 reaction 531873579).
 - [ ] Codex approval present on the PR.
-- [ ] No Jinx thumbs-up (+1) yet; that lands with Final approval.
 
 ## Non-blocking notes worth fixing now
 
-- tests/qa_operator.mjs: the sequence-panel scroll check asserts exact float equality on `getBoundingClientRect().top`. This is the real source of the 0.25px flake you flagged. An epsilon comparison would make it robust. Not caused by this PR and not a merge blocker, but fix it now and the flake goes away permanently.
-- Cosmetic: the access-table self-refusal message names "another QA Manager or Master Access account", while the canManageAccess gate also allows a Quality Supervisor to manage access. Wording only.
-- The QS branch guard still carries a now-unreachable `u.username===me.username` term after the earlier self check. Harmless.
+- `tests/test_server_first_load.mjs` does not assert the race-3 fix: no scenario creates a refused edit, reloads, and checks that the recovery banner appears. The fix (index.html:10901, `showUnconfirmedServerRecovery()` in the 200 branch) is verified by code reading only. Add one assertion in a follow-up; do not reset this head for it.
+- The new test's "no early record change" assertion excludes `/workspace/actions/` calls that returned 200. Adequate in practice (the server 404s actions on an uninitialized workspace), but a strict "no action call at all before ready" assertion would be stronger.
+- PR body is stale: it says 67/67 and 17,546 records; VERSION.md and your status note say 68/68 and 17,595. Refresh the PR body text when you get a chance. Cosmetic.
+- tests/qa_operator.mjs: the sequence-panel scroll check asserts exact float equality on `getBoundingClientRect().top`. An epsilon comparison would kill the 0.25px flake permanently. Queued per your note.
+- Cosmetic: the access-table self-refusal message names "another QA Manager or Master Access account", while the canManageAccess gate also allows a Quality Supervisor. Wording only. Queued per your note.
+- The QS branch guard still carries a now-unreachable `u.username===me.username` term after the earlier self check. Harmless. Queued per your note.
 - Still open from before (accepted deferral): TRAINING_GATED_ROLE_CAPS stays next to ROLE_CAPS; you noted ROLE_CAPS is regex-extracted by server/mes-host.mjs, so this belongs in its own change. Agreed, not for this PR.
 
-## Verified good (head b5447ea4)
+## Verified good (head ebfa69b2f6)
 
-- Self-grant hole is closed and verified in code and tests:
-  - `server/server.mjs` roles action refuses any account changing its own roles (`if (target.username === actor.username)`), not just a Quality Supervisor.
-  - Browser engine (index.html, mirrored in demo.html and fixtures): setRoles, recordTraining, issueStamp, updateStamp all refuse the signed-in account as target. updateStamp allows only suspend or retire on one's own stamp, which can only reduce authority.
-  - The fifth path is closed: the primary-role dropdown change handler (index.html access table, `data-role-user` listener) refuses self-target before writing instead of bypassing setRoles.
-  - The server action route (server/server.mjs) turns any engine `{ok:false}` into 403 with an `action-refused` audit row and returns before persistence, so the workspace ETag is unchanged; engine refusals hold on the remote route.
-  - tests/test_frozen_contract.mjs pins all five refusal strings plus the server line. tests/test_authority.mjs checks each refusal next to the same act for another person. tests/test_server.mjs checks 403 through both the access route and the action route (QA Manager and Master Access self-role attempts), unchanged ETag, audited refusals, and no inspect-steps granted.
-  - qa_master, qa_full D-5/D-6, and test_inspect_own_work now use a second account for setup acts; test_jira_integration honours CHROME_PATH.
-- VERSION.md release record regenerated by tools/release-report.mjs from full clean runs on this tree: 67 of 67 mirror off, 67 of 67 mirror on, 17,595 mirror records, chain intact, no skips, qa_full 310 checks, stamped sha 49145a4a.
-- First-run sync race fixed in code and the fix is sound: the action queue chains behind the in-flight snapshot push before sending, so the first-run initialize PUT lands with its ETag before any action flush (no more 428, no more false "The server refused this change"). test_server_ui timeout correctly back to 15s. IMPORTANT UPDATE: this fix did NOT cure the CI TimeoutError on test_server_ui (it fails in CI on this head and on the prior head 6f7d157b too). The true root cause of the CI timeout is still unidentified.
-- `trainingQualifies` helper in server/server.mjs consolidates the three training-check copies (the non-blocking note from 6f7d157b, now done). Browser `capsOf` and server `capsOf` memoize the stamp check to once per call (the other note from 6f7d157b, now done).
+- First-load sync root-cause fix (`1ddc6ee23c`), verified line by line in index.html at this head:
+  - index.html:10785 `localWorkspaceAtBoot` captured at script parse time, before any session write. The 404 branch (index.html:10901) keys on it instead of re-reading localStorage, which is the actual bug: the old check ran after this session's own boot write and mistook it for a pre-existing browser workspace.
+  - index.html:10830 `serverWorkspaceReady` gates `flushServerActions` (index.html:10870) and `pushWorkspace` (index.html:10898). Nothing is sent until the first load resolves: 200 sets it after replacing state, 404 sets it after clearing the queue, then `pushWorkspace` sends the initializing snapshot. The `online` handler (index.html:10902) loads first when not ready, so an offline page cannot leak queued writes on reconnect. The boot-time `MES.selectProfile` (fired from the `sk-auth` handler via `bindCredential` into `save`/`pushWorkspace`) is gated too, which removes the pre-ETag flush that produced the 428.
+  - The 200 branch calls `showUnconfirmedServerRecovery()`, so a reload after a refused edit surfaces the preserved recovery copy.
+  - Clearing `serverActionQueue` on the 404-init path is safe: the queued actions' effects are already in `state`, which the snapshot carries, and `serverActionPending` cannot be nonzero on that path because no action can be in flight before the first load completes under this gate.
+  - Mirrored identically in demo.html and the publish/demo_qa150 fixtures; build stamps regenerated.
+- VERSION.md (ebfa69b2f6) verified against committed blobs: stamped SHA matches index.html and demo.html meta tags; plain file SHAs match. Suite table lists 68/68 mirror off and on including the new `test_server_first_load`, no skips.
+- Self-grant hole remains closed (unchanged since b5447ea4): server roles action refuses any self-target; engine setRoles/recordTraining/issueStamp/updateStamp refuse the signed-in account; primary-role dropdown handler refuses self-target; engine refusals map to 403 with action-refused audit and unchanged ETag. Pinned by tests/test_frozen_contract.mjs.
 - Inspection stamp gate and new-account training gate from earlier heads still hold and are tested.
