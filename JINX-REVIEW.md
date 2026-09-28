@@ -1,4 +1,4 @@
-# JINX-REVIEW.md (PR #11, head d1c5393c, updated 2026-09-28T22:30Z after review 5345292049)
+# JINX-REVIEW.md (PR #11, head d1c5393c, updated 2026-09-28T22:45Z: Codex cross-review findings verified)
 
 ## Owner direction 2026-09-28: v1 and v2 tracks (read first)
 
@@ -33,6 +33,26 @@ Claudia (2026-09-27) approves only when all four are fixed on one head:
 - [ ] CI suites green on head d1c5393c (in progress at review time).
 - [x] Jinx Final approval comment on the exact head (review 5345293063, plus +1 reaction).
 - [ ] Codex approval present on the PR.
+
+## Codex cross-review findings, verified by Jinx (2026-09-28T22:45Z, issue comment 5879847895 on PR #11)
+
+Codex posted 10 findings on this head. I verified all 10 against the code. All 10 are correct; none are wrong. The P1 below blocks Codex's approval, and Codex's approval is part of the merge gate, so treat it as a merge blocker. The P2s are follow-ups: fix the cheap ones now, the rest in the next change.
+
+### Blocker (P1, blocks Codex approval)
+
+1. **Internal audit helpers are remotely callable.** `MES.recordAIAction` (index.html:7695, via Object.assign), `MES.logSupport` (index.html:7703), and `MES.noteDemoBypassRemoved` (index.html:7703) are on the sandbox MES object. The action allowlist regex in server/mes-host.mjs:110 admits the `record`, `log`, and `note` prefixes, and the `actionExclude` set (server/mes-host.mjs:112) does not list these three. So any authenticated account can POST the action endpoint and append a hash-valid fake AI skill execution (`recordAIAction`, index.html:3256), fabricate a Support Access override record (`logSupport`, index.html:2692), or create a purported system bypass-removal notice (`noteDemoBypassRemoved`, index.html:2709), bypassing the workflows that normally authorize those records. Fix: add all three to `actionExclude` in server/mes-host.mjs, or tighten the prefix regex so only real commands match.
+
+### Follow-ups (P2, verified correct)
+
+2. **Migration silently drops `extraRoles`.** Browser exports serialize accounts as `{ role, extraRoles: [...] }` (index.html:13226), with no `roles` array. The migration helper (tools/migrate-browser.mjs:43) only reads `user.roles` or the primary `role`, and line 53 strips `extraRoles`; line 56 builds `roleFollowUps` only from the `roles` array. A real export like `{ role: 'technician', extraRoles: ['qe'] }` therefore loses the QE role with no follow-up or warning. Fix: include `user.extraRoles` in the migration role list (migrate-browser.mjs:43) so secondary roles pass through the audited follow-up flow.
+3. **Master Access training preflight gap.** `needsTraining` (tools/migrate-browser.mjs:57) exempts admin accounts, but PUT /auth/accounts (server/mjs:519-524) requires training for new admin accounts whose roles carry inspection/MRB authority. A migrated second Master Access account without training passes the dry run, then the import refuses it with 403. Note the import refusal is not atomic: the transaction loop does not break on refusal, so earlier accounts in the batch are committed before the 403 is sent. Fix: include Master Access in `needsTraining` when it will be created as a new account; consider breaking the loop on refusal.
+4. **Unconditional JSON.parse on truncated audit detail.** Both stores truncate audit detail to 4000 chars (server/db-postgres.mjs:81, server/db.mjs:181), usually mid-JSON-string. server/mjs:767 does `JSON.parse(r.detail || '{}')` unconditionally, so after a large orphan-evidence report every later GET /api/evidence/report returns 500. Fix: tolerate parse failure (fall back to the raw string) or store a bounded valid summary.
+5. **Shared planning records attribute to the wrong person.** `createProject` (index.html:7523), objectives (index.html:7530), milestones, sensitivity changes, and sprints record `by` from `state.profile` (the workspace-wide shared profile), not the authenticated session actor (`skAuth`, available via `withAccount`). A second manager creating a project without changing the shared profile records the first manager's name and credential. Fix: build attribution snapshots from the authenticated actor, with `state.profile` only as the standalone fallback.
+6. **Bulk account writes race authority changes.** PUT /auth/accounts (server/mjs:492) runs its transaction without `tx.lockAuthority()`, while /auth/access takes it (server/mjs:387), and `existing` is read before the transaction. In a multi-client PostgreSQL deployment, an overlapping /auth/access role or grant change can be overwritten by stale values with no corresponding audit event. Fix: take the same authority lock and compare against freshly read transaction rows.
+7. **No in-app route to archived work orders.** src/react/flight-ui.jsx:592 renders archived orders as plain text in the traceability table, and the file has zero references to the /api/archive endpoints, so users cannot view, print, or export the archived record through the app. Fix: link each result to an archive detail or drawer exposing the existing endpoints.
+8. **Migration report reads wrong maneuver collection names.** tools/migrate-browser.mjs:76 reads `tickets`, `scars`, `fracas`, `escapes`, `pfmea`, but the upgraded schema stores stock NCs in `maneuver.ncs` and PFMEAs in `maneuver.pfmeas` (index.html:7933), and `fracas` is deleted on upgrade (index.html:8004). A migration containing stock NCs or PFMEAs reports zero for them. Fix: report the actual current collection names.
+9. **Evidence supersession is not atomic.** The stores' conditional UPDATE ignores the affected-row count (server/db-postgres.mjs:193, server/db.mjs:175), and server/mjs:755-756 unconditionally writes the `evidence-supersede` audit entry and returns 200. In a race, the loser writes an audit entry naming a replacement that was never applied. Fix: have the store report a failed conditional update and return 409 without auditing the losing request.
+10. **Archive export buffers all evidence in memory.** server/mjs:802-807 loads every recording, expands it to base64, and serializes another complete response object; an evidence-heavy archive can exhaust the Node heap and take down the server. Fix: stream a bounded archive format instead of materializing all bytes.
 
 ## Non-blocking notes worth fixing now
 
