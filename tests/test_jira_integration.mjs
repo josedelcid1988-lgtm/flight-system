@@ -116,7 +116,7 @@ try {
   const page = await (await fetch(`http://127.0.0.1:${port}/`)).text();
   assert.doesNotMatch(page, /test-only-secret|flight-connector@example\.invalid/);
   const { chromium } = await import('playwright');
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {}) });
   try {
     const ui = await browser.newPage();
     await ui.goto(`http://127.0.0.1:${port}/`);

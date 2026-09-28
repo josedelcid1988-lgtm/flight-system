@@ -29,7 +29,8 @@ const assigned=await assignTestRoles(p,{rsup:['qe']});
 ok('setup: the Support Access account also holds the Quality role after training',assigned===true,String(assigned));
 const stamp=await run(()=>{const r=MES.issueStamp(state,{number:'QI-77',name:'Quinn Inspector',department:'Quality',buyoffType:'Quality',account:'qinsp',expires:'2029-01-01'});if(!r.ok)return r.message;const st=state.stamps.find(s=>s.number==='QI-77');st.account='qinsp';const pin=MES.setStampPin(state,st.id,'2468','2468');if(!pin.ok)return pin.message;save();return true;});
 ok('an independent Quality inspector holds a Quality stamp with a PIN',stamp===true,String(stamp));
-const additionalStamps=await run(()=>['jdoe','mhale','rsup','qbuild'].map(username=>MES.issueStamp(state,{name:({jdoe:'Jordan Doe',mhale:'Morgan Hale',rsup:'Robin Support',qbuild:'Pat Manager'})[username],buyoffType:'Quality',account:username,expires:'2029-01-01'}).ok));
+// Nobody issues a stamp to themselves: jdoe issues the others, and the second Master Access account (mhale) issues jdoe's.
+const additionalStamps=await run(()=>['jdoe','mhale','rsup','qbuild'].map(username=>{const issuer=username==='jdoe'?'mhale':'jdoe';sessionStorage.setItem('skyryse-mes-session-v1',issuer);const r=MES.issueStamp(state,{name:({jdoe:'Jordan Doe',mhale:'Morgan Hale',rsup:'Robin Support',qbuild:'Pat Manager'})[username],buyoffType:'Quality',account:username,expires:'2029-01-01'});sessionStorage.setItem('skyryse-mes-session-v1','jdoe');return r.ok;}));
 ok('Master Access and Support Access also require an assigned inspection stamp',additionalStamps.every(Boolean),JSON.stringify(additionalStamps));
 
 // Two Building orders from the same WI: three build operations, then three inspection operations.
