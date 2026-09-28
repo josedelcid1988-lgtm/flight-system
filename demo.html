@@ -1,4 +1,4 @@
-<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v82"><meta name="fs-build-sha256" content="4ae765fd383031dcd7627c12b23eb622e6e66121c38ef9535ea851a0e752ad78"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><!-- FLIGHT REACT ASSETS BEGIN -->
+<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v82"><meta name="fs-build-sha256" content="3dabc25e67eccc89f549d44ed7071f9612a7f01a4e57647ca7390560f21b358d"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><!-- FLIGHT REACT ASSETS BEGIN -->
 <link rel="stylesheet" href="assets/flight-ui-fonts.css">
 <link rel="stylesheet" href="assets/flight-ui.css">
 <link rel="stylesheet" href="assets/flight-plan-react.css">
@@ -1772,7 +1772,7 @@ function skBoot(){
   if(!u)return {ok:false,message:'That account is not on this device.'};
   var before=rolesOf(u,true),isQS=roleOf(me)==='qs',protectedTarget=before.some(function(k){return k==='qm'||k==='admin';});
   if(isQS&&protectedTarget)return {ok:false,message:'A Quality Supervisor cannot change a QA Manager or Master Access account.'};
-  if(username===me.username)return {ok:false,message:'Nobody changes their own roles. Another QA Manager or Master Access account must do it.'};
+  if(username===me.username)return {ok:false,message:'Nobody changes their own roles. Another QA Manager, Quality Supervisor, or Master Access account must do it.'};
   var list=(Array.isArray(roles)?roles:[]).filter(function(k,i,arr){return ROLES.some(function(r){return r.key===k;})&&arr.indexOf(k)===i;});
   if(!list.length)return {ok:false,message:'Choose at least one role.'};
   if(isQS&&list.some(function(k){return k==='qm'||k==='admin';}))return {ok:false,message:'A Quality Supervisor cannot assign QA Manager or Master Access.'};
@@ -1825,8 +1825,8 @@ function skBoot(){
   var a=loadAuth(),me=currentUser(),u=a.users.find(function(x){return x.username===sel.dataset.roleUser;});if(!u)return;
   var say=function(msg){var t=document.getElementById('toast');if(t){t.querySelector('p').textContent=msg;t.hidden=false;setTimeout(function(){t.hidden=true;},5000);}};
   if(!(me&&canManageAccess(me))){sel.value=primaryRole(u);say('Only a Master Access, QA Manager, or Quality Supervisor account can change roles. Yours is '+roleLabel(roleOf(me))+'.');return;}
-  if(u.username===me.username){sel.value=primaryRole(u);say('Nobody changes their own roles. Another QA Manager or Master Access account must do it.');return;}
-  if(roleOf(me)==='qs'&&(rolesOf(u,true).some(function(k){return k==='qm'||k==='admin';})||u.username===me.username||sel.value==='qm'||sel.value==='admin')){sel.value=primaryRole(u);say('A Quality Supervisor cannot change their own role, a QA Manager or Master Access account, or assign either elevated role.');return;}
+  if(u.username===me.username){sel.value=primaryRole(u);say('Nobody changes their own roles. Another QA Manager, Quality Supervisor, or Master Access account must do it.');return;}
+  if(roleOf(me)==='qs'&&(rolesOf(u,true).some(function(k){return k==='qm'||k==='admin';})||sel.value==='qm'||sel.value==='admin')){sel.value=primaryRole(u);say('A Quality Supervisor cannot change their own role, a QA Manager or Master Access account, or assign either elevated role.');return;}
   if(!ROLES.some(function(r){return r.key===sel.value;})){sel.value=primaryRole(u);say('Choose a listed role.');return;}
   // What must survive is someone able to administer access, not a particular title: moving the
   // last QA Manager to Master Access keeps an administrator, so it is allowed.

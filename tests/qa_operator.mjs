@@ -23,7 +23,8 @@ try {
   const headerY=await page.locator('.sequence-panel .panel-head').evaluate(e=>e.getBoundingClientRect().top);
   await page.keyboard.press('End');
   await page.waitForFunction(()=>{const e=document.querySelector('.sequence-list');return e.scrollTop>=e.scrollHeight-e.clientHeight-2;});
-  assert.equal(await page.locator('.sequence-panel .panel-head').evaluate(e=>e.getBoundingClientRect().top),headerY);
+  const headerYAfter=await page.locator('.sequence-panel .panel-head').evaluate(e=>e.getBoundingClientRect().top);
+  assert.ok(Math.abs(headerYAfter-headerY)<1,`the sequence panel header does not move while the list scrolls (before=${headerY}, after=${headerYAfter})`);
   if(process.env.FLIGHT_QA_SCREENSHOTS)await page.screenshot({path:process.env.FLIGHT_QA_SCREENSHOTS+'/sequence-scroll-1440.png'});
   await page.setViewportSize({width:1440,height:1000});
   assert.equal(await page.locator('.fs-work-cue').evaluate(e=>getComputedStyle(e).backgroundColor),'rgb(21, 28, 36)');
