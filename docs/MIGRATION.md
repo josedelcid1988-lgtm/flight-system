@@ -49,9 +49,11 @@ Paste the clipboard contents into a JSON file. The export contains password hash
 node tools/migrate-browser.mjs --input /protected/path/flight-browser-export.json
 ```
 
-Review the report before applying. It lists work orders, master work instructions, planned orders, Flight Maneuver records, accounts, signatures and evidence, including removed (quarantined) recordings. Missing IndexedDB media and multi-role accounts are called out. The server preserves all assigned roles and their capability union.
+Review the report before applying. It lists work orders, master work instructions, planned orders, Flight Maneuver records, accounts, signatures and evidence, including removed (quarantined) recordings. Missing IndexedDB media and multi-role accounts are called out.
 
-An account whose role carries inspection or MRB authority (Quality, Manufacturing Engineering, Engineering, Certification) is created only when it cites a current training record for that person. The dry run finds one in the migrated workspace for each such account and lists any account that has none under `accounts.needsTraining`; the apply step refuses to start until that list is empty.
+A new server account never arrives with authority attached. Each account is created with its first role; its other roles are then added through the server's audited role-change route (the same one a QA Manager uses), each citing the person's current training record, so every added role appears in the audit trail as a `role-change` by the migrating account. The migrating account cannot change its own roles; if it has more than one, another QA Manager or Master Access account adds them afterwards. Individually granted authority (conformity work, the AQI signature) and Support Access are signed by the person who granted them and are not copied. The dry run lists them under `accounts.manualAfterMigration`, and a QA Manager (Master Access for Support Access) grants them again after migration.
+
+An account whose role carries inspection or MRB authority (Quality, Manufacturing Engineering, Engineering, Certification) is created only when it cites a current training record for that person. The same applies to an account with more than one role, since each added role cites training. The dry run finds one in the migrated workspace for each such account and lists any account that has none under `accounts.needsTraining`; the apply step refuses to start until that list is empty.
 
 ## Apply to an empty server
 
@@ -64,7 +66,7 @@ FLIGHT_MIGRATION_PASSWORD='your password' \
 node tools/migrate-browser.mjs --input /protected/path/flight-browser-export.json --apply
 ```
 
-The command uploads supplied recordings, writes the validated Flight workspace, and then imports account records, so each account's cited training record is already on the server. It uses the server ETag and same workspace validation used by normal writes. If a step fails, the command reports which earlier step completed. Check the server audit and evidence report before retrying.
+The command uploads supplied recordings, writes the validated Flight workspace, then imports account records, so each account's cited training record is already on the server, and then adds each account's other roles. Its result lists `rolesNotApplied` (with the server's reason) and `manualAfterMigration`. It uses the server ETag and same workspace validation used by normal writes. If a step fails, the command reports which earlier step completed. Check the server audit and evidence report before retrying.
 
 ## Verification limits
 

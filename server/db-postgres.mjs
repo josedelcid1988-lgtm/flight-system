@@ -51,7 +51,12 @@ export async function openPostgres(connectionString, options = {}) {
   const pool = new Pool({ connectionString, max: Number(options.maxConnections) || 10, application_name: 'Flight System' });
   try {
     await pool.query(SCHEMA);
-    return makeStore(pool, pool.query.bind(pool), false, connectionString);
+    const store = makeStore(pool, pool.query.bind(pool), false, connectionString);
+    // Refuse to start on a tampered audit trail, as the SQLite store does: a server that kept running would append new
+    // entries to a chain that no longer verifies.
+    const chain = await store.verifyAudit();
+    if (!chain.ok) throw new Error(`Flight System audit chain is invalid at entry ${chain.failedAt}. The database was left unchanged.`);
+    return store;
   } catch (error) {
     await pool.end().catch(() => {});
     throw error;
@@ -108,6 +113,9 @@ function makeStore(pool, query, inTransaction, connectionString) {
       if (!inTransaction) return store.transaction(tx => tx.putDoc(tenant, value, expectedEtag, by));
       await query('SELECT pg_advisory_xact_lock(hashtext($1))', [tenant]);
       const cur = await store.getDoc(tenant);
+      // A null expected ETag means the document must not exist yet (first initialization). Checked under the lock, so
+      // two concurrent initializations cannot both succeed with the second replacing the first.
+      if (cur && expectedEtag === null) return null;
       if (cur && expectedEtag !== undefined && expectedEtag !== null && cur.etag !== expectedEtag) return null;
       const revision = (cur ? cur.revision : 0) + 1, etag = etagFor(value, revision);
       await query('INSERT INTO documents (tenant,json,etag,revision,updated_at,updated_by) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (tenant) DO UPDATE SET json=EXCLUDED.json,etag=EXCLUDED.etag,revision=EXCLUDED.revision,updated_at=EXCLUDED.updated_at,updated_by=EXCLUDED.updated_by', [tenant, value, etag, revision, now(), by || null]);
@@ -167,6 +175,7 @@ function makeStore(pool, query, inTransaction, connectionString) {
     async exportSetting(recordType) { return (await store.exportSettings()).find(r => r.recordType === recordType) || null; },
     async jiraIssueRequest(key) { return (await query('SELECT * FROM jira_issue_requests WHERE idempotency_key=$1',[key])).rows[0] || null; },
     async beginJiraIssueRequest(row) { const result=await query("INSERT INTO jira_issue_requests (idempotency_key,request_sha256,record_type,record_id,project_key,status,created_at,updated_at,created_by) VALUES ($1,$2,$3,$4,$5,'pending',$6,$6,$7) ON CONFLICT (idempotency_key) DO NOTHING RETURNING idempotency_key",[row.idempotencyKey,row.requestSha256,row.recordType,row.recordId,row.projectKey,now(),row.createdBy]); return { request:await store.jiraIssueRequest(row.idempotencyKey), inserted:Number(result.rowCount)===1 }; },
+    async releaseJiraIssueRequest(key) { return Number((await query("DELETE FROM jira_issue_requests WHERE idempotency_key=$1 AND status='pending'",[key])).rowCount) === 1; },
     async completeJiraIssueRequest(key, issue) { const result=await query("UPDATE jira_issue_requests SET status='created',issue_key=$1,issue_url=$2,updated_at=$3 WHERE idempotency_key=$4 AND status='pending'",[issue.key,issue.url,now(),key]); return Number(result.rowCount)===1 ? store.jiraIssueRequest(key) : null; },
     async putExportSetting(value) { await query('INSERT INTO record_export_settings (record_type,enabled,destination_kind,destination,token_setting,naming_pattern,updated_at,updated_by,rationale) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (record_type) DO UPDATE SET enabled=EXCLUDED.enabled,destination_kind=EXCLUDED.destination_kind,destination=EXCLUDED.destination,token_setting=EXCLUDED.token_setting,naming_pattern=EXCLUDED.naming_pattern,updated_at=EXCLUDED.updated_at,updated_by=EXCLUDED.updated_by,rationale=EXCLUDED.rationale', [value.recordType,value.enabled,value.destinationKind,value.destination,value.tokenSetting||null,value.namingPattern,now(),value.updatedBy,value.rationale]); return store.exportSetting(value.recordType); },
     async queueExportJob(value) { const at = now(); const result = await query("INSERT INTO record_export_jobs (id,record_type,record_id,export_id,sha256,payload,status,attempts,destination_kind,destination,token_setting,naming_pattern,created_at,created_by,updated_at,last_error) VALUES ($1,$2,$3,$4,$5,$6,'pending',0,$7,$8,$9,$10,$11,$12,$13,NULL) ON CONFLICT (record_type,record_id,sha256) DO NOTHING RETURNING id", [value.id,value.recordType,value.recordId,value.exportId,value.sha256,value.payload,value.destinationKind,value.destination,value.tokenSetting||null,value.namingPattern,at,value.createdBy,at]); return result.rows[0] ? store.exportJob(value.id) : null; },

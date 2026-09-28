@@ -106,6 +106,7 @@ try {
   // A queued job is re-checked at delivery: a destination and setting that are not bound are never contacted.
   server.store.queueExportJob({ id: 'JOB-5EC0000000000000000000AA', recordType: 'fair', recordId: 'FAIR-LEAK', exportId: 'EXT-LEAK', sha256: 'b'.repeat(64), payload: '{}', destinationKind: 'https', destination: 'https://attacker.example/collect', tokenSetting: 'FLIGHT_EXPORT_LEAK_CHECK', namingPattern: '{recordType}-{recordId}-{exportId}.json', createdBy: 'export-admin' });
   assert.equal((await api('POST', `/record-exports/jobs/${failedFair.id}/retry`)).status, 202);
+  assert.ok(server.store.exportLog(failedFair.id, 20).some(row => row.status === 'queued' && /Manual retry requested by export-admin/.test(row.detail || '')), 'a manual retry is recorded in that job\'s own delivery history');
   let leak = null;
   for (let n = 0; n < 100; n += 1) { leak = server.store.exportJob('JOB-5EC0000000000000000000AA'); if (leak.status === 'failed') break; await new Promise(resolve => setTimeout(resolve, 50)); }
   assert.equal(leak.status, 'failed');
@@ -113,6 +114,13 @@ try {
   assert.ok(leakLog.length >= 1, 'the refused delivery is logged');
   assert.ok(leakLog.every(row => /is not bound to this destination in FLIGHT_EXPORT_CREDENTIALS\. Nothing was sent\./.test(row.detail || '')), JSON.stringify(server.store.exportLog(leak.id, 10)));
   delete process.env.FLIGHT_EXPORT_LEAK_CHECK;
+  // One trigger drains every pending job, not only the first batch of 100.
+  const bulk = Array.from({ length: 150 }, (_, n) => `JOB-BULK${String(n).padStart(18, '0')}`);
+  for (const [n, id] of bulk.entries()) server.store.queueExportJob({ id, recordType: 'work-order', recordId: `WO-BULK-${n}`, exportId: `EXT-BULK-${n}`, sha256: String(n).padStart(64, '0'), payload: '{}', destinationKind: 'folder', destination: outDir, tokenSetting: null, namingPattern: '{recordType}-{recordId}-{exportId}.json', createdBy: 'export-admin' });
+  assert.equal((await api('POST', `/record-exports/jobs/${leak.id}/retry`)).status, 202);
+  let delivered = 0;
+  for (let n = 0; n < 200; n += 1) { delivered = bulk.filter(id => server.store.exportJob(id).status === 'delivered').length; if (delivered === bulk.length) break; await new Promise(resolve => setTimeout(resolve, 50)); }
+  assert.equal(delivered, bulk.length, 'all 150 queued exports are delivered from one trigger');
   // One job per finalized version: a record reopened and finalized again has new content and gets its own export.
   const version = (sha, id) => ({ id, recordType: 'fair', recordId: 'FAIR-REOPENED', exportId: `EXT-${id}`, sha256: sha, payload: '{}', destinationKind: 'folder', destination: outDir, tokenSetting: null, namingPattern: '{recordType}-{recordId}-{exportId}.json', createdBy: 'export-admin' });
   assert.ok(server.store.queueExportJob(version('c'.repeat(64), 'JOB-REOPEN0000000000000001')), 'the first final version is queued');

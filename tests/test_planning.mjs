@@ -148,6 +148,23 @@ if (calibratedTool) {
 }
 assert.equal(host.MES.validate(state), true, 'equipment maintenance, return-to-service verification and capacity state pass Flight validation');
 if (calibratedTool) {
+  // Maintenance separation is by person: on the server the stored profile is shared, so the signed-in account decides.
+  const opener = { username: 'maint-opener', displayName: 'Maintenance Opener', role: 'qm', roles: ['qm'] };
+  const second = { username: 'maint-verifier', displayName: 'Maintenance Verifier', role: 'qm', roles: ['qm'] };
+  const opened = host.withAccount(opener, () => host.MES.recordMaintenance(state, { assetTag: calibratedTool.tag, type: 'Calibration', description: 'Account separation check' }), state);
+  assert.equal(opened.ok, true, opened.message);
+  const openedRecord = state.resources.maintenance.find(item => item.id === opened.id);
+  assert.equal(openedRecord.openedBy.credentialId, 'ACCT-maint-opener', 'the opener is the signed-in account');
+  state.profile = { ...savedProfile, name: 'Other Credential', credentialId: 'OTHER-CRED' };
+  const self = host.withAccount(opener, () => host.MES.closeMaintenance(state, opened.id, 'Verified by the opener'), state);
+  assert.equal(self.ok, false, 'the same signed-in person cannot verify their own maintenance, whatever the stored profile says');
+  assert.match(self.message, /different person/);
+  const verified = host.withAccount(second, () => host.MES.closeMaintenance(state, opened.id, 'Verified by a second person'), state);
+  assert.equal(verified.ok, true, verified.message);
+  assert.equal(openedRecord.closedBy.credentialId, 'ACCT-maint-verifier', 'the verifier is the signed-in account');
+  state.profile = savedProfile;
+}
+if (calibratedTool) {
   // The server runs the engine with no page-level workspace, so ATP asset checks must use the workspace they are given.
   const atpAt = new Date().toISOString();
   assert.equal(host.MES.atpAssets([{ asset: calibratedTool.tag }], atpAt, state).ok, true, 'a calibrated test asset in service is accepted for an ATP buy-off on the server');
@@ -217,6 +234,17 @@ if (productionExternal) {
   assert.equal(op.externalReceipt.by.credentialId, 'ACCT-qe-inspector', 'the receipt is attributed to the signed-in inspector, not the stored profile');
   assert.equal(host.MES.validate(state), true, 'the account-attributed receipt passes Flight validation');
   state.profile = savedProfile;
+}
+{
+  // Stocking is the step after QA closure, so a closed order that is ready to stock stays live until it is stocked.
+  const closed = state.orders.filter(order => order.status === 'Closed');
+  const waiting = closed.find(order => !order.inventory && host.MES.inventoryReadiness(state, order).ready);
+  const stocked = closed.find(order => order.inventory);
+  assert.ok(waiting && stocked, 'the fixture has a stocked and an unstocked closed order');
+  assert.equal(host.MES.archivable(state).includes(waiting.id), false, 'a closed order waiting to be stocked is not archived');
+  assert.equal(host.MES.archivable(state).includes(stocked.id), true, 'a stocked closed order is archived');
+  const scrapped = structuredClone(waiting); scrapped.id = 'WO-99991'; scrapped.operations = scrapped.operations.map((op, n) => n ? { ...op, done: false } : op);
+  assert.equal(host.MES.archivable({ ...state, orders: [scrapped] }).includes('WO-99991'), true, 'a closure that can never be stocked is archived at once');
 }
 const buildingOrder = state.orders.find(order => order.status === 'Building' && order.operations.some(item => !item.done));
 if (buildingOrder) {

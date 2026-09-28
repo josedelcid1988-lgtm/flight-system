@@ -216,6 +216,11 @@ try {
     assert.equal(tampered.ok, false);
     assert.equal(tampered.failures.length, 1);
   });
+  await check('a first initialization never replaces an existing workspace', async () => {
+    assert.ok(server.store.putDoc('init-check', '{"n":1}', null, 'first'));
+    assert.equal(server.store.putDoc('init-check', '{"n":2}', null, 'second'), null);
+    assert.equal(JSON.parse(server.store.getDoc('init-check').json).n, 1);
+  });
   await check('stale ETag writes are refused', async () => {
     const loaded = await api('GET', '/workspace', { token });
     const result = await api('PUT', '/workspace', { token, body: loaded.json, headers: { 'If-Match': '"stale"' } });

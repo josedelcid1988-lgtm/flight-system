@@ -85,6 +85,9 @@ try {
   assert.ok(archives.json.total > 0);
   const orderId = archives.json.orders[0].orderId;
   assert.equal((await call(`/archive/${orderId}`, { token })).json.readOnly, true);
+  const inits = await Promise.all([server.store.putDoc('race-tenant', '{"n":1}', null, 'a'), server.store.putDoc('race-tenant', '{"n":2}', null, 'b')]);
+  assert.equal(inits.filter(Boolean).length, 1, 'only one of two concurrent first initializations succeeds');
+  assert.equal(await server.store.putDoc('race-tenant', '{"n":3}', null, 'c'), null, 'a later initialization cannot replace an existing workspace');
   console.log('ok PostgreSQL workspace transaction, archive, and exact search');
 
   const printed = await call(`/archive/${orderId}/print`, { token });
@@ -153,7 +156,12 @@ try {
     assert.deepEqual(restoredProfile.grants, pgProfile.grants);
     assert.deepEqual(restoredProfile.grantHistory, pgProfile.grantHistory);
     assert.equal(restoredProfile.supportAccess, true);
-    console.log('ok PostgreSQL custom-format backup restores account authority profile');
+    // A tampered audit row stops the store from opening, as it does for SQLite. The restored copy is the one altered.
+    await restoredStore._query('ALTER TABLE audit DISABLE TRIGGER USER');
+    await restoredStore._query("UPDATE audit SET detail='{\"tampered\":true}' WHERE id=(SELECT MIN(id) FROM audit)");
+    await restoredStore.close(); restoredStore = null;
+    await assert.rejects(openPostgres(restoreUrl.href), /audit chain is invalid at entry/);
+    console.log('ok PostgreSQL custom-format backup restores account authority profile, and a tampered audit chain refuses startup');
   } finally {
     await restoredStore?.close();
     await adminPool.query(`DROP DATABASE IF EXISTS "${restoreDatabase}"`).catch(() => {});

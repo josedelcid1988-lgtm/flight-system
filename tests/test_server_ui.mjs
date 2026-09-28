@@ -319,6 +319,15 @@ try {
   }, evidenceCheck.id);
   assert.equal(fetchedEvidence.size, evidenceCheck.size, 'the browser can retrieve and verify the shared recording');
   assert.equal(fetchedEvidence.type, 'video/webm');
+  // Archived work orders stay traceable: the React trace view lists the server's archive matches.
+  const archivedRows = await server.store.archiveSearch('', 10);
+  assert.ok(archivedRows.length, 'the server has archived a closed work order by now');
+  const archivedId = archivedRows[0].orderId;
+  assert.equal(await page.evaluate(id => state.orders.some(order => order.id === id), archivedId), false, 'the archived order has left the live workspace');
+  await page.evaluate(id => { traceQuery = id; view = 'trace'; render(); }, archivedId);
+  const archiveSection = page.locator('.fr-trace-section').filter({ has: page.getByRole('heading', { name: 'Archived work orders' }) });
+  await archiveSection.waitFor({ timeout: 10000 });
+  assert.match(await archiveSection.innerText(), new RegExp(archivedId), 'the archived work order is found by trace search');
   assert.deepEqual(errors, []);
   console.log('server UI: account session, shared workspace, authorized changes, refused-edit recovery, account profiles and controlled evidence passed');
 } finally {

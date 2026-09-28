@@ -1,4 +1,4 @@
-<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v82"><meta name="fs-build-sha256" content="0d5d025d14b15078f76f7e90ceeb5edeb3bc77d2818c6c330c5dd9fe2f6feb10"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><!-- FLIGHT REACT ASSETS BEGIN -->
+<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v82"><meta name="fs-build-sha256" content="d5443641f92719f0cbecccc380dc557af76bc93d8192103adfd5ff1e4bc85867"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><!-- FLIGHT REACT ASSETS BEGIN -->
 <link rel="stylesheet" href="../../assets/flight-ui-fonts.css">
 <link rel="stylesheet" href="../../assets/flight-ui.css">
 <link rel="stylesheet" href="../../assets/flight-plan-react.css">
@@ -7201,7 +7201,9 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   }
   function archivable(state) {
     const orders = Array.isArray(state?.orders) ? state.orders : [];
-    return orders.filter(order => order && order.status === 'Closed').map(order => order.id);
+    // A closed order that is ready to stock stays live until it is moved to inventory: stocking is the step after QA
+    // closure and needs the order in the workspace. Stocked orders and closures that can never be stocked archive now.
+    return orders.filter(order => order && order.status === 'Closed' && (order.inventory || !inventoryReadiness(state, order).ready)).map(order => order.id);
   }
   function archivedOrderValid(entry) {
     const order = entry && entry.order;
@@ -7460,7 +7462,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (resources.maintenance.some(item => item.assetTag === assetTag && item.status === 'Open')) return fail(`${assetTag} already has an open maintenance record.`);
     if (resources.maintenance.length >= 10000) return fail('The maintenance register has reached its record limit.');
     const n = Math.max(0, ...resources.maintenance.map(item => Number(String(item.id).match(/(\d+)$/)?.[1]) || 0)) + 1;
-    const record = { id: `MNT-${String(n).padStart(5, '0')}`, assetTag, type, description, status: 'Open', openedBy: { name: state.profile.name, role: state.profile.role, credentialId: state.profile.credentialId }, openedAt: new Date().toISOString(), closedBy: null, closedAt: null, result: '' };
+    const record = { id: `MNT-${String(n).padStart(5, '0')}`, assetTag, type, description, status: 'Open', openedBy: actor(state), openedAt: new Date().toISOString(), closedBy: null, closedAt: null, result: '' };
     resources.maintenance.push(record);
     return { ok: true, id: record.id, message: `${assetTag} is out of service under ${record.id}.`, record };
   }
@@ -7468,10 +7470,12 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const deniedAction = denied('operate', 'close equipment maintenance'); if (deniedAction) return deniedAction;
     const item = ensureResources(state).maintenance.find(row => row.id === id);
     if (!item || item.status !== 'Open') return fail('Open maintenance record not found.');
-    if (item.openedBy.credentialId === state.profile.credentialId) return fail('A different credential must verify and close this maintenance record.');
+    // Person-level separation: the signed-in account (one credential per person) when there is one, the profile otherwise.
+    const verifier = actor(state);
+    if (item.openedBy.credentialId === verifier.credentialId) return fail('A different person must verify and close this maintenance record.');
     const note = String(result || '').trim();
     if (note.length < 3 || note.length > 300) return fail('Enter a maintenance result of 3 to 300 characters.');
-    item.status = 'Closed'; item.closedBy = { name: state.profile.name, role: state.profile.role, credentialId: state.profile.credentialId }; item.closedAt = new Date().toISOString(); item.result = note;
+    item.status = 'Closed'; item.closedBy = verifier; item.closedAt = new Date().toISOString(); item.result = note;
     return { ok: true, message: `${item.assetTag} returned to service.`, record: item };
   }
   function recordExternalReceipt(state, orderId, operationId, input) {

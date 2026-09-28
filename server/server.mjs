@@ -297,7 +297,10 @@ export function createServer(options = {}) {
   const drainExports = () => {
     if (exportDrain) return exportDrain;
     exportDrain = (async () => {
-      for (const queued of await store.pendingExportJobs(100)) {
+      // Keep taking batches until nothing new is pending: one commit can finalize more records than one batch holds.
+      const seen = new Set();
+      for (let batch = await store.pendingExportJobs(100); batch.some(job => !seen.has(job.id)); batch = await store.pendingExportJobs(100)) for (const queued of batch.filter(job => !seen.has(job.id))) {
+        seen.add(queued.id);
         let job = queued;
         while (job && job.attempts < 3 && job.status === 'pending') {
           try {
@@ -613,6 +616,14 @@ export function createServer(options = {}) {
           } catch {
             await store.audit(session.username, 'jira-issue-uncertain', { recordType, recordId, idempotencyKey });
             send(res, 502, { error: 'Jira did not confirm the result. Check Jira for the Flight record label before retrying; Flight will not send a second create request.', code: 'JIRA_RESULT_UNKNOWN' }); return;
+          }
+          // 400, 401, 403, 404 and 422 mean Jira refused the request and created nothing, so the record can be sent again
+          // once the configuration is fixed. Timeouts, 5xx and 429 stay uncertain: Jira may have created the issue.
+          if ([400, 401, 403, 404, 422].includes(remote.status)) {
+            let detail = ''; try { detail = String((await remote.text()) || '').slice(0, 300); } catch {}
+            await store.releaseJiraIssueRequest(idempotencyKey);
+            await store.audit(session.username, 'jira-issue-rejected', { recordType, recordId, idempotencyKey, responseStatus: remote.status });
+            send(res, 502, { error: `Jira refused the request (${remote.status}) and created no issue. Check the Jira project, issue type and connector account, then send it again.${detail ? ` Jira said: ${detail}` : ''}`, code: 'JIRA_REJECTED' }); return;
           }
           if (!remote.ok) {
             await store.audit(session.username, 'jira-issue-uncertain', { recordType, recordId, idempotencyKey, responseStatus: remote.status });
