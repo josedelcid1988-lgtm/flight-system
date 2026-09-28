@@ -172,7 +172,7 @@ export function openDb(path) {
     evidenceBytes(id) { const r = db.prepare('SELECT bytes FROM evidence WHERE id = ?').get(id); return r ? Buffer.from(r.bytes) : null; },
     evidenceList() { return db.prepare('SELECT id FROM evidence ORDER BY uploaded_at').all().map(r => this.evidenceMeta(r.id)); },
     putEvidence(e) { db.prepare('INSERT INTO evidence (id, sha256, size, mime, file_name, uploaded_by, uploaded_at, bytes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(e.id, e.sha256, e.size, e.mime, e.fileName || null, e.uploadedBy, now(), e.bytes); return this.evidenceMeta(e.id); },
-    supersedeEvidence(id, by, reason) { db.prepare('UPDATE evidence SET superseded_by = ?, superseded_at = ?, superseded_reason = ? WHERE id = ? AND superseded_by IS NULL').run(by, now(), reason, id); return this.evidenceMeta(id); },
+    supersedeEvidence(id, by, reason) { const r = db.prepare('UPDATE evidence SET superseded_by = ?, superseded_at = ?, superseded_reason = ? WHERE id = ? AND superseded_by IS NULL').run(by, now(), reason, id); return r.changes ? this.evidenceMeta(id) : null; },
     // Online backup of the whole file: record, accounts, audit and evidence together.
     backup(dest) { return sqliteBackup(db, dest); },
     // ---- append-only, hash-chained audit and skill runs ----

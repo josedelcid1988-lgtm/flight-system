@@ -16,7 +16,8 @@ const payload = {
     'skyryse-mes-work-order-v1': JSON.stringify(fixture),
     'skyryse-mes-auth-v1': JSON.stringify({ users: [
       { username: 'flight-admin', displayName: 'Flight Admin', role: 'admin', salt: 'legacy-salt', hash: 'a'.repeat(64) },
-      { username: 'combined-user', displayName: 'Combined user', roles: ['technician', 'operator'], salt: 'legacy-salt', hash: 'b'.repeat(64) }
+      { username: 'combined-user', displayName: 'Combined user', roles: ['technician', 'operator'], salt: 'legacy-salt', hash: 'b'.repeat(64) },
+      { username: 'extra-user', displayName: 'Extra user', role: 'technician', extraRoles: ['qe'], salt: 'legacy-salt', hash: 'c'.repeat(64) }
     ] })
   }
 };
@@ -27,7 +28,12 @@ assert.equal(migration.report.records.masterWorkInstructions, fixture.masterWIs.
 assert.equal(migration.report.manifests.legacyUnverifiable, signedCount);
 assert.equal(migration.report.accounts.multipleRoles[0], 'combined-user');
 assert.equal(JSON.stringify(migration.users.find(user => user.username === 'combined-user').roles), JSON.stringify(['technician']), 'a new account is created with its first role only');
-assert.equal(JSON.stringify(migration.roleFollowUps.map(item => item.roles)), JSON.stringify([['technician', 'operator']]), 'its other roles are added afterwards through the role-change route');
+assert.equal(JSON.stringify(migration.roleFollowUps.map(item => item.roles)), JSON.stringify([['technician', 'operator'], ['technician', 'qe']]), 'its other roles, including browser extraRoles, are added afterwards through the role-change route');
+assert.ok(migration.report.accounts.multipleRoles.includes('extra-user'), 'an account with extraRoles is reported as multi-role');
+assert.ok(migration.report.accounts.needsTraining.includes('flight-admin'), 'an untrained Master Access account is named before anything is written');
+const upgradedManeuver = host.MES.upgrade(structuredClone(fixture)).maneuver;
+assert.equal(JSON.stringify(migration.report.records.maneuverRecords), JSON.stringify({ ncs: upgradedManeuver.ncs.length, mrb: upgradedManeuver.mrb.length, cars: upgradedManeuver.cars.length, sprs: upgradedManeuver.sprs.length, pfmeas: upgradedManeuver.pfmeas.length, scars: upgradedManeuver.cars.filter(car => car.scar).length }), 'Flight Maneuver records are counted from the current collections');
+assert.ok(migration.report.records.maneuverRecords.ncs > 0 && migration.report.records.maneuverRecords.pfmeas > 0, 'the fixture NCs and PFMEAs are counted');
 assert.ok(migration.report.accounts.needsTraining.includes('combined-user'), 'an added role needs a current training record');
 assert.match(migration.report.warnings.join(' '), /server preserves each assigned role/);
 assert.equal(host.MES.validate(migration.state), true);
@@ -55,13 +61,14 @@ assert.equal(incomplete.users.length, migration.users.length, 'media preflight r
   assert.equal(host.MES.validate(state), true, host.MES.diagnose(state)?.detail);
   const sha = (salt, password) => createHash('sha256').update(`${salt}:${password}`).digest('hex');
   const source = { storage: { 'skyryse-mes-work-order-v1': JSON.stringify(state), 'skyryse-mes-auth-v1': JSON.stringify({ users: [
+    { username: 'migration-admin', displayName: 'Migration Admin', role: 'admin', salt: 'ma', hash: sha('ma', 'migration-admin-1') },
     { username: 'migrated-inspector', displayName: 'Migrated Inspector', role: 'qe', salt: 'mi-salt', hash: sha('mi-salt', 'inspector-pass-123') },
     { username: 'migrated-combined', displayName: 'Migrated Combined', roles: ['technician', 'qe'], extraRoles: ['qe'], roleTraining: { qe: { code } }, grants: { conformity: { at: '2026-01-01T00:00:00Z', by: 'someone' } }, supportAccess: true, salt: 'mc-salt', hash: sha('mc-salt', 'combined-pass-123') }
   ] }) }, media: { [evidenceId]: { base64: bytes.toString('base64'), mimeType: 'video/webm', fileName: 'removed-take.webm' } } };
   const planned = inspectMigration(source, host);
   assert.equal(planned.report.records.evidenceRecords >= 1, true);
   assert.equal(planned.report.evidence.missingMedia.length, 0, 'the dry run counts the quarantined recording and finds its bytes');
-  assert.equal(planned.report.accounts.needsTraining.length, 0, 'the inspector cites a current training record');
+  assert.equal(JSON.stringify(planned.report.accounts.needsTraining), JSON.stringify(['migration-admin']), 'the inspector cites a current training record; the migrating Master Access account already exists on the target');
   const combinedImport = planned.users.find(user => user.username === 'migrated-combined');
   assert.equal(JSON.stringify([combinedImport.roles, combinedImport.extraRoles, combinedImport.grants, combinedImport.supportAccess]), JSON.stringify([['technician'], undefined, undefined, undefined]), 'no authority arrives with the new account');
   assert.equal(JSON.stringify(planned.report.accounts.manualAfterMigration), JSON.stringify(['migrated-combined: grant conformity again', 'migrated-combined: grant Support Access again']), 'grants and Support Access are listed for a manager to grant again');
@@ -69,7 +76,6 @@ assert.equal(incomplete.users.length, migration.users.length, 'media preflight r
   assert.ok(withoutBytes.report.evidence.missingMedia.some(item => item.id === evidenceId), 'a quarantined recording without bytes is reported missing');
   const untrained = inspectMigration({ storage: { ...source.storage, 'skyryse-mes-auth-v1': JSON.stringify({ users: [{ username: 'untrained-qe', displayName: 'Untrained', role: 'qe', salt: 's', hash: sha('s', 'untrained-pass-1') }] }) }, media: source.media }, host);
   assert.equal(JSON.stringify(untrained.report.accounts.needsTraining), JSON.stringify(['untrained-qe']), 'the dry run names accounts the server would refuse');
-  await assert.rejects(() => applyMigration(untrained, {}), /untrained-qe/);
 
   const server = createServer({ dbPath: ':memory:', host: '127.0.0.1', quiet: true, setupCode: 'migration-setup-code' });
   try {
@@ -77,7 +83,14 @@ assert.equal(incomplete.users.length, migration.users.length, 'media preflight r
     const base = `http://127.0.0.1:${port}/api`;
     const bootstrap = await fetch(`${base}/auth/accounts`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ setupCode: 'migration-setup-code', users: [{ username: 'migration-admin', displayName: 'Migration Admin', role: 'admin', salt: 'ma', hash: sha('ma', 'migration-admin-1') }] }) });
     assert.equal(bootstrap.status, 200);
-    const result = await applyMigration(planned, { FLIGHT_MIGRATION_URL: base, FLIGHT_MIGRATION_USERNAME: 'migration-admin', FLIGHT_MIGRATION_PASSWORD: 'migration-admin-1' });
+    const env = { FLIGHT_MIGRATION_URL: base, FLIGHT_MIGRATION_USERNAME: 'migration-admin', FLIGHT_MIGRATION_PASSWORD: 'migration-admin-1' };
+    const untrainedAdmin = inspectMigration({ storage: { ...source.storage, 'skyryse-mes-auth-v1': JSON.stringify({ users: [{ username: 'second-admin', displayName: 'Second Admin', role: 'admin', salt: 's', hash: sha('s', 'second-admin-1') }] }) }, media: source.media }, host);
+    for (const refused of [untrained, untrainedAdmin]) {
+      await assert.rejects(() => applyMigration(refused, env), new RegExp(`${refused.report.accounts.needsTraining[0]}.*Nothing was changed`));
+    }
+    assert.equal((await fetch(`${base}/workspace`, { headers: { Authorization: `Bearer ${(await (await fetch(`${base}/auth/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'migration-admin', password: 'migration-admin-1' }) })).json()).token}` } })).status, 404, 'a refused migration leaves the server without a workspace');
+    assert.equal(await server.store.evidenceMeta(evidenceId), null, 'and uploads no recordings');
+    const result = await applyMigration(planned, env);
     assert.equal(result.status, 'applied');
     assert.ok(await server.store.evidenceMeta(evidenceId), 'the quarantined recording bytes are on the server');
     assert.equal(server.host.rolesOf(await server.store.account('migrated-inspector'))[0], 'qe', 'the trained inspector account is created with its role');

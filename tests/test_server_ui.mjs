@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright';
@@ -328,6 +329,16 @@ try {
   const archiveSection = page.locator('.fr-trace-section').filter({ has: page.getByRole('heading', { name: 'Archived work orders' }) });
   await archiveSection.waitFor({ timeout: 10000 });
   assert.match(await archiveSection.innerText(), new RegExp(archivedId), 'the archived work order is found by trace search');
+  // The archived record opens from the app: the export downloads the signed extract, the print opens the stamped record.
+  const [download] = await Promise.all([page.waitForEvent('download'), archiveSection.getByRole('button', { name: `Export archived ${archivedId}` }).click()]);
+  const exportedArchive = JSON.parse(fs.readFileSync(await download.path(), 'utf8'));
+  assert.equal(JSON.stringify([exportedArchive.kind, exportedArchive.order.id]), JSON.stringify(['archived-work-order', archivedId]), 'Export downloads the archived record');
+  assert.match(exportedArchive.exportId, /^EXT-[A-F0-9]{32}$/);
+  const [printed] = await Promise.all([page.context().waitForEvent('page'), archiveSection.getByRole('button', { name: `Print archived ${archivedId}` }).click()]);
+  await printed.waitForLoadState();
+  assert.match(await printed.content(), /flight-extract-stamp/, 'Print opens the stamped archived record');
+  await printed.close();
+  assert.equal(JSON.stringify((await server.store.extractHistory('work-order', archivedId)).map(row => row.kind).sort()), JSON.stringify(['json-download', 'print']), 'both extracts are recorded against the archived order');
   assert.deepEqual(errors, []);
   console.log('server UI: account session, shared workspace, authorized changes, refused-edit recovery, account profiles and controlled evidence passed');
 } finally {

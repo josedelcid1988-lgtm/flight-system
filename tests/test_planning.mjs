@@ -236,6 +236,22 @@ if (productionExternal) {
   state.profile = savedProfile;
 }
 {
+  // On the shared server the stored profile can name whoever last selected it; planning records name the signed-in person.
+  const savedProfile = state.profile;
+  state.profile = { ...savedProfile, name: 'Earlier Manager', role: 'QA Manager', credentialId: 'STORED-EARLIER' };
+  const second = { username: 'second-planner', displayName: 'Second Planner', role: 'qm', roles: ['qm'] };
+  const as = fn => host.withAccount(second, fn, state);
+  const plan = as(() => host.MES.createProject(state, { name: 'Attribution check', lifecycle: 'Development', sensitivity: 'Low', startDate: date, dueDate: '2026-11-30', partNumbers: [] }));
+  assert.equal(plan.ok, true, plan.message);
+  const goal = as(() => host.MES.addProjectObjective(state, { title: 'Attribution objective', dueDate: '2026-11-30' }));
+  const mark = as(() => host.MES.addProjectMilestone(state, { title: 'Attribution milestone', projectId: plan.id, objectiveId: goal.id, dueDate: '2026-11-15' }));
+  const find = (list, id) => (Array.isArray(list) ? list : []).find(item => item.id === id);
+  const projects = host.MES.ensureProjects(state);
+  const credentials = [find(projects.projects, plan.id).by, find(projects.objectives, goal.id).by, find(projects.milestones, mark.id).by].map(by => by && by.credentialId);
+  assert.equal(JSON.stringify(credentials), JSON.stringify(Array(3).fill('ACCT-second-planner')), 'project, objective and milestone name the signed-in account, not the stored profile');
+  state.profile = savedProfile;
+}
+{
   // Stocking is the step after QA closure, so a closed order that is ready to stock stays live until it is stocked.
   const closed = state.orders.filter(order => order.status === 'Closed');
   const waiting = closed.find(order => !order.inventory && host.MES.inventoryReadiness(state, order).ready);
