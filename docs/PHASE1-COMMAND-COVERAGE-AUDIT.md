@@ -35,16 +35,18 @@ Class: (a) routed through a role-checked server action, (b) legacy snapshot path
 | 13 | index.html:8756 | `FlightManeuver.seedDemoRecords` mutates state but has no call sites in `index.html` | (c) | Not a gap in production. Dead code in this tree; leave it out of the action surface. |
 | 14 | index.html:13241 | `sk-mirror` `commit(ws)` POSTs workspace-derived record entities to `<mirror>/api/v1/writes` | (c) | Not a gap for the primary server. Separate opt-in mirror target, not the shared workspace. |
 | 15 | tools/demo/overlay.js:15-16 | Demo build seeds `localStorage` with the sample workspace | (c) | Not a gap. Demo-only file, not part of the production build. |
+| 16 | src/react/flight-ui.jsx:250-275 | React Flight Plan mutates live state and relies on null `onMutation` (`index.html:11051`), so changes are never persisted in standalone mode and only flush on an unrelated `save()` in server mode | (c) | Minor gap. Unmatched by the command boundary; the React bundle does not call the wrapped engine for these mutations. Corrects the earlier line-39 clearance of this file. |
+| 17 | index.html:12038-12044 | `mediaCommit` writes `localStorage` before validation and bypasses `save()`'s validate-and-rollback | (c) | GAP, significant. Invalid state can be persisted without rollback. Violates AGENTS.md L63-65 (validate-before-persist). |
 
-Checked and cleared (not write paths): `assets/flight-ui.js` uses `localStorage` only for UI preferences (filters, compact view). `assets/floor-picker.js`, `planner/big3.mjs` and `src/react/flight-ui.jsx` contain no workspace write paths; the React bundle calls the already-wrapped engine through props. `index.html:13586` re-wraps `MES.markNetSuitePosted`, but it delegates to the queue-wrapped base function, so command routing is preserved. No direct field edits (`state.X = ...`) were found in app scripts, so engine-function coverage is the complete mutation surface.
+Checked and cleared (not write paths): `assets/flight-ui.js` uses `localStorage` only for UI preferences (filters, compact view). `assets/floor-picker.js` and `planner/big3.mjs` contain no workspace write paths. CORRECTION: `src/react/flight-ui.jsx:250-275` does mutate live state (see row 16 above); the React bundle calls the already-wrapped engine through props for everything else. `index.html:13586` re-wraps `MES.markNetSuitePosted`, but it delegates to the queue-wrapped base function, so command routing is preserved. No direct field edits (`state.X = ...`) were found in app scripts, so engine-function coverage is the complete mutation surface.
 
 ## Summary counts
 
-- Total write paths inventoried: 15
+- Total write paths inventoried: 17
 - (a) role-checked server action: 2
 - (b) legacy snapshot path: 2
-- (c) unmatched/other: 11
-- Gaps needing implementation: 5 (1 primary, 4 minor)
+- (c) unmatched/other: 13
+- Gaps needing implementation: 7 (1 primary, 5 minor, 1 significant)
 
 ## Fixes for Claudia (owner: Claudia, due: 2026-09-29 per the handoff blocker)
 
