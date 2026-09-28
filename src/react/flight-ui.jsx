@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
-import { ArrowUpRight, Ban, Box, Boxes, CalendarClock, Check, ChevronRight, CircleAlert, Clock, Download, ExternalLink, FileText, Info, Layers, Link, List, Lock, Plus, Search, Shield, SlidersHorizontal, TriangleAlert, Upload, User, Video, Wrench, X, Zap } from 'lucide-react';
+import { ArrowRight, ArrowUpRight, Ban, Box, Boxes, CalendarClock, Check, ChevronRight, CircleAlert, Clock, Download, ExternalLink, FileText, Info, Layers, Link, List, Lock, Plus, Search, Shield, SlidersHorizontal, TriangleAlert, Upload, User, Video, Wrench, X, Zap } from 'lucide-react';
 
 const densityKey = 'flight-system-density-v1';
 const queueKey = 'flight-system-queue-v1';
@@ -689,7 +689,8 @@ function ActivityLog({ events, onOpenOrder }) {
  * so server authority and approval gates are unchanged.
  * ------------------------------------------------------------------ */
 const pillClass = status => String(status || '').toLowerCase().replace(/\s/g, '-');
-const Pill = ({ status, className }) => <span className={`pill ${pillClass(status)}${className ? ` ${className}` : ''}`}>{asText(status)}</span>;
+// Callers pass the label either as `status` or as children (<Pill>{m.status}</Pill>).
+const Pill = ({ status, children, className }) => { const label = status ?? children; return <span className={`pill ${pillClass(label)}${className ? ` ${className}` : ''}`}>{asText(label)}</span>; };
 const legacyDateTime = value => {
   if (!value) return '';
   const d = new Date(value);
@@ -2174,13 +2175,13 @@ window.FlightReact = {
     }
     flushSync(() => root.render(<PlanHome state={state} MES={MES} FlightPlan={FlightPlan} skCan={skCan}/>));
   },
-  renderQmsConfig(element, state, MES) {
+  renderQmsConfig(element, state, MES, skCan) {
     if (!root || rootElement !== element) {
       if (root) root.unmount();
       root = createRoot(element);
       rootElement = element;
     }
-    flushSync(() => root.render(<QmsConfig state={state} MES={MES}/>));
+    flushSync(() => root.render(<QmsConfig state={state} MES={MES} skCan={skCan}/>));
   },
   renderQmsRecords(element, state, MES) {
     if (!root || rootElement !== element) {
@@ -2190,7 +2191,9 @@ window.FlightReact = {
     }
     flushSync(() => root.render(<QmsRecords state={state} MES={MES}/>));
   },
-  renderOrder(element, state, MES, order, tab, selectedOp, skCan) {
+  renderOrder(element, state, MES, order, tab, selectedOp, skCan, revision) {
+    // The page owns the selected work-order revision ([data-rev-select] updates it); mirror it before rendering.
+    if (revision) selectedRev = revision;
     if (!root || rootElement !== element) {
       if (root) root.unmount();
       root = createRoot(element);
