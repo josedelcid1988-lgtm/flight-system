@@ -3,7 +3,19 @@
 const crypto = require('node:crypto');
 
 function latestBy(items, timestamp) {
-  return [...items].sort((left, right) => Date.parse(timestamp(right) || 0) - Date.parse(timestamp(left) || 0))[0] || null;
+  return items.reduce((latest, item) => {
+    if (!latest) return item;
+    const timeDelta = Date.parse(timestamp(item) || 0) - Date.parse(timestamp(latest) || 0);
+    if (timeDelta !== 0) return timeDelta > 0 ? item : latest;
+    const itemId = Number(item.id);
+    const latestId = Number(latest.id);
+    if (Number.isFinite(itemId) && Number.isFinite(latestId) && itemId !== latestId) {
+      return itemId > latestId ? item : latest;
+    }
+    // GitHub returns reviews and comments in chronological API order; when
+    // second-resolution timestamps and IDs are unavailable, the last item wins.
+    return item;
+  }, null);
 }
 
 function jinxApproved(reviews, login, headSha) {
@@ -13,10 +25,13 @@ function jinxApproved(reviews, login, headSha) {
     review => review.submitted_at,
   );
   if (!latest || latest.state !== 'COMMENTED' || latest.commit_id !== headSha) return false;
-  return (latest.body || '').split(/\r?\n/).some(line => {
+  const verdicts = (latest.body || '').split(/\r?\n/).flatMap(line => {
     const normalized = line.replace(/[*_`]/g, '').trim();
-    return /^(?:Jinx verdict:\s*)?No blockers(?: remain| found)?\s*\.?$/i.test(normalized);
+    if (/^(?:Jinx verdict:\s*)?No blockers(?: remain| found)?\s*\.?$/i.test(normalized)) return ['approved'];
+    if (/^(?:Jinx verdict:\s*)?(?:changes needed|blocked)(?:\b|\s|:)/i.test(normalized)) return ['blocked'];
+    return [];
   });
+  return verdicts.length === 1 && verdicts[0] === 'approved';
 }
 
 function descriptionSha256(pull) {
@@ -43,9 +58,12 @@ function claudeApproved(comments, headSha, mainSha, descriptionSha) {
 function isImportantFinding(body) {
   const text = typeof body === 'string' ? body : body?.body || '';
   if (/\bP[01](?:\s+Badge)?\b/i.test(text.slice(0, 500))) return true;
+  if (/\[!IMPORTANT\]/i.test(text)) return true;
   return text.split(/\r?\n/).some(line => {
     const normalized = line
-      .replace(/^\s*(?:(?:>\s*)|(?:[-*+]\s+)|(?:\d+[.)]\s+))+/, '')
+      .replace(/^\s*(?:>\s*)+/, '')
+      .replace(/^\s*#{1,6}\s*/, '')
+      .replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+)/, '')
       .replace(/^[*_`]+/, '')
       .replace(/^\d+[.)]\s+/, '')
       .replace(/^[*_`]+/, '');
