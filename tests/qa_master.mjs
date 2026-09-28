@@ -24,9 +24,10 @@ try {
     const check = r => { assert(r.ok, r.message); return r; };
     const setRole = role => { const k='skyryse-mes-auth-v1', a=JSON.parse(localStorage.getItem(k));a.users.find(u=>u.username==='master-test').role=role;localStorage.setItem(k,JSON.stringify(a)); };
     const caps=['view','raise-nc','submit-ecr','operate','operate-steps','split','request-pedigree','approve-pedigree','edit-wi','peer-review-wi','create-wo','adjust-wo','dispo-nc','push-software','assign-work','accept-software','safety-buyoff','inspect-steps','mrb-quality','mrb-me','mrb-eng','mrb-cert','approve-wo','approve-wi','approve-nc','post-notice','manage-access'];
-    // Inspection and MRB seats follow role capabilities. Only conformity and AQI are named grants.
+    // Inspection requires an assigned current Quality stamp; MRB seats follow role capabilities. Only conformity and AQI are named grants.
     const granted=skAuth.GRANTED;
-    for (const cap of caps.filter(c=>!granted.includes(c))) assert(skAuth.can(cap), 'Missing Master capability: '+cap);
+    for (const cap of caps.filter(c=>!granted.includes(c)&&c!=='inspect-steps')) assert(skAuth.can(cap), 'Missing Master capability: '+cap);
+    assert(!skAuth.can('inspect-steps'), 'Master Access needs an assigned Quality stamp for inspection');
     for (const cap of granted) assert(!skAuth.can(cap), 'Master Access holds '+cap+' without a grant');
     { const k='skyryse-mes-auth-v1',a=JSON.parse(localStorage.getItem(k)),salt='00112233445566778899aabbccddeeff';
       const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(salt+':test-qm2')))].map(x=>x.toString(16).padStart(2,'0')).join('');
@@ -34,9 +35,11 @@ try {
       sessionStorage.setItem('skyryse-mes-session-v1','test-qm2');
       const r=MES.recordTraining(state,{account:'master-test',code:'ESD',expires:'2031-12-31',note:'test setup'}); assert(r.ok,r.message);
       for (const cap of granted) { const grant=skAuth.setGrant('master-test',cap,true,'Test setup grant.','ESD'); assert(grant.ok,grant.message); }
+      const stamp=MES.issueStamp(state,{name:'Master Test',buyoffType:'Quality',account:'master-test',expires:'2031-12-31'});assert(stamp.ok,stamp.message);
       const latest=JSON.parse(localStorage.getItem(k));latest.users=latest.users.filter(user=>user.username!=='test-qm2');localStorage.setItem(k,JSON.stringify(latest));
       assert(save(),'training and QA Manager grant records saved');sessionStorage.setItem('skyryse-mes-session-v1','master-test'); }
-    for (const cap of caps) assert(skAuth.can(cap), 'Missing Master capability after grants: '+cap);
+    for (const cap of caps.filter(c=>c!=='inspect-steps')) assert(skAuth.can(cap), 'Missing Master capability after grants: '+cap);
+    assert(skAuth.can('inspect-steps'), 'Master Access inspection activates only after an assigned Quality stamp is recorded');
     assert(FlightManeuver.seatsForRole('admin').length===4,'Master Access holds all four role-based MRB seats');
     const base=structuredClone(fixture);
     // Exercise the production engine with a saved sample, not the demo engine.
@@ -141,6 +144,7 @@ try {
   await role.selectOption('admin');
   assert.equal(await page.evaluate(()=>skAuth.role()),'general');
   await page.evaluate(()=>{const k='skyryse-mes-auth-v1',a=JSON.parse(localStorage.getItem(k));a.users[0].role='qm';localStorage.setItem(k,JSON.stringify(a));});
+  await page.evaluate(()=>{if(!MES.hasValidInspectionStamp(state,'master-test')){const stamp=MES.issueStamp(state,{name:'Master Test',buyoffType:'Quality',account:'master-test',expires:'2031-12-31'});if(!stamp.ok)throw Error(stamp.message);save();}if(!MES.hasValidInspectionStamp(state,'master-test'))throw Error('Master Test does not hold a current assigned Quality inspection stamp.');});
   await role.selectOption('admin');
   await page.locator('#profile-form button[type=submit]').click();
   assert.equal(await page.locator('#operation-form input[name=stampNumber]').count(),0);

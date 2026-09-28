@@ -47,8 +47,10 @@ below exist for AS9100 and 14 CFR reasons; do not "simplify" them away.
    requester of a closure cannot approve it, one person holds one MRB seat, and
    nobody inspects their own work (Development NFF orders excepted, and recorded).
    The person who completes an 8130-9 may give the AQI signature only after an
-   acknowledged warning, recorded on the signature. Ordinary inspection is
-   role-gated. MRB seats follow role capability, with optional current-training
+   acknowledged warning, recorded on the signature. Ordinary inspection
+   requires the Quality role and a valid, active Quality inspection stamp
+   assigned to the signed-in account; the server enforces the stamp gate. MRB
+   seats follow role capability, with optional current-training
    disposition tiers off by default. Conformity work and the AQI signature are
    granted to named people by a QA Manager against current training, never to
    themselves. The demo

@@ -13,7 +13,8 @@ Access, and it lifts two gates for one action with a logged reason (see `docs/HA
 
 **Named grants.** `conformity`, `aqi-sign` are never part of a role. A QA Manager
 grants them to another eligible person with a reason and current training. A grant pauses while its
-training is not current. Inspection and MRB seats are role capabilities; optional training tiers for MRB
+training is not current. Inspection requires the role plus a valid active Quality stamp assigned to the
+account; the server enforces this gate. MRB seats are role capabilities; optional training tiers for MRB
 dispositions start Off.
 
 ## Roles
@@ -42,7 +43,7 @@ dispositions start Off.
 | `aqi-sign` (sign the 8130-9 as the authorized quality inspector (AQI)) | eligible |  |  |  |  |  |  | eligible |  |  | eligible | eligible |
 | `operate` (work the floor (kit, inventory, serials, AOG, schedule, stages)) | yes |  |  | yes | yes | yes |  |  |  |  |  | yes |
 | `operate-steps` (run and buy off operations) | yes |  | yes | yes | yes | yes |  |  |  |  |  | yes |
-| `inspect-steps` (check off and buy off inspection operations) | yes |  |  |  |  |  |  | yes |  |  | yes | yes |
+| `inspect-steps` (check off and buy off inspection operations with a current assigned Quality stamp) | yes |  |  |  |  |  |  | yes |  |  | yes | yes |
 | `safety-buyoff` (give the Safety Team PFMEA buy-off) | yes |  |  |  |  |  |  |  | yes |  |  | yes |
 | `mrb-quality` (hold the Quality seat on an MRB) | yes |  |  |  |  |  |  | yes |  |  | yes | yes |
 | `mrb-me` (hold the Manufacturing Engineering seat on an MRB) | yes |  |  |  |  | yes |  |  |  |  |  | yes |

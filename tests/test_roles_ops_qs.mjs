@@ -18,8 +18,15 @@ check('Quality Supervisor can manage standard accounts, notices, organization se
 check('Quality Supervisor cannot administer QMS configuration or take Manufacturing Engineering or Engineering seats', forbid('qs', ['configure-qms', 'mrb-me', 'mrb-eng', 'edit-wi']));
 const account = { username: 'quality-supervisor', displayName: 'Quality Supervisor', role: 'qs', roles: ['qs'] };
 check('server actor resolution retains the Quality Supervisor account role', host.roleOf(account) === 'qs');
-const actorCaps = host.withAccount(account, () => ['inspect-steps', 'mrb-quality', 'conformity', 'aqi-sign'].filter(cap => host.capsOf(account).includes(cap)));
-check('server capability evaluation follows the role for inspection and MRB while keeping named grants separate', JSON.stringify(actorCaps) === JSON.stringify(['inspect-steps', 'mrb-quality']));
+const workspace = host.MES.seed();
+const noStampCaps = host.withAccount(account, () => host.capsOf(account, workspace));
+check('server withholds inspection authority from a Quality role without an assigned stamp', !noStampCaps.includes('inspect-steps') && noStampCaps.includes('mrb-quality'));
+const manager = { username: 'qa-manager', displayName: 'QA Manager', role: 'qm', roles: ['qm'] };
+const issued = host.withAccount(manager, () => host.MES.issueStamp(workspace, { name: account.displayName, buyoffType: 'Quality', account: account.username, expires: '2099-12-31' }), workspace);
+const actorCaps = host.withAccount(account, () => ['inspect-steps', 'mrb-quality', 'conformity', 'aqi-sign'].filter(cap => host.capsOf(account, workspace).includes(cap)));
+check('server activates inspection with a current Quality stamp and keeps named grants separate', issued.ok && JSON.stringify(actorCaps) === JSON.stringify(['inspect-steps', 'mrb-quality']));
+workspace.stamps.find(stamp => stamp.account === account.username).expires = '2000-01-01';
+check('server refuses inspection when the assigned Quality stamp expires', !host.capsOf(account, workspace).includes('inspect-steps'));
 const app = readFileSync(fileURLToPath(new URL('../index.html', import.meta.url)), 'utf8');
 check('access administration flags critical capabilities held by fewer than two accounts', /Access coverage needs review/.test(app) && /holders<2/.test(app));
 console.log(`roles_ops_qs: ${checks} checks, all passed`);

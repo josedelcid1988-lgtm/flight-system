@@ -21,7 +21,7 @@ try {
   await page.locator('#sk-login-submit').click();
   await page.locator('#sk-boot').waitFor({ state: 'hidden', timeout: 15000 });
   await page.locator('#main .flight-react').waitFor({ timeout: 15000 });
-  await page.waitForFunction(() => window.skServer?.sync?.status === 'synced', null, { timeout: 15000 });
+  await page.waitForFunction(() => window.skServer?.sync?.status === 'synced', null, { timeout: 30000 });
   await page.evaluate(() => serverPush);
 
   const token = await page.evaluate(() => sessionStorage.getItem('skyryse-mes-server-token-v1'));

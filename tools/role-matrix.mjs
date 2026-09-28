@@ -51,7 +51,8 @@ Access, and it lifts two gates for one action with a logged reason (see \`docs/H
 
 **Named grants.** ${GRANTED.map(c => `\`${c}\``).join(', ')} are never part of a role. A QA Manager
 grants them to another eligible person with a reason and current training. A grant pauses while its
-training is not current. Inspection and MRB seats are role capabilities; optional training tiers for MRB
+training is not current. Inspection requires the role plus a valid active Quality stamp assigned to the
+account; the server enforces this gate. MRB seats are role capabilities; optional training tiers for MRB
 dispositions start Off.
 
 ## Roles

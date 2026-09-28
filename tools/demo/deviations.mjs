@@ -140,7 +140,7 @@ const LIST = [
     find: '  const wiPeerReviewRefusal = (state, wi) => wiAuthors(wi).has(actor(state).credentialId) ?', count: 1,
     replace: (ctx, m, id) => `  const wiPeerReviewRefusal = (state, wi) => false /* DEMO ${id} */ && wiAuthors(wi).has(actor(state).credentialId) ?` },
   { area: 'Roles', title: 'Authorities follow the role without a QA Manager grant',
-    why: 'Conformity work and AQI signatures work for eligible demo accounts without a named grant or current training record, so scenarios run without setup. Production requires a named grant and a current training record. Inspection and MRB seats follow the same role capabilities in demo and production.',
+    why: 'Conformity work and AQI signatures work for eligible demo accounts without a named grant or current training record, so scenarios run without setup. Production requires a named grant and a current training record. Inspection requires an assigned active Quality stamp in production, while MRB seats follow role capabilities in both builds.',
     find: ' function grantActive(u,cap){', count: 1,
     replace: (ctx, m, id) => ` function grantActive(u,cap){return true;/* DEMO ${id} */` },
   { area: 'Separation of duties', title: 'The person who verified a FAIR may sign box 22',

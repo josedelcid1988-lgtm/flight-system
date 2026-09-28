@@ -73,6 +73,10 @@ const deniedConfig = host.withAccount({ username: 'worker', displayName: 'Worker
 assert.equal(deniedConfig.ok, false, 'ordinary users cannot change QMS registers');
 const inspector = { username: 'inspector', displayName: 'Independent Inspector', role: 'qe', grants: { 'inspect-steps': { trainingCode: 'ESD' } } };
 assert.equal(host.withAccount(qm, () => host.MES.recordTraining(dcmaState, { account: inspector.username, code: 'ESD', expires: '2031-12-31' }), dcmaState).ok, true, 'QA Manager records the inspector training');
+assert.equal(host.withAccount(inspector, () => host.capsOf(inspector, dcmaState).includes('inspect-steps'), dcmaState), false, 'inspection role remains inactive without an assigned stamp');
+const inspectionStamp = host.withAccount(qm, () => host.MES.issueStamp(dcmaState, { name: inspector.displayName, buyoffType: 'Quality', account: inspector.username, expires: '2031-12-31' }), dcmaState);
+assert.equal(inspectionStamp.ok, true, inspectionStamp.message);
+assert.equal(host.withAccount(inspector, () => host.capsOf(inspector, dcmaState).includes('inspect-steps'), dcmaState), true, 'QA Manager assigns the current Quality stamp required for inspection');
 const recorded = host.withAccount(inspector, () => host.MES.recordSourceInspection(dcmaState, dcmaOrder.id, dcma.id, {
   agency: 'DCMA', inspector: 'Inspector Two', reference: 'DCMA-124', notifiedDate: '2026-09-23', inspectedDate: '2026-09-26'
 }), dcmaState);

@@ -362,8 +362,15 @@ try {
     assert.equal(expanded.status, 200, JSON.stringify(expanded.json));
     assert.deepEqual(server.store.account('combined').extraRoles, ['qe']);
     assert.ok(server.host.capsOf(server.store.account('combined'), state).includes('approve-wo'));
-    assert.ok(server.host.capsOf(server.store.account('combined'), state).includes('inspect-steps'), 'Quality role carries inspection capability');
+    assert.ok(!server.host.capsOf(server.store.account('combined'), state).includes('inspect-steps'), 'Quality role without a stamp cannot inspect');
     assert.ok(server.host.capsOf(server.store.account('combined'), state).includes('mrb-quality'), 'Quality role carries its MRB seat');
+    const qualityStamp = server.host.withAccount(server.store.account('qa-manager'), () => server.host.MES.issueStamp(state, { name: 'Combined role account', buyoffType: 'Quality', account: 'combined', expires: '2099-12-31' }), state);
+    assert.equal(qualityStamp.ok, true, JSON.stringify(qualityStamp));
+    assert.ok(server.host.capsOf(server.store.account('combined'), state).includes('inspect-steps'), 'server activates inspection only after an assigned Quality stamp');
+    const assignedStamp = state.stamps.find(stamp => stamp.account === 'combined');
+    assignedStamp.status = 'Suspended';
+    assert.ok(!server.host.capsOf(server.store.account('combined'), state).includes('inspect-steps'), 'server refuses a suspended inspection stamp');
+    assignedStamp.status = 'Active';
     const individualInspection = await api('POST', '/auth/access', { token: qaToken, body: { action: 'grant', username: 'combined', cap: 'inspect-steps', reason: 'Current inspection qualification verified.', trainingCode: 'ESD' } });
     assert.equal(individualInspection.status, 400, 'inspection cannot be granted individually');
     const individualSeat = await api('POST', '/auth/access', { token: qaToken, body: { action: 'grant', username: 'combined', cap: 'mrb-quality', reason: 'Current Quality MRB seat qualification verified.', trainingCode: 'ESD' } });
