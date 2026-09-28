@@ -14,7 +14,7 @@
 
 ## Verification
 
-The September 27 local and mirror runs each passed 67 of 67 suites with zero skips against build stamp `bbbe48e3c92db2fbaa3626aa3a4515156aec21c77b2a446d814762c043cdf40c`. `qa_full` passed 310 checks. The mirror verified 17,546 records with an intact hash chain. Current build outputs, release ZIP contents, source archive CRC and machine-path scan passed. PostgreSQL was not provisioned locally.
+The September 27 local and mirror runs each passed 67 of 67 suites with zero skips against build stamp `1d6a5215e5aef4b7b990a94e87844477317aab2e0ee07f03880f3d5c26cf7bab`. `qa_full` passed 310 checks and `qa_multi` passed 161. The mirror verified 17,547 records with an intact hash chain. Current build outputs, release ZIP contents, source archive contents and machine-path scan passed. PostgreSQL was not provisioned locally.
 
 ## Open before production use
 

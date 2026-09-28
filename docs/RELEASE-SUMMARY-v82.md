@@ -25,9 +25,9 @@
 
 ## Verification
 
-- 67 of 67 suites passed in the latest local run (20:45:32 to 20:51:26 UTC) and mirror run (20:51:43 to 20:57:40 UTC) on September 27, 2026. Both had zero skips; `qa_full` passed 310 checks. The mirror stored 17,546 records with an intact chain. Both runs used index stamp `bbbe48e3c92db2fbaa3626aa3a4515156aec21c77b2a446d814762c043cdf40c`; exact suite output is in `tests/suite_results.json` and `tests/suite_results_mirror.json`. Browser tests verify the audited 8130-9 server action and the React Activity filters and drawer behavior.
+- 67 of 67 suites passed in the latest local run (18:03 to 18:09 PDT) and mirror run (18:09 to 18:16 PDT) on September 27, 2026. Both had zero skips; `qa_full` passed 310 checks and `qa_multi` passed 161. The mirror stored 17,547 records with an intact chain. Both runs used index stamp `1d6a5215e5aef4b7b990a94e87844477317aab2e0ee07f03880f3d5c26cf7bab`; exact suite output is in `tests/suite_results.json` and `tests/suite_results_mirror.json`. Browser tests verify the audited 8130-9 server action and the React Activity filters and drawer behavior.
 - Browser captures exercise Hangar drawers, open holds, search, density, Flight Plan Kanban and MRP forecast, all four dedicated Flight Maneuver queues, the Flight Control work-order queue at 1440px, 1920px with reduced motion, and tablet widths; Created and Due use Month Day, Year formatting, full work order navigation, and the protected helicopter progress visualization. Jira browser verification covers authenticated ECR issue requests and safe replay of a linked ticket.
-- Production, demo, and source ZIPs are rebuilt and checked against the tree for this integration-review package.
+- Production and demo ZIPs match the current tree. The 220-file source ZIP was byte-checked against its manifest. Rebuild all three after any later source change.
 - PostgreSQL integration is configured in CI but was not run against a locally provisioned PostgreSQL database.
 
 ## Known incomplete work
