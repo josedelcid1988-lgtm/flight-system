@@ -190,7 +190,19 @@ export function createServer(options = {}) {
 
   // The document as the engine sees it: upgraded, blockers synced, validated. Returns the state or a problem.
   const loadState = async () => { const row = await store.getDoc(TENANT); if (!row) return { state: null, etag: null }; const parsed = JSON.parse(row.json); const state = host.MES.upgrade(structuredClone(parsed)); return { state, etag: row.etag, raw: parsed, problem: state ? null : (host.MES.diagnose(parsed) || {}).detail || 'The document does not match the current record format.' }; };
-  const validState = state => { host.MES.syncBlockers?.(state); if (Array.isArray(state.orders) && state.orders.filter(order => order.status !== 'Closed').length > 1000) return 'The workspace exceeds the 1,000 open work order limit. Close or archive work before adding more orders.'; if (host.MES.validate(state)) return null; return (host.MES.diagnose(state) || {}).detail || 'The workspace is invalid.'; };
+  // Derived-state convergence: the browser engine recomputes these on boot, refresh and render
+  // without ever queuing them as commands (planning blockers, assignment auto-close, master WI /
+  // plan / maneuver defaults). The server runs them here, inside every commit path, before
+  // validation, so the shared record always leaves with the same derived state any device would
+  // compute, and a convergence defect fails the write instead of persisting.
+  const convergeDerivedState = state => {
+    host.MES.ensureMasterWIs?.(state);
+    host.FlightPlan.ensure?.(state);
+    host.FlightManeuver.ensure?.(state);
+    host.MES.syncAssignments?.(state);
+    host.MES.syncBlockers?.(state);
+  };
+  const validState = state => { convergeDerivedState(state); if (Array.isArray(state.orders) && state.orders.filter(order => order.status !== 'Closed').length > 1000) return 'The workspace exceeds the 1,000 open work order limit. Close or archive work before adding more orders.'; if (host.MES.validate(state)) return null; return (host.MES.diagnose(state) || {}).detail || 'The workspace is invalid.'; };
 
   // Evidence integrity on every write, beside the engine's validation. The engine refuses a buy-off
   // without a stored copy and hash and refuses edits to signed evidence (MES.evidenceChanges); the
@@ -670,9 +682,7 @@ export function createServer(options = {}) {
         { const stale = await dropArchived(doc); if (stale) { send(res, 409, { error: stale, code: 'ARCHIVED' }); return; } }
         const state = host.MES.upgrade(structuredClone(doc));
         if (!state) { send(res, 422, { error: (host.MES.diagnose(doc) || {}).detail || 'The document does not match the current record format.' }); return; }
-        host.MES.ensureMasterWIs?.(state);
-        host.FlightPlan.ensure?.(state);
-        host.MES.syncBlockers?.(state);
+        convergeDerivedState(state);
         const accountProfile = host.withAccount(session.account, () => host.MES.profileOptions(state)?.[0], state);
         if (accountProfile) state.profile = { name: accountProfile.name, role: accountProfile.role, credentialId: accountProfile.credentialId };
         const cur = await store.getDoc(TENANT);
@@ -894,7 +904,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   const dbPath = dbOverride || process.env.FLIGHT_DB || path.join(ROOT, 'data', 'flight.sqlite');
   const databaseUrl = arg('database-url', dbOverride ? null : process.env.FLIGHT_DATABASE_URL || null);
   const openCliStore = async () => databaseUrl ? openPostgres(databaseUrl) : openDb(dbPath);
-  const backupTo = arg('backup', null), unlockUser = arg('unlock', null);
+  const backupTo = arg('backup', null), restoreFrom = arg('restore', null), unlockUser = arg('unlock', null);
   if (unlockUser) {
     // node server/server.mjs --db data/datum.sqlite --unlock <username> --reason "..." --by <your name>
     const store = await openCliStore();
@@ -907,6 +917,13 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
     const store = await openCliStore();
     try { const pages = await store.backup(backupTo), count = (await store.evidenceList()).length; await store.close(); console.log(`${databaseUrl ? 'PostgreSQL dump' : 'Backup'} written to ${backupTo}${databaseUrl ? '' : ` (${pages} pages, ${count} evidence items)`}.`); }
     catch (e) { console.error(`Backup failed: ${e.message}`); await store.close(); process.exit(1); }
+  } else if (restoreFrom) {
+    // Offline restore of a pg_dump custom-format archive into the PostgreSQL target.
+    // Stop the server first when restoring into its database.
+    if (!databaseUrl) { console.error('Restore targets PostgreSQL only: pass --database-url <connection string>.'); process.exit(1); }
+    const { restorePostgres } = await import('./db-postgres.mjs');
+    try { await restorePostgres(databaseUrl, restoreFrom); console.log(`Restored ${restoreFrom} into the PostgreSQL database. Start the server normally; it verifies the audit chain on startup and refuses a tampered restore.`); }
+    catch (e) { console.error(`Restore failed: ${e.message}`); process.exit(1); }
   } else {
   const host = arg('host', process.env.FLIGHT_HOST || DEFAULT_HOST);
   const server = createServer({ dbPath, databaseUrl, host });
