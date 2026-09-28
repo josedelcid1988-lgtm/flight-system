@@ -552,6 +552,96 @@ try {
     assert.equal(result.status, 200);
     assert.equal((await api('POST', '/auth/session', { body: { username: 'basic', password: 'basic-pass-123' } })).status, 200);
   });
+  await check('action commits converge derived state that never became a command', async () => {
+    const before = server.store.getDoc('default');
+    const doc = JSON.parse(before.json);
+    // Plant stale derived state the browser only fixes on render/refresh, never as a queued command.
+    doc.assignments = Array.isArray(doc.assignments) ? doc.assignments : [];
+    const closedId = (doc.orders.find(order => order.status === 'Closed') || {}).id || 'WO-NONE';
+    doc.assignments.push({ id: 'A-STALE', type: 'op', orderId: closedId, opId: 'op-010', status: 'Open', assignee: { username: 'tech', name: 'Tech' } });
+    delete doc.maneuver;
+    delete doc.plannedOrders;
+    delete doc.blockers;
+    delete doc.masterWIs;
+    const plantedEtag = server.store.putDoc('default', JSON.stringify(doc), before.etag, 'server-test-fixture');
+    assert.ok(plantedEtag, 'the stale derived state is planted');
+    const acted = await api('POST', '/workspace/actions/MES.pruneExpiredNotices', { token, body: { args: [] }, headers: { 'If-Match': plantedEtag } });
+    assert.equal(acted.status, 200, JSON.stringify(acted.json));
+    const after = JSON.parse(server.store.getDoc('default').json);
+    const stale = after.assignments.find(a => a.id === 'A-STALE');
+    assert.ok(stale, 'the planted assignment survived the commit');
+    assert.equal(stale.status, 'Done', 'assignment auto-close converges on the server commit');
+    assert.equal(stale.autoClosed, true);
+    assert.ok(after.maneuver && Array.isArray(after.maneuver.cars), 'maneuver defaults converge on the server commit');
+    assert.ok(Array.isArray(after.plannedOrders), 'plan defaults converge on the server commit');
+    assert.ok(Array.isArray(after.masterWIs) && after.masterWIs.length > 0, 'master WI defaults converge on the server commit');
+    assert.ok(Array.isArray(after.blockers), 'planning blockers recompute on the server commit');
+  });
+  await check('an invalid converged workspace refuses the write and keeps the previous record', async () => {
+    const before = server.store.getDoc('default');
+    const doc = JSON.parse(before.json);
+    const template = doc.orders.find(order => order.status !== 'Closed') || doc.orders[0];
+    assert.ok(template, 'the workspace has a work order to clone');
+    // The engine holds at most 100 work orders: past that, post-convergence validation must fail.
+    for (let i = 0; doc.orders.length < 105; i += 1) doc.orders.push({ ...structuredClone(template), id: `${template.id}-bulk-${i}` });
+    const plantedEtag = server.store.putDoc('default', JSON.stringify(doc), before.etag, 'server-test-fixture');
+    assert.ok(plantedEtag);
+    const refused = await api('POST', '/workspace/actions/MES.pruneExpiredNotices', { token, body: { args: [] }, headers: { 'If-Match': plantedEtag } });
+    assert.equal(refused.status, 422, JSON.stringify(refused.json));
+    assert.match(refused.json.error, /the workspace holds 100/);
+    const kept = server.store.getDoc('default');
+    assert.equal(kept.etag, plantedEtag, 'the refused write keeps the previous record');
+    assert.equal(kept.json, JSON.stringify(doc), 'the refused write persists nothing');
+  });
+  await check('workspace initialization converges derived state before the first commit', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flight-system-init-'));
+    const second = createServer({ dbPath: path.join(dir, 'flight.sqlite'), quiet: true, setupCode: 'init-test-setup-code' });
+    await second.ready;
+    try {
+      const handler = second.listeners('request')[0];
+      const call = async (method, url, { token: tok, body } = {}) => {
+        const incoming = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]);
+        incoming.method = method;
+        incoming.url = url;
+        incoming.headers = { ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...(tok ? { authorization: `Bearer ${tok}` } : {}) };
+        const chunks = [];
+        const outgoing = new Writable({ write(chunk, encoding, callback) { chunks.push(Buffer.from(chunk)); callback(); } });
+        outgoing.writeHead = status => { outgoing.statusCode = status; return outgoing; };
+        const finished = new Promise((resolve, reject) => { outgoing.once('finish', resolve); outgoing.once('error', reject); });
+        handler(incoming, outgoing);
+        await finished;
+        const text = Buffer.concat(chunks).toString('utf8');
+        return { status: outgoing.statusCode, json: text ? JSON.parse(text) : null };
+      };
+      const created = await call('PUT', '/api/auth/accounts', { body: { setupCode: 'init-test-setup-code', users: [{ username: 'init-admin', displayName: 'Init Admin', role: 'general', salt: 's', hash: sha('s', 'init-pass-123') }] } });
+      assert.equal(created.status, 200, JSON.stringify(created.json));
+      const signedIn = await call('POST', '/api/auth/session', { body: { username: 'init-admin', password: 'init-pass-123' } });
+      assert.equal(signedIn.status, 200, JSON.stringify(signedIn.json));
+      const tok = signedIn.json.token;
+      const state = second.host.MES.seed();
+      delete state.maneuver;
+      delete state.plannedOrders;
+      delete state.blockers;
+      delete state.masterWIs;
+      state.assignments = [{ id: 'A-INIT', type: 'op', orderId: 'WO-NONE', opId: 'op-010', status: 'Open', assignee: { username: 'tech', name: 'Tech' } }];
+      const put = await call('PUT', '/api/workspace', { token: tok, body: state });
+      assert.equal(put.status, 204, JSON.stringify(put.json));
+      const loaded = await call('GET', '/api/workspace', { token: tok });
+      assert.equal(loaded.status, 200, JSON.stringify(loaded.json));
+      assert.ok(loaded.json.maneuver && Array.isArray(loaded.json.maneuver.cars), 'init converges maneuver defaults');
+      assert.ok(Array.isArray(loaded.json.plannedOrders), 'init converges plan defaults');
+      assert.ok(Array.isArray(loaded.json.masterWIs) && loaded.json.masterWIs.length > 0, 'init converges master WIs');
+      assert.ok(Array.isArray(loaded.json.blockers), 'init recomputes planning blockers');
+      const initStale = loaded.json.assignments.find(a => a.id === 'A-INIT');
+      assert.ok(initStale, 'the planted assignment survived initialization');
+      assert.equal(initStale.status, 'Done', 'init auto-closes the stale assignment');
+      assert.equal(initStale.autoClosed, true);
+      assert.equal(second.host.MES.validate(loaded.json), true, 'the converged initial workspace validates');
+    } finally {
+      second.store.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
   await check('sign-out closes the session', async () => {
     assert.equal((await api('DELETE', '/auth/session', { token })).status, 204);
     assert.equal((await api('GET', '/auth/session', { token })).status, 401);
