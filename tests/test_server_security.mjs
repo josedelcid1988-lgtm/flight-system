@@ -199,13 +199,13 @@ await check('an unexpected failure returns a generic message and a reference, an
       const text = Buffer.concat(chunks).toString('utf8'); return { status: outgoing.statusCode, text, json: text ? JSON.parse(text) : null };
     };
     const token = (await call('POST', '/api/auth/session', null, { username: 'err-admin', password: 'err-admin-pass-1' })).json.token;
-    const secret = 'SQLITE_CORRUPT reading /srv/flight/private/flight.sqlite page 7';
+    const secret = 'SQLITE_CORRUPT reading flight-internal-store.sqlite page 7';
     const realSearch = noisy.store.archiveSearch;
     noisy.store.archiveSearch = () => { throw new Error(secret); };
     const failed = await call('GET', '/api/archive', token);
     noisy.store.archiveSearch = realSearch;
     assert.equal(failed.status, 500);
-    assert.ok(!failed.text.includes('SQLITE') && !failed.text.includes('/srv/flight'), `the error text stays on the server: ${failed.text}`);
+    assert.ok(!failed.text.includes('SQLITE') && !failed.text.includes('flight-internal-store'), `the error text stays on the server: ${failed.text}`);
     assert.match(failed.json.error, /reference [0-9A-F]{12}/);
     assert.ok(lines.some(line => line.includes(failed.json.reference) && line.includes(secret)), 'the server log carries the reference and the detail');
     const realPriority = noisy.host.MES.setPriority;
