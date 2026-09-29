@@ -33,6 +33,7 @@ try {
   assert.equal(report.react, true);
   assert.doesNotMatch(report.text, /Search a serial or lot first/, 'the trace report receives the searched serial');
   assert.match(report.text, /FC-200-00001/);
+  assert.match(report.text, /\d{1,2}:\d{2}\s?[AP]M/, 'buy-off and event times keep the hour and minute, as the legacy report did');
 
   for (const name of ['wis', 'mnv-board', 'qms-config', 'support-log']) {
     const shown = await show(name);
