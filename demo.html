@@ -8486,7 +8486,10 @@ const ATTACH_KINDS = Object.freeze(['mrb','cars','ncs','sprs']);
     log(state, rec, `${name} attached${file.storage === 'reference' ? ' (logged by name only)' : ''}.`);
     return { ok: true, message: `${name} attached to ${rec.id}.` };
   }
+  // Anyone who can raise a record may attach evidence to it, but removing a file from a quality record takes an
+  // authority over the record: dispositioning it (dispo-nc) or approving it for Quality (approve-nc).
   function removeRecordFile(state, kind, id, fileId) {
+    if (!can('dispo-nc') && !can('approve-nc')) return fail('Your role cannot remove a file from a quality record. Ask the person who dispositions or approves the record to remove it.');
     if (!ATTACH_KINDS.includes(kind)) return fail('That record does not hold files.');
     const rec = get(state, kind, id); if (!rec) return fail('Record not found.');
     const file = recAttachments(rec).find(f => f.id === fileId); if (!file) return fail('File not found.');
