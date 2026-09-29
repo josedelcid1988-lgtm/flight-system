@@ -90,6 +90,19 @@ const shapeHole = structuredClone(state);
 shapeHole._probe = { manifest: {} };
 check('the server gate rejects a manifest that entry validation ignores', MES.validate(shapeHole) && typeof srv.validState(shapeHole) === 'string');
 
+// P1 regression: a non-calibration payload that uses "manifest" as an ordinary data key
+// (for example an AI analysis draft body) is payload data, not a signature. updateSkillDraft
+// accepts it, and the manifest walk plus the server gate must leave it untouched instead of
+// rejecting it as a malformed signature.
+const spc = run(qa, () => MES.runSkill(state, { skill: 'spc-chart-builder', values: [10.1, 10.2, 9.9, 10.0, 10.3], reason: 'Exercise the draft body manifest-key regression.' }));
+check('a skill draft is created', spc.ok && !!spc.draftId);
+const draftUpdated = run(qa, () => MES.updateSkillDraft(state, spc.draftId, { summary: 'review', manifest: 'supplier package manifest' }, 'The evidence references the supplier package manifest.'));
+check('updateSkillDraft accepts a body that uses manifest as an ordinary key', draftUpdated.ok);
+check('a draft body with a manifest key passes manifest verification', MES.verifyManifests(state).ok);
+check('a draft body with a manifest key passes the server gate', MES.validate(state) && srv.validState(structuredClone(state)) === null);
+// ...while a tampered calibration manifest is still rejected by the same gate.
+check('the server gate still rejects a tampered calibration manifest', typeof srv.validState(tampered) === 'string');
+
 // P1: a calibration-log entry whose description omits TORQUE must not declassify a seeded
 // torque wrench. Torque classification is authoritative from the seed record (tool identity),
 // never from a log entry's free-text description.

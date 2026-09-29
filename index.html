@@ -1,4 +1,4 @@
-<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v82"><meta name="fs-build-sha256" content="8586c645376e7de860e9f56eea78a7eac215eaaf512b13412c471d8aa64cfde4"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><!-- FLIGHT REACT ASSETS BEGIN -->
+<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v82"><meta name="fs-build-sha256" content="7d537439e3ff3557ac13c7fcd0962df3d80d4dddec3529a5c158cec620559c3c"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><!-- FLIGHT REACT ASSETS BEGIN -->
 <link rel="stylesheet" href="assets/flight-ui-fonts.css">
 <link rel="stylesheet" href="assets/flight-ui.css">
 <link rel="stylesheet" href="assets/flight-plan-react.css">
@@ -2707,8 +2707,11 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       if (Array.isArray(node)) { node.forEach((x, i) => walk(x, `${path}[${i}]`)); return; }
       if (!plain(node)) return;
       Object.keys(node).forEach(k => {
-        if (k === 'manifest' && node[k] !== null && node[k] !== undefined) { checked++; if (!shapeOk(node[k])) failures.push({ where: `${path}.manifest`, reason: 'manifest shape is invalid' }); else { if (node[k].build !== undefined && !buildStampValid(node[k].build)) failures.push({ where: `${path}.manifest.build`, reason: 'build stamp is malformed' }); if (plain(node[k].subject)) manifestSubjects.push([`${path}.manifest`, node[k], node[k].subject]); else legacy++; } }
-        else walk(node[k], `${path}.${k}`);
+        // A signature manifest is always a plain object. A scalar, null, or array value that happens
+        // to use the "manifest" key (for example a free-text field inside an AI draft body) is payload
+        // data, not a signature, so the walk leaves it untouched instead of failing it as malformed.
+        if (k === 'manifest' && plain(node[k])) { checked++; if (!shapeOk(node[k])) failures.push({ where: `${path}.manifest`, reason: 'manifest shape is invalid' }); else { if (node[k].build !== undefined && !buildStampValid(node[k].build)) failures.push({ where: `${path}.manifest.build`, reason: 'build stamp is malformed' }); if (plain(node[k].subject)) manifestSubjects.push([`${path}.manifest`, node[k], node[k].subject]); else legacy++; } }
+        else if (k !== 'manifest') walk(node[k], `${path}.${k}`);
       });
     };
     walk(state, 'state');
