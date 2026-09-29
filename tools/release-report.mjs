@@ -21,6 +21,7 @@ import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { buildId, clear, stamp, verify } from './stamp-build.mjs';
+import { assetsProblem } from './package-release.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const VERSION = path.join(ROOT, 'VERSION.md');
@@ -51,9 +52,10 @@ function assertReleasable() {
   let headVersion, headIndex;
   try { headVersion = git('show', 'HEAD:VERSION.md'); headIndex = git('show', 'HEAD:index.html'); }
   catch { throw new Error('the release record needs a git checkout of the release commit.'); }
-  const problem = releaseProblem(html, headVersion, headIndex);
+  const problem = releaseProblem(html, headVersion, headIndex) || assetsProblem();
   if (problem) throw new Error(problem);
 }
+
 
 const stampOf = (html, name) => (html.match(new RegExp(`<meta name="${name}" content="([^"]*)">`)) || [])[1] || 'unstamped';
 
