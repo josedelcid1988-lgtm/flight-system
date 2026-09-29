@@ -1,3 +1,15 @@
+## Owner direction 2026-09-28 (evening): record-coverage fixes before Oct 7 handoff (read first)
+
+Jose reversed the "hand over WIP with gaps documented" plan. Every record-coverage gap below must be fixed before the Wed Oct 7 handoff to Hemant and IT, not delivered unfinished. Owner-confirmed priority: these three jump ahead of the P2/P3 cleanup queue.
+
+Background: Jinx mapped every quality and product record write to server-covered or on-device (full table with file:line in Jinx's workspace at flight-system-review/record-coverage-map.md). Headline: every record type (WI, Stamp Log, Work Orders, Traceability, NC, MRB, CAR, approval logs, buy-offs, user info, training) already has a server path. The gaps to fix:
+
+1. **Kill the dual-path.** Today the same record write goes to the server or stays on-device depending on whether a server session was active at that moment (trackServerMutations wraps the mutator, index.html:10862; save() always writes localStorage regardless, index.html:10930). Fix: when a server is configured, record writes require an active server session. No silent on-device saves for quality and product records. Recommended approach: refuse the write with a clear message telling the user to sign in, rather than silently persisting locally. Seeding functions (ensureMasterWIs, ensureStamps) stay on-device by design; read-only helpers and validation helpers are unaffected.
+2. **Build the calibration record write path.** Today CAL_TOOLS is Object.freeze'd seed data (index.html:2106) with no UI, no MES mutator, and zero server code; calibration only enters records as references inside buy-offs. Build a real lifecycle for calibrated-tool log entries (create/update, append-only preferred; state your choice in the PR), server-covered through the normal mutator path like the other records, landing in the hash-chained server audit trail.
+3. **Label the browser security log.** secLog (localStorage key skyryse-mes-security-v1, index.html:13356-13364) is on-device only and must never be mistaken for the server audit trail. Rename or relabel it in the UI so the distinction is obvious to IT.
+
+Merge gate (current, owner 2026-09-28): Jinx final approval plus green CI on the exact head, then you merge through the PR button. Codex reviews automatically but its approval does not gate merges. Ship each fix as its own PR through the normal gate.
+
 # JINX-REVIEW.md (PR #11, head d1c5393c, updated 2026-09-28T22:45Z: Codex cross-review findings verified)
 
 ## Owner direction 2026-09-28: v1 and v2 tracks (read first)
@@ -5,7 +17,7 @@
 - This repository (flight-system) is now the **v2** track. Keep building the React upgrade and the MES feature work here toward a fuller MES. Do not trim this repo. The Sep 27 pause is lifted for v2 as of today.
 - **v1** is a separate trimmed build for the Skyryse official release and pilot. It lives in a new separate repo, built by a separate Claude session from an older Flight System version with Flight Maneuver stripped out. Nothing in v1 changes your work here.
 - Datum-OS is the owner's commercial product and stays separate. Do not copy code between Datum-OS and this repo in either direction.
-- The merge gate is unchanged: Jinx clean review on the exact head SHA, Codex approval, green CI, then Claudia merges via the PR button. No auto-merge automation: it was parked by the owner on 2026-09-27, do not build it and do not propose it.
+- The merge gate (updated by owner 2026-09-28): Jinx final approval plus green CI on the exact head, then Claudia merges via the PR button. Codex reviews automatically but its approval does not gate merges. No auto-merge automation: it was parked by the owner on 2026-09-27, do not build it and do not propose it.
 
 ## How to use this file (Claude)
 
