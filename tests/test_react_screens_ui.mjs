@@ -39,6 +39,23 @@ try {
     const shown = await show(name);
     assert.equal(shown.react, false, `${name} stays on the legacy view in this build`);
   }
+  // The Flight Maneuver detail views stay on legacy, but their React version is bundled and reads its formatting helpers
+  // from window.FlightManeuverUI.helpers. Rendered directly, each one renders without page errors, so routing them to
+  // React later cannot crash on a missing export.
+  const helpers = await page.evaluate(() => Object.fromEntries(['dt', 'historyList', 'mrbProposalNote'].map(k => [k, typeof window.FlightManeuverUI.helpers?.[k]])));
+  assert.deepEqual(helpers, { dt: 'function', historyList: 'function', mrbProposalNote: 'function' }, 'Flight Maneuver exports the helpers its React detail views use');
+  for (const name of ['mnv-board', 'mnv-nc', 'mnv-pfmea', 'mnv-pfmea-detail', 'mnv-changes', 'mnv-metrics', 'mnv-feedback']) {
+    const before = errors.length;
+    const thrown = await page.evaluate(async next => {
+      const host = document.createElement('div'); host.hidden = true; document.body.appendChild(host);
+      try { window.FlightReact.renderManeuverDetail(host, state, MES, window.FlightManeuver, window.FlightManeuverUI.sel, skCan, window.FlightManeuverUI.helpers, next); await new Promise(done => setTimeout(done, 50)); return null; }
+      catch (error) { return error.message; }
+      finally { window.FlightReact.unmount?.(); host.remove(); }
+    }, name);
+    assert.equal(thrown, null, `${name}: the React detail view renders without throwing`);
+    assert.deepEqual(errors.slice(before), [], `${name}: the React detail view renders without page errors`);
+  }
+  await show('home');
   const orderView = await show('order', 'selectedId = state.orders[0].id; tab = "operations"; selectedOp = null;');
   assert.equal(orderView.react, false, 'work order detail stays on the legacy view in this build');
   assert.deepEqual(errors, []);
