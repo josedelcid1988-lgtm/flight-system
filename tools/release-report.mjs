@@ -51,15 +51,17 @@ function assertReleasable() {
   let headVersion, headIndex;
   try { headVersion = git('show', 'HEAD:VERSION.md'); headIndex = git('show', 'HEAD:index.html'); }
   catch { throw new Error('the release record needs a git checkout of the release commit.'); }
-  const problem = releaseProblem(html, headVersion, headIndex) || assetsProblem(git('status', '--porcelain', '--untracked-files=all', '--ignored', '--', 'assets'));
+  const problem = releaseProblem(html, headVersion, headIndex) || assetsProblem(git('status', '--porcelain', '-z', '--no-renames', '--untracked-files=all', '--ignored', '--', 'assets'));
   if (problem) throw new Error(problem);
 }
 
-// The release zips carry every file in assets/ as it is on disk, except dotfiles (package-release manifest()), so each
-// packaged file must be exactly what the named commit holds: modified, untracked and ignored files are all refused.
+// The release zips carry every entry directly in assets/ as it is on disk, except dot-named ones (package-release
+// manifest()), so each packaged file must be exactly what the named commit holds: modified, deleted, untracked and
+// ignored files are all refused. Status comes from git status --porcelain -z --no-renames, so a rename is reported as
+// a deletion and an addition and both paths are checked, and paths are never quoted.
 export function assetsProblem(status) {
-  const packaged = line => !line.slice(3).split('/').pop().startsWith('.');
-  const changed = String(status || '').split('\n').filter(line => line.trim() && packaged(line)).map(line => line.trim());
+  const packaged = entry => !(entry.slice(3).split('/')[1] || '').startsWith('.');
+  const changed = String(status || '').split(/[\0\n]/).filter(entry => entry.trim() && packaged(entry)).map(entry => entry.trim());
   return changed.length ? `assets/ differs from HEAD (${changed.slice(0, 5).join('; ')}${changed.length > 5 ? '; ...' : ''}), so the release commit would not reproduce the packaged files. Commit or discard those changes, then stamp from that commit.` : null;
 }
 
