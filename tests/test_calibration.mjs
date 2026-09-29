@@ -279,4 +279,47 @@ const retiredList = MES.calibratedToolChecks(state, now);
 check('a retired tool is not offered as usable', !retiredList.some(c => c.ok && ['B2-TOOL', 'NONE-176'].includes(c.tool.tag)));
 check('the retired tool\'s earlier signed entries stay in the log and verify', state.calibrationLog.filter(e => e.tag === 'B2-TOOL').length === 2 && MES.validate(state) && MES.verifyManifests(state).ok);
 check('the record form tells the user that Retired is how a tool leaves service', /record it as Retired/.test(pageSource));
+// The signed subject of a calibration entry (calibrationSubject in index.html), for building imported rows.
+const calSubject = e => ({ id: e.id, tag: e.tag, description: e.description, serial: e.serial, calibratedAt: e.calibratedAt, expires: e.expires, status: e.status, location: e.location, note: e.note, recordedAt: e.recordedAt, recordedBy: e.recordedBy, supersedes: e.supersedes || null });
+// #35 review: only the current entry for a tag can be corrected. With two independent entries A (usable)
+// then B (Quarantined), correcting A would copy A's usable status into the newest row and re-enable the tool.
+const curA = run(qa, () => MES.recordCalibration(state, { tag: 'CUR-TOOL', description: 'DIAL INDICATOR', serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }));
+const curB = run(qa, () => MES.recordCalibration(state, { tag: 'CUR-TOOL', description: 'DIAL INDICATOR', serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'Quarantined', location: '', note: 'Failed gage check' }));
+const curLog = state.calibrationLog.length;
+const staleFix = run(qa, () => MES.updateCalibration(state, curA.id, { note: 'cert reference' }));
+check('a correction to an older, non-current entry for the tag is refused and names the current entry', curA.ok && curB.ok && !staleFix.ok && staleFix.message.includes(curB.id) && state.calibrationLog.length === curLog);
+check('the quarantined tool stays unusable after the refused correction', !MES.toolCheck('CUR-TOOL', now, state).ok && MES.calibrationStatus(state, 'CUR-TOOL').id === curB.id);
+check('the current entry can still be corrected', run(qa, () => MES.updateCalibration(state, curB.id, { note: 'Failed gage check, sent to lab' })).ok);
+const staleImport = structuredClone(state), staleSource = staleImport.calibrationLog.find(e => e.id === curA.id);
+staleImport.calibrationLog.push(host.withAccount(qa, () => { const e = { ...staleSource, id: 'CALLOG-09990', supersedes: curA.id, note: 'restored', recordedAt: new Date().toISOString() }; e.calibrationSignature = { manifest: MES.signManifest(staleImport, 'Calibration entry corrected', calSubject(e), e.recordedAt) }; return e; }, staleImport));
+check('a workspace with a correction of a non-current entry fails validation', !MES.validate(staleImport));
+check('diagnose names the correction of a non-current entry', /CALLOG-09990/.test(MES.diagnose(staleImport)?.where || '') && /not the current entry/.test(MES.diagnose(staleImport)?.detail || ''));
+
+// #35 review: a new record cannot bring a retired tag back into use.
+const reuse = run(qa, () => MES.recordCalibration(state, { tag: 'B2-TOOL', description: 'MICROMETER', serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }));
+const reuseSeed = run(qa, () => MES.recordCalibration(state, { tag: 'NONE-176', description: 'TORQUE WRENCH', serial: '0617112253', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }));
+check('a new record for a retired tag is refused and says how a mistaken retirement is undone', !reuse.ok && /retired/i.test(reuse.message) && /reason/.test(reuse.message) && !reuseSeed.ok);
+check('the retired tools stay unusable after the refused records', !MES.toolCheck('B2-TOOL', now, state).ok && !MES.toolCheck('NONE-176', now, state).ok);
+const reuseImport = structuredClone(state), retiredRow = MES.calibrationStatus(reuseImport, 'B2-TOOL');
+reuseImport.calibrationLog.push(host.withAccount(qa, () => { const e = { ...retiredRow, id: 'CALLOG-09991', status: 'In Calibration', note: '', recordedAt: new Date().toISOString() }; delete e.supersedes; delete e.calibrationSignature; e.calibrationSignature = { manifest: MES.signManifest(reuseImport, 'Calibration recorded', calSubject(e), e.recordedAt) }; return e; }, reuseImport));
+check('a workspace that records a retired tag again fails validation', !MES.validate(reuseImport));
+check('diagnose names the entry that records a retired tag again', /CALLOG-09991/.test(MES.diagnose(reuseImport)?.where || '') && /retired/.test(MES.diagnose(reuseImport)?.detail || ''));
+
+// Owner decision on #35: a QA Manager may correct a Retired entry back to service, with a mandatory reason in
+// the signed note. Example: TW-042 was retired after a drop, but the dropped wrench was TW-024.
+const tw = run(qa, () => MES.recordCalibration(state, { tag: 'TW-042', description: 'TORQUE WRENCH', serial: '', calibratedAt: '2026-09-26', expires: '2027-09-26', status: 'In Calibration', location: '', note: 'Lab cert 77' }));
+const twRetired = run(qa, () => MES.updateCalibration(state, tw.id, { status: 'Retired', note: 'Dropped on the floor' }));
+const noReason = run(qa, () => MES.updateCalibration(state, twRetired.id, { status: 'In Calibration' }));
+const sameReason = run(qa, () => MES.updateCalibration(state, twRetired.id, { status: 'In Calibration', note: 'Dropped on the floor' }));
+const shortReason = run(qa, () => MES.updateCalibration(state, twRetired.id, { status: 'In Calibration', note: 'oops' }));
+check('returning a retired tool to service without a new reason is refused', tw.ok && twRetired.ok && !noReason.ok && /reason/.test(noReason.message) && !sameReason.ok && !shortReason.ok && !MES.toolCheck('TW-042', now, state).ok);
+check('a technician cannot return a retired tool to service', !run(tech, () => MES.updateCalibration(state, twRetired.id, { status: 'In Calibration', note: 'Retired by mistake: the dropped wrench was TW-024' })).ok);
+const reinstated = run(qa, () => MES.updateCalibration(state, twRetired.id, { status: 'In Calibration', note: 'Retired by mistake: the dropped wrench was TW-024' }));
+const twRows = state.calibrationLog.filter(e => e.tag === 'TW-042');
+check('a QA Manager returns a mistakenly retired tool to service with a reason', reinstated.ok && MES.toolCheck('TW-042', now, state).ok);
+check('the retirement stays in the signed history under the same tag, with the reason on the correction', twRows.length === 3 && twRows[1].status === 'Retired' && twRows[2].supersedes === twRows[1].id && /TW-024/.test(twRows[2].note) && MES.validate(state) && MES.verifyManifests(state).ok);
+const noReasonImport = structuredClone(state);
+noReasonImport.calibrationLog.pop();
+noReasonImport.calibrationLog.push(host.withAccount(qa, () => { const e = { ...twRows[1], id: 'CALLOG-09992', status: 'In Calibration', supersedes: twRows[1].id, recordedAt: new Date().toISOString() }; delete e.calibrationSignature; e.calibrationSignature = { manifest: MES.signManifest(noReasonImport, 'Calibration entry corrected', calSubject(e), e.recordedAt) }; return e; }, noReasonImport));
+check('a workspace that returns a retired tool to service without a reason fails validation', !MES.validate(noReasonImport) && /CALLOG-09992/.test(MES.diagnose(noReasonImport)?.where || ''));
 console.log(`calibration: ${checks} checks, all passed`);

@@ -29,6 +29,26 @@ try {
     assert.deepEqual(errors, [], `${name} renders without page errors`);
   }
 
+  // #35 review: System QMS records renders through React, so the calibration log and its record form must be in the
+  // React view, not only in the legacy markup it replaces. A QA Manager records a calibration from that screen.
+  await show('qms-records');
+  const island = page.locator('#main #flight-react-island');
+  const calForm = island.locator('form[data-qms-record="calibration"]');
+  assert.equal(await calForm.count(), 1, 'the React QMS records view has the calibration record form');
+  assert.deepEqual(await calForm.locator('[name]').evaluateAll(els => els.map(e => e.name)), ['tag', 'description', 'serial', 'calibratedAt', 'expires', 'status', 'location', 'note'], 'the React calibration form carries every field the engine records');
+  assert.match(await island.innerText(), /record it as Retired/, 'the React calibration panel says Retired is how a tool leaves service');
+  const calToday = await page.evaluate(() => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }));
+  const [calY, calM, calD] = calToday.split('-').map(Number), calDue = `${calY + 1}-${String(calM).padStart(2, '0')}-${String(calD).padStart(2, '0')}`;
+  await calForm.locator('[name="tag"]').fill('UI-CAL-01');
+  await calForm.locator('[name="description"]').fill('DIGITAL CALIPER');
+  await calForm.locator('[name="calibratedAt"]').fill(calToday);
+  await calForm.locator('[name="expires"]').fill(calDue);
+  await calForm.locator('[name="note"]').fill('Lab cert 12');
+  await calForm.locator('button[type="submit"]').click();
+  await page.waitForFunction(() => (state.calibrationLog || []).some(e => e.tag === 'UI-CAL-01'));
+  assert.match(await page.locator('#main #flight-react-island').innerText(), /UI-CAL-01 · DIGITAL CALIPER · due/, 'the recorded calibration is listed in the React calibration log');
+  assert.deepEqual(errors, [], 'recording a calibration from the React view raises no page errors');
+
   const report = await show('trace-report', "traceQuery = 'FC-200-00001';");
   assert.equal(report.react, true);
   assert.doesNotMatch(report.text, /Search a serial or lot first/, 'the trace report receives the searched serial');
