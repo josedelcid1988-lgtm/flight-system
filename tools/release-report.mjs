@@ -10,7 +10,7 @@
 //                                            without --mirror first)
 //   node tools/release-report.mjs --dry-run  build the same record and print it; VERSION.md is not written
 //   node tools/release-report.mjs --check    exit 1 unless the record in VERSION.md names the build and
-//                                            the hashes of the index.html and demo.html in the tree
+//                                            the stamped SHA-256 this source produces
 //
 // It refuses to write a record from an unstamped index.html, a stamp generated from uncommitted source
 // (see assertReleasable), or results that failed, carry an unexplained skip, or were produced against
@@ -20,7 +20,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { buildId, clear, verify } from './stamp-build.mjs';
+import { buildId, clear, stamp, verify } from './stamp-build.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const VERSION = path.join(ROOT, 'VERSION.md');
@@ -128,11 +128,14 @@ function main() {
   const now = current();
   const text = fs.readFileSync(VERSION, 'utf8');
   if (process.argv.includes('--check')) {
-    const r = readRecord(text);
-    if (!r) { console.error('FAIL VERSION.md has no release record. Run the suites, then node tools/release-report.mjs.'); process.exit(1); }
-    const wrong = Object.keys(now).filter(k => r[k] !== now[k]);
-    if (wrong.length) { console.error(`FAIL the VERSION.md release record is out of date: ${wrong.map(k => `${k} is ${r[k]}, the tree has ${now[k]}`).join('; ')}. Run the suites, then node tools/release-report.mjs.`); process.exit(1); }
-    console.log(`VERSION.md release record matches the tree: build ${now.build}, index.html ${now.indexFileSha256}, demo.html ${now.demoFileSha256}`);
+    // The committed index.html is unstamped, so the check rebuilds the stamp it would carry and compares the
+    // build and stamped SHA-256. The file hashes in the record are of the released files and are not rechecked.
+    const r = readRecord(text), html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+    const build = buildId(text), want = { build, indexStamp: verify(stamp(clear(html, build), build)).stamped };
+    if (!r) { console.error('FAIL VERSION.md has no release record. Follow the release steps in docs/HANDOVER.md.'); process.exit(1); }
+    const wrong = Object.keys(want).filter(k => r[k] !== want[k]);
+    if (wrong.length) { console.error(`FAIL the VERSION.md release record does not match this source: ${wrong.map(k => `${k} is ${r[k]}, this source stamps ${want[k]}`).join('; ')}. It is refreshed at release (docs/HANDOVER.md).`); process.exit(1); }
+    console.log(`VERSION.md release record matches this source: build ${want.build}, stamped SHA-256 ${want.indexStamp}`);
     return;
   }
   assertReleasable();

@@ -30,7 +30,7 @@ ok('the demo build carries the same build id and index.html SHA-256',(()=>{const
 // Release tooling refuses what cannot be traced: an unstamped or mismatched file, or a stamp not generated
 // from the committed source and build id in the commit the release record names.
 const {releaseProblem}=await import(path.join(ROOT,'tools/release-report.mjs'));
-const {buildId:packageBuildId}=await import(path.join(ROOT,'tools/package-release.mjs'));
+const {buildId:packageBuildId,demoProblem}=await import(path.join(ROOT,'tools/package-release.mjs'));
 const headVersion=fs.readFileSync(path.join(ROOT,'VERSION.md'),'utf8'),stamped=stamp(committed,build);
 const refuses=(fn,re)=>{try{fn();return false;}catch(e){return re.test(e.message);}};
 ok('the release record accepts a stamp generated from the committed file and build id',releaseProblem(stamped,headVersion,committed)===null,releaseProblem(stamped,headVersion,committed));
@@ -41,6 +41,8 @@ ok('the release record refuses a stamp generated from uncommitted source',/not g
 ok('the release packager refuses the unstamped committed form',refuses(()=>packageBuildId(committed),/not stamped/));
 ok('the release packager refuses a stamp that does not match the file',refuses(()=>packageBuildId(stamped.replace('</body>',' </body>')),/computes/));
 ok('the release packager accepts a verified stamp',packageBuildId(stamped)===build);
+ok('the release packager refuses a demo build not regenerated after stamping',/Run node tools\/build-demo/.test(demoProblem(stamped,committed)||''));
+ok('the release packager accepts a demo build carrying the production stamp',demoProblem(stamped,stamped)===null);
 ok('the production fixture is the stamped index.html',fs.readFileSync(TESTS+'fixtures/publish.html','utf8').includes(`<meta name="fs-build-sha256" content="${v.stamped}">`));
 
 // ---- the app ----

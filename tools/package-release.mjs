@@ -27,6 +27,23 @@ export function buildId(html = fs.readFileSync(path.join(ROOT, 'index.html'), 'u
   return v.build;
 }
 
+// The demo build is generated from the stamped index.html, so it must carry the same build id and SHA-256.
+export function demoProblem(indexHtml, demoHtml) {
+  const tag = (html, name) => (html.match(new RegExp(`<meta name="${name}" content="([^"]*)">`)) || [])[1];
+  for (const name of ['fs-build', 'fs-build-sha256']) {
+    if (tag(demoHtml, name) !== tag(indexHtml, name)) return `demo.html carries ${name} ${tag(demoHtml, name) || 'none'} but index.html carries ${tag(indexHtml, name)}. Run node tools/build-demo.mjs after stamping.`;
+  }
+  return null;
+}
+
+// Both builds checked before either zip is written or verified.
+function releaseBuild() {
+  const read = f => fs.readFileSync(path.join(ROOT, f), 'utf8');
+  const html = read('index.html'), build = buildId(html), problem = demoProblem(html, read('demo.html'));
+  if (problem) throw new Error(problem);
+  return build;
+}
+
 // The files each zip carries: [path inside the zip, path in the tree].
 export function manifest(kind) {
   const page = kind === 'demo' ? 'demo.html' : 'index.html';
@@ -76,7 +93,7 @@ export function readZip(buf) {
 }
 
 export function packageRelease(outDir) {
-  const build = buildId(), names = zipNames(build);
+  const build = releaseBuild(), names = zipNames(build);
   fs.mkdirSync(outDir, { recursive: true });
   for (const kind of ['production', 'demo']) {
     const entries = manifest(kind).map(([inZip, inTree]) => [inZip, fs.readFileSync(path.join(ROOT, inTree))]);
@@ -87,7 +104,7 @@ export function packageRelease(outDir) {
 
 // Every problem found, or an empty list when both zips match the tree exactly.
 export function verifyRelease(outDir) {
-  const build = buildId(), names = zipNames(build), problems = [];
+  const build = releaseBuild(), names = zipNames(build), problems = [];
   for (const kind of ['production', 'demo']) {
     const file = path.join(outDir, names[kind]);
     if (!fs.existsSync(file)) { problems.push(`${names[kind]} is missing from ${outDir}`); continue; }
