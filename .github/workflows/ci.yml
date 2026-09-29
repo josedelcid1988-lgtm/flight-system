@@ -38,7 +38,11 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
+      # The pull request head itself, not GitHub's merge ref: the release record built below names this
+      # commit, and tools/release-report.mjs refuses a commit that is not the one checked out.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       # node:sqlite without a flag needs Node 22.13 or later (server/package.json).
       - uses: actions/setup-node@v4

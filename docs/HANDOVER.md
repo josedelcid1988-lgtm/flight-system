@@ -192,7 +192,9 @@ CI (`.github/workflows/ci.yml`) runs on every pull request and push to `main`. I
 bundle, demo build and role matrix are current and that `index.html` carries no committed stamp. It then
 generates the build stamp in its working copy (not committed), verifies it with `--verify`, runs every
 suite with the mirror off and on against the stamped build, and builds a release record from the results
-with `release-report --dry-run`. The results are kept as a run artifact.
+with `release-report --dry-run`. On a pull request it checks out the pull request head, not GitHub's merge
+ref, because the record names that commit and `release-report` refuses a commit other than the one checked
+out. The results are kept as a run artifact.
 
 ## 10. Release process
 

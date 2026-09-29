@@ -132,6 +132,17 @@ try{
    ok('the release record refuses results from a commit before HEAD',o.code===1&&new RegExp(`different commit \\(${commit}\\)`).test(o.out),o.out);
    s.results();const a=s.node(['tools/release-report.mjs','--dry-run']);
    ok('the release record accepts results from the commit it names',a.code===0&&a.out.includes('| Stamp generated from commit | `'+s.g('rev-parse','HEAD')+'` |'),a.out);}
+  // #83: every release check reads HEAD, so the record refuses to name any other commit.
+  {const s=sandbox();const first=s.g('rev-parse','HEAD');s.g('commit','-q','--allow-empty','-m','merge ref stand-in');const head=s.g('rev-parse','HEAD');
+   s.stamp();s.results({...s.tested(),commit:first});
+   const o=s.node(['tools/release-report.mjs','--dry-run'],{FLIGHT_SOURCE_COMMIT:first});
+   ok('the release record refuses a FLIGHT_SOURCE_COMMIT that is not the checked-out HEAD',o.code===1&&new RegExp(`FLIGHT_SOURCE_COMMIT names ${first} but the checkout is at ${head}`).test(o.out),o.out);
+   const u=s.node(['tools/release-report.mjs','--dry-run'],{FLIGHT_SOURCE_COMMIT:'no-such-commit'});
+   ok('the release record refuses a FLIGHT_SOURCE_COMMIT that names no commit',u.code===1&&/FLIGHT_SOURCE_COMMIT names no-such-commit, which is not a commit/.test(u.out),u.out);
+   s.results();const a=s.node(['tools/release-report.mjs','--dry-run'],{FLIGHT_SOURCE_COMMIT:head.slice(0,12)});
+   ok('the release record accepts a FLIGHT_SOURCE_COMMIT naming HEAD and records it in full',a.code===0&&a.out.includes('| Stamp generated from commit | `'+head+'` |'),a.out);
+   const ci=fs.readFileSync(path.join(ROOT,'.github/workflows/ci.yml'),'utf8');
+   ok('CI checks out the pull request head that its dry-run record names',/uses: actions\/checkout@v4\n\s+with:\n\s+ref: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}/.test(ci)&&/FLIGHT_SOURCE_COMMIT: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}/.test(ci));}
   // #85 (fixed in PR #82): the release steps name the assets/ refusal.
   ok('HANDOVER release step 4 lists the assets/ refusal',/a packaged file in\s+`assets\/` whose bytes differ from HEAD/.test(fs.readFileSync(path.join(ROOT,'docs/HANDOVER.md'),'utf8')));
   // #89 (does not reproduce): git ls-tree lists assets/ one level deep, so a committed file under a dot-named
