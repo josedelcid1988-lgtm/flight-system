@@ -61,12 +61,12 @@ the tree.
 | Item | Value |
 | --- | --- |
 | Build | v82 |
-| index.html SHA-256, as stamped in the file | `c0bcea0e0af0623afb306a30b0a1052992598cca7e1e77cac737ecb814164bee` |
-| index.html file SHA-256 | `5053c0744c7a9d591b619ea6d6d47517b9f94fb6ae873cdbfd5633486ce4f945` |
-| demo.html file SHA-256 | `f1ce75cf82cd1a12631c4127bf120ea8108e823b1bd82063a6ccd0f87109febd` |
+| index.html SHA-256, as stamped in the file | `7ce2bb723e8e1a642f8ded8306062bbae83e3aa2e72adc09f40e904e0e668e18` |
+| index.html file SHA-256 | `415a649d82da87c9bb33fea067723c6a35d2ef6f310af668868c52d7a79b620d` |
+| demo.html file SHA-256 | `37604c479246ec2196e21cd57f77491f4bfbdc8e8917acf037039c546896feb6` |
 | Suites run | 2026-09-29 |
-| Mirror off | 69 of 69 pass |
-| Mirror on | 69 of 69 pass; the mirror received 17600 records, chain intact |
+| Mirror off | 70 of 70 pass |
+| Mirror on | 70 of 70 pass; the mirror received 17588 records, chain intact |
 | Skips | none |
 
 The stamped SHA-256 is the hash of `index.html` with its own `fs-build-sha256` field set to
@@ -102,6 +102,7 @@ values are plain hashes of the files as committed.
 | test_jira_integration |  | pass | pass |
 | test_load_safety |  | pass | pass |
 | test_load_safety_ui |  | pass | pass |
+| test_media_commit_ui |  | pass | pass |
 | test_migration |  | pass | pass |
 | test_migration_cli |  | pass | pass |
 | test_mirror |  | pass | pass |
