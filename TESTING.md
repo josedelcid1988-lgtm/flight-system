@@ -1,7 +1,10 @@
 # Testing Flight System
 
-The product build id is set in `VERSION.md` and stamped into `index.html`, with
-the SHA-256 of `index.html`, by `node tools/stamp-build.mjs`. Suite names such as
+The product build id is set in `VERSION.md`. The SHA-256 stamp is generated, not
+committed: CI and the release process run `node tools/stamp-build.mjs`. Before running
+the suites locally, stamp the working copy (`node tools/stamp-build.mjs`, then
+`node tools/build-demo.mjs`); before committing, put it back with `--clear` and
+`build-demo`. Suite names such as
 `test_v80.mjs` record when that suite was added. They are not the build id.
 
 The product page is generated from `index.html`; the React Hangar is bundled

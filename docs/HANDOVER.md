@@ -166,9 +166,12 @@ with manual handoffs and IT connects each system without changing the rules.
 
 ## 8. Working on it
 
-- Change `index.html` or `src/react/flight-ui.jsx`, then run `node tools/build-react.mjs`,
-  `node tools/stamp-build.mjs`, `node tools/build-demo.mjs`, and commit the generated files. A change
-  to a role or capability also needs `node tools/role-matrix.mjs`.
+- Change `index.html` or `src/react/flight-ui.jsx`, then run `node tools/build-react.mjs` and
+  `node tools/build-demo.mjs`, and commit the generated files. A change to a role or capability also
+  needs `node tools/role-matrix.mjs`. Do not commit a build stamp: `index.html` keeps the placeholder
+  `unstamped`. To run the suites locally, stamp the working copy first (`node tools/stamp-build.mjs`,
+  then `node tools/build-demo.mjs`) and put it back before committing (`node tools/stamp-build.mjs
+  --clear`, then `node tools/build-demo.mjs`).
 - Keep browser assets self-hosted: no CDN runtime scripts or external fonts.
 - A new rule needs a test for the rule and for its refusal path.
 - A demo relaxation is a new entry in `tools/demo/deviations.mjs`, appended at the end so existing `D-n`
@@ -185,21 +188,26 @@ node tools/run-suites.mjs --mirror   # every suite, mirror on
 `TESTING.md` lists every suite and what it covers. A suite fails on a failed check, a page error or a
 skip not explained in `tests/allowed_skips.json`. There are no unexplained skips.
 
-CI (`.github/workflows/ci.yml`) runs on every pull request and push to `main`. It checks that the build
-stamp, demo build, role matrix and release record are current, then runs every suite with the mirror
-off and on. The results are kept as a run artifact.
+CI (`.github/workflows/ci.yml`) runs on every pull request and push to `main`. It checks that the React
+bundle, demo build and role matrix are current and that `index.html` carries no committed stamp. It then
+generates the build stamp in its working copy (not committed), verifies it with `--verify`, runs every
+suite with the mirror off and on against the stamped build, and builds a release record from the results
+with `release-report --dry-run`. The results are kept as a run artifact.
 
 ## 10. Release process
 
 1. Set the new build id on the `build:` line of `VERSION.md` and describe the change in `CHANGELOG.md`.
-2. Run `node tools/stamp-build.mjs`, then `node tools/build-demo.mjs`, then `node tools/role-matrix.mjs`.
+2. From a clean checkout of the release commit, generate the stamp: `node tools/stamp-build.mjs`, then
+   `node tools/build-demo.mjs`. The stamp is not committed.
 3. Run `node tools/run-suites.mjs` and `node tools/run-suites.mjs --mirror`. Both must pass.
-4. Run `node tools/release-report.mjs`. It writes the release record (build, hashes, results, skips)
-   into `VERSION.md`, and refuses a failed run or results from different files.
-5. Open a pull request; CI must be green. Merge.
-6. `node tools/package-release.mjs` writes `release/flight-system-<build>.zip` and the demo zip.
-   Deploy `index.html` and `assets/` from `main` (or unpack the production zip). Check the deployed copy with
+4. Run `node tools/release-report.mjs`. It writes the release record (build, the commit the stamp was
+   generated from, hashes, results, skips) into `VERSION.md`, and refuses a failed run or results from
+   different files.
+5. `node tools/package-release.mjs` writes `release/flight-system-<build>.zip` and the demo zip from the
+   stamped files. Deploy from the production zip, not from `main`, and check the deployed copy with
    `node tools/stamp-build.mjs --verify <deployed index.html>`.
+6. Put the committed form back (`node tools/stamp-build.mjs --clear`, then `node tools/build-demo.mjs`),
+   commit only `VERSION.md` and `CHANGELOG.md` in a pull request, and merge it once CI is green.
 7. Record the build id and the SHA-256 from the release record in the quality system's software
    configuration record.
 

@@ -9,7 +9,7 @@ const TESTS=decodeURI(new URL('.',import.meta.url).pathname);
 const ROOT=path.resolve(TESTS,'..');
 const FIXTURES=process.env.FS_FIXTURES_DIR?process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):TESTS+'fixtures/';
 const PROD='file://'+FIXTURES+'publish.html';
-const {buildId,canonicalSha256,stamp,verify}=await import(path.join(ROOT,'tools/stamp-build.mjs'));
+const {buildId,canonicalSha256,stamp,verify,clear}=await import(path.join(ROOT,'tools/stamp-build.mjs'));
 const fails=[];const ok=(w,c,m='')=>{console.log((c?'  ok   ':'  FAIL ')+w+(c?'':' -> '+m));if(!c)fails.push(w);};
 
 // ---- the stamp tool ----
@@ -21,6 +21,11 @@ ok('index.html carries its own SHA-256 and it recomputes',v.ok&&/^[0-9a-f]{64}$/
 ok('stamping is idempotent',stamp(index,build)===index);
 ok('one changed byte anywhere changes the SHA-256',canonicalSha256(index.replace('Flight System','Flight Systen'))!==v.stamped);
 ok('a copy edited after stamping fails verification',!verify(index.replace('</body>',' </body>')).ok);
+// The stamp is generated, not committed: the committed form carries the build id and the placeholder.
+const committed=clear(index,build);
+ok('the committed form carries the build id and the "unstamped" placeholder',committed.includes(`<meta name="fs-build" content="${build}">`)&&committed.includes('<meta name="fs-build-sha256" content="unstamped">'));
+ok('an unstamped file fails verification, so a stamp step that does nothing is caught',!verify(committed).ok);
+ok('stamping the committed form reproduces this stamp, and clearing it gives the committed form back',stamp(committed,build)===stamp(index,build)&&clear(stamp(committed,build),build)===committed);
 ok('the demo build carries the same build id and index.html SHA-256',(()=>{const d=fs.readFileSync(path.join(ROOT,'demo.html'),'utf8');return d.includes(`<meta name="fs-build" content="${build}">`)&&d.includes(`<meta name="fs-build-sha256" content="${v.stamped}">`);})());
 ok('the production fixture is the stamped index.html',fs.readFileSync(TESTS+'fixtures/publish.html','utf8').includes(`<meta name="fs-build-sha256" content="${v.stamped}">`));
 
