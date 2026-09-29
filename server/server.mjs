@@ -121,10 +121,13 @@ export function parseExportCredentials(value) {
 
 // The committed index.html carries the hash placeholder "unstamped"; a release zip carries the real stamp.
 // A checkout is stamped in memory at start, with the same tool and result as a release, so the page served
-// and every record it writes carry the build's SHA-256. A stamped file is served as it is.
+// and every record it writes carry the build's SHA-256. A stamped file is served as it is only when its stamp
+// verifies: a file edited after stamping would record a SHA-256 that does not match the code being served.
 export function servedIndex(indexPath) {
   const html = fs.readFileSync(indexPath, 'utf8'), v = verify(html);
-  return v.stamped === 'unstamped' ? stamp(html, v.build) : html;
+  if (v.stamped === 'unstamped') return stamp(html, v.build);
+  if (!v.ok) throw new Error(`${indexPath} carries SHA-256 ${v.stamped} but its content computes ${v.actual}: it was changed after stamping. Deploy the release zip again, or run node tools/stamp-build.mjs --clear to serve this checkout.`);
+  return html;
 }
 
 export function createServer(options = {}) {

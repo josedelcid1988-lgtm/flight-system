@@ -1,6 +1,7 @@
 // The committed index.html carries the hash placeholder "unstamped". A server started from a checkout stamps the
 // page in memory with the release stamp tool, so the page it serves, and every record written there, carries the
-// build's SHA-256 and never "unstamped". A file that is already stamped (a release zip) is served as it is.
+// build's SHA-256 and never "unstamped". A file that is already stamped (a release zip) is served as it is, and a
+// stamped file edited afterwards is refused.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -18,6 +19,8 @@ try {
   // The helper: a checkout is stamped exactly as a release would be; a stamped file is left alone.
   assert.equal(servedIndex(write('committed.html', committed)), released, 'a checkout is stamped in memory as the release tool would stamp it');
   assert.equal(servedIndex(write('released.html', released)), released, 'a stamped file is served unchanged');
+  assert.throws(() => servedIndex(write('edited.html', released.replace('</body>', ' </body>'))), /changed after stamping/, 'a file edited after stamping is refused, not served with a stamp that does not match it');
+  assert.throws(() => createServer({ dbPath: ':memory:', indexPath: path.join(dir, 'edited.html'), quiet: true }), /changed after stamping/, 'the server does not start on it');
 
   // The page the server actually serves from a checkout.
   for (const [name, html] of [['committed.html', committed], ['released.html', released]]) {
