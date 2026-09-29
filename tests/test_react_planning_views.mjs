@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+import { serveRepo } from './lib/static-server.mjs';
 
-const fixture = new URL('./fixtures/demo_qa150_publish.html', import.meta.url).href;
+// Served over http: this test reloads the page, and Chromium can lose file:// localStorage writes under parallel load.
+const server = await serveRepo();
+const fixture = server.url('tests/fixtures/demo_qa150_publish.html');
 const browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
 try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 960 } });
@@ -103,4 +106,4 @@ try {
   assert.deepEqual(errors, []);
   await context.close();
   console.log('React Flight Plan Kanban and MRP forecast render live records, expose density and retain structured planning views.');
-} finally { await browser.close(); }
+} finally { await browser.close(); await server.close(); }
