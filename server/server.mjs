@@ -207,7 +207,7 @@ export function createServer(options = {}) {
     host.MES.syncAssignments?.(state);
     host.MES.syncBlockers?.(state);
   };
-  const validState = state => { convergeDerivedState(state); if (Array.isArray(state.orders) && state.orders.filter(order => order.status !== 'Closed').length > 1000) return 'The workspace exceeds the 1,000 open work order limit. Close or archive work before adding more orders.'; if (host.MES.validate(state)) return null; return (host.MES.diagnose(state) || {}).detail || 'The workspace is invalid.'; };
+  const validState = state => { convergeDerivedState(state); if (Array.isArray(state.orders) && state.orders.filter(order => order.status !== 'Closed').length > 1000) return 'The workspace exceeds the 1,000 open work order limit. Close or archive work before adding more orders.'; if (!host.MES.validate(state)) return (host.MES.diagnose(state) || {}).detail || 'The workspace is invalid.'; const manifested = host.MES.verifyManifests(state); if (!manifested.ok) { const f = manifested.failures[0] || {}; return `A signed record failed verification at ${f.where || 'an unknown record'}: ${f.reason || 'invalid manifest'}.`; } return null; };
 
   // Evidence integrity on every write, beside the engine's validation. The engine refuses a buy-off
   // without a stored copy and hash and refuses edits to signed evidence (MES.evidenceChanges); the
@@ -931,7 +931,7 @@ export function createServer(options = {}) {
   }
 
   server = http.createServer((req, res) => { handle(req, res); });
-  server.store = store; server.host = host; server.ready = storeReady.then(async () => { await wrapped; void drainExports(); });
+  server.store = store; server.host = host; server.validState = validState; server.ready = storeReady.then(async () => { await wrapped; void drainExports(); });
   // Bind address: behind a reverse proxy, bind 127.0.0.1 so only that proxy can connect.
   server.listenAsync = async (port, host = options.host || process.env.FLIGHT_HOST || DEFAULT_HOST) => { await server.ready; return new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, () => { server.off('error', reject); resolve(server.address().port); }); }); };
   // The code to show in the server console, or null once the first account exists.

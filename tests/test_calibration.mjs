@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { createHost } from '../server/mes-host.mjs';
+import { createServer } from '../server/server.mjs';
 
 const host = createHost(fileURLToPath(new URL('../index.html', import.meta.url)));
 const { MES } = host;
@@ -43,7 +44,8 @@ check('the log still validates and every manifest still verifies', MES.validate(
 
 const tampered = structuredClone(state);
 tampered.calibrationLog[2].expires = '2030-01-01';
-check('editing a signed calibration field is detected by manifest verification', MES.validate(tampered) && !MES.verifyManifests(tampered).ok);
+check('editing a signed calibration field is rejected by entry validation', !MES.validate(tampered));
+check('editing a signed calibration field is detected by manifest verification', !MES.verifyManifests(tampered).ok);
 const broken = structuredClone(state);
 broken.calibrationLog[2].expires = 'not-a-date';
 check('a malformed calibration entry invalidates the workspace', !MES.validate(broken));
@@ -66,4 +68,25 @@ const unsigned = structuredClone(state);
 delete unsigned.calibrationLog[unsigned.calibrationLog.length - 1].calibrationSignature;
 check('a calibration entry without a signature invalidates the workspace', !MES.validate(unsigned));
 check('verifyManifests fails on an unsigned calibration entry instead of skipping it', !MES.verifyManifests(unsigned).ok);
+
+// P1 follow-up: an emptied manifest must fail entry validation, not just the verifier.
+const emptied = structuredClone(state);
+emptied.calibrationLog[emptied.calibrationLog.length - 1].calibrationSignature.manifest = {};
+check('an emptied calibration manifest fails entry validation', !MES.validate(emptied));
+check('an emptied calibration manifest fails manifest verification', !MES.verifyManifests(emptied).ok);
+const rehashed = structuredClone(state);
+rehashed.calibrationLog[rehashed.calibrationLog.length - 1].calibrationSignature.manifest.hash = '0'.repeat(64);
+check('a manifest with a mismatched hash fails entry validation', !MES.validate(rehashed));
+const resignMeaning = structuredClone(state);
+resignMeaning.calibrationLog[resignMeaning.calibrationLog.length - 1].calibrationSignature.manifest.meaning = 'Something else';
+check('a manifest with a rebound meaning fails entry validation', !MES.validate(resignMeaning));
+
+// Server gate: validState runs manifest verification, not just entry validation.
+const srv = createServer({ dbPath: ':memory:', quiet: true, indexPath: fileURLToPath(new URL('../index.html', import.meta.url)) });
+check('the server gate accepts a valid workspace', srv.validState(structuredClone(state)) === null);
+const srvEmptied = srv.validState(emptied);
+check('the server gate rejects a workspace with an emptied manifest', typeof srvEmptied === 'string' && srvEmptied.length > 0);
+const shapeHole = structuredClone(state);
+shapeHole._probe = { manifest: {} };
+check('the server gate rejects a manifest that entry validation ignores', MES.validate(shapeHole) && typeof srv.validState(shapeHole) === 'string');
 console.log(`calibration: ${checks} checks, all passed`);
