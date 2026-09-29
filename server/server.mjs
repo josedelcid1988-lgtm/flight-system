@@ -288,7 +288,10 @@ export function createServer(options = {}) {
   const page = async session => {
     const row = await store.getDoc(TENANT);
     // Never embed a workspace in a page response. The app fetches it only after sign-in.
-    const ctx = { api: '/api', etag: null, workspace: null, workspaceAvailable: !!row, jiraConfigured, auth: { users: (await store.accounts()).map(publicAccount) }, account: session ? publicAccount(session.account) : null, served: new Date().toISOString() };
+    // Nor the account directory: a visitor who has not signed in learns only whether the first account still has
+    // to be set up. A signed-in page reads the list from GET /api/auth/accounts with its session.
+    const accounts = await store.accounts();
+    const ctx = { api: '/api', etag: null, workspace: null, workspaceAvailable: !!row, jiraConfigured, auth: { users: session ? accounts.map(publicAccount) : [], setupRequired: accounts.length === 0 }, account: session ? publicAccount(session.account) : null, served: new Date().toISOString() };
     const script = `<script id="flight-server">window.FLIGHT_SERVER=${JSON.stringify(ctx).replace(/</g, '\\u003c')};</script>`;
     return host.html.replace('<head>', `<head>${script}`);
   };
