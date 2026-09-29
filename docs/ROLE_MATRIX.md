@@ -25,14 +25,14 @@ dispositions start Off.
 | `general` | General User | General user | View only, plus raising an NC and submitting an ECR. |
 | `technician` | Technician | Assembly technician | Run and buy off operations at the bench (stamp), raise an NC, submit an ECR, view everything. No kitting, inventory, AOG, scheduling or stage changes. |
 | `operator` | Operations | Operations technician | Everything a Technician can, plus kit parts and lots, move units to inventory, assign serials, mark AOG, adjust schedule, advance stages, split quantity. |
-| `ops` | Operations Manager | Operations Manager | Runs the production floor, work orders, assignments, notices, inventory handoffs and planning settings. Records training, sets training requirements on work instructions, and may disposition an NC as Scrap or use a QA-approved standard rework. |
+| `ops` | Operations Manager | Operations Manager | Runs the production floor, work orders, assignments, notices, inventory handoffs, planning settings and work-center sprints. Records training, sets training requirements on work instructions, and may disposition an NC as Scrap or use a QA-approved standard rework. |
 | `me` | Manufacturing Engineering | Manufacturing Engineer | Everything an Operator can, plus author WIs and WOs, adjust operations, peer-review WIs, record the NC initial disposition, and hold the Manufacturing Engineering MRB seat. No QA approvals. |
 | `swe` | Engineering | Engineer | View, raise an NC, submit an ECR, hold the Engineering MRB seat, push ATP software to an operation, and accept or reject software pushes. No Manufacturing Engineering functions. |
 | `qe` | Quality | Quality Engineer | Quality approvals and access administration. Inspection and the Quality MRB seat follow this role; nobody inspects their own work. |
 | `safety` | Safety Team | Safety Engineer | View, raise an NC, submit an ECR, and give the final Safety Team buy-off on a PFMEA, which releases a critical safety work instruction. |
 | `cert` | Certification | Certification Engineer | View, raise an NC, submit an ECR, and hold the Certification seat on a Material Review Board for Production FAI and Mfg. work orders. |
 | `qs` | Quality Supervisor | Quality Supervisor | Quality approvals plus account and training administration, organization settings, and floor notices. Inspection and the Quality MRB seat follow the Quality role. Can manage standard accounts but cannot manage a QA Manager or Master Access account. |
-| `qm` | QA Manager | Quality Manager | Quality approvals plus Manufacturing Engineering authoring, the Quality, Manufacturing Engineering and Engineering MRB seats, the Safety Team PFMEA buy-off (never on an analysis they reviewed or wrote), notices and access management. Not the Certification seat. |
+| `qm` | QA Manager | Quality Manager | Quality approvals plus Manufacturing Engineering authoring, the Quality, Manufacturing Engineering and Engineering MRB seats, the Safety Team PFMEA buy-off (never on an analysis they reviewed or wrote), notices and access management, work-center sprints and project sensitivity. Not the Certification seat. |
 
 ## Capabilities by role
 
@@ -70,6 +70,8 @@ dispositions start Off.
 | `approve-pedigree` (approve a pedigree change) | yes |  |  | yes | yes | yes |  | yes |  |  | yes | yes |
 | `configure-qms`  | yes |  |  |  |  |  |  |  |  |  |  | yes |
 | `configure-training`  | yes |  |  |  | yes |  |  |  |  |  | yes | yes |
+| `plan-order`  | yes |  |  |  | yes |  |  |  |  |  |  | yes |
+| `set-sensitivity`  | yes |  |  |  |  |  |  |  |  |  |  | yes |
 
 ## MRB seats
 

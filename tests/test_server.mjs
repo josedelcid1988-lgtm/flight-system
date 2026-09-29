@@ -97,6 +97,8 @@ try {
     assert.ok(caps.ops.includes('adjust-wo'));
     assert.ok(caps.ops.includes('edit-wi'));
     assert.ok(caps.ops.includes('configure-training'));
+    assert.ok(caps.ops.includes('plan-order') && !caps.ops.includes('set-sensitivity'), 'Operations plans sprints but does not set project sensitivity');
+    assert.ok(caps.qm.includes('plan-order') && caps.qm.includes('set-sensitivity'), 'QA Manager plans sprints and sets project sensitivity');
     assert.ok(caps.qs.includes('manage-access'));
     assert.ok(caps.qs.includes('mrb-quality'));
     assert.ok(caps.qs.includes('configure-training'));
