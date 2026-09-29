@@ -423,4 +423,13 @@ atpOpRef.buyoff.tools[0] = { ...atpOpRef.buyoff.tools[0] }; delete atpOpRef.buyo
 atpOpRef.buyoff.testAssets = [{ asset: refTag, calibrationEntry: 'CALLOG-09995' }];
 check('an ATP test asset citing a missing calibration entry fails validation', !MES.validate(danglingAtp));
 
+// #35 review (Codex 4134619499): the write-path rule that a calibration is dated on or before the Pacific day it
+// is recorded also holds on load, so an imported or hand-signed entry cannot postdate its own calibration.
+const postdated = structuredClone(state), pdSource = MES.calibrationStatus(postdated, 'NT-TOOL');
+postdated.calibrationLog.push(host.withAccount(qa, () => { const e = { ...pdSource, id: 'CALLOG-09996', tag: 'PD-TOOL', torque: false, calibratedAt: '2026-10-01', expires: '2027-10-01', note: '', recordedAt: '2026-09-29T19:00:00.000Z' }; delete e.supersedes; delete e.calibrationSignature; e.calibrationSignature = { manifest: MES.signManifest(postdated, 'Calibration recorded', calSubject(e), e.recordedAt) }; return e; }, postdated));
+check('a calibration dated after the day it was recorded fails validation and diagnose names it', !MES.validate(postdated) && MES.diagnose(postdated)?.where === 'CALLOG-09996');
+const sameDay = structuredClone(state);
+sameDay.calibrationLog.push(host.withAccount(qa, () => { const e = { ...pdSource, id: 'CALLOG-09997', tag: 'SD-TOOL', torque: false, calibratedAt: '2026-09-29', expires: '2027-09-29', note: '', recordedAt: '2026-09-29T19:00:00.000Z' }; delete e.supersedes; delete e.calibrationSignature; e.calibrationSignature = { manifest: MES.signManifest(sameDay, 'Calibration recorded', calSubject(e), e.recordedAt) }; return e; }, sameDay));
+check('a calibration dated the Pacific day it was recorded validates', MES.validate(sameDay));
+
 console.log(`calibration: ${checks} checks, all passed`);

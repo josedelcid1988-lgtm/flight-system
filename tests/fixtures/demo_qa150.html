@@ -2550,7 +2550,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const subject = calibrationSubject(entry);
     return canonical(m.subject) === canonical(subject) && m.hash === sha256(canonical(subject));
   };
-  const calibrationEntryValid = entry => plain(entry) && /^CALLOG-\d{5}$/.test(entry.id) && CALIBRATION_TAG_RE.test(entry.tag) && str(entry.description, 80) && str(entry.serial, 40, 0) && dateOnly(entry.calibratedAt) && dateOnly(entry.expires) && entry.expires > entry.calibratedAt && CALIBRATION_STATUSES.includes(entry.status) && str(entry.location, 80, 0) && str(entry.note, 300, 0) && str(entry.recordedBy, 140) && timestamp(entry.recordedAt) && (entry.supersedes === undefined || /^CALLOG-\d{5}$/.test(entry.supersedes)) && (entry.torque === undefined || typeof entry.torque === 'boolean') && calibrationManifestValid(entry);
+  const calibrationEntryValid = entry => plain(entry) && /^CALLOG-\d{5}$/.test(entry.id) && CALIBRATION_TAG_RE.test(entry.tag) && str(entry.description, 80) && str(entry.serial, 40, 0) && dateOnly(entry.calibratedAt) && dateOnly(entry.expires) && entry.expires > entry.calibratedAt && CALIBRATION_STATUSES.includes(entry.status) && str(entry.location, 80, 0) && str(entry.note, 300, 0) && str(entry.recordedBy, 140) && timestamp(entry.recordedAt) && entry.calibratedAt <= pacificDay(entry.recordedAt) && (entry.supersedes === undefined || /^CALLOG-\d{5}$/.test(entry.supersedes)) && (entry.torque === undefined || typeof entry.torque === 'boolean') && calibrationManifestValid(entry);
   // The first field of a calibration entry that fails calibrationEntryValid, for diagnose. Same order.
   const calibrationInvalidField = entry => {
     if (!plain(entry)) return 'entry';
@@ -2565,6 +2565,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (!str(entry.note, 300, 0)) return 'note';
     if (!str(entry.recordedBy, 140)) return 'recordedBy';
     if (!timestamp(entry.recordedAt)) return 'recordedAt';
+    if (entry.calibratedAt > pacificDay(entry.recordedAt)) return 'calibratedAt';
     if (entry.supersedes !== undefined && !/^CALLOG-\d{5}$/.test(entry.supersedes)) return 'supersedes';
     if (entry.torque !== undefined && typeof entry.torque !== 'boolean') return 'torque';
     if (!calibrationManifestValid(entry)) return 'signature';
