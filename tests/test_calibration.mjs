@@ -322,4 +322,32 @@ const noReasonImport = structuredClone(state);
 noReasonImport.calibrationLog.pop();
 noReasonImport.calibrationLog.push(host.withAccount(qa, () => { const e = { ...twRows[1], id: 'CALLOG-09992', status: 'In Calibration', supersedes: twRows[1].id, recordedAt: new Date().toISOString() }; delete e.calibrationSignature; e.calibrationSignature = { manifest: MES.signManifest(noReasonImport, 'Calibration entry corrected', calSubject(e), e.recordedAt) }; return e; }, noReasonImport));
 check('a workspace that returns a retired tool to service without a reason fails validation', !MES.validate(noReasonImport) && /CALLOG-09992/.test(MES.diagnose(noReasonImport)?.where || ''));
+// #35 review (Codex 4133296942): the current entry follows log order, so the order is bound to the signed ids.
+// Reversing an independent usable entry and a later quarantine would otherwise re-enable the tool.
+const orderA = run(qa, () => MES.recordCalibration(state, { tag: 'ORD-TOOL', description: 'BORE GAGE', serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }));
+const orderB = run(qa, () => MES.recordCalibration(state, { tag: 'ORD-TOOL', description: 'BORE GAGE', serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'Quarantined', location: '', note: 'Out of tolerance' }));
+const reordered = structuredClone(state), ia = reordered.calibrationLog.findIndex(e => e.id === orderA.id), ib = reordered.calibrationLog.findIndex(e => e.id === orderB.id);
+[reordered.calibrationLog[ia], reordered.calibrationLog[ib]] = [reordered.calibrationLog[ib], reordered.calibrationLog[ia]];
+check('a calibration log whose entries are out of id order fails validation', orderA.ok && orderB.ok && !MES.validate(reordered));
+check('diagnose names the out-of-order calibration entry', /out of order/.test(MES.diagnose(reordered)?.detail || '') && [orderA.id, orderB.id].includes(MES.diagnose(reordered)?.where));
+check('the quarantine stays current in the log as recorded', !MES.toolCheck('ORD-TOOL', now, state).ok && MES.validate(state));
+
+// #35 review (Codex 4133296971): calibration ids stay five digits. After CALLOG-99999 a new entry is refused
+// before anything is written, instead of producing CALLOG-100000 and an invalid workspace.
+const idFull = structuredClone(state), highRow = idFull.calibrationLog[idFull.calibrationLog.length - 1];
+idFull.calibrationLog.push(host.withAccount(qa, () => { const e = { ...highRow, id: 'CALLOG-99999', tag: 'HIGH-TOOL', status: 'In Calibration', note: '', recordedAt: new Date().toISOString() }; delete e.supersedes; delete e.calibrationSignature; e.calibrationSignature = { manifest: MES.signManifest(idFull, 'Calibration recorded', calSubject(e), e.recordedAt) }; return e; }, idFull));
+const fullLen = idFull.calibrationLog.length, exhausted = host.withAccount(qa, () => MES.recordCalibration(idFull, { ...entry, tag: 'NEXT-TOOL' }), idFull), exhaustedFix = host.withAccount(qa, () => MES.updateCalibration(idFull, 'CALLOG-99999', { note: 'cert 9' }), idFull);
+check('a new calibration entry after CALLOG-99999 is refused without writing', MES.validate(idFull) && !exhausted.ok && !exhaustedFix.ok && /CALLOG-99999/.test(exhausted.message) && idFull.calibrationLog.length === fullLen);
+
+// #35 review (Codex 4133296980): a draft body may use "manifest" as an ordinary key (#66), and the draft's
+// own signature must still cover that key, so changing it is detected.
+const coveredDraft = structuredClone(state), coveredBody = coveredDraft.aiSkillDrafts.find(d => d.id === spc.draftId).body;
+check('the draft fixture still carries a plain-object manifest key in its body', coveredBody && coveredBody.manifest && coveredBody.manifest.revision === 'A' && MES.validate(state) && MES.verifyManifests(state).ok);
+coveredBody.manifest.revision = 'B';
+check('changing a manifest key inside a signed draft body fails validation', !MES.validate(coveredDraft));
+check('changing a manifest key inside a signed draft body fails manifest verification', !MES.verifyManifests(coveredDraft).ok);
+const addedKey = structuredClone(state), plainDraft = run(qa, () => MES.runSkill(addedKey, { skill: 'spc-chart-builder', values: [1, 2, 3, 2, 1], reason: 'A draft whose body has no manifest key.' }));
+addedKey.aiSkillDrafts.find(d => d.id === plainDraft.draftId).body.manifest = { injected: true };
+check('adding a manifest key to a signed draft body fails validation', plainDraft.ok && !MES.validate(addedKey));
+
 console.log(`calibration: ${checks} checks, all passed`);

@@ -48,6 +48,21 @@ try {
   await page.waitForFunction(() => (state.calibrationLog || []).some(e => e.tag === 'UI-CAL-01'));
   assert.match(await page.locator('#main #flight-react-island').innerText(), /UI-CAL-01 · DIGITAL CALIPER · due/, 'the recorded calibration is listed in the React calibration log');
   assert.deepEqual(errors, [], 'recording a calibration from the React view raises no page errors');
+  // #35 review (Codex 4133296954): the current entry for each tag has a correction form that appends a signed
+  // correction through MES.updateCalibration; superseded entries do not offer one.
+  const calId = await page.evaluate(() => state.calibrationLog.find(e => e.tag === 'UI-CAL-01').id);
+  const fixForm = page.locator(`#main #flight-react-island form[data-qms-calibration-correct="${calId}"]`);
+  assert.equal(await fixForm.count(), 1, 'the current calibration entry has a correction form in the React view');
+  await fixForm.locator('xpath=ancestor::details').locator('summary').click();
+  assert.equal(await fixForm.locator('[name="description"]').inputValue(), 'DIGITAL CALIPER', 'the correction form starts from the current entry');
+  await fixForm.locator('[name="status"]').selectOption('Quarantined');
+  await fixForm.locator('[name="note"]').fill('Failed daily check');
+  await fixForm.locator('button[type="submit"]').click();
+  await page.waitForFunction(id => (state.calibrationLog || []).some(e => e.supersedes === id), calId);
+  const fixed = await page.evaluate(id => { const e = state.calibrationLog.find(x => x.supersedes === id); return { status: e.status, note: e.note, current: MES.calibrationStatus(state, 'UI-CAL-01').id === e.id }; }, calId);
+  assert.deepEqual(fixed, { status: 'Quarantined', note: 'Failed daily check', current: true }, 'the correction is appended as the current entry');
+  assert.equal(await page.locator(`#main #flight-react-island form[data-qms-calibration-correct="${calId}"]`).count(), 0, 'the superseded entry no longer offers a correction form');
+  assert.deepEqual(errors, [], 'correcting a calibration from the React view raises no page errors');
 
   const report = await show('trace-report', "traceQuery = 'FC-200-00001';");
   assert.equal(report.react, true);
