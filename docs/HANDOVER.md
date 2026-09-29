@@ -192,7 +192,9 @@ CI (`.github/workflows/ci.yml`) runs on every pull request and push to `main`. I
 bundle, demo build and role matrix are current and that `index.html` carries no committed stamp. It then
 generates the build stamp in its working copy (not committed), verifies it with `--verify`, runs every
 suite with the mirror off and on against the stamped build, and builds a release record from the results
-with `release-report --dry-run`. The results are kept as a run artifact.
+with `release-report --dry-run`. On a pull request it checks out the pull request head, not GitHub's merge
+ref, because the record names that commit and `release-report` refuses a commit other than the one checked
+out. The results are kept as a run artifact.
 
 ## 10. Release process
 
@@ -204,9 +206,10 @@ with `release-report --dry-run`. The results are kept as a run artifact.
 3. Run `node tools/run-suites.mjs` and `node tools/run-suites.mjs --mirror`. Both must pass.
 4. Run `node tools/release-report.mjs`. It writes the release record (build, the commit the stamp was
    generated from, hashes, results, skips) into `VERSION.md`. It refuses an unstamped `index.html`, a
-   stamp that was not generated from the `index.html` and build id committed in HEAD, a packaged file in
-   `assets/` whose bytes differ from HEAD (changed, added, ignored or missing), a failed run, or results
-   from different files. `tools/package-release.mjs` also refuses an unstamped or mismatched
+   stamp that was not generated from the `index.html` and build id committed in HEAD, a `demo.html` not
+   regenerated from the stamped `index.html`, a packaged file in `assets/` whose bytes differ from HEAD
+   (changed, added, ignored or missing), a failed run, or results from different files or from a commit
+   other than the one the record names (`tools/run-suites.mjs` records the commit it ran on). `tools/package-release.mjs` also refuses an unstamped or mismatched
    `index.html`, and checks `assets/` against HEAD again before it writes the zips.
 5. `node tools/package-release.mjs` writes `release/flight-system-<build>.zip` and the demo zip from the
    stamped files. Deploy from the production zip, not from `main`, and check the deployed copy with

@@ -15,7 +15,7 @@ const check = async (name, fn) => {
 const sha = (salt, password) => createHash('sha256').update(`${salt}:${password}`).digest('hex');
 let now = Date.now();
 const SETUP_CODE = 'server-test-setup-code';
-const server = createServer({ dbPath: ':memory:', quiet: true, clock: () => now, setupCode: SETUP_CODE });
+const server = createServer({ dbPath: ':memory:', quiet: true, clock: () => now, setupCode: SETUP_CODE, modelAdapterSettings: ['FLIGHT_TEST_MODEL_KEY'] });
 const requestHandler = server.listeners('request')[0];
 const base = 'http://flight-system.test/api';
 const request = async (url, { method = 'GET', headers = {}, body } = {}) => {
@@ -55,12 +55,10 @@ const api = async (method, path, { token, body, raw = false, headers } = {}) => 
 };
 
 try {
-  await check('fresh database health identifies Flight System', async () => {
+  await check('fresh database health answers liveness only without a session', async () => {
     const result = await api('GET', '/health');
     assert.equal(result.status, 200);
-    assert.equal(result.json.product, 'Flight System');
-    assert.equal(result.json.accounts, 0);
-    assert.equal(result.json.workspace, false);
+    assert.deepEqual(result.json, { ok: true });
   });
   await check('served page receives server context with no credential hashes', async () => {
     const html = await (await request('http://flight-system.test/')).text();
@@ -320,10 +318,11 @@ try {
     const setOf = (source, name) => { const found = new RegExp(`${name}\\s*=\\s*new Set\\((\\[[^\\]]*\\])\\)`).exec(source); assert.ok(found, `${name} is declared`); return JSON.stringify(Function(`return ${found[1]}`)().sort()); };
     assert.equal(setOf(page, 'serverMutatorExact'), setOf(host, 'actionExact'), 'page and server exact action lists match');
     assert.equal(setOf(page, 'serverMutatorExclude'), setOf(host, 'actionExclude'), 'page and server excluded action lists match');
+    assert.equal(setOf(page, 'serverMutatorAllow'), setOf(host, 'actionAllow'), 'page and server reviewed command lists match');
     assert.equal(/const serverMutatorName=(\/\^\(\?:[^/]*\)\/i)/.exec(page)?.[1], /const actionName = (\/\^\(\?:[^/]*\)\/i)/.exec(host)?.[1], 'page and server command-name patterns match');
     assert.equal(server.host.resolveAction('MES.icalExport'), null, 'calendar export stays a read and is not exposed as a mutation command');
     assert.equal(server.host.resolveAction('MES.verifyAIActionLog'), null, 'AI action-log verification stays a read and is not exposed as a mutation command');
-    for (const name of ['MES.upgrade', 'MES.validate', 'MES.verifyManifests', 'MES.verifyAIActionLog', 'MES.signManifest', 'FlightPlan.status', 'FlightManeuver.pfmeaFor', 'MES.recordAIAction', 'MES.logSupport', 'MES.noteDemoBypassRemoved', 'MES.releaseWIFromPfmea']) {
+    for (const name of ['MES.upgrade', 'MES.validate', 'MES.verifyManifests', 'MES.verifyAIActionLog', 'MES.signManifest', 'FlightPlan.status', 'FlightManeuver.pfmeaFor', 'MES.recordAIAction', 'MES.logSupport', 'MES.noteDemoBypassRemoved', 'MES.releaseWIFromPfmea', 'MES.quarantineOrder', 'MES.rollWorkOrderRevision']) {
       const result = await api('POST', `/workspace/actions/${name}`, { token, body: { args: [] }, headers: { 'If-Match': before.etag } });
       assert.equal(result.status, 404, `${name} must not be remotely callable`);
     }

@@ -47,6 +47,32 @@ A closed work order leaves the live workspace once it is stocked, or when it can
 
 The export's `extractSha256` covers the order, its activity, the archive hash and the metadata of each recording, including that recording's SHA-256. The recording bytes are streamed one at a time, so a large archive never has to fit in server memory. To verify a download, check each recording's base64 bytes against its `sha256`, then hash the rest of the extract as described in `extractHashCovers`.
 
+## Demo build
+
+`demo.html` relaxes separation of duties, PIN entry and the stamp gate, so the production server does
+not serve it. To offer it from a training server, start that server with `--serve-demo` or
+`FLIGHT_SERVE_DEMO=1`. Every page of the demo still says DEMO, NOT FOR ACCEPTANCE.
+
+## Health check
+
+`GET /api/health` answers `{ "ok": true }` to anyone, for a load balancer or monitor. The product name,
+account count, workspace presence, ETag and schema version are returned only to a signed-in session.
+
+## Sessions at rest
+
+Each session is stored as the SHA-256 of its token, in SQLite and PostgreSQL alike, so a copy of the
+database or a backup holds no session that can be used. The browser keeps the token for its tab and
+the server hashes it on every request. Upgrading a database made before this ends its stored sessions:
+each person signs in again once.
+
+## Who can read evidence
+
+A recording is read under the authority of the record that names it. Any signed-in account can read the
+live workspace and the archive, so it can read a recording a live operation or an archived order names,
+including the stored copy behind another ID. A recording no record names yet (uploaded but not saved on
+an operation) can be opened only by the account that uploaded it and by a QA Manager or Master Access
+account. Other requests are refused with 403 and recorded as `evidence-read-refused`.
+
 ## First-run setup code
 
 The first account on a new server becomes Master Access, so creating it needs a setup code that only
@@ -77,6 +103,20 @@ Saving an export setting whose setting name or destination host is not bound is 
 delivery is checked again before it is sent, so no other server secret, such as
 `FLIGHT_JIRA_API_TOKEN`, can be sent to any host. A malformed `FLIGHT_EXPORT_CREDENTIALS` stops the
 server at startup.
+
+## Model adapter key setting
+
+The model adapter's configuration names the server setting that holds its key; the key itself stays
+in the server environment. Only a setting the operator lists can be named:
+
+```bash
+FLIGHT_MODEL_ADAPTER_SETTINGS='FLIGHT_MODEL_KEY'
+FLIGHT_MODEL_KEY='...'
+```
+
+Naming any other setting is refused with the same message as a listed setting that is empty, so the
+check cannot be used to learn which environment variables exist on the server. A malformed list stops
+the server at startup.
 
 ## Jira Cloud connector
 

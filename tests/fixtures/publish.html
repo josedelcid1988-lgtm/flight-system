@@ -1647,6 +1647,9 @@ function skBoot(){
  function serverApi(route,options){options=options||{};var headers={'Content-Type':'application/json'},token=serverToken();if(token)headers.Authorization='Bearer '+token;if(options.headers)Object.keys(options.headers).forEach(function(k){headers[k]=options.headers[k];});return fetch(SERVER.api+route,{method:options.method||'GET',headers:headers,body:options.body===undefined?undefined:JSON.stringify(options.body)}).then(function(response){return response.text().then(function(body){var json=null;try{json=body?JSON.parse(body):null;}catch(e){}return {ok:response.ok,status:response.status,json:json,etag:response.headers.get('etag'),archived:response.headers.get('x-flight-archived')};});});}
  function serverSignIn(username,password){return serverApi('/auth/session',{method:'POST',body:{username:username,password:password}}).then(function(result){if(!result.ok)return {ok:false,message:result.json&&result.json.error||'Sign-in failed.'};try{sessionStorage.setItem(SERVER_TOKEN,result.json.token);}catch(e){}var users=SERVER.auth&&Array.isArray(SERVER.auth.users)?SERVER.auth.users:[];var at=users.findIndex(function(u){return u.username===result.json.account.username;});if(at<0)users.push(result.json.account);else users[at]=result.json.account;SERVER.auth={users:users};return {ok:true,account:result.json.account};});}
  window.skServer={active:!!SERVER,api:serverApi,token:serverToken,context:SERVER,etag:SERVER?SERVER.etag:null};
+ // The server does not send its account list to a page that has not signed in; it says only whether the first
+ // account still has to be set up. A signed-in page loads the list with its session.
+ function firstRunSetup(a){return SERVER?!!(SERVER.auth&&SERVER.auth.setupRequired):!a.users.length;}
  function loadAuth(){if(SERVER)return SERVER.auth&&Array.isArray(SERVER.auth.users)?{users:structuredClone(SERVER.auth.users)}:{users:[]};try{var a=JSON.parse(localStorage.getItem(AUTH_KEY)||'null');return a&&Array.isArray(a.users)?a:{users:[]};}catch(e){return {users:[]};}}
  function saveAuth(a){if(SERVER){var users=structuredClone(a.users);return serverApi('/auth/accounts',{method:'PUT',body:{users:users}}).then(function(r){if(r.ok&&r.json&&Array.isArray(r.json.users)){SERVER.auth={users:r.json.users};try{window.dispatchEvent(new CustomEvent('sk-auth-saved'));}catch(e){}return true;}secEvent('account-sync-failed',{reason:r.json&&r.json.error||'server refused account changes'});try{window.dispatchEvent(new CustomEvent('sk-auth-save-failed',{detail:{message:r.json&&r.json.error||'The server refused account changes.'}}));}catch(e){}return false;}).catch(function(e){secEvent('account-sync-failed',{reason:e&&e.message||'server unavailable'});try{window.dispatchEvent(new CustomEvent('sk-auth-save-failed',{detail:{message:'The server could not save account changes.'}}));}catch(_){ }return false;});}localStorage.setItem(AUTH_KEY,JSON.stringify(a));try{window.dispatchEvent(new CustomEvent('sk-auth-saved'));}catch(e){}return Promise.resolve(true);}
  function serverAccessChange(action,fields){return serverApi('/auth/access',{method:'POST',body:Object.assign({action:action},fields)}).then(function(r){if(!r.ok||!r.json||!Array.isArray(r.json.users))return {ok:false,message:r.json&&r.json.error||'The server refused this access change.'};SERVER.auth={users:r.json.users};var user=currentUser();if(action==='roles'&&user&&user.username===fields.username)applyPermClasses(user);secEvent(action==='grant'?'authority-granted':action==='revoke'?'authority-revoked':action==='roles'?'role-change':fields.on?'support-grant':'support-revoke',{username:fields.username,by:currentUser()&&currentUser().username,reason:fields.reason,trainingCode:fields.trainingCode||null,authority:fields.cap||null});try{window.dispatchEvent(new CustomEvent('sk-auth-saved'));if(action==='support')window.dispatchEvent(new CustomEvent('sk-support-access',{detail:{username:fields.username,on:fields.on,reason:fields.reason}}));if(action==='roles')window.dispatchEvent(new CustomEvent('sk-role-change',{detail:{username:fields.username,label:(fields.roles||[]).map(roleLabel).join(' + ')}}));}catch(e){}return {ok:true,message:r.json.message||'Access change saved by the server.'};}).catch(function(){return {ok:false,message:'The server could not confirm this access change.'};});}
@@ -1770,7 +1773,7 @@ function skBoot(){
   var list=(Array.isArray(roles)?roles:[]).filter(function(k,i,arr){return ROLES.some(function(r){return r.key===k;})&&arr.indexOf(k)===i;});
   if(!list.length)return {ok:false,message:'Choose at least one role.'};
   if(isQS&&list.some(function(k){return k==='qm'||k==='admin';}))return {ok:false,message:'A Quality Supervisor cannot assign QA Manager or Master Access.'};
-  if(reason.length<10||reason.length>300)return {ok:false,message:'Give the reason in 10 to 300 characters. It is kept in this device\u2019s local security log, not the server audit trail.'};
+  if(reason.length<10||reason.length>300)return {ok:false,message:'Give the reason in 10 to 300 characters. '+(SERVER?'It is kept in the server audit trail.':'It is kept in this device\'s security log.')};
   var managers=a.users.filter(function(x){return rolesOf(x,true).some(function(k){return k==='qm'||k==='admin';});});
   var added=list.slice(1).filter(function(k){return before.indexOf(k)<0||(before[0]===k);});
   if(added.length){if(!trainingCode)return {ok:false,message:'Adding '+added.map(roleLabel).join(', ')+' expands '+u.displayName+'\'s authority beyond their role. Choose the training that qualifies them.'};if(!trainingOk(u,trainingCode))return {ok:false,message:u.displayName+' has no current '+trainingCode+' training record. Record the training first.'};}
@@ -1882,7 +1885,7 @@ function skBoot(){
  var typed=document.getElementById('sk-typed');var caret=document.createElement('i');caret.className='sk-caret';typed.after(caret);var full='';var ci=0;
  var loginForm=document.getElementById('sk-login'),greet=document.getElementById('sk-greet'),skipBtn=document.getElementById('sk-skip');
  function startGreeting(displayName){try{if(sessionStorage.getItem('sk-boot-seen')){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',function(){dismiss();});else dismiss();return;}sessionStorage.setItem('sk-boot-seen','1');}catch(e){}name=firstName(displayName);full='Ready to take flight, '+name+'.';loginForm.hidden=true;greet.hidden=false;skipBtn.hidden=false;runTyping();t=setTimeout(dismiss,REDUCE?1200:(TYPE_AT+TYPE_MS+TAIL_MS));}
- function showLogin(){var a=loadAuth(),firstRun=!a.users.length;greet.hidden=true;loginForm.hidden=false;
+ function showLogin(){var a=loadAuth(),firstRun=firstRunSetup(a);greet.hidden=true;loginForm.hidden=false;
   document.getElementById('sk-login-title').textContent=firstRun?'Set up Master Access':'Sign in';
   document.getElementById('sk-login-submit').textContent=firstRun?'Create account and sign in':'Sign in';
   document.getElementById('sk-name-field').hidden=!firstRun;document.getElementById('sk-confirm-field').hidden=!firstRun;document.getElementById('sk-setup-field').hidden=!(firstRun&&SERVER);document.getElementById('sk-setup').required=!!(firstRun&&SERVER);
@@ -1891,7 +1894,7 @@ function skBoot(){
   document.getElementById('sk-login-note').textContent=firstRun?(SERVER?'Create the first Master Access account for this Flight System server. Enter the setup code shown in the server console when it started.':'Create your named Master Access account on this browser. Choose a unique password. Master buy-offs are recorded as overrides. Independent approval requirements still apply. Accounts are local to this browser.'):(SERVER?'Sign in to the shared Flight System workspace. Your session is managed by the server.':'Local sign-in on this device. Accounts are stored in this browser only.');
   setTimeout(function(){(firstRun?document.getElementById('sk-displayname'):document.getElementById('sk-username')).focus();},50);}
  loginForm.addEventListener('submit',function(ev){ev.preventDefault();var err=document.getElementById('sk-login-error');err.textContent='';
-  var a=loadAuth(),firstRun=!a.users.length;var username=document.getElementById('sk-username').value.trim().toLowerCase(),pw=document.getElementById('sk-password').value;
+  var a=loadAuth(),firstRun=firstRunSetup(a);var username=document.getElementById('sk-username').value.trim().toLowerCase(),pw=document.getElementById('sk-password').value;
   if(!/^[a-z0-9._-]{3,40}$/.test(username)){err.textContent='Username: 3 to 40 characters, letters, numbers, dot, dash, underscore.';return;}
   if(pw.length<8){err.textContent='Password must be at least 8 characters.';return;}
   var btn=document.getElementById('sk-login-submit');btn.disabled=true;
@@ -1925,7 +1928,11 @@ function skBoot(){
  var gone=false,t;
  function dismiss(){if(gone)return;gone=true;clearTimeout(t);clearInterval(hi);el.remove();}
  document.getElementById('sk-skip').addEventListener('click',dismiss);
- if(user)startGreeting(user.displayName);else showLogin();
+ // A reload keeps the server session in this tab but the page arrives without the account list: load it with the
+ // session once the page has finished loading, then continue as a sign-in would. A session the server no longer
+ // accepts shows the sign-in form.
+ function restoreServerSession(){loginForm.hidden=true;greet.hidden=true;var parsed=new Promise(function(done){if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',function(){done();},{once:true});else done();});Promise.all([serverApi('/auth/accounts'),parsed]).then(function(all){var r=all[0];if(!(r.ok&&r.json&&Array.isArray(r.json.users))){showLogin();return;}SERVER.auth={users:r.json.users,setupRequired:false};var u=currentUser();if(!u){showLogin();return;}applyPermClasses(u);try{if(typeof window.skBindCredential==='function')window.skBindCredential();if(typeof render==='function')render();}catch(e){}startGreeting(u.displayName);}).catch(function(){showLogin();});}
+ if(user)startGreeting(user.displayName);else if(SERVER&&serverToken()&&(function(){try{return !!sessionStorage.getItem(SESSION_KEY);}catch(e){return false;}})())restoreServerSession();else showLogin();
  function deco(){var ph=document.querySelector('.page-heading');if(!ph||ph.querySelector('.sk-ticker'))return;var t=document.createElement('div');t.className='sk-ticker';t.innerHTML='<i>Live</i><span>El Segundo <b id="sk-site">Floor</b></span><span id="sk-clock"></span>';ph.appendChild(t);}
  function site(){var b=document.getElementById('sk-site');if(!b)return;var o=null;try{o=(typeof order==='function')?order():null;}catch(e){}var v=o&&o.site?String(o.site):'Floor';if(b.textContent!==v)b.textContent=v;}
  function tick(){site();var c=document.getElementById('sk-clock');if(c)c.textContent=new Date().toLocaleTimeString('en-US',{timeZone:'America/Los_Angeles',hour12:false})+' PT';}
@@ -2915,7 +2922,12 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   }
   function nextControlledRevision(revision){if(/^[A-Z]{1,3}$/.test(revision)){let n=0;for(const char of revision)n=n*26+char.charCodeAt(0)-64;n++;let out='';while(n){n--;out=String.fromCharCode(65+n%26)+out;n=Math.floor(n/26);}return out.length<=3?out:null;}if(/^\d{1,3}$/.test(revision)){const next=Number(revision)+1;return next<=999?String(next).padStart(revision.length,'0'):null;}return null;}
   function controlledDocumentReady(state){return qualityAuditReady(state);}
+  // Document control follows the work instruction authorities: a person who may author WIs (edit-wi) or approve them for
+  // Quality (approve-wi) authors a controlled document or starts its next revision; only Quality WI approval (approve-wi)
+  // reviews and releases one. Author, reviewer and releaser stay three different people.
+  const controlledDocumentAuthorDenied=()=>can('edit-wi')||can('approve-wi')?null:fail('Your role cannot author a controlled document. Ask the QA Manager to change your role.');
   function createControlledDocument(state,input,revisionOf=false){
+    {const d=controlledDocumentAuthorDenied();if(d)return d;}
     const bad=controlledDocumentReady(state);if(bad)return bad;if(qualityIsAgent(input))return fail('An agent cannot author a controlled document.');
     const documentNumber=String(input?.documentNumber||'').trim(),title=String(input?.title||'').trim(),kind=input?.kind,revision=String(input?.revision||'A').trim(),file=input?.file;
     if(!/^[A-Z][A-Z0-9]*(?:-[A-Z0-9]+){1,4}$/.test(documentNumber))return fail('Enter a document number using letters, numbers, and hyphens.');
@@ -2930,12 +2942,15 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const id=nextQualityId(state.controlledDocuments,'QDOC-'),at=new Date().toISOString(),doc={id,documentNumber,title,kind,revision,previousId,status:'Draft',file:attached,author:{...who},authoredAt:at,reviewer:null,releaser:null,reviewManifest:null,releaseManifest:null};doc.authorManifest=signManifest(state,'Controlled document authored',controlledDocumentSubject(doc),at);state.controlledDocuments.push(doc);return {ok:true,id,message:`${documentNumber} Rev ${revision} created as a controlled draft.`};
   }
   function startControlledDocumentRevision(state,documentId,input){
+    {const d=controlledDocumentAuthorDenied();if(d)return d;}
     const previous=(state.controlledDocuments||[]).find(doc=>doc.id===documentId);if(!previous)return fail('Controlled document not found.');if(previous.status!=='Released')return fail('Only a released document can start a new revision.');const revision=nextControlledRevision(previous.revision);if(!revision)return fail('The revision sequence is not supported.');return createControlledDocument(state,{...input,documentNumber:previous.documentNumber,kind:previous.kind,revision,previousId:previous.id},true);
   }
   function reviewControlledDocument(state,documentId,input){
+    {const d=denied('approve-wi','review a controlled document');if(d)return d;}
     const bad=controlledDocumentReady(state);if(bad)return bad;if(qualityIsAgent(input))return fail('An agent cannot review a controlled document.');const doc=(state.controlledDocuments||[]).find(item=>item.id===documentId);if(!doc)return fail('Controlled document not found.');if(doc.status!=='Draft')return fail('Only a draft document can be reviewed.');const who=actor(state);if(!snapshotValid(who))return fail('Sign in with a name and credential before reviewing a document.');if(who.credentialId===doc.author.credentialId)return fail('The document author cannot review their own document.');const at=new Date().toISOString();doc.reviewer={...who};doc.reviewedAt=at;doc.reviewManifest=signManifest(state,'Controlled document reviewed',controlledDocumentReviewSubject(doc),at);doc.status='Reviewed';return {ok:true,message:`${doc.documentNumber} Rev ${doc.revision} reviewed by ${who.name}.`};
   }
   function releaseControlledDocument(state,documentId,input){
+    {const d=denied('approve-wi','release a controlled document');if(d)return d;}
     const bad=controlledDocumentReady(state);if(bad)return bad;if(qualityIsAgent(input))return fail('An agent cannot release a controlled document.');const doc=(state.controlledDocuments||[]).find(item=>item.id===documentId);if(!doc)return fail('Controlled document not found.');if(doc.status!=='Reviewed')return fail('A reviewer must sign before the document can be released.');const who=actor(state);if(!snapshotValid(who))return fail('Sign in with a name and credential before releasing a document.');if([doc.author.credentialId,doc.reviewer.credentialId].includes(who.credentialId))return fail('The releaser must be a third person, different from the author and reviewer.');const at=new Date().toISOString();doc.releaser={...who};doc.releasedAt=at;doc.releaseManifest=signManifest(state,'Controlled document released',controlledDocumentReleaseSubject(doc),at);doc.status='Released';return {ok:true,message:`${doc.documentNumber} Rev ${doc.revision} released by ${who.name}.`};
   }
   const AI_GOVERNANCE_PROCEDURES=Object.freeze([
@@ -3263,7 +3278,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   function closeAudit(state,auditId,input){const bad=qualityAuditReady(state);if(bad)return bad;if(qualityIsAgent(input))return fail('An agent cannot close an audit. A person signs.');const audit=(state.audits||[]).find(a=>a.id===auditId);if(!audit)return fail('Audit not found.');if(audit.status==='Closed')return fail('This audit is already closed.');if((audit.findings||[]).some(f=>f.status!=='Closed'))return fail('Close every open finding before closing the audit.');const who=actor(state);if(!snapshotValid(who))return fail('A person signs the audit closed. Sign in with a name and credential.');if(who.credentialId===audit.openedBy.credentialId)return fail('The person who wrote this audit cannot close it. A different person signs.');const at=new Date().toISOString();audit.status='Closed';audit.closer={...who};audit.closedAt=at;audit.manifest=signManifest(state,'Audit closed',{auditId,scope:audit.scope},at);return {ok:true,message:`${auditId} closed by ${who.name}.`};}
   function issueCertification(state,input){const bad=qualityAuditReady(state);if(bad)return bad;if(qualityIsAgent(input))return fail('An agent cannot issue a certification. A person signs.');const who=actor(state),statement=String(input?.statement||'').trim();if(!snapshotValid(who))return fail('A person signs a certification. Sign in with a name and credential.');if(!str(statement,300)||statement.length<5)return fail('Enter what this certification covers, in 5 to 300 characters.');state.certifications=Array.isArray(state.certifications)?state.certifications:[];if(state.certifications.length>=200)return fail('The workspace holds 200 certifications.');const at=new Date().toISOString(),id=nextQualityId(state.certifications,'CERT-'),record={id,statement,by:{...who},at};record.manifest=signManifest(state,'Certification issued',{id,statement},at);state.certifications.push(record);return {ok:true,id,message:`${id} signed by ${who.name}.`};}
   function approveSupplier(state,input){const bad=qualityAuditReady(state);if(bad)return bad;if(qualityIsAgent(input))return fail('An agent cannot approve a supplier. A person signs.');const who=actor(state),supplier=String(input?.supplier||'').trim();if(!snapshotValid(who))return fail('A person signs a supplier approval. Sign in with a name and credential.');if(!str(supplier,120)||supplier.length<2)return fail('Enter the supplier name, 2 to 120 characters.');state.supplierApprovals=Array.isArray(state.supplierApprovals)?state.supplierApprovals:[];if(state.supplierApprovals.length>=200)return fail('The workspace holds 200 supplier approvals.');const at=new Date().toISOString(),id=nextQualityId(state.supplierApprovals,'SAP-'),record={id,supplier,decision:'Approved',by:{...who},at};record.manifest=signManifest(state,'Supplier approval',{id,supplier},at);state.supplierApprovals.push(record);return {ok:true,id,message:`${id} signed by ${who.name}.`};}
-  function storeQualityValue(state,input){const bad=qualityAuditReady(state);if(bad)return bad;const kind=input?.kind;if(!QUALITY_KINDS.includes(kind))return fail('Choose gage, capability, or sampling.');if(!plain(input)||typeof input.value!=='number'||!Number.isFinite(input.value))return fail(`Enter the computed ${kind} value. This record does not calculate it.`);const name=String(input.name||'').trim().slice(0,80);state.qualityValues=Array.isArray(state.qualityValues)?state.qualityValues:[];if(state.qualityValues.length>=400)return fail('The workspace holds 400 computed values.');const id=nextQualityId(state.qualityValues,'QV-');state.qualityValues.push({id,kind,value:input.value,name});return {ok:true,id,message:`Computed ${kind} value stored.`};}
+  function storeQualityValue(state,input){{const d=denied('approve-nc','store a quality study value');if(d)return d;}const bad=qualityAuditReady(state);if(bad)return bad;const kind=input?.kind;if(!QUALITY_KINDS.includes(kind))return fail('Choose gage, capability, or sampling.');if(!plain(input)||typeof input.value!=='number'||!Number.isFinite(input.value))return fail(`Enter the computed ${kind} value. This record does not calculate it.`);const name=String(input.name||'').trim().slice(0,80);state.qualityValues=Array.isArray(state.qualityValues)?state.qualityValues:[];if(state.qualityValues.length>=400)return fail('The workspace holds 400 computed values.');const id=nextQualityId(state.qualityValues,'QV-');state.qualityValues.push({id,kind,value:input.value,name});return {ok:true,id,message:`Computed ${kind} value stored.`};}
   function recordQualityVerdict(state,input){const bad=qualityAuditReady(state);if(bad)return bad;const kind=input?.kind;if(!QUALITY_KINDS.includes(kind))return fail('Choose gage, capability, or sampling.');const stored=(state.qualityValues||[]).find(v=>v.id===input.valueId&&v.kind===kind&&typeof v.value==='number'&&Number.isFinite(v.value));if(!stored)return fail(`A ${kind} verdict needs a computed value already stored.`);const verdict=String(input.verdict||'').trim();if(!str(verdict,80)||verdict.length<2)return fail('Enter the verdict in 2 to 80 characters.');const who=actor(state);if(!snapshotValid(who))return fail('Sign in with a name and credential before recording a verdict.');state.qualityVerdicts=Array.isArray(state.qualityVerdicts)?state.qualityVerdicts:[];if(state.qualityVerdicts.length>=400)return fail('The workspace holds 400 quality verdicts.');const at=new Date().toISOString(),id=nextQualityId(state.qualityVerdicts,'QVD-'),record={id,kind,valueId:stored.id,value:stored.value,verdict,by:{...who},at};record.manifest=signManifest(state,`${kind} verdict`,{id,kind,valueId:stored.id,value:stored.value,verdict},at);state.qualityVerdicts.push(record);return {ok:true,id,message:`${id} records the stored ${kind} value ${stored.value}.`};}
   function validateVersion(state, version) {
     if (!(plain(state) && state.version === version && Array.isArray(state.orders) && state.orders.length <= MAX_ORDERS && unique(state.orders.map(order => order && order.id)) && state.orders.every(order => orderValid(order, version)) && Array.isArray(state.activity) && state.activity.length <= 500 && unique(state.activity.map(event => event && event.id)) && state.activity.every(event => eventValid(event) && state.orders.some(order => order.id === event.orderId)) && supportLogValid(state.supportLog) && trainingCatalogValid(state.trainingCatalog) && trainingRecordsValid(state.trainingRecords) && qualityRecordsValid(state))) return false;
@@ -3559,9 +3574,14 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // MCRs that apply to one operation of a work instruction (open, or marked for this revision).
   function ecrsForOperation(state, wi, opId) { return ecrList(state).filter(e => e.type === 'process' && e.wiId === wi.id && e.opId === opId && (e.status === 'Open' || (e.status === 'Incorporating' && e.incorporatedIn === wi.revision))); }
   function openProcessECRs(state, wiId) { return ecrList(state).filter(e => e.type === 'process' && e.wiId === wiId && ['Open', 'Incorporating'].includes(e.status)); }
+  // Called by the WI revise form right after reviseMasterWI: the MCRs chosen there are incorporated into the new draft.
   function incorporateECRs(state, wiId, revision, ids) {
+    { const d = denied('edit-wi', 'incorporate MCRs into a work instruction'); if (d) return d; }
+    const { error } = editableWI(state, wiId, revision); if (error) return fail(error);
     const chosen = new Set(Array.isArray(ids) ? ids : []);
-    ecrList(state).filter(e => e.type === 'process' && e.wiId === wiId && e.status === 'Open' && chosen.has(e.id)).forEach(e => { e.status = 'Incorporating'; e.incorporatedIn = revision; });
+    const incorporated = ecrList(state).filter(e => e.type === 'process' && e.wiId === wiId && e.status === 'Open' && chosen.has(e.id));
+    incorporated.forEach(e => { e.status = 'Incorporating'; e.incorporatedIn = revision; });
+    return { ok: true, message: incorporated.length ? `${incorporated.map(e => e.id).join(', ')} incorporated into ${wiId} Rev ${revision}.` : 'No MCRs were incorporated.' };
   }
   function requestWorkOrder(state, input) {
     const list = Array.isArray(state.woRequests) ? state.woRequests : (state.woRequests = []);
@@ -4606,6 +4626,8 @@ const OP_BOM_MAX = 12;
     const ecoNote = !wi ? (wiId ? `No record of ${wiId} Rev ${wiRev}` : 'Ad hoc work order: no master WI') : !design ? 'No design change: work order level change' : eco ? `From ${wi.id} Rev ${wi.revision}${prev ? ' (design change)' : ''}` : `${wi.id} Rev ${wi.revision} has no ECO recorded${wi.status === 'Unreleased' ? ' (written to an unreleased drawing)' : ''}`;
     return { approvedBy, source, eco, ecoNote, design };
   }
+  // Internal: the sequence change and engineering change approvals call it with the order they are changing. It is
+  // not a server action (server/mes-host.mjs actionExclude), and the page never sends it as one.
   function rollWorkOrderRevision(state, order, summary, changes, approver) {
     ensureRevisions(state);
     if (order.revisions.length >= 200) return null;
@@ -4728,6 +4750,7 @@ const OP_BOM_MAX = 12;
   }
 
   function voidSerial(state, orderId, serial, reason) {
+    { const d = denied('operate', 'void serial numbers'); if (d) return d; }
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
     ensureInventory(state);
@@ -5647,6 +5670,7 @@ const OP_BOM_MAX = 12;
     return { ok: true, message: `${e.id}: ${number} recorded from PDM.` };
   }
   function markNetSuitePosted(state, orderId, ref) {
+    { const d = denied('operate', 'record a NetSuite posting'); if (d) return d; }
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
     const inv = order.inventory;
@@ -5663,7 +5687,11 @@ const OP_BOM_MAX = 12;
   const attachmentValid = file => plain(file) && str(file.id, 40) && str(file.name, 160) && str(file.type, 80, 0) && Number.isInteger(file.size) && file.size >= 0 && ['inline', 'reference'].includes(file.storage) && (file.storage === 'reference' || (typeof file.dataUrl === 'string' && file.dataUrl.length <= MAX_ATTACHMENT)) && timestamp(file.addedAt) && profileValid(file.addedBy);
   const attachmentBytes = state => state.orders.reduce((total, order) => total + order.operations.reduce((sum, op) => sum + (Array.isArray(op.attachments) ? op.attachments: []).reduce((n, file) => n + (file.dataUrl ? file.dataUrl.length: 0), 0), 0), 0);
 
+  // Operation attachments follow the step media on the same operation: the person running it (operate-steps) or
+  // inspecting it (inspect-steps).
+  const attachmentDenied = what => can('operate-steps') || can('inspect-steps') ? null : fail(`Your role cannot ${what}. Ask the QA Manager to change your role.`);
   function addAttachment(state, orderId, opId, input) {
+    { const d = attachmentDenied('attach files to an operation'); if (d) return d; }
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
     if (order.status === 'Closed') return fail('A closed work order can’t take new attachments.');
@@ -5720,6 +5748,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     return { ok: true, message: `${file.name} removed.` };
   }
     function removeAttachment(state, orderId, opId, fileId) {
+    { const d = attachmentDenied('remove files from an operation'); if (d) return d; }
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
     if (order.status === 'Closed') return fail('A closed work order can’t be changed.');
@@ -6217,10 +6246,13 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const open = order.operations.find(op => !op.done);
     return `AOG: ${order.id} · ${order.partNumber} Rev ${order.revision} · aircraft ${order.aircraft || 'unassigned'} · ${orderSite(order)}\n${order.title}. Stage: ${order.status}${open ? `, current Op ${opNumber(order, open.id)}: ${open.title}` : ', all operations complete'}. Planned ${order.start || '-'} → ${order.due}.\nEscalation ${(plain(order.aog) ? order.aog.notified: 0) + 1}, repeating every 2 hours until AOG is cleared. Reply in thread with the blocker and who is on it.`;
   }
+  // Logged by whichever signed-in page is open when the escalation is due, so it has no role check. It is refused
+  // until the next escalation is due, so a direct call cannot raise the count or post to the thread early.
   function logAogBroadcast(state, id) {
     const { order, error } = target(state, id);
     if (error) return fail(error);
     if (!aogActive(order)) return fail('This work order is not AOG.');
+    if (!aogDue(order)) return fail('The next AOG escalation is not due yet. It is logged every 2 hours while the work order is AOG.');
     if (!plain(order.aog)) startAog(state, order);
     const text = aogMessage(order);
     const at = new Date().toISOString();
@@ -7165,6 +7197,8 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     return { where: 'workspace', detail: 'The workspace fails a validation rule that could not be isolated.', fix: null };
   }
   // Move one order out of the workspace, with its activity, keeping it in the saved copy.
+  // Only MES.repair calls this, to set aside an order that fails validation while the workspace opens. It is not a
+  // server action (server/mes-host.mjs actionExclude), and the page never sends it as one (serverMutatorExclude).
   function quarantineOrder(state, id) {
     const i = state.orders.findIndex(o => o && o.id === id);
     if (i < 0) return false;
@@ -8477,7 +8511,10 @@ const ATTACH_KINDS = Object.freeze(['mrb','cars','ncs','sprs']);
     log(state, rec, `${name} attached${file.storage === 'reference' ? ' (logged by name only)' : ''}.`);
     return { ok: true, message: `${name} attached to ${rec.id}.` };
   }
+  // Anyone who can raise a record may attach evidence to it, but removing a file from a quality record takes an
+  // authority over the record: dispositioning it (dispo-nc) or approving it for Quality (approve-nc).
   function removeRecordFile(state, kind, id, fileId) {
+    if (!can('dispo-nc') && !can('approve-nc')) return fail('Your role cannot remove a file from a quality record. Ask the person who dispositions or approves the record to remove it.');
     if (!ATTACH_KINDS.includes(kind)) return fail('That record does not hold files.');
     const rec = get(state, kind, id); if (!rec) return fail('Record not found.');
     const file = recAttachments(rec).find(f => f.id === fileId); if (!file) return fail('File not found.');
@@ -8588,6 +8625,7 @@ const ATTACH_KINDS = Object.freeze(['mrb','cars','ncs','sprs']);
     return { ok: true, message: `${t.id} approved: ${t.dispo.decision}.${rework ? ' Create the rework order against the serial and link it here.' : ''}` };
   }
   function linkReworkOrder(state, id, orderId) {
+    { const d = denied('dispo-nc', 'link a rework order to an NC'); if (d) return d; }
     const t = get(state, 'ncs', id); if (!t) return fail('NC not found.');
     const o = MES.getOrder(state, clean(orderId)); if (!o) return fail('Work order not found.');
     t.reworkOrderId = o.id; log(state, t, `Rework order ${o.id} linked.`);
@@ -10861,7 +10899,10 @@ let serverPush=Promise.resolve();
 let serverWorkspaceReady=false,serverActionQueue=[],serverActionPending=0,serverActionStopped=false,serverSnapshotRetryPending=false,serverReconcilePending=false,serverActionChain=Promise.resolve();
 const serverMutatorName=/^(?:run|add|update|remove|delete|create|complete|close|issue|approve|reject|sign|mark|assign|advance|resolve|disposition|request|release|record|submit|start|stop|review|accept|return|void|reopen|split|move|link|verify|raise|cancel|withdraw|incorporate|peer|roll|set|save|store|open|finish|grant|revoke|capture|attach|detach|quarantine|repair|replace|send|change|configure|stamp|buyoff|log|tick|decide|vote|reset|publish|apply|import|reinspect|firm|convert|carry|propose|escalate|select|clock|aqi|post|acknowledge|edit|revise|ping|push|ical|check|notify|qa|note)/i;
 const serverMutatorExact=new Set(['containNC','effectivenessCheck','pfmeaSafetyBuyoff','pruneExpiredNotices']);
-const serverMutatorExclude=new Set(['repair','signManifest','verifyManifests','verifyAIActionLog','stampCheck','stampRegister','stampRegisterCsv','stampCredential','stampHolderFor','ticketAttachments','openProcessECRs','syncAssignments','buyoffCredential','ensure','seedDemoRecords','icalExport','recordAIAction','logSupport','noteDemoBypassRemoved','releaseWIFromPfmea']);
+const serverMutatorExclude=new Set(['repair','signManifest','verifyManifests','verifyAIActionLog','stampCheck','stampRegister','stampRegisterCsv','stampCredential','stampHolderFor','ticketAttachments','openProcessECRs','syncAssignments','buyoffCredential','ensure','seedDemoRecords','icalExport','openMaintenanceFor','recordAIAction','logSupport','noteDemoBypassRemoved','releaseWIFromPfmea','quarantineOrder','rollWorkOrderRevision']);
+// The reviewed commands the server accepts (server/mes-host.mjs actionAllow). A function is sent as a command only
+// when it is named here; the prefix rule alone is not enough.
+const serverMutatorAllow=new Set(['MES.addSavedView','MES.removeSavedView','MES.addAttachment','MES.addTicketAttachment','MES.removeTicketAttachment','MES.removeAttachment','MES.logAogBroadcast','MES.resolveAog','MES.setSchedule','MES.editOrderOperation','MES.setWIStepImage','MES.selectProfile','MES.assignSerial','MES.voidSerial','MES.moveToInventory','MES.markNetSuitePosted','MES.addKitFile','MES.linkOpToTicket','MES.saveReworkTemplate','MES.removeReworkTemplate','MES.saveOpAsReworkTemplate','MES.approveReworkTemplate','MES.addStandardRework','MES.setWIDrawing','MES.releaseUnreleasedWI','MES.rejectInspection','MES.logTravelerPrint','MES.saveFairHeader','MES.setFairIndex','MES.addFairForm2','MES.setFairTest','MES.addFairChar','MES.updateFairChar','MES.verifyFair','MES.approveFair','MES.reopenFair','MES.startConformity','MES.saveConformity','MES.checkConformity','MES.complete8130_9','MES.void8130_9','MES.aqiSign8130_9','MES.notifyCertification','MES.addDarFinding','MES.acceptDarFinding','MES.recordDarApproval','MES.record8130_3','MES.closeConformity','MES.issueFromOrder','MES.returnIssuedOrder','MES.qaReviewMasterWI','MES.setImpactDecision','MES.linkECO','MES.setWICriticalSafety','MES.addPfmeaRow','MES.updatePfmeaRow','MES.setStampPin','MES.setMsdsBook','MES.tickFodItem','MES.removeKitFile','MES.addMasterWI','MES.updateMasterWI','MES.saveWIOperations','MES.releaseMasterWI','MES.reviseMasterWI','MES.setStepCheck','MES.pushATPSoftware','MES.reviewATPPush','MES.linkATPSoftware','MES.addPurchaseOrder','MES.requestOrderClosure','MES.postNotice','MES.acknowledgeNotice','MES.updateNotice','MES.pruneExpiredNotices','MES.requestWorkOrder','MES.decideWORequest','MES.submitECRRequest','MES.reviewFeedbackECR','MES.linkECRJira','MES.incorporateECRs','MES.decideOrderClosure','MES.assignWork','MES.completeAssignment','MES.pingAssignment','MES.addOrderOperation','MES.removeOrderOperation','MES.approveSequenceChange','MES.setMaterialLot','MES.releaseApproval','MES.approveRelease','MES.approveECR','MES.approveEngineeringChange','MES.advance','MES.setMaterial','MES.setPriority','MES.completeOperation','MES.closeOrder','MES.addOrder','MES.addAdhocOrder','MES.splitOrder','MES.splitRequestOrder','MES.requestPedigreeChange','MES.approvePedigreeChange','MES.peerReviewMasterWI','MES.dispositionTicket','MES.addNote','MES.createTicket','MES.resolveTicket','MES.returnDisposition','MES.closeSplitRequest','MES.rejectEngineeringChange','MES.rejectSequenceChange','MES.rejectPedigreeChange','MES.returnRelease','MES.returnMasterWI','MES.withdrawClosure','MES.closeECRRequest','MES.updateProfile','MES.attachEvidence','MES.reviewEvidence','MES.rejectEvidence','MES.removeEvidence','MES.issueStamp','MES.updateStamp','MES.addMessage','MES.setSlackThread','MES.createBigThreePlan','MES.decideBigThree','MES.carryBigThree','MES.proposeBigThreeTimeBlock','MES.decideBigThreeTimeBlock','MES.escalateBigThree','MES.setPlanningCalendarSync','MES.icalImport','MES.openAudit','MES.closeAuditFinding','MES.closeAudit','MES.issueCertification','MES.approveSupplier','MES.storeQualityValue','MES.recordQualityVerdict','MES.createControlledDocument','MES.startControlledDocumentRevision','MES.reviewControlledDocument','MES.releaseControlledDocument','MES.configureModelAdapter','MES.setForm3Plan','MES.setSkillTrigger','MES.runSkill','MES.reviewSkillDraft','MES.updateSkillDraft','MES.acceptSkillDraft','MES.addEquipmentArea','MES.addEquipmentUnit','MES.createProject','MES.addProjectObjective','MES.addProjectMilestone','MES.setProjectSensitivity','MES.linkWorkOrderProject','MES.createSprint','MES.recordMaintenance','MES.closeMaintenance','MES.recordExternalReceipt','MES.clockOnOperation','MES.clockOffOperation','MES.postInventoryTransaction','MES.submitEngineeringChange','MES.reviewFair','MES.recordTraining','MES.saveTraining','MES.importStamps','MES.recordSupportAccess','MES.saveSourceInspectionCodes','MES.saveOperationSubcodes','MES.saveMrbTrainingTiers','MES.recordSourceInspection','FlightPlan.addPlannedOrder','FlightPlan.firm','FlightPlan.cancel','FlightPlan.convert','FlightManeuver.raiseCAR','FlightManeuver.recordContainment','FlightManeuver.recordRootCause','FlightManeuver.addAction','FlightManeuver.completeAction','FlightManeuver.verifyCAR','FlightManeuver.effectivenessCheck','FlightManeuver.closeCAR','FlightManeuver.cancelCAR','FlightManeuver.openMRB','FlightManeuver.voteMRB','FlightManeuver.decideMRB','FlightManeuver.linkCAR','FlightManeuver.addRecordFile','FlightManeuver.removeRecordFile','FlightManeuver.raiseNC','FlightManeuver.dispositionNC','FlightManeuver.containNC','FlightManeuver.approveNC','FlightManeuver.linkReworkOrder','FlightManeuver.raiseSPR','FlightManeuver.linkSPRJira','FlightManeuver.closeSPR','FlightManeuver.requestSCAR','FlightManeuver.linkSCARJira','FlightManeuver.closeSCAR','FlightManeuver.openPFMEA','FlightManeuver.setPfmeaScope','FlightManeuver.addPfmeaMode','FlightManeuver.removePfmeaMode','FlightManeuver.markOpNoRisk','FlightManeuver.completePfmeaAnalysis','FlightManeuver.setPfmeaAction','FlightManeuver.closePfmeaAction','FlightManeuver.completePfmeaActions','FlightManeuver.pfmeaSafetyBuyoff']);
 const serverCommandStates=new WeakSet([state]);
 // Commands are queued as engine calls succeed, before their change is committed. A refused change must not leave
 // its commands behind for the next flush: commits mark what is queued, refusals drop everything unmarked.
@@ -10882,7 +10923,7 @@ function trackServerMutations(namespace,engine){
   if(!engine)return;
   Object.keys(engine).forEach(name=>{
     const original=engine[name];
-    if(typeof original!=='function'||(!serverMutatorName.test(name)&&!serverMutatorExact.has(name))||serverMutatorExclude.has(name)||original.__serverCommandWrapped)return;
+    if(typeof original!=='function'||(!serverMutatorName.test(name)&&!serverMutatorExact.has(name))||serverMutatorExclude.has(name)||!serverMutatorAllow.has(namespace+'.'+name)||original.__serverCommandWrapped)return;
     const wrapped=function(){
       const args=Array.from(arguments),candidate=args[0];
       // A change to the live workspace, or to a proposed copy of it that a caller will commit. The copy is
@@ -10933,6 +10974,7 @@ function flushServerActions(){
       const response=await window.skServer.api('/workspace/actions/'+command.action,{method:'POST',body:{args:command.args},headers:serverEtag?{'If-Match':serverEtag}:{}});
       if(response.status!==200){const error=Error(response.json&&response.json.error||'The server refused the record change.');error.status=response.status;throw error;}
       serverEtag=response.etag;window.skServer.etag=response.etag;
+      command.accepted=true;
       committedActions++;
       if(response.archived)dropArchivedLocally(response.archived.split(','));
     }
@@ -11075,7 +11117,7 @@ function renderControlledDocumentBlock(){
   const docs=Array.isArray(state.controlledDocuments)?state.controlledDocuments:[],released=docs.filter(doc=>doc.status==='Released');
   const rows=docs.slice().reverse().map(doc=>`<article class="panel qms-record-card"><div class="panel-head"><div><h3>${esc(doc.documentNumber)} · ${esc(doc.title)} · Rev ${esc(doc.revision)}</h3><p class="small muted">${esc(doc.kind)} · ${esc(doc.status)} · SHA-256 ${esc(doc.file.sha256)}</p><p class="small muted">Author ${esc(doc.author.name)}${doc.reviewer?` · Reviewer ${esc(doc.reviewer.name)}`:''}${doc.releaser?` · Released by ${esc(doc.releaser.name)}`:''}</p></div><span class="pill ${doc.status==='Released'?'closed':'kitting'}">${esc(doc.status)}</span></div><div class="media-actions"><button class="btn quiet" type="button" data-controlled-doc-download="${esc(doc.id)}">Download verified file</button>${doc.status==='Draft'?`<button class="btn" type="button" data-controlled-doc-review="${esc(doc.id)}">Sign review</button>`:''}${doc.status==='Reviewed'?`<button class="btn primary" type="button" data-controlled-doc-release="${esc(doc.id)}">Sign release</button>`:''}</div></article>`).join('');
   const revisionOptions=released.map(doc=>`<option value="${esc(doc.id)}">${esc(doc.documentNumber)} Rev ${esc(doc.revision)} · ${esc(doc.title)}</option>`).join('');
-  return `<section class="panel"><div class="panel-head"><h2>Controlled documents</h2><span class="pill">${docs.length} revisions</span></div><p class="small muted">Each revision keeps its signed author, review, release, file, and SHA-256 record. The author, reviewer, and releaser must be three different people.</p><form data-controlled-document="create"><div class="form-grid"><label class="field">Document number<input name="documentNumber" maxlength="40" required placeholder="SOP-750-001"></label><label class="field">Title<input name="title" maxlength="160" minlength="3" required></label><label class="field">Kind<select name="kind"><option value="procedure">Procedure</option><option value="SOP">SOP</option><option value="form">Form</option></select></label><label class="field wide">File<input name="file" type="file" required></label></div><p class="small muted">PDF or other source file, maximum 2 MiB. A new document starts at revision A.</p><button class="btn primary" type="submit">Author document</button><p class="access-add-error" role="alert" data-controlled-doc-error></p></form>${revisionOptions?`<form data-controlled-document="revision"><div class="form-grid"><label class="field">Released document<select name="documentId" required>${revisionOptions}</select></label><label class="field">New revision title<input name="title" maxlength="160" minlength="3" required></label><label class="field wide">Revised file<input name="file" type="file" required></label></div><button class="btn" type="submit">Start next revision</button><p class="access-add-error" role="alert" data-controlled-doc-error></p></form>`:''}${rows||'<p class="muted">No controlled documents recorded.</p>'}</section>`;
+  return `<section class="panel"><div class="panel-head"><h2>Controlled documents</h2><span class="pill">${docs.length} revisions</span></div><p class="small muted">Each revision keeps its signed author, review, release, file, and SHA-256 record. The author, reviewer, and releaser must be three different people. Authoring needs a role that writes or approves work instructions; review and release need Quality work instruction approval.</p><form data-controlled-document="create"><div class="form-grid"><label class="field">Document number<input name="documentNumber" maxlength="40" required placeholder="SOP-750-001"></label><label class="field">Title<input name="title" maxlength="160" minlength="3" required></label><label class="field">Kind<select name="kind"><option value="procedure">Procedure</option><option value="SOP">SOP</option><option value="form">Form</option></select></label><label class="field wide">File<input name="file" type="file" required></label></div><p class="small muted">PDF or other source file, maximum 2 MiB. A new document starts at revision A.</p><button class="btn primary" type="submit">Author document</button><p class="access-add-error" role="alert" data-controlled-doc-error></p></form>${revisionOptions?`<form data-controlled-document="revision"><div class="form-grid"><label class="field">Released document<select name="documentId" required>${revisionOptions}</select></label><label class="field">New revision title<input name="title" maxlength="160" minlength="3" required></label><label class="field wide">Revised file<input name="file" type="file" required></label></div><button class="btn" type="submit">Start next revision</button><p class="access-add-error" role="alert" data-controlled-doc-error></p></form>`:''}${rows||'<p class="muted">No controlled documents recorded.</p>'}</section>`;
 }
 function renderQmsRecords(){
   const audits=(state.audits||[]).slice().reverse().map(audit=>`<article class="panel qms-record-card"><div class="panel-head"><div><h3>${esc(audit.id)} · ${esc(audit.scope)}</h3><p class="small muted">Opened ${date(audit.openedAt||audit.findings?.[0]?.openedAt||'')} by ${esc(audit.openedBy?.name||'')}</p></div><span class="pill ${audit.status==='Closed'?'closed':'high'}">${esc(audit.status)}</span></div><ul>${(audit.findings||[]).map(finding=>`<li><strong>${esc(finding.id)}</strong> · ${esc(finding.text)} <span class="pill ${finding.status==='Closed'?'closed':'kitting'}">${esc(finding.status)}</span>${finding.status==='Open'?` <button class="btn quiet small" data-audit-close-finding="${esc(audit.id)}" data-finding="${esc(finding.id)}">Sign finding closed</button>`:''}${finding.closer?`<small class="muted">Closed by ${esc(finding.closer.name)} · ${date(finding.closedAt)}</small>`:''}</li>`).join('')}</ul>${audit.status==='Open'?(audit.findings||[]).every(f=>f.status==='Closed')?`<button class="btn" data-audit-close="${esc(audit.id)}">Sign audit closed</button>`:'<p class="small muted">Close every finding before closing this audit. The audit author cannot close it.</p>':''}</article>`).join('');
@@ -12398,10 +12440,26 @@ function printTraveler(orderId, silent) {
   let printLog = null;
   try { printLog = MES.logTravelerPrint ? MES.logTravelerPrint(state, o.id) : null; } catch (e) {}
   if (printLog && printLog.ok === false && printLog.serverRequired) { notify(printLog.message); return; }
+  // With a server configured, the print record is queued as a server action by the call above; saving sends it.
+  const command = printLog && printLog.ok && window.skServer && window.skServer.active ? serverActionQueue.findLast(item => item.action === 'MES.logTravelerPrint') : null;
   if (printLog && printLog.ok && !save()) return;
+  if (!command) { deliverTraveler(o.id, html, null, silent); return; }
+  // The traveler opens only after the server confirms its print record. The window is opened now, while the click
+  // still allows a pop-up, and is written only on confirmation; when the server refuses the record it is closed.
   const w = window.open('', '_blank');
+  if (w) { try { w.opener = null; w.document.open(); w.document.write('<!doctype html><title>Traveler</title><p style="font:16px sans-serif;margin:24px">Waiting for the server to confirm the print record.</p>'); w.document.close(); } catch (e) {} }
+  return serverActionChain.catch(() => {}).then(() => {
+    if (command.accepted === true) { deliverTraveler(o.id, html, w || false, silent); return; }
+    try { w && w.close && w.close(); } catch (e) {}
+    const why = window.skServer.sync && window.skServer.sync.message ? ` ${window.skServer.sync.message}` : '';
+    notify(`The server did not confirm the print record, so the traveler was not printed.${why} Print it again once the shared workspace is saved.`);
+  });
+}
+// w: a window already opened for the traveler, false when the pop-up was blocked, null to open one now.
+function deliverTraveler(orderId, html, w, silent) {
+  if (w === null) w = window.open('', '_blank');
   if (w) { w.opener = null; w.document.open(); w.document.write(html); w.document.close(); w.document.querySelector('.print-action')?.addEventListener('click', () => { w.focus(); w.print(); }); }
-  else { const blob = new Blob([html], { type: 'text/html' }); const u = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = u; a.download = `traveler-${o.id}.html`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 2000); }
+  else { const blob = new Blob([html], { type: 'text/html' }); const u = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = u; a.download = `traveler-${orderId}.html`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 2000); }
   if (!silent) notify(w ? 'Traveler opened. Use Print in the preview.' : 'Pop-ups are blocked, so the traveler was downloaded as a file to print.');
 }
 // Prompt the traveler when an order is issued to kitting (Draft to Kitting), however it got there.
