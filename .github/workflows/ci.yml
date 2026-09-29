@@ -87,6 +87,8 @@ jobs:
         run: node tools/run-suites.mjs --mirror --parallel 2
 
       - name: Release record builds from this run's results (dry run, not committed)
+        env:
+          FLIGHT_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: node tools/release-report.mjs --dry-run
 
       - name: Keep the results
