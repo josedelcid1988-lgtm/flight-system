@@ -134,6 +134,10 @@ try {
   assert.equal(upload.status, 201);
   const download = await fetch(base + `/evidence/${evidenceId}`, { headers: { Authorization: `Bearer ${token}` } });
   assert.deepEqual(Buffer.from(await download.arrayBuffer()), bytes);
+  const arcJson = JSON.stringify({ order: { id: 'WO-PG-EVIDENCE', status: 'Closed', operations: [{ id: 'op-010', evidence: [{ id: evidenceId }] }] }, activity: [] });
+  assert.equal(await server.store.archiveNamesEvidence(evidenceId), false, 'no archived order names the new recording yet');
+  await server.store.putArchived({ id: 'WO-PG-EVIDENCE', json: arcJson, sha256: createHash('sha256').update(arcJson).digest('hex'), schema: 1, keys: { partNumber: 'P', serials: [], lots: [], parts: ['P'], title: 'Evidence', closedAt: null }, by: 'postgres-test' });
+  assert.equal(await server.store.archiveNamesEvidence(evidenceId), true, 'an archived order that names the recording is found');
   console.log('ok PostgreSQL evidence bytes round-trip with SHA-256');
 
   const backupPath = path.join(exportDir, 'flight-postgres.dump');

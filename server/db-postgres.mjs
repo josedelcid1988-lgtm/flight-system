@@ -191,6 +191,7 @@ function makeStore(pool, query, inTransaction, connectionString) {
     async archived(id) { const r = (await query('SELECT order_id,json,sha256,schema,archived_at,archived_by FROM archive WHERE order_id=$1', [id])).rows[0]; return r ? { id: r.order_id, entry: parsed(r.json), sha256: r.sha256, schema: Number(r.schema), archivedAt: r.archived_at, archivedBy: r.archived_by } : null; },
     async archivedSha(id) { return (await query('SELECT sha256 FROM archive WHERE order_id=$1', [id])).rows[0]?.sha256 || null; },
     async putArchived(e) { await query('INSERT INTO archive (order_id,json,sha256,schema,part_number,serials,lots,parts,title,closed_at,archived_at,archived_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)', [e.id,e.json,e.sha256,e.schema,e.keys.partNumber||null,json(e.keys.serials),json(e.keys.lots),json(e.keys.parts),e.keys.title||null,e.keys.closedAt||null,now(),e.by||null]); },
+    async archiveNamesEvidence(id) { return (await query('SELECT 1 AS found FROM archive WHERE position($1 in json) > 0 LIMIT 1', [JSON.stringify(String(id))])).rows.length > 0; },
     async archiveCount() { return Number((await query('SELECT COUNT(*) AS c FROM archive')).rows[0].c); },
     async archiveSearch(term, limit = 200) {
       const q = String(term || '').trim().toUpperCase();

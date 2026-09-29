@@ -243,6 +243,22 @@ export function createServer(options = {}) {
     return null;
   };
 
+  // Evidence is read under the authority of the record that names it. Every signed-in account reads the live
+  // workspace and the archive, so a recording a live operation or an archived order names (directly, or as the
+  // stored copy behind another ID) is readable by any session. A recording no record names yet is readable only
+  // by the account that uploaded it and by a QA Manager or Master Access account.
+  const namesEvidence = (doc, id) => (Array.isArray(doc?.orders) ? doc.orders : []).some(o => (Array.isArray(o?.operations) ? o.operations : []).some(op => [...(Array.isArray(op?.evidence) ? op.evidence : []), ...(Array.isArray(op?.quarantinedEvidence) ? op.quarantinedEvidence : [])].some(e => e && (e.id === id || e.copyOf === id))));
+  const mayReadEvidence = async (session, row) => {
+    if (manages(session.account) || row.uploadedBy === session.username) return true;
+    const doc = await store.getDoc(TENANT);
+    if (doc) { let parsed = null; try { parsed = JSON.parse(doc.json); } catch { parsed = null; } if (namesEvidence(parsed, row.id)) return true; }
+    return !!await store.archiveNamesEvidence(row.id);
+  };
+  const refuseEvidenceRead = async (res, session, row) => {
+    await store.audit(session.username, 'evidence-read-refused', { id: row.id });
+    send(res, 403, { error: `${row.id} is not attached to a record yet. Only the account that uploaded it or a QA Manager can open it until it is saved on an operation.` });
+  };
+
   // Stores a validated state. Closed work orders nothing live points at move to the archive table in the
   // same transaction as the document write, each validated like a live order first. Archiving happens on
   // close: the write that closes an order (or the next write after it) moves it. Returns { etag, archived }
@@ -800,9 +816,10 @@ export function createServer(options = {}) {
         await store.audit(session.username, 'evidence-upload', { id: ev[1], sha256, size: bytes.length, mime });
         send(res, 201, row); return;
       }
-      if (ev && ev[2] === '/meta' && m === 'GET') { const row = await store.evidenceMeta(ev[1]); if (!row) { send(res, 404, { error: `The server holds no recording ${ev[1]}. Upload it from the device that captured it.` }); return; } send(res, 200, row); return; }
+      if (ev && ev[2] === '/meta' && m === 'GET') { const row = await store.evidenceMeta(ev[1]); if (!row) { send(res, 404, { error: `The server holds no recording ${ev[1]}. Upload it from the device that captured it.` }); return; } if (!await mayReadEvidence(session, row)) { await refuseEvidenceRead(res, session, row); return; } send(res, 200, row); return; }
       if (ev && !ev[2] && m === 'GET') {
         const row = await store.evidenceMeta(ev[1]); if (!row) { send(res, 404, { error: `The server holds no recording ${ev[1]}. Upload it from the device that captured it.` }); return; }
+        if (!await mayReadEvidence(session, row)) { await refuseEvidenceRead(res, session, row); return; }
         const bytes = await store.evidenceBytes(ev[1]);
         res.writeHead(200, { 'Content-Type': row.mime, 'Content-Length': bytes.length, 'X-Evidence-Sha256': row.sha256, 'Cache-Control': 'private, no-store' }); res.end(bytes); return;
       }

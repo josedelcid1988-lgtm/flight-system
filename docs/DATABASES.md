@@ -54,6 +54,14 @@ database or a backup holds no session that can be used. The browser keeps the to
 the server hashes it on every request. Upgrading a database made before this ends its stored sessions:
 each person signs in again once.
 
+## Who can read evidence
+
+A recording is read under the authority of the record that names it. Any signed-in account can read the
+live workspace and the archive, so it can read a recording a live operation or an archived order names,
+including the stored copy behind another ID. A recording no record names yet (uploaded but not saved on
+an operation) can be opened only by the account that uploaded it and by a QA Manager or Master Access
+account. Other requests are refused with 403 and recorded as `evidence-read-refused`.
+
 ## First-run setup code
 
 The first account on a new server becomes Master Access, so creating it needs a setup code that only

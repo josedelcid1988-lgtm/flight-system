@@ -92,6 +92,36 @@ try {
       for (const value of Object.values(row).map(String).filter(v => v.length >= 32)) assert.equal((await api('GET', '/auth/session', { token: value })).status, 401, 'a stored value is refused');
     }
   });
+
+  // #29: evidence bytes are read under the authority of the record that names them.
+  await check('evidence no record names is readable only by its uploader and a manager', async () => {
+    await addUser('sec-tech2', 'technician', 'sec-tech2-pass-1');
+    const uploader = await signIn('sec-tech', 'sec-tech-pass-1'), other = await signIn('sec-tech2', 'sec-tech2-pass-1');
+    adminToken = await signIn('sec-admin', 'sec-admin-pass-1');
+    const upload = async (id, token) => { const bytes = Buffer.from(`evidence ${id}`); const r = await api('POST', `/evidence/${id}`, { token, raw: true, body: bytes, headers: { 'Content-Type': 'video/webm', 'X-Evidence-Sha256': createHash('sha256').update(bytes).digest('hex') } }); assert.equal(r.status, 201, JSON.stringify(r.json)); return bytes; };
+    const loose = 'EV-00000000-0000-4000-8000-0000000c0001', named = 'EV-00000000-0000-4000-8000-0000000c0002', archived = 'EV-00000000-0000-4000-8000-0000000c0003', copied = 'EV-00000000-0000-4000-8000-0000000c0004';
+    const bytes = await upload(loose, uploader);
+    await upload(named, uploader); await upload(archived, uploader); await upload(copied, uploader);
+    for (const suffix of ['', '/meta']) {
+      const refused = await api('GET', `/evidence/${loose}${suffix}`, { token: other });
+      assert.equal(refused.status, 403, `another account cannot read ${suffix || 'the bytes'} of a recording no record names`);
+      assert.ok(!refused.bytes.includes(bytes), 'no bytes are returned');
+      assert.match(refused.json.error, /not attached to a record/);
+    }
+    assert.ok((await server.store.auditRows(200)).some(row => row.action === 'evidence-read-refused' && row.username === 'sec-tech2'), 'the refusal is audited');
+    const own = await api('GET', `/evidence/${loose}`, { token: uploader });
+    assert.equal(own.status, 200); assert.ok(own.bytes.equals(bytes), 'the uploader reads the recording it sent');
+    assert.equal((await api('GET', `/evidence/${loose}`, { token: adminToken })).status, 200, 'a manager reads any recording');
+    // Named by a live operation (directly or as the stored copy of another ID) or by an archived order: every
+    // signed-in account can read that record, so it can read the recording.
+    const doc = { orders: [{ id: 'WO-SEC-1', operations: [{ id: 'op-010', evidence: [{ id: named }, { id: 'EV-00000000-0000-4000-8000-0000000c0099', copyOf: copied }] }] }] };
+    const current = await server.store.getDoc('default');
+    assert.ok(await server.store.putDoc('default', JSON.stringify(doc), current ? current.etag : null, 'security-test'));
+    const json = JSON.stringify({ order: { id: 'WO-SEC-ARC', status: 'Closed', operations: [{ id: 'op-010', quarantinedEvidence: [{ id: archived }] }] }, activity: [] });
+    await server.store.putArchived({ id: 'WO-SEC-ARC', json, sha256: createHash('sha256').update(json).digest('hex'), schema: 1, keys: { partNumber: 'P', serials: [], lots: [], parts: ['P'], title: 'Security', closedAt: null }, by: 'security-test' });
+    for (const id of [named, copied, archived]) assert.equal((await api('GET', `/evidence/${id}`, { token: other })).status, 200, `${id} is named by a record, so any signed-in account reads it`);
+    assert.equal((await api('GET', `/evidence/${loose}`, { token: other })).status, 403, 'the unnamed recording stays refused');
+  });
 } finally {
   await server.closeAsync().catch(() => {});
 }
