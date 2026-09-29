@@ -8764,9 +8764,17 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
 const ATTACH_KINDS = Object.freeze(['mrb','cars','ncs','sprs']);
   function recAttachments(rec) { return Array.isArray(rec.attachments) ? rec.attachments : []; }
   function recAttachValid(f) { return MES.attachmentValid ? MES.attachmentValid(f) : (plain(f) && str(f.id, 60) && str(f.name, 160)); }
+  // Attaching evidence follows the authority over the record type. An NC, CAR or problem report takes files from
+  // anyone who may raise one (raise-nc), so the person who found the problem can add the photo, and from the people
+  // who work it (dispo-nc, approve-nc). An MRB record takes files only from the board: the person who opens and
+  // dispositions it (dispo-nc), Quality who records the decision (approve-nc), and the holders of a seat.
+  const ATTACH_CAPS = Object.freeze({ ncs: ['raise-nc', 'dispo-nc', 'approve-nc'], cars: ['raise-nc', 'dispo-nc', 'approve-nc'], sprs: ['raise-nc', 'dispo-nc', 'approve-nc'], mrb: ['dispo-nc', 'approve-nc', 'mrb-quality', 'mrb-me', 'mrb-eng', 'mrb-cert'] });
+  const canAttach = kind => (ATTACH_CAPS[kind] || []).some(can);
   function addRecordFile(state, kind, id, input) {
     if (!ATTACH_KINDS.includes(kind)) return fail('That record does not hold files.');
+    if (!canAttach(kind)) return fail(kind === 'mrb' ? 'Your role cannot attach a file to an MRB record. Add the file to the NC ticket, or ask a board member to attach it.' : 'Your role cannot attach a file to a quality record. Ask the QA Manager to change your role.');
     const rec = get(state, kind, id); if (!rec) return fail('Record not found.');
+    if (['Closed', 'Cancelled'].includes(rec.status)) return fail(`${rec.id} is ${rec.status.toLowerCase()} and keeps the files it had. Attach new evidence to an open record.`);
     const files = recAttachments(rec);
     if (files.length >= 10) return fail('A record can hold up to 10 files.');
     const name = String(input?.name ?? '').trim().slice(0, 160);
@@ -8780,8 +8788,7 @@ const ATTACH_KINDS = Object.freeze(['mrb','cars','ncs','sprs']);
     log(state, rec, `${name} attached${file.storage === 'reference' ? ' (logged by name only)' : ''}.`);
     return { ok: true, message: `${name} attached to ${rec.id}.` };
   }
-  // Anyone who can raise a record may attach evidence to it, but removing a file from a quality record takes an
-  // authority over the record: dispositioning it (dispo-nc) or approving it for Quality (approve-nc).
+  // Removing a file from a quality record takes an authority over the record: dispositioning it (dispo-nc) or approving it for Quality (approve-nc).
   function removeRecordFile(state, kind, id, fileId) {
     if (!can('dispo-nc') && !can('approve-nc')) return fail('Your role cannot remove a file from a quality record. Ask the person who dispositions or approves the record to remove it.');
     if (!ATTACH_KINDS.includes(kind)) return fail('That record does not hold files.');
@@ -9150,7 +9157,7 @@ const ATTACH_KINDS = Object.freeze(['mrb','cars','ncs','sprs']);
     return state;
   }
 
-  const FlightManeuver = { seatsOf, SEAT_CAPS, seatsForAccount, CERT_SEAT, certRequired, NC_SOURCES, CAR_STATUSES, SEVERITIES, CAR_SOURCES, FISHBONE, MRB_SEATS, MRB_STATUSES, MRB_REQUIRED, VOTES, SPR_FOUND_AT, SPR_STATUSES, NC_FOUND_AT, ESCAPED_FROM, DETECTED_AT, STOCK, SCAR_STATUSES, seatsForRole, list, get, ensure, seedDemoRecords, maneuverValid, diagnose: diagnoseManeuver, carValid, mrbValid, raiseCAR, recordContainment, recordRootCause, addAction, completeAction, verifyCAR, effectivenessCheck, closeCAR, cancelCAR, carOverdue, carNext, needsMRB, mrbFor, openMRB, voteMRB, decideMRB, linkCAR, addRecordFile, removeRecordFile, ATTACH_KINDS, gateResolve, findTicket, allTickets, raiseNC, dispositionNC, containNC, approveNC, linkReworkOrder, raiseSPR, linkSPRJira, closeSPR, requestSCAR, linkSCARJira, closeSCAR, jiraQueue, intake, pareto, trend, metrics, metricsReport, metricsCsv, PFMEA_STATUSES, PFMEA_STEPS, pfmeaFor, openPFMEA, setPfmeaScope, addPfmeaMode, removePfmeaMode, markOpNoRisk, completePfmeaAnalysis, setPfmeaAction, closePfmeaAction, completePfmeaActions, pfmeaSafetyBuyoff, pfmeaCoverage: coverage, pfmeaHigh: isHigh };
+  const FlightManeuver = { seatsOf, SEAT_CAPS, seatsForAccount, CERT_SEAT, certRequired, NC_SOURCES, CAR_STATUSES, SEVERITIES, CAR_SOURCES, FISHBONE, MRB_SEATS, MRB_STATUSES, MRB_REQUIRED, VOTES, SPR_FOUND_AT, SPR_STATUSES, NC_FOUND_AT, ESCAPED_FROM, DETECTED_AT, STOCK, SCAR_STATUSES, seatsForRole, list, get, ensure, seedDemoRecords, maneuverValid, diagnose: diagnoseManeuver, carValid, mrbValid, raiseCAR, recordContainment, recordRootCause, addAction, completeAction, verifyCAR, effectivenessCheck, closeCAR, cancelCAR, carOverdue, carNext, needsMRB, mrbFor, openMRB, voteMRB, decideMRB, linkCAR, addRecordFile, removeRecordFile, ATTACH_KINDS, canAttach, gateResolve, findTicket, allTickets, raiseNC, dispositionNC, containNC, approveNC, linkReworkOrder, raiseSPR, linkSPRJira, closeSPR, requestSCAR, linkSCARJira, closeSCAR, jiraQueue, intake, pareto, trend, metrics, metricsReport, metricsCsv, PFMEA_STATUSES, PFMEA_STEPS, pfmeaFor, openPFMEA, setPfmeaScope, addPfmeaMode, removePfmeaMode, markOpNoRisk, completePfmeaAnalysis, setPfmeaAction, closePfmeaAction, completePfmeaActions, pfmeaSafetyBuyoff, pfmeaCoverage: coverage, pfmeaHigh: isHigh };
   if (typeof module !== 'undefined' && module.exports) module.exports = FlightManeuver;
   if (root) {
     root.FlightManeuver = FlightManeuver;
@@ -14344,7 +14351,7 @@ document.addEventListener('change',function(e){var cb=e.target;if(!cb.matches||!
     var rec=recOf(kind,id); if(!rec)return;
     var openRec=!['Closed','Cancelled'].includes(rec.status);
     openDialog(rec.id+' · files and photos',
-      recordFiles(rec.attachments,{canAdd:openRec,key:'d-'+rec.id,attrs:'data-scope="mnv" data-kind="'+kind+'" data-rec="'+rec.id+'"'})
+      recordFiles(rec.attachments,{canAdd:openRec&&window.FlightManeuver.canAttach(kind),key:'d-'+rec.id,attrs:'data-scope="mnv" data-kind="'+kind+'" data-rec="'+rec.id+'"'})
       +'<div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Close</button></div>');
   };
   document.addEventListener('click',function(e){

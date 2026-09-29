@@ -2,8 +2,11 @@
 // POST /api/workspace/actions/<name> cannot do what the page would refuse. Each rule is checked for the refusal
 // (nothing changes) and for the role that is meant to do it.
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { Readable, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { createHost } from '../server/mes-host.mjs';
+import { createServer, makeHash } from '../server/server.mjs';
 
 const host = createHost(fileURLToPath(new URL('../index.html', import.meta.url)));
 const { MES, FlightManeuver } = host;
@@ -14,6 +17,9 @@ const operator = account('operator', 'Owen Operator');
 const me = account('me', 'Morgan Engineer');
 const qe = account('qe', 'Quinn Quality');
 const qm = account('qm', 'Quincy Manager');
+const safety = account('safety', 'Sam Safety');
+const swe = account('swe', 'Ellis Engineer');
+const cert = account('cert', 'Casey Cert');
 let checks = 0;
 const check = (name, result) => { checks += 1; assert.ok(result, name); console.log(`ok ${name}`); };
 const roleRefused = result => !!result && result.ok === false && /Your role cannot/.test(result.message);
@@ -27,7 +33,7 @@ const roleRefused = result => !!result && result.ok === false && /Your role cann
   check('an NC is raised for the record file checks', nc.ok);
   const photo = { name: 'scratch.png', type: 'image/png', size: 10, dataUrl: 'data:image/png;base64,iVBORw0KGgo=' };
   const added = run(technician, () => FlightManeuver.addRecordFile(state, 'ncs', nc.id, photo));
-  check('anyone who can raise an NC still attaches a file to it', added.ok);
+  check('a Technician (raise-nc) attaches a file to an NC', added.ok);
   const files = () => (FlightManeuver.get(state, 'ncs', nc.id).attachments || []).map(f => f.id);
   const fileId = files().at(-1);
   for (const who of [general, technician, operator]) {
@@ -38,6 +44,68 @@ const roleRefused = result => !!result && result.ok === false && /Your role cann
   const again = run(technician, () => FlightManeuver.addRecordFile(state, 'ncs', nc.id, photo));
   check('Quality (approve-nc) removes a file from a quality record', again.ok && run(qe, () => FlightManeuver.removeRecordFile(state, 'ncs', nc.id, files().at(-1))).ok && files().length === 0);
   check('the workspace is valid after the record file checks', MES.validate(state));
+}
+
+// ---- Flight Maneuver record files (#102): attaching follows the authority over the record type ----
+const curated = () => JSON.parse(fs.readFileSync(new URL('./fixtures/demo_publish.html', import.meta.url), 'utf8').match(/window\.__DEMO_SEED=(\{[\s\S]*?\});/)[1]);
+const photo = { name: 'evidence.png', type: 'image/png', size: 10, dataUrl: 'data:image/png;base64,iVBORw0KGgo=' };
+{
+  const state = curated();
+  FlightManeuver.ensure(state);
+  const run = (who, fn) => host.withAccount(who, fn, state);
+  const mrb = state.maneuver.mrb[0], car = state.maneuver.cars.find(c => c.status !== 'Closed' && c.status !== 'Cancelled'), nc = state.maneuver.ncs[0];
+  const count = (kind, id) => (FlightManeuver.get(state, kind, id).attachments || []).length;
+  for (const who of [general, technician, operator, safety]) {
+    const before = JSON.stringify(state);
+    const result = run(who, () => FlightManeuver.addRecordFile(state, 'mrb', mrb.id, photo));
+    check(`${who.displayName} (${who.role}) cannot attach a file to an MRB record and nothing changes`, roleRefused(result) && /MRB record/.test(result.message) && JSON.stringify(state) === before);
+  }
+  for (const who of [me, qe, swe, cert]) {
+    const before = count('mrb', mrb.id);
+    check(`${who.displayName} (${who.role}, board authority) attaches a file to an MRB record`, run(who, () => FlightManeuver.addRecordFile(state, 'mrb', mrb.id, photo)).ok && count('mrb', mrb.id) === before + 1);
+  }
+  for (const who of [general, technician, safety, me, qe]) {
+    const before = count('cars', car.id) + count('ncs', nc.id);
+    const ok = run(who, () => FlightManeuver.addRecordFile(state, 'cars', car.id, photo)).ok && run(who, () => FlightManeuver.addRecordFile(state, 'ncs', nc.id, photo)).ok;
+    check(`${who.displayName} (${who.role}, raise-nc) attaches evidence to an NC and a CAR`, ok && count('cars', car.id) + count('ncs', nc.id) === before + 2);
+  }
+  check('a Quality manager cancels the CAR for the closed record check', run(qm, () => FlightManeuver.cancelCAR(state, car.id, 'Raised in error.')).ok);
+  const before = JSON.stringify(state);
+  const closed = run(qm, () => FlightManeuver.addRecordFile(state, 'cars', car.id, photo));
+  check('a cancelled record refuses a new file, even for the QA Manager, and nothing changes', closed.ok === false && /cancelled and keeps the files/.test(closed.message) && JSON.stringify(state) === before);
+  check('the workspace is valid after the record attach checks', MES.validate(state));
+}
+
+// ---- the same rule over the server action: POST /api/workspace/actions/FlightManeuver.addRecordFile ----
+{
+  const server = createServer({ dbPath: ':memory:', quiet: true, setupCode: 'record-file-authz' });
+  await server.ready;
+  const call = async (method, url, token, body, headers = {}) => {
+    const incoming = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]); incoming.method = method; incoming.url = url;
+    incoming.headers = { ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...(token ? { authorization: `Bearer ${token}` } : {}), ...Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v])) };
+    const chunks = [], outgoing = new Writable({ write(c, e, cb) { chunks.push(Buffer.from(c)); cb(); } });
+    outgoing.writeHead = status => { outgoing.statusCode = status; return outgoing; };
+    const done = new Promise((resolve, reject) => { outgoing.once('finish', resolve); outgoing.once('error', reject); });
+    server.listeners('request')[0](incoming, outgoing); await done;
+    const text = Buffer.concat(chunks).toString('utf8'); let json = null; try { json = text ? JSON.parse(text) : null; } catch { json = null; }
+    return { status: outgoing.statusCode, json };
+  };
+  try {
+    for (const [username, role] of [['srv-tech', 'technician'], ['srv-qe', 'qe']]) await server.store.upsertAccount({ username, displayName: `Server ${role}`, salt: '', hash: await makeHash(`${username}-pass-1`), role, roles: [role] });
+    const state = curated();
+    server.host.FlightManeuver.ensure(state);
+    const planted = await server.store.putDoc('default', JSON.stringify(state), null, 'record-file-authz');
+    const mrbId = state.maneuver.mrb[0].id, ncId = state.maneuver.ncs[0].id;
+    const token = async username => (await call('POST', '/api/auth/session', null, { username, password: `${username}-pass-1` })).json.token;
+    const tech = await token('srv-tech'), quality = await token('srv-qe');
+    const files = async (kind, id) => (JSON.parse((await server.store.getDoc('default')).json).maneuver[kind].find(r => r.id === id).attachments || []).length;
+    const refused = await call('POST', '/api/workspace/actions/FlightManeuver.addRecordFile', tech, { args: ['mrb', mrbId, photo] }, { 'If-Match': planted });
+    check('over the server a Technician is refused an MRB file with 403 and the workspace is not written', refused.status === 403 && /MRB record/.test(refused.json.error) && (await server.store.getDoc('default')).etag === planted && await files('mrb', mrbId) === 0);
+    const ncFile = await call('POST', '/api/workspace/actions/FlightManeuver.addRecordFile', tech, { args: ['ncs', ncId, photo] }, { 'If-Match': planted });
+    check('over the server a Technician (raise-nc) attaches evidence to an NC', ncFile.status === 200 && await files('ncs', ncId) === 1);
+    const allowed = await call('POST', '/api/workspace/actions/FlightManeuver.addRecordFile', quality, { args: ['mrb', mrbId, photo] }, { 'If-Match': (await server.store.getDoc('default')).etag });
+    check('over the server Quality (approve-nc) attaches a file to an MRB record', allowed.status === 200 && await files('mrb', mrbId) === 1);
+  } finally { server.store.close(); }
 }
 
 // ---- smaller write paths (#78): each checks the capability of the page control that calls it ----
