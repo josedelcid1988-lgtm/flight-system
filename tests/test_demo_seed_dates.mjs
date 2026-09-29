@@ -99,14 +99,20 @@ try {
         const openPackages = state.orders.reduce((n, o) => n + (o.conformity || []).filter(p => !p.form).length, 0);
         const expired = state.stamps.filter(s => s.status === 'Active' && (s.expires < pageDay || (s.qualifications || []).some(q => q.expires < pageDay))).map(s => s.number);
         const manifests = MES.verifyManifests(state);
-        return { written, pageDay, valid: MES.validate(state) === true, detail: (MES.diagnose(state) || {}).detail || '', gaps, openPackages, expired, manifests: { ok: manifests.ok, failures: manifests.failures.length } };
+        // Control: the seed as captured, not moved, does show the out-of-date MDL copy at this clock, so the gap check above can fail.
+        const raw = MES.upgrade(structuredClone(window.__DEMO_SEED));
+        const rawGaps = raw.orders.flatMap(o => (o.conformity || []).filter(p => !p.form).flatMap(p => MES.confGaps(raw, o, p, 'prepare').filter(g => /Step 1\.1: the MDL copy is/.test(g))));
+        return { written, pageDay, valid: MES.validate(state) === true, detail: (MES.diagnose(state) || {}).detail || '', gaps, rawGaps: rawGaps.length, openPackages, expired, manifests: { ok: manifests.ok, failures: manifests.failures.length } };
       });
       check(`${name} page +${ahead}d: the browser clock is the moved day`, result.pageDay === day, result.pageDay);
       check(`${name} page +${ahead}d: the first-load workspace is the seed moved to that day`, JSON.stringify(result.written) === JSON.stringify(rebaseDemoSeed(SEEDS[name], day)));
       check(`${name} page +${ahead}d: the first-load workspace validates`, result.valid, result.detail);
       check(`${name} page +${ahead}d: every signature manifest verifies`, result.manifests.ok === true && result.manifests.failures === 0, JSON.stringify(result.manifests));
       check(`${name} page +${ahead}d: no package with an open 8130-9 shows an out-of-date MDL copy`, result.gaps.length === 0, result.gaps.join(' | '));
-      if (name === 'curated') check(`${name} page +${ahead}d: the curated set still has an open conformity package to walk`, result.openPackages > 0);
+      if (name === 'curated') {
+        check(`${name} page +${ahead}d: the curated set still has an open conformity package to walk`, result.openPackages > 0);
+        check(`${name} page +${ahead}d: control: the seed as captured shows the out-of-date MDL copy at this clock`, result.rawGaps > 0);
+      }
       check(`${name} page +${ahead}d: no active stamp or stamp qualification has expired`, result.expired.length === 0, result.expired.join(', '));
       await context.close();
     }
