@@ -5,7 +5,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import {execFileSync} from 'node:child_process';
+import {pathToFileURL} from 'node:url';
 import {chromium} from 'playwright';
 const TESTS=decodeURI(new URL('.',import.meta.url).pathname);
 const ROOT=path.resolve(TESTS,'..');
@@ -65,6 +67,62 @@ ok('the release packager refuses a stamp that does not match the file',refuses((
 ok('the release packager accepts a verified stamp',packageBuildId(stamped)===build);
 ok('the release packager refuses a demo build not regenerated after stamping',/Run node tools\/build-demo/.test(demoProblem(stamped,committed)||''));
 ok('the release packager accepts a demo build carrying the production stamp',demoProblem(stamped,stamped)===null);
+// ---- the release tools end to end, in a throwaway git repository holding copies of them ----
+// Each sandbox is a committed release tree (tools, VERSION.md, a small index.html and demo.html, assets/),
+// so the command-line tools run exactly as at release, against a HEAD the test controls.
+const sandboxes=[];
+function sandbox(){
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'flight-release-'));sandboxes.push(dir);
+  const at=f=>path.join(dir,f);
+  const g=(...a)=>execFileSync('git',['-c','user.name=Test','-c','user.email=test@example.com','-c','commit.gpgsign=false',...a],{cwd:dir,encoding:'utf8'}).trim();
+  const node=(args,env={})=>{try{return {code:0,out:execFileSync(process.execPath,args,{cwd:dir,encoding:'utf8',env:{...process.env,FLIGHT_SOURCE_COMMIT:'',...env},stdio:['ignore','pipe','pipe']})};}catch(e){return {code:e.status,out:String(e.stdout||'')+String(e.stderr||'')};}};
+  const page=b=>`<!doctype html><html><head><meta name="fs-build" content="${b}"><meta name="fs-build-sha256" content="unstamped"></head><body>Flight System</body></html>\n`;
+  for(const d of ['tools','assets','tests'])fs.mkdirSync(at(d));
+  for(const t of ['stamp-build.mjs','release-report.mjs','package-release.mjs','package-source.mjs'])fs.copyFileSync(path.join(ROOT,'tools',t),at('tools/'+t));
+  fs.writeFileSync(at('VERSION.md'),'# Test build\n\nbuild: vT\n');fs.writeFileSync(at('index.html'),page('vT'));fs.writeFileSync(at('demo.html'),page('vT'));
+  fs.writeFileSync(at('assets/a.js'),'one');fs.writeFileSync(at('.gitignore'),'tests/suite_results*.json\nrelease/\n');
+  g('init','-q');g('add','.');g('commit','-q','-m','release');
+  const sha=f=>crypto.createHash('sha256').update(fs.readFileSync(at(f))).digest('hex');
+  const s={dir,at,g,node,page,
+    // node tools/stamp-build.mjs, then the demo regenerated from the stamped file (build-demo stand-in: same tags).
+    stamp(){const r=node(['tools/stamp-build.mjs']);if(r.code)throw new Error(r.out);fs.copyFileSync(at('index.html'),at('demo.html'));},
+    tested(){const v=verify(fs.readFileSync(at('index.html'),'utf8'));return {build:v.build,indexStamp:v.stamped,indexFileSha256:sha('index.html'),demoFileSha256:sha('demo.html'),commit:g('rev-parse','HEAD')};},
+    // Both results files as tools/run-suites.mjs writes them, for one passing suite.
+    results(tested=s.tested()){for(const [f,mirror] of [['suite_results.json',null],['suite_results_mirror.json',{records:1,chainIntact:true}]])fs.writeFileSync(at('tests/'+f),JSON.stringify({startedAt:'2026-09-29T00:00:00.000Z',finishedAt:'2026-09-29T00:01:00.000Z',tested,mirror,suites:[{name:'test_one',status:'pass',problems:[],checks:1,skips:[]}],skips:[]}));},
+    tool:async f=>import(pathToFileURL(at('tools/'+f)).href)};
+  return s;
+}
+try{
+  // #44 (fixed in PR #25): --check compares the record with the stamp the committed index.html produces, so a
+  // clean committed checkout passes and a changed index.html fails.
+  {const s=sandbox();s.stamp();s.results();const w=s.node(['tools/release-report.mjs']);
+   s.node(['tools/stamp-build.mjs','--clear']);fs.copyFileSync(s.at('index.html'),s.at('demo.html'));
+   const c=s.node(['tools/release-report.mjs','--check']);
+   ok('release-report --check accepts the record on a clean committed checkout',w.code===0&&c.code===0&&/matches this source/.test(c.out),w.out+c.out);
+   fs.appendFileSync(s.at('index.html'),'<!-- changed -->\n');const d=s.node(['tools/release-report.mjs','--check']);
+   ok('release-report --check refuses a record the committed index.html does not produce',d.code===1&&/does not match this source/.test(d.out),d.out);}
+  // #45, packager half (fixed in PR #25): the packager refuses a demo.html not regenerated after stamping.
+  {const s=sandbox();s.node(['tools/stamp-build.mjs']);const r=s.node(['tools/package-release.mjs','--out','release']);
+   ok('the release packager refuses a demo.html left unstamped and writes no zip',r.code===1&&/demo\.html carries fs-build-sha256 unstamped/.test(r.out)&&!fs.existsSync(s.at('release')),r.out);}
+  // #84 (fixed in PR #82): a standalone run of the packager checks assets/ against HEAD before it writes.
+  {const s=sandbox();s.stamp();fs.writeFileSync(s.at('assets/a.js'),'changed');const r=s.node(['tools/package-release.mjs','--out','release']);
+   ok('the packager run on its own refuses an asset that differs from HEAD and writes no zip',r.code===1&&/assets\/a\.js differs from HEAD/.test(r.out)&&!fs.existsSync(s.at('release')),r.out);
+   s.g('checkout','-q','--','assets/a.js');const a=s.node(['tools/package-release.mjs','--out','release']);
+   ok('the packager run on its own writes both zips when assets/ matches HEAD',a.code===0&&fs.readdirSync(s.at('release')).length===2,a.out);}
+  // #86 (fixed in PR #82): no git status call remains; a git failure is a plain refusal, not a stack trace.
+  {const dir=fs.mkdtempSync(path.join(os.tmpdir(),'flight-nogit-'));sandboxes.push(dir);fs.mkdirSync(path.join(dir,'assets'));fs.writeFileSync(path.join(dir,'assets/a.js'),'one');
+   let r;try{r=assetsProblem({root:dir});}catch(e){r='threw '+e.message;}
+   ok('the asset check outside a git checkout refuses with a plain message',/^assets\/ could not be read from commit HEAD\. Release from a git checkout/.test(r||''),r);
+   const s=sandbox();s.stamp();fs.rmSync(s.at('.git'),{recursive:true,force:true});const x=s.node(['tools/release-report.mjs','--dry-run']);
+   ok('the release record outside a git checkout refuses with a plain message',x.code===1&&/^FAIL the release record needs a git checkout/m.test(x.out)&&!/\n\s+at /.test(x.out),x.out);}
+  // #85 (fixed in PR #82): the release steps name the assets/ refusal.
+  ok('HANDOVER release step 4 lists the assets/ refusal',/a packaged file in\s+`assets\/` whose bytes differ from HEAD/.test(fs.readFileSync(path.join(ROOT,'docs/HANDOVER.md'),'utf8')));
+  // #89 (does not reproduce): git ls-tree lists assets/ one level deep, so a committed file under a dot-named
+  // directory appears as that directory and is left out on both sides.
+  {const s=sandbox();fs.mkdirSync(s.at('assets/.cache'));fs.writeFileSync(s.at('assets/.cache/x'),'x');s.g('add','-f','assets/.cache/x');s.g('commit','-q','-m','cache');
+   ok('the asset check accepts a committed file under a dot-named assets directory',assetsProblem({root:s.dir})===null,assetsProblem({root:s.dir}));}
+}finally{for(const d of sandboxes)fs.rmSync(d,{recursive:true,force:true});}
+
 ok('the production fixture is the stamped index.html',fs.readFileSync(TESTS+'fixtures/publish.html','utf8').includes(`<meta name="fs-build-sha256" content="${v.stamped}">`));
 
 // ---- the app ----
