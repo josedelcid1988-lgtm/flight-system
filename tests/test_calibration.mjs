@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createHost } from '../server/mes-host.mjs';
 import { createServer } from '../server/server.mjs';
@@ -155,4 +156,35 @@ const dateFixFuture = run(qa, () => MES.updateCalibration(state, dateFix.id, { c
 check('a correction to a future calibration date is refused', !dateFixFuture.ok && /later than today/.test(dateFixFuture.message) && MES.calibrationStatus(state, 'DATE-001').id === dateFix.id);
 const dateFixAfterDue = run(qa, () => MES.updateCalibration(state, dateFix.id, { calibratedAt: '2026-09-28', expires: '2026-09-28' }));
 check('a correction that puts the due date on or before the calibration date is refused', !dateFixAfterDue.ok && MES.calibrationStatus(state, 'DATE-001').id === dateFix.id);
+// #48, #53, #58, #59, #65: every point-of-use list (buy-off tools, torque tools, ATP assets) comes from
+// one engine helper that reads the seed and the live calibration log together.
+check('calibratedToolChecks is exported and not remotely callable', typeof MES.calibratedToolChecks === 'function' && host.resolveAction('MES.calibratedToolChecks') === null);
+const sugRec = run(qa, () => MES.recordCalibration(state, { ...entry, tag: 'SUG-001', description: 'OLD GAGE NAME' }));
+const sugFix = run(qa, () => MES.updateCalibration(state, sugRec.id, { description: 'THREAD GAGE', expires: '2027-06-30' }));
+const suggestions = MES.calibratedToolChecks(state, now);
+const suggestionTags = suggestions.map(c => c.tool && c.tool.tag);
+check('the tool list has one result per tag', sugRec.ok && sugFix.ok && new Set(suggestionTags).size === suggestionTags.length);
+const sug = suggestions.find(c => c.tool && c.tool.tag === 'SUG-001');
+check('a log-only tool is offered with its corrected description and due date', !!sug && sug.ok && sug.tool.description === 'THREAD GAGE' && sug.tool.expires === '2027-06-30');
+check('a seed tool with no log entry is still offered', suggestions.some(c => c.ok && c.tool.tag === 'NONE-175'));
+check('a tool quarantined through the log is listed but not usable', suggestions.some(c => c.tool && c.tool.tag === 'CAL-022' && !c.ok));
+const torqueOffer = suggestions.filter(c => c.ok && MES.isTorqueTool(c.tool)).map(c => c.tool.tag);
+check('the torque list keeps seeded torque wrenches and leaves out non-torque log tools', torqueOffer.includes('NONE-174') && torqueOffer.includes('NONE-175') && !torqueOffer.includes('NT-TOOL'));
+check('each list entry matches the single-tool point-of-use check', suggestions.every(c => { const one = MES.toolCheck(c.tool.tag, now, state); return one.ok === c.ok && one.tool.expires === c.tool.expires; }));
+// The log is read once for the whole list, not once per tag: count element reads on a large log.
+const bigLog = structuredClone(state.calibrationLog);
+for (let i = 0; i < 2000; i += 1) bigLog.push({ id: `CALLOG-${String(90000 + i)}`, tag: `BIG-${i}`, description: 'FILLER', serial: '', calibratedAt: '2026-09-01', expires: '2027-09-01', status: 'In Calibration', location: '', note: '' });
+let logReads = 0;
+const countedLog = new Proxy(bigLog, { get(target, key, receiver) { if (typeof key === 'string' && /^\d+$/.test(key)) logReads += 1; return Reflect.get(target, key, receiver); } });
+const bigState = { ...structuredClone({ ...state, calibrationLog: [] }), calibrationLog: countedLog };
+const bigChecks = MES.calibratedToolChecks(bigState, now);
+check('the tool list reads the calibration log a bounded number of times', bigChecks.length >= 2000 && logReads <= bigLog.length * 4);
+// Page and React interface: no suggestion list is built from the seed alone, and every point-of-use
+// check passes the workspace so it resolves through the calibration log.
+const pageSources = [['index.html', readFileSync(fileURLToPath(new URL('../index.html', import.meta.url)), 'utf8')], ['src/react/flight-ui.jsx', readFileSync(fileURLToPath(new URL('../src/react/flight-ui.jsx', import.meta.url)), 'utf8')]];
+for (const [name, source] of pageSources) {
+  check(`${name} builds no tool list from the seed alone`, !/MES\.CAL_TOOLS\.(filter|forEach|find|some)\(/.test(source));
+  const calls = [...source.matchAll(/MES\.toolCheck\(((?:[^()]|\([^()]*\))*)\)/g)].map(m => m[1].trim());
+  check(`${name} passes the workspace to every MES.toolCheck call`, calls.length > 0 && calls.every(args => /,\s*state$/.test(args)));
+}
 console.log(`calibration: ${checks} checks, all passed`);
