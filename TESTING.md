@@ -1,7 +1,10 @@
 # Testing Flight System
 
-The product build id is set in `VERSION.md` and stamped into `index.html`, with
-the SHA-256 of `index.html`, by `node tools/stamp-build.mjs`. Suite names such as
+The product build id is set in `VERSION.md`. The SHA-256 stamp is generated, not
+committed: CI and the release process run `node tools/stamp-build.mjs`. Before running
+the suites locally, stamp the working copy (`node tools/stamp-build.mjs`, then
+`node tools/build-demo.mjs`); before committing, put it back with `--clear` and
+`build-demo`. Suite names such as
 `test_v80.mjs` record when that suite was added. They are not the build id.
 
 The product page is generated from `index.html`; the React Hangar is bundled
@@ -76,8 +79,11 @@ failing suite, `tests/suite_<name>.log`. `--only a,b` runs named suites.
 | `node tests/test_mirror.mjs` | The persistence mirror: off by default, on, outage and recovery, idempotent retry, no password or PIN material, tamper detection, backup, restore test and restart on the restored file. |
 | `node tests/test_server.mjs` | SQLite API: scrypt sessions, lockouts, shared ETags, evidence, archive, extracts, exports, engine actions and hash-chained audit. |
 | `node tests/test_server_ui.mjs` | Browser sign-in, shared workspace hydration, a real MES mutation saved to the server, and account-profile round-trip. |
+| `node tests/test_server_stamp.mjs` | The server stamps a checkout's unstamped index.html in memory at start, so the page it serves carries the release SHA-256 for its build, never the placeholder; a stamped release file is served as it is. |
+| `node tests/test_server_record_path.mjs` | With a server configured, a record change is sent to the server as an action, or refused before it runs when there is no server session, the shared workspace has not loaded, or an earlier change is unconfirmed: nothing is changed, stored in the browser or queued. Evidence and discussion commits are refused the same way. Standalone use still saves in the browser. |
 | `node tests/test_server_first_load.mjs` | First sign-in against an uninitialized server on a 6x CPU-throttled page: no record change is sent while the first load is in flight, the workspace initializes and syncs, and a browser workspace that predates the page is still refused until migrated. |
 | `node tests/test_react_screens_ui.mjs` | The React screens routed in this build (plan home, QMS records, trace report) render without page errors, and the trace report receives the searched serial. WI library and detail, Flight Maneuver record details, QMS configuration, the support log and work order detail stay on legacy until their React versions match the legacy behavior. |
+| `node tests/test_media_commit_ui.mjs` | The evidence, discussion and profile commit refuses an invalid workspace before browser storage, the server or the mirror sees it, with a plain reason, and commits a valid one. |
 | `node tests/test_jira_integration.mjs` | Jira Cloud issue creation from canonical ECR/SPR/SCAR records, server-only secrets, caller authorization, saved issue linking, persistent idempotency, restart replay, uncertain-response refusal, and ECR UI flow. |
 | `node tests/test_migration.mjs` | Browser workspace migration dry-run, validation, report and copy verification. |
 | `node tests/postgres/integration.mjs` | PostgreSQL store, account profiles, ETags, archive, exports, Jira idempotency rows and immutable histories. Requires a running PostgreSQL service; CI runs it on PostgreSQL 16. |

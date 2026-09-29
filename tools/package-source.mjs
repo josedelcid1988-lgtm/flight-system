@@ -3,7 +3,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildId, makeZip } from './package-release.mjs';
+import { makeZip } from './package-release.mjs';
+import { buildId } from './stamp-build.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const INCLUDED_DIRS = ['.github', 'artifacts/design', 'assets', 'docs', 'planner', 'qms', 'server', 'src', 'tests', 'tools'];
@@ -29,7 +30,8 @@ export function sourceManifest() {
 }
 
 export function packageSource(outDir = path.join(ROOT, 'release')) {
-  const build = buildId();
+  // The source package holds the committed tree, so its build id comes from VERSION.md, not from a stamp.
+  const build = buildId(fs.readFileSync(path.join(ROOT, 'VERSION.md'), 'utf8'));
   const file = path.join(outDir, `flight-system-v${build.replace(/^v/, '')}-source.zip`);
   fs.mkdirSync(outDir, { recursive: true });
   const names = sourceManifest();
