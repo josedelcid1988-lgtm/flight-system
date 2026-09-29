@@ -40,7 +40,8 @@ export function releaseProblem(html, headVersion, headIndex) {
   const v = verify(html);
   if (v.stamped === 'unstamped') return 'index.html is not stamped. Run node tools/stamp-build.mjs, node tools/build-demo.mjs and the suites first.';
   if (!v.ok) return `index.html carries SHA-256 ${v.stamped} but the file computes ${v.actual}. Run node tools/stamp-build.mjs again.`;
-  const committedBuild = buildId(headVersion);
+  let committedBuild;
+  try { committedBuild = buildId(headVersion); } catch (error) { return `HEAD's VERSION.md: ${error.message} Commit the build id first, then stamp.`; }
   if (committedBuild !== v.build) return `index.html is stamped with build ${v.build} but HEAD's VERSION.md sets ${committedBuild}. Commit the build id first, then stamp.`;
   if (clear(html, v.build) !== headIndex) return 'the stamped index.html was not generated from the committed index.html in HEAD. Commit the change, then stamp from that commit.';
   return null;
