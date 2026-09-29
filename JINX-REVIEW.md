@@ -1,4 +1,4 @@
-# JINX-REVIEW.md (PR #35, head 7b56961d, updated 2026-09-29T14:22Z; Jinx review 5353924076 plus cross-review of the 5 new Codex replies)
+# JINX-REVIEW.md (PR #35, head 7b56961d, updated 2026-09-29T15:15Z; Jinx reviews 5353924076 and 5354526433)
 
 ## Owner direction 2026-09-28 (evening): record-coverage fixes before Oct 7 handoff (read first)
 
@@ -32,16 +32,24 @@ Commit 7b56961d ("fix: require the torque answer on load for log-only calibratio
 
 Codex 4134256621 (P1 per the 2026-09-29 decision), CONFIRMED still present: `qualityRecordsValid` (index.html:3100) checks each log entry but nothing checks that a buy-off's stored `calibrationEntry` id resolves to a signed log row; an empty log is valid. If the row goes missing (import path or manual edit), signed operation and ATP buy-offs citing it still pass validate and verifyManifests: calibration evidence disappears while acceptance records stay valid. Codex's inline reply states a scope decision was asked of the owner (Jose). Fix when decided: at buy-off validation, require every stored `calibrationEntry` reference to resolve to a matching signed log row, plus a regression test.
 
+
+## New blocker 2026-09-29T15:10Z: Codex P1 4134619499 (postdated calibration on loaded records), CONFIRMED still open on this head
+
+Codex inline 4134619499 (index.html:2546), review 5354007084: `calibrationEntryValid` (index.html:2546) never checks the write-path invariant that `calibratedAt` is on or before the Pacific day of `recordedAt`. Jinx verified against the branch code on this exact head: neither `calibrationEntryValid` (2546) nor its diagnose mirror `calibrationInvalidField` (2547) nor the diagnose calibrate block (7383) contains any chronology check; the write path alone enforces it (`calibrationFieldError`, index.html:2595, with the comment "a calibration cannot be dated after the day it is recorded"). `calibrationSequenceProblem` (2574) does not cover this, it only checks id ordering and torque classification. Consequence: an imported or manually signed entry signed on Sep 29 with `calibratedAt` of Oct 1 passes `MES.validate`, `MES.verifyManifests`, and `MES.diagnose`; from Oct 1 onward `toolCheck` accepts the tool even though the signed record predates the claimed calibration. This is a data integrity P1 and blocks the merge. NOTE: the earlier B1 label belonged to the torque comment (4134256601), which IS fixed on this head; the postdated finding (4134619499) was never fixed.
+
+Fix: apply the same chronology check in `calibrationEntryValid` and in the diagnose calibrate block so loading a workspace cannot admit a postdated calibration. Suggested condition: `entry.calibratedAt <= pacificDay(entry.recordedAt)` using the same `pacificDay` helper the write path uses, alongside the existing dateOnly checks. Existing log entries that violate it should be surfaced by diagnose for QA Manager review, never silently repaired. Add a regression test in tests/test_calibration.mjs: an imported signed entry with calibratedAt after pacificDay(recordedAt) fails validate and diagnose names the entry.
+
 ## Current status (Jinx review 5353924076 on head 7b56961d, plus the cross-review above)
 
-Final approval is WITHHELD for three reasons: (1) the GitHub 'suites' check is in_progress on this exact head; (2) B2 is open and needs an owner scope decision (Codex asked Jose directly); (3) the do-not-merge checklist below. Eyes reaction is up, no thumbs-up. All 20 calibration-log issues in the PR body remain verified fixed on this head, each with a regression check in tests/test_calibration.mjs, and B1 (the torque live-only gap) is now fixed with its own regression test.
+Final approval is WITHHELD. Review 5353924076 found no blockers on the diff it covered, but review 5354526433 (this run) confirmed an open Codex P1 on this head: the postdated calibration load gap (4134619499, section above). A Final approval (5354503581) was posted earlier today on the mistaken basis that the Codex P1s were closed; it is WITHDRAWN and superseded by 5354526433, and the thumbs-up reaction was removed. GitHub 'suites' is now completed SUCCESS on this exact head (checked 15:06Z), so CI is not the blocker. Eyes reaction stays up. B2 (dangling calibrationEntry references) is still open pending the owner scope decision. All 20 calibration-log issues in the PR body remain verified fixed on this head, each with a regression check in tests/test_calibration.mjs, and B1 (the torque live-only gap) is now fixed with its own regression test.
 
 ## Do-not-merge checklist
 
 - [x] Fix B1 (require boolean torque for non-seed tags at load validation) with regression test. Done in 7b56961d, verified by Jinx.
+- [ ] Fix the postdated calibration load gap (Codex P1 4134619499): chronology check in `calibrationEntryValid` (index.html:2546) and the diagnose calibrate block (7383), plus regression test. Fix goes on this branch.
 - [ ] Owner scope decision on B2 (dangling calibrationEntry references). Codex asked Jose; no decision recorded yet.
-- [ ] CI suites GREEN on the exact head 7b56961d (in_progress at last check 14:20Z).
-- [ ] Jinx Final approval on the exact head (not yet posted).
+- [x] CI suites GREEN on the exact head 7b56961d (completed, success, checked 2026-09-29T15:06Z).
+- [ ] Jinx Final approval on the exact head (5354503581 was withdrawn; re-review needed after the fix).
 - [ ] PR body: add `Closes #110` (per-row index rebuild, fixed on branch by calibrationCurrentIds but not listed), plus `Closes #111 #112 #113` if fixed on the branch.
 - [ ] When green and approved, Claudia merges through the PR button.
 
@@ -53,6 +61,10 @@ Final approval is WITHHELD for three reasons: (1) the GitHub 'suites' check is i
 - Waste pass: the new rule reuses the existing CAL_TOOLS snapshot and the same tag-normalization convention as neighboring guards; no parallel mechanism.
 - Not independently verified: the suite was not executed by Jinx. The GitHub 'suites' run is the authority and it is in_progress.
 
-## Open issue counts
+## Open issue counts (2026-09-29T15:06Z)
+
+- P2: 29 (new since last note: #111 prefix-match trace search, #112 unvalidated signer role, #113 5k-entry limit with no archive path, #114 AI draft bodyHash canonical mismatch)
+- P3: 7
+
 
 P2 open: 28 (unchanged: #38, #39, #40, #47, #48, #49, #53, #54, #56, #57, #64, #66, #67, #94, #97, #98, #99, #100, #101, #102, #105, #106, #107, #108, #110, #111, #112, #113). P3 open: 7 (unchanged: #41, #58, #59, #65, #95, #103, #104). The 20 calibration-log issues close on merge.
