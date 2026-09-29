@@ -264,4 +264,19 @@ check('the draft\'s own signature manifest is still verified', !MES.verifyManife
 const strayManifest = structuredClone(state);
 strayManifest._probe = { manifest: { document: 'not a signature' } };
 check('a plain-object manifest outside a draft body is still refused by the server gate', typeof srv.validState(strayManifest) === 'string');
+// #64: the calibration log is append-only. Retirement, not deletion, removes a tool from use: a retired
+// tool reads unusable at point of use and its entries stay in the signed log.
+check('there is no calibration delete command', MES.deleteCalibration === undefined && MES.removeCalibration === undefined && host.resolveAction('MES.deleteCalibration') === null);
+const retireLogBefore = state.calibrationLog.length;
+const retireLive = run(qa, () => MES.updateCalibration(state, MES.calibrationStatus(state, 'B2-TOOL').id, { status: 'Retired', note: 'Worn out, removed from service' }));
+const retireSeed = run(qa, () => MES.recordCalibration(state, { tag: 'NONE-176', description: 'TORQUE WRENCH', serial: '0617112253', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'Retired', location: '', note: 'Scrapped' }));
+check('retiring a tool appends entries and removes nothing', retireLive.ok && retireSeed.ok && state.calibrationLog.length === retireLogBefore + 2);
+const retiredCheck = MES.toolCheck('B2-TOOL', now, state);
+check('a retired log tool is unusable at point of use', !retiredCheck.ok && /Retired/.test(retiredCheck.message));
+check('a retired seed tool is unusable at point of use', !MES.toolCheck('NONE-176', now, state).ok);
+check('a retired tool is refused on an ATP asset list', !MES.atpAssets([{ asset: 'B2-TOOL' }], now, state).ok);
+const retiredList = MES.calibratedToolChecks(state, now);
+check('a retired tool is not offered as usable', !retiredList.some(c => c.ok && ['B2-TOOL', 'NONE-176'].includes(c.tool.tag)));
+check('the retired tool\'s earlier signed entries stay in the log and verify', state.calibrationLog.filter(e => e.tag === 'B2-TOOL').length === 2 && MES.validate(state) && MES.verifyManifests(state).ok);
+check('the record form tells the user that Retired is how a tool leaves service', /record it as Retired/.test(pageSource));
 console.log(`calibration: ${checks} checks, all passed`);
