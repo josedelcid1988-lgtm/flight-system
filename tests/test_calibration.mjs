@@ -29,7 +29,10 @@ check('a QA Manager records a calibration entry', recorded.ok && recorded.id ===
 check('the calibration entry carries a signed manifest that verifies', state.calibrationLog[0].calibrationSignature && MES.verifyManifests(state).ok);
 check('a due date before the calibration date is refused', !run(qa, () => MES.recordCalibration(state, { ...entry, tag: 'TEST-002', calibratedAt: '2027-09-28', expires: '2026-09-28' })).ok);
 
-const now = new Date().toISOString();
+// Fixed point-of-use clock. The fixtures and the shipped CAL_TOOLS seed carry fixed calibration and due
+// dates, so every point-of-use check runs at this reference time instead of the wall clock; otherwise the
+// seed assertions start failing once NONE-175 expires (2026-10-17) and the fixtures once they expire.
+const now = '2026-10-01T19:00:00.000Z';
 check('point-of-use validation accepts a tool recorded in the log', MES.toolCheck('TEST-001', now, state).ok);
 const quarantine = run(qa, () => MES.recordCalibration(state, { tag: 'CAL-022', description: 'DIGITAL CALIPER', serial: '150151267', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: 'Quarantined', note: '' }));
 check('a newly recorded quarantine supersedes the shipped snapshot at point of use', quarantine.ok && !MES.toolCheck('CAL-022', now, state).ok && /returns to service/.test(MES.toolCheck('CAL-022', now, state).message));
