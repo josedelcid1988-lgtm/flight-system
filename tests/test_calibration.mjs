@@ -451,4 +451,53 @@ retroAtpOp.buyoff.testAssets = [{ asset: refTag, calibrationEntry: refEntry.id }
 retroAtpOp.buyoff.at = new Date(Date.parse(citedRow.recordedAt) - 60000).toISOString();
 check('an ATP test asset citing calibration evidence recorded after the buy-off fails validation', !MES.validate(retroAtp));
 
+// #35 review (Codex 4137333755, Jinx ruling A): the server gate verifies every signature on every write, so a split
+// that carries completed operations (and their signed buy-offs) onto a new order must still verify end to end.
+const splitFixture = readFileSync(new URL('./fixtures/demo_publish.html', import.meta.url), 'utf8');
+const splitState = MES.upgrade(JSON.parse(splitFixture.match(/window\.__DEMO_SEED=(\{[\s\S]*?\});/)[1]));
+const splitAdmin = { username: 'admin', displayName: 'Flight Master', role: 'admin' };
+const splitParent = splitState.orders.find(o => o.operations.some(op => op.buyoff && op.buyoff.manifest && Array.isArray(op.buyoff.evidenceIds) && op.buyoff.evidenceIds.length)) || splitState.orders.find(o => o.operations.some(op => op.buyoff && op.buyoff.manifest));
+Object.assign(splitParent, { status: 'Building', quantity: 3 });
+delete splitParent.closure; delete splitParent.closureRequest;
+splitParent.splitRequests = [{ id: 'SPR-TEST-1', ticketId: null, quantity: 1, of: 3, serials: [], reason: 'Split one unit out after early buy-offs', status: 'Open', requestedBy: { name: 'Flight Master', role: 'Master Access', credentialId: 'MA-1' }, requestedAt: new Date().toISOString() }];
+check('the split fixture verifies before the split', MES.verifyManifests(splitState).ok);
+const splitResult = host.withAccount(splitAdmin, () => MES.splitRequestOrder(splitState, splitParent.id, 'SPR-TEST-1'), splitState);
+const splitChild = splitState.orders.find(o => o.id === splitResult.id);
+check('the split carries a signed buy-off onto the new order', splitResult.ok && !!splitChild && splitChild.operations.some(op => op.buyoff && op.buyoff.manifest));
+const splitVerify = MES.verifyManifests(splitState);
+check('carried buy-offs still verify against their original signed subject after a split', splitVerify.ok, JSON.stringify(splitVerify.failures && splitVerify.failures[0]));
+check('the server write gate accepts the split workspace', srv.validState(structuredClone(splitState)) === null);
+const carried = splitChild.operations.find(op => op.buyoff && op.buyoff.manifest).buyoff;
+check('a carried buy-off records the order and evidence ids it was signed under', carried.carriedFrom && carried.carriedFrom.orderId === splitParent.id && Array.isArray(carried.carriedFrom.evidenceIds));
+const forged = structuredClone(splitState), forgedOp = forged.orders.find(o => o.id === splitChild.id).operations.find(op => op.buyoff && op.buyoff.manifest);
+forgedOp.buyoff.tools = [...(forgedOp.buyoff.tools || []), { tag: 'FORGED-TOOL' }];
+check('a carried buy-off edited after the split still fails verification', !MES.verifyManifests(forged).ok);
+const stray = structuredClone(splitState), strayOp = stray.orders.find(o => o.id === splitParent.id).operations.find(op => op.buyoff && op.buyoff.manifest);
+strayOp.buyoff.carriedFrom = { orderId: splitParent.id, evidenceIds: strayOp.buyoff.evidenceIds };
+strayOp.buyoff.evidenceIds = ['EV-00000000-0000-0000-0000-000000000000'];
+check('carriedFrom cannot excuse an edited buy-off on an order that was not split', !MES.verifyManifests(stray).ok);
+
+// The split can also move the NC that caused it onto the new order; a resolved ticket's signed approval must verify too.
+const tkState = MES.upgrade(JSON.parse(splitFixture.match(/window\.__DEMO_SEED=(\{[\s\S]*?\});/)[1]));
+const tkOrderId = splitParent.id;
+// Setup, signature and split run in one withAccount call, against the live workspace it acts on.
+const tkRun = host.withAccount(splitAdmin, () => {
+  const parent = tkState.orders.find(o => o.id === tkOrderId);
+  Object.assign(parent, { status: 'Building', quantity: 3 }); delete parent.closure; delete parent.closureRequest;
+  const template = tkState.orders.flatMap(o => o.tickets || [])[0];
+  const createdAt = new Date(Date.now() - 3600000).toISOString();
+  const tk = { ...structuredClone(template), id: 'NC-9901', operationId: parent.operations[0].id, status: 'Resolved', createdAt, resolution: 'Reworked and reinspected', resolvedAt: new Date().toISOString() };
+  tk.manifest = MES.signManifest(tkState, 'NC disposition approval', { orderId: tkOrderId, ticketId: tk.id, operationId: tk.operationId, dispo: tk.dispo, resolution: tk.resolution, defect: tk.defect || null, affected: tk.affected || null }, tk.resolvedAt);
+  parent.tickets = [...(parent.tickets || []), tk];
+  parent.splitRequests = [{ id: 'SPR-TEST-2', ticketId: tk.id, quantity: 1, of: 3, serials: [], reason: 'Split the affected unit', status: 'Open', requestedBy: { name: 'Flight Master', role: 'Master Access', credentialId: 'MA-1' }, requestedAt: new Date().toISOString() }];
+  const before = MES.validate(tkState) && MES.verifyManifests(tkState).ok;
+  const split = MES.splitRequestOrder(tkState, tkOrderId, 'SPR-TEST-2');
+  const child = tkState.orders.find(o => o.id === split.id), after = tkState.orders.find(o => o.id === tkOrderId);
+  const moved = child && child.tickets.find(t => t.id === tk.id);
+  return { before, split, moved: !!moved && !after.tickets.some(t => t.id === tk.id), carriedFrom: moved && moved.carriedFrom, verify: MES.verifyManifests(tkState) };
+}, tkState);
+check('the signed ticket verifies on its original order before the split', tkRun.before);
+check('the split moves the signed ticket onto the new order', tkRun.split.ok && tkRun.moved, JSON.stringify(tkRun.split));
+check('a moved ticket still verifies against the order it was signed on', tkRun.verify.ok && tkRun.carriedFrom?.orderId === tkOrderId, JSON.stringify(tkRun.verify.failures?.[0]));
+
 console.log(`calibration: ${checks} checks, all passed`);

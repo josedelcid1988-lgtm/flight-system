@@ -2887,9 +2887,10 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       (order.operations || []).forEach(op => {
         const b = op.buyoff; if (!plain(b) || !plain(b.manifest)) return;
         const note = op.note === NO_EVIDENCE_NOTE ? '' : String(op.note || '');
-        recheck(`${order.id} ${op.id} buy-off`, b.manifest, buyoffSubject(order, op, note));
+        const carried = order.splitFrom && plain(b.carriedFrom) ? b.carriedFrom : null;
+        recheck(`${order.id} ${op.id} buy-off`, b.manifest, carried ? { ...buyoffSubject(order, op, note), orderId: carried.orderId, evidenceIds: carried.evidenceIds } : buyoffSubject(order, op, note));
       });
-      (order.tickets || []).forEach(t => { if (plain(t.manifest) && t.status === 'Resolved') recheck(`${order.id} ${t.id} approval`, t.manifest, ticketSubject(order, t)); });
+      (order.tickets || []).forEach(t => { if (!plain(t.manifest) || t.status !== 'Resolved') return; const carried = order.splitFrom && plain(t.carriedFrom) ? t.carriedFrom : null; recheck(`${order.id} ${t.id} approval`, t.manifest, carried ? { ...ticketSubject(order, t), orderId: carried.orderId } : ticketSubject(order, t)); });
       if (plain(order.closure) && plain(order.closure.manifest)) recheck(`${order.id} closure`, order.closure.manifest, closureSubject(state, order));
       const fair = order.fair;
       if (plain(fair) && plain(fair.approved) && plain(fair.approved.manifest) && plain(fair.verified) && plain(fair.verified.manifest)) { recomputed++; const sub = { fair: fairId(order), verified: fair.verified.manifest.hash, ...(fair.approved.manifest.override ? { override: fair.approved.manifest.override } : {}) }; if (sha256(canonical(sub)) !== fair.approved.manifest.hash) failures.push({ where: `${order.id} FAIR approval`, reason: 'approval does not chain to the verified FAIR' }); }
@@ -6868,6 +6869,10 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const hex = n => Array.from({ length: n }, () => Math.floor(Math.random() * 16).toString(16)).join('');
     const freshEvidenceId = () => `EV-${hex(8)}-${hex(4)}-${hex(4)}-${hex(4)}-${hex(12)}`;
     let recopied = 0;
+    // A carried buy-off keeps the signature made on the parent order. carriedFrom records the order id and evidence
+    // ids it was signed under (the first split's, when a split order is split again) so verifyManifests can recheck
+    // the historical signature unchanged.
+    child.operations.forEach(op => { if (plain(op.buyoff) && plain(op.buyoff.manifest) && !plain(op.buyoff.carriedFrom)) op.buyoff.carriedFrom = { orderId: order.id, evidenceIds: Array.isArray(op.buyoff.evidenceIds) ? [...op.buyoff.evidenceIds] : op.buyoff.evidenceIds }; });
     child.operations.forEach(op => {
       if (!Array.isArray(op.evidence) || !op.evidence.length) return;
       const map = new Map();
@@ -6876,6 +6881,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     });
     if (ticket) {
       child.tickets = [JSON.parse(JSON.stringify(ticket))];
+      if (plain(child.tickets[0].manifest) && !plain(child.tickets[0].carriedFrom)) child.tickets[0].carriedFrom = { orderId: order.id };
       order.tickets = order.tickets.filter(item => item.id !== ticket.id);
     }
     order.quantity -= qty;
