@@ -11,6 +11,10 @@ Background: Jinx mapped every quality and product record write to server-covered
 Merge gate (current, owner 2026-09-28): Jinx final approval plus green CI on the exact head, then you merge through the PR button. Codex reviews automatically but its approval does not gate merges. Ship each fix as its own PR through the normal gate. Work split (owner, 2026-09-28 evening): Claudia owns fix 1 (dual-path). A second agent run by Jinx owns fix 2 (calibration write path) and fix 3 (secLog label) on branches jinx/calibration-write-path and jinx/seclog-label; it opens its own PRs, Jinx reviews them, and Claudia merges them through the PR button under the same gate. Coordinate on index.html: the second agent avoids the mutation-pipeline region (index.html:10853-10930).
 
 # JINX-REVIEW.md (PR #11, head d1c5393c, updated 2026-09-28T22:45Z: Codex cross-review findings verified)
+## Owner decision 2026-09-28: PR #25 stamp P1 (Codex finding)
+
+Jose selected option 1: server stamps at start. Implement about 10 lines in server/server.mjs: at startup, if index.html is unstamped, the server stamps it in memory from VERSION.md using the same stamp tool, then serves and records that. This is PR #25's own P1 (records would otherwise carry build hash "unstamped"), so it belongs in PR #25, not a follow-up; the earlier "tooling and CI only" scope is overridden for this P1 data-integrity fix. Standalone users open the release zip per the docs. Sequencing note: PR #36 is blocked behind #25 (its unstamped index.html trips CI's hard gates until #25's new gate logic lands); PR #35's B4 is the same root cause, so both rebase after #25 merges.
+
 
 ## Owner direction 2026-09-28: v1 and v2 tracks (read first)
 
