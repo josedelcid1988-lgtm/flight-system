@@ -373,4 +373,26 @@ const badFlag = structuredClone(state);
 badFlag.calibrationLog[badFlag.calibrationLog.length - 1].torque = 'yes';
 check('a torque flag that is not true or false invalidates the entry', !MES.validate(badFlag));
 
+// #107: a tool used only as an ATP test asset is found by a traceability search for its tag.
+const atpTrace = structuredClone(state), atpOrder = { id: 'WO-ATP-TRACE', status: 'Complete', partNumber: 'P-100', revision: 'A', materials: [], tickets: [], operations: [{ id: 'op-atp', title: 'Acceptance test', buyoff: { tools: [], testAssets: [{ asset: 'CW-310', calibrationEntry: MES.calibrationStatus(state, 'CW-310').id }] } }] };
+atpTrace.orders = [...(atpTrace.orders || []), atpOrder];
+const atpHits = MES.traceSearch(atpTrace, 'cw-310');
+check('traceability finds a tool used only as an ATP test asset', atpHits.kind === 'tool' && JSON.stringify(atpHits.orders).includes(atpOrder.id));
+check('an unused tag still finds no orders', MES.traceSearch(atpTrace, 'CW-310-X').orders.length === 0);
+
+// #108: the signed meaning is bound to the entry kind: "Calibration recorded" for an original entry and
+// "Calibration entry corrected" for a correction. Swapping them is detected.
+const relabel = structuredClone(state), original = relabel.calibrationLog.find(e => !e.supersedes), correction = relabel.calibrationLog.find(e => e.supersedes);
+original.calibrationSignature.manifest.meaning = 'Calibration entry corrected';
+check('an original calibration entry relabeled as a correction fails validation', !MES.validate(relabel) && /CALLOG-/.test(MES.diagnose(relabel)?.where || ''));
+const relabel2 = structuredClone(state);
+relabel2.calibrationLog.find(e => e.id === correction.id).calibrationSignature.manifest.meaning = 'Calibration recorded';
+check('a calibration correction relabeled as an original entry fails validation', !MES.validate(relabel2));
+
+// #41: one rule decides which entries are current. The log view reads it from the engine instead of rebuilding it.
+const currentIds = MES.calibrationCurrentIds(state);
+check('calibrationCurrentIds holds exactly the current entry for every logged tag', [...new Set(state.calibrationLog.map(e => e.tag))].every(tag => currentIds.has(MES.calibrationStatus(state, tag).id)) && currentIds.size === new Set(state.calibrationLog.map(e => e.tag)).size);
+check('calibrationCurrentIds is read-only and not remotely callable', host.resolveAction('MES.calibrationCurrentIds') === null);
+check('the log views take the current entries from the engine, not an inline supersede rule', /MES\.calibrationCurrentIds\(state\)/.test(pageSource) && !/calSuperseded/.test(pageSource) && /MES\.calibrationCurrentIds\(state\)/.test(readFileSync(new URL('../src/react/flight-ui.jsx', import.meta.url), 'utf8')));
+
 console.log(`calibration: ${checks} checks, all passed`);
