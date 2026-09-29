@@ -115,7 +115,10 @@ export function createHost(indexPath, html = fs.readFileSync(indexPath, 'utf8'))
   const actionExclude = new Set(['repair','signManifest','verifyManifests','verifyAIActionLog','stampCheck','stampRegister','stampRegisterCsv','stampCredential','stampHolderFor','ticketAttachments','openProcessECRs','syncAssignments','buyoffCredential','ensure','seedDemoRecords','icalExport',
     // Internal record writers: each runs only inside the gated command that owns it (runSkill, a buy-off
     // override, the browser-only demo notice), so calling one directly would fabricate that record.
-    'recordAIAction','logSupport','noteDemoBypassRemoved']);
+    'recordAIAction','logSupport','noteDemoBypassRemoved',
+    // Sets an unreadable work order aside. Only MES.repair calls it, while a workspace opens; as a remote action it
+    // would let any signed-in account remove a live work order from the register.
+    'quarantineOrder']);
   function resolveAction(name) {
     const functionName = String(name).split('.').at(-1);
     return (actionName.test(functionName) || actionExact.has(functionName)) && !actionExclude.has(functionName) ? resolve(name) : null;
