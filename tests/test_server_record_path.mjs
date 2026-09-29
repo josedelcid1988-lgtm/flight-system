@@ -62,6 +62,60 @@ try {
     await page.waitForTimeout(200);
     assert.equal(actions.length, sentBefore, `${label}: nothing is sent`);
   }
+  // A proposed copy of the live workspace is recognized even when the live workspace has moved on from the last
+  // save (upgrade convergence fills derived fields): its change is sent as an action, not lost to a snapshot PUT.
+  await page.evaluate(() => {
+    lastSaved = { ...structuredClone(lastSaved), savedViews: [] };
+    const next = structuredClone(state), r = MES.addSavedView(next, 'Record path copy', {});
+    if (!r.ok) throw new Error(r.message);
+    mediaCommit(next);
+  });
+  await page.waitForFunction(() => !serverActionPending && !serverActionQueue.length && window.skServer.sync.status === 'synced', null, { timeout: 15000 });
+  assert.ok((await serverViews()).includes('Record path copy'), 'a change on a copy of the live workspace reaches the server');
+
+  // A shared workspace reload that fails leaves writes refused, not running against the stale copy.
+  const reload = await page.evaluate(async () => {
+    const api = window.skServer.api;
+    window.skServer.api = async () => { throw new Error('offline'); };
+    try { await loadServerWorkspace(); } finally { window.skServer.api = api; }
+    const r = MES.addSavedView(state, 'Refused after reload', {});
+    await loadServerWorkspace();
+    return { ok: r.ok, message: r.message, readyAgain: serverWorkspaceReady };
+  });
+  assert.equal(reload.ok, false, 'a change after a failed reload is refused');
+  assert.match(reload.message, /has not loaded from the server/);
+  assert.equal(reload.readyAgain, true, 'a successful reload makes the workspace ready again');
+
+  // Resetting the workspace is refused the same way; nothing on this device is replaced.
+  const reset = await page.evaluate(() => {
+    const token = sessionStorage.getItem('skyryse-mes-server-token-v1'), stored = localStorage.getItem(KEY), before = JSON.stringify(state);
+    sessionStorage.removeItem('skyryse-mes-server-token-v1');
+    try { resetWorkspace(); return { unchanged: JSON.stringify(state) === before, storedUnchanged: localStorage.getItem(KEY) === stored, toast: document.querySelector('#toast p')?.textContent || '' }; }
+    finally { sessionStorage.setItem('skyryse-mes-server-token-v1', token); }
+  });
+  assert.deepEqual({ unchanged: reset.unchanged, storedUnchanged: reset.storedUnchanged }, { unchanged: true, storedUnchanged: true }, 'a refused reset changes nothing');
+  assert.match(reset.toast, /Sign in to the shared server/, 'the reset refusal says what to do');
+
+  // A traveler is printed only when its print record can reach the server.
+  const orderId = await page.evaluate(() => {
+    const wi = state.masterWIs.find(item => item.status === 'Released');
+    const r = MES.addOrder(state, { masterWI: wi.id + '|' + wi.revision, pedigree: 'Development', subcategory: 'Mfg.', quantity: 1, aircraft: MES.AIRCRAFT[0], site: MES.SITES[0] });
+    if (!r.ok) throw new Error(r.message);
+    save();
+    return r.id || state.orders[state.orders.length - 1].id;
+  });
+  await page.waitForFunction(() => !serverActionPending && !serverActionQueue.length && window.skServer.sync.status === 'synced', null, { timeout: 15000 });
+  const traveler = await page.evaluate(id => {
+    const opened = []; const open = window.open; window.open = () => { opened.push(1); return null; };
+    const token = sessionStorage.getItem('skyryse-mes-server-token-v1'), history = JSON.stringify(MES.getOrder(state, id).history || []);
+    sessionStorage.removeItem('skyryse-mes-server-token-v1');
+    try { printTraveler(id); return { opened: opened.length, downloads: document.querySelectorAll('a[download^="traveler-"]').length, historyUnchanged: JSON.stringify(MES.getOrder(state, id).history || []) === history, toast: document.querySelector('#toast p')?.textContent || '' }; }
+    finally { sessionStorage.setItem('skyryse-mes-server-token-v1', token); window.open = open; }
+  }, orderId);
+  assert.equal(traveler.opened, 0, 'the traveler is not opened when its print record is refused');
+  assert.equal(traveler.historyUnchanged, true, 'no print record is kept on this device');
+  assert.match(traveler.toast, /Sign in to the shared server/, 'the print refusal says what to do');
+
   const views = await serverViews();
   assert.ok(views.includes('Record path sent') && !views.some(name => name.startsWith('Refused')), `the server record is unchanged by the refused attempts: ${views.join(', ')}`);
   assert.deepEqual(errors, []);
