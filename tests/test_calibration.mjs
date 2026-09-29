@@ -12,7 +12,7 @@ const tech = { username: 'tech-sam', displayName: 'Sam Tech', role: 'technician'
 const run = (account, fn) => host.withAccount(account, fn, state);
 let checks = 0;
 const check = (name, result) => { checks += 1; assert.ok(result, name); console.log(`ok ${name}`); };
-const entry = { tag: 'TEST-001', description: 'DIGITAL CALIPER', serial: 'SN-1', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: 'Production Floor', note: 'Lab cert 42' };
+const entry = { tag: 'TEST-001', description: 'DIGITAL CALIPER', torque: false, serial: 'SN-1', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: 'Production Floor', note: 'Lab cert 42' };
 
 check('new Flight workspaces include an empty calibration log', Array.isArray(state.calibrationLog) && state.calibrationLog.length === 0);
 const old = structuredClone(state);
@@ -56,14 +56,14 @@ check('a malformed calibration entry invalidates the workspace', !MES.validate(b
 
 // B1 regression: a correction to an already-superseded entry is refused, so a
 // quarantined tool cannot be silently restored to usable by correcting the old entry.
-const b1rec = run(qa, () => MES.recordCalibration(state, { tag: 'B1-TOOL', description: 'TORQUE WRENCH', serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }));
+const b1rec = run(qa, () => MES.recordCalibration(state, { tag: 'B1-TOOL', description: 'TORQUE WRENCH', torque: true, serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }));
 const b1quar = run(qa, () => MES.updateCalibration(state, b1rec.id, { status: 'Quarantined', note: 'dropped on floor' }));
 check('a correction to a superseded entry is refused', b1rec.ok && b1quar.ok && !run(qa, () => MES.updateCalibration(state, b1rec.id, { note: 'sneaky restore' })).ok);
 check('the quarantined tool still reads unusable after the refused correction', !MES.toolCheck('B1-TOOL', now, state).ok && MES.calibrationStatus(state, 'B1-TOOL').status === 'Quarantined');
 
 // B2 regression: atpAssets resolves through the calibration log first and fails closed.
 check('atpAssets refuses a quarantined tool that exists only in the calibration log', !MES.atpAssets([{ asset: 'B1-TOOL', description: 'torque wrench' }], now, state).ok);
-const b2rec = run(qa, () => MES.recordCalibration(state, { tag: 'B2-TOOL', description: 'MICROMETER', serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }));
+const b2rec = run(qa, () => MES.recordCalibration(state, { tag: 'B2-TOOL', description: 'MICROMETER', torque: false, serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }));
 const b2res = MES.atpAssets([{ asset: 'b2-tool', description: 'micrometer' }], now, state);
 check('atpAssets accepts a usable logged tool from the calibration log', b2rec.ok && b2res.ok && b2res.list[0].asset === 'B2-TOOL' && b2res.list[0].source === 'Calibrated Tool Log');
 
@@ -118,7 +118,7 @@ check('a log entry without TORQUE in its description does not declassify a seede
 check('the torque-evidence requirement survives declassification (completeOperation missingTorque gate)', tqCheck.ok && MES.isTorqueTool(tqCheck.tool) === true);
 const seedOnly = MES.toolCheck('NONE-175', now, state);
 check('a seeded torque wrench with no log entry still classifies as a torque tool', seedOnly.ok && MES.isTorqueTool(seedOnly.tool) === true);
-const ntRec = run(qa, () => MES.recordCalibration(state, { tag: 'NT-TOOL', description: 'CLICK WRENCH', serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }));
+const ntRec = run(qa, () => MES.recordCalibration(state, { tag: 'NT-TOOL', description: 'CLICK WRENCH', torque: false, serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }));
 const ntCheck = MES.toolCheck('NT-TOOL', now, state);
 check('a log-only tool without TORQUE in its description is not a torque tool', ntRec.ok && ntCheck.ok && MES.isTorqueTool(ntCheck.tool) === false);
 
@@ -280,11 +280,11 @@ check('a retired tool is not offered as usable', !retiredList.some(c => c.ok && 
 check('the retired tool\'s earlier signed entries stay in the log and verify', state.calibrationLog.filter(e => e.tag === 'B2-TOOL').length === 2 && MES.validate(state) && MES.verifyManifests(state).ok);
 check('the record form tells the user that Retired is how a tool leaves service', /record it as Retired/.test(pageSource));
 // The signed subject of a calibration entry (calibrationSubject in index.html), for building imported rows.
-const calSubject = e => ({ id: e.id, tag: e.tag, description: e.description, serial: e.serial, calibratedAt: e.calibratedAt, expires: e.expires, status: e.status, location: e.location, note: e.note, recordedAt: e.recordedAt, recordedBy: e.recordedBy, supersedes: e.supersedes || null });
+const calSubject = e => ({ id: e.id, tag: e.tag, description: e.description, serial: e.serial, calibratedAt: e.calibratedAt, expires: e.expires, status: e.status, location: e.location, note: e.note, recordedAt: e.recordedAt, recordedBy: e.recordedBy, supersedes: e.supersedes || null, ...(e.torque !== undefined ? { torque: e.torque } : {}) });
 // #35 review: only the current entry for a tag can be corrected. With two independent entries A (usable)
 // then B (Quarantined), correcting A would copy A's usable status into the newest row and re-enable the tool.
-const curA = run(qa, () => MES.recordCalibration(state, { tag: 'CUR-TOOL', description: 'DIAL INDICATOR', serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }));
-const curB = run(qa, () => MES.recordCalibration(state, { tag: 'CUR-TOOL', description: 'DIAL INDICATOR', serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'Quarantined', location: '', note: 'Failed gage check' }));
+const curA = run(qa, () => MES.recordCalibration(state, { tag: 'CUR-TOOL', description: 'DIAL INDICATOR', torque: false, serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }));
+const curB = run(qa, () => MES.recordCalibration(state, { tag: 'CUR-TOOL', description: 'DIAL INDICATOR', torque: false, serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'Quarantined', location: '', note: 'Failed gage check' }));
 const curLog = state.calibrationLog.length;
 const staleFix = run(qa, () => MES.updateCalibration(state, curA.id, { note: 'cert reference' }));
 check('a correction to an older, non-current entry for the tag is refused and names the current entry', curA.ok && curB.ok && !staleFix.ok && staleFix.message.includes(curB.id) && state.calibrationLog.length === curLog);
@@ -296,7 +296,7 @@ check('a workspace with a correction of a non-current entry fails validation', !
 check('diagnose names the correction of a non-current entry', /CALLOG-09990/.test(MES.diagnose(staleImport)?.where || '') && /not the current entry/.test(MES.diagnose(staleImport)?.detail || ''));
 
 // #35 review: a new record cannot bring a retired tag back into use.
-const reuse = run(qa, () => MES.recordCalibration(state, { tag: 'B2-TOOL', description: 'MICROMETER', serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }));
+const reuse = run(qa, () => MES.recordCalibration(state, { tag: 'B2-TOOL', description: 'MICROMETER', torque: false, serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }));
 const reuseSeed = run(qa, () => MES.recordCalibration(state, { tag: 'NONE-176', description: 'TORQUE WRENCH', serial: '0617112253', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }));
 check('a new record for a retired tag is refused and says how a mistaken retirement is undone', !reuse.ok && /retired/i.test(reuse.message) && /reason/.test(reuse.message) && !reuseSeed.ok);
 check('the retired tools stay unusable after the refused records', !MES.toolCheck('B2-TOOL', now, state).ok && !MES.toolCheck('NONE-176', now, state).ok);
@@ -307,7 +307,7 @@ check('diagnose names the entry that records a retired tag again', /CALLOG-09991
 
 // Owner decision on #35: a QA Manager may correct a Retired entry back to service, with a mandatory reason in
 // the signed note. Example: TW-042 was retired after a drop, but the dropped wrench was TW-024.
-const tw = run(qa, () => MES.recordCalibration(state, { tag: 'TW-042', description: 'TORQUE WRENCH', serial: '', calibratedAt: '2026-09-26', expires: '2027-09-26', status: 'In Calibration', location: '', note: 'Lab cert 77' }));
+const tw = run(qa, () => MES.recordCalibration(state, { tag: 'TW-042', description: 'TORQUE WRENCH', torque: true, serial: '', calibratedAt: '2026-09-26', expires: '2027-09-26', status: 'In Calibration', location: '', note: 'Lab cert 77' }));
 const twRetired = run(qa, () => MES.updateCalibration(state, tw.id, { status: 'Retired', note: 'Dropped on the floor' }));
 const noReason = run(qa, () => MES.updateCalibration(state, twRetired.id, { status: 'In Calibration' }));
 const sameReason = run(qa, () => MES.updateCalibration(state, twRetired.id, { status: 'In Calibration', note: 'Dropped on the floor' }));
@@ -324,8 +324,8 @@ noReasonImport.calibrationLog.push(host.withAccount(qa, () => { const e = { ...t
 check('a workspace that returns a retired tool to service without a reason fails validation', !MES.validate(noReasonImport) && /CALLOG-09992/.test(MES.diagnose(noReasonImport)?.where || ''));
 // #35 review (Codex 4133296942): the current entry follows log order, so the order is bound to the signed ids.
 // Reversing an independent usable entry and a later quarantine would otherwise re-enable the tool.
-const orderA = run(qa, () => MES.recordCalibration(state, { tag: 'ORD-TOOL', description: 'BORE GAGE', serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }));
-const orderB = run(qa, () => MES.recordCalibration(state, { tag: 'ORD-TOOL', description: 'BORE GAGE', serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'Quarantined', location: '', note: 'Out of tolerance' }));
+const orderA = run(qa, () => MES.recordCalibration(state, { tag: 'ORD-TOOL', description: 'BORE GAGE', torque: false, serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }));
+const orderB = run(qa, () => MES.recordCalibration(state, { tag: 'ORD-TOOL', description: 'BORE GAGE', torque: false, serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'Quarantined', location: '', note: 'Out of tolerance' }));
 const reordered = structuredClone(state), ia = reordered.calibrationLog.findIndex(e => e.id === orderA.id), ib = reordered.calibrationLog.findIndex(e => e.id === orderB.id);
 [reordered.calibrationLog[ia], reordered.calibrationLog[ib]] = [reordered.calibrationLog[ib], reordered.calibrationLog[ia]];
 check('a calibration log whose entries are out of id order fails validation', orderA.ok && orderB.ok && !MES.validate(reordered));
@@ -349,5 +349,28 @@ check('changing a manifest key inside a signed draft body fails manifest verific
 const addedKey = structuredClone(state), plainDraft = run(qa, () => MES.runSkill(addedKey, { skill: 'spc-chart-builder', values: [1, 2, 3, 2, 1], reason: 'A draft whose body has no manifest key.' }));
 addedKey.aiSkillDrafts.find(d => d.id === plainDraft.draftId).body.manifest = { injected: true };
 check('adding a manifest key to a signed draft body fails validation', plainDraft.ok && !MES.validate(addedKey));
+
+// #35 review (Codex 4133610007): a log-only tool's torque classification is an explicit signed answer, not a
+// guess from its description, and once a tag is a torque tool no later entry can declassify it.
+const clickRec = run(qa, () => MES.recordCalibration(state, { tag: 'CW-310', description: 'CLICK WRENCH', torque: 'yes', serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }));
+const clickCheck = MES.toolCheck('CW-310', now, state);
+check('a log-only click wrench recorded as a torque tool is a torque tool at point of use', clickRec.ok && state.calibrationLog.find(e => e.id === clickRec.id).torque === true && clickCheck.ok && MES.isTorqueTool(clickCheck.tool) === true);
+check('the torque suggestion list offers a log-only click wrench recorded as a torque tool', MES.calibratedToolChecks(state, now).some(c => c.ok && c.tool.tag === 'CW-310' && MES.isTorqueTool(c.tool)));
+const unanswered = run(qa, () => MES.recordCalibration(state, { tag: 'CW-311', description: 'CLICK WRENCH', serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }));
+check('a new log-only tool must say whether it is a torque tool', !unanswered.ok && /torque/i.test(unanswered.message) && !state.calibrationLog.some(e => e.tag === 'CW-311'));
+const declassFix = run(qa, () => MES.updateCalibration(state, clickRec.id, { torque: 'no', note: 'relabel' }));
+const declassNew = run(qa, () => MES.recordCalibration(state, { tag: 'CW-310', description: 'CLICK WRENCH', torque: 'no', serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }));
+check('a torque tool cannot be declassified by a correction or a new record', !declassFix.ok && !declassNew.ok && /torque/i.test(declassFix.message) && MES.isTorqueTool(MES.toolCheck('CW-310', now, state).tool));
+const keepFix = run(qa, () => MES.updateCalibration(state, clickRec.id, { note: 'Lab cert 88' }));
+const keepNew = run(qa, () => MES.recordCalibration(state, { tag: 'CW-310', description: 'CLICK WRENCH', serial: '', calibratedAt: '2026-09-29', expires: '2027-09-29', status: 'In Calibration', location: '', note: 'Annual' }));
+check('corrections and later records keep the torque classification without restating it', keepFix.ok && keepNew.ok && state.calibrationLog.filter(e => e.tag === 'CW-310').every(e => e.torque === true));
+const promote = run(qa, () => MES.updateCalibration(state, MES.calibrationStatus(state, 'NT-TOOL').id, { torque: 'yes', note: 'It is a torque wrench' }));
+check('a correction can classify a tool as a torque tool', promote.ok && MES.isTorqueTool(MES.toolCheck('NT-TOOL', now, state).tool));
+const declassImport = structuredClone(state), cwCurrent = MES.calibrationStatus(declassImport, 'CW-310');
+declassImport.calibrationLog.push(host.withAccount(qa, () => { const e = { ...cwCurrent, id: 'CALLOG-09993', torque: false, supersedes: cwCurrent.id, note: 'relabel', recordedAt: new Date().toISOString() }; delete e.calibrationSignature; e.calibrationSignature = { manifest: MES.signManifest(declassImport, 'Calibration entry corrected', calSubject(e), e.recordedAt) }; return e; }, declassImport));
+check('a workspace that declassifies a torque tool fails validation and diagnose names the entry', !MES.validate(declassImport) && MES.diagnose(declassImport)?.where === 'CALLOG-09993' && /torque/.test(MES.diagnose(declassImport)?.detail || ''));
+const badFlag = structuredClone(state);
+badFlag.calibrationLog[badFlag.calibrationLog.length - 1].torque = 'yes';
+check('a torque flag that is not true or false invalidates the entry', !MES.validate(badFlag));
 
 console.log(`calibration: ${checks} checks, all passed`);

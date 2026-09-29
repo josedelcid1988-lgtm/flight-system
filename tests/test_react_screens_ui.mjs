@@ -35,12 +35,13 @@ try {
   const island = page.locator('#main #flight-react-island');
   const calForm = island.locator('form[data-qms-record="calibration"]');
   assert.equal(await calForm.count(), 1, 'the React QMS records view has the calibration record form');
-  assert.deepEqual(await calForm.locator('[name]').evaluateAll(els => els.map(e => e.name)), ['tag', 'description', 'serial', 'calibratedAt', 'expires', 'status', 'location', 'note'], 'the React calibration form carries every field the engine records');
+  assert.deepEqual(await calForm.locator('[name]').evaluateAll(els => els.map(e => e.name)), ['tag', 'description', 'torque', 'serial', 'calibratedAt', 'expires', 'status', 'location', 'note'], 'the React calibration form carries every field the engine records');
   assert.match(await island.innerText(), /record it as Retired/, 'the React calibration panel says Retired is how a tool leaves service');
   const calToday = await page.evaluate(() => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }));
   const [calY, calM, calD] = calToday.split('-').map(Number), calDue = `${calY + 1}-${String(calM).padStart(2, '0')}-${String(calD).padStart(2, '0')}`;
   await calForm.locator('[name="tag"]').fill('UI-CAL-01');
   await calForm.locator('[name="description"]').fill('DIGITAL CALIPER');
+  await calForm.locator('[name="torque"]').selectOption('no');
   await calForm.locator('[name="calibratedAt"]').fill(calToday);
   await calForm.locator('[name="expires"]').fill(calDue);
   await calForm.locator('[name="note"]').fill('Lab cert 12');
