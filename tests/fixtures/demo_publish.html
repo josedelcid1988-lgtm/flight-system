@@ -4977,7 +4977,9 @@ const OP_BOM_MAX = 12;
     const mv = plain(state.maneuver) ? state.maneuver : { ncs: [], sprs: [], mrb: [], cars: [] };
     const up = v => String(v ?? '').toUpperCase();
     const orderSerialsOf = o => [...new Set([o.serial, ...(state.serialLog || []).filter(e => e.orderId === o.id).map(e => e.serial), ...((o.inventory && o.inventory.serials) || []), o.sourceBuild ? o.sourceBuild.serial : null].filter(Boolean))];
-    const tool = CAL_TOOLS.find(t => up(t.tag) === q) || null;
+    // Live calibration log first, then the shipped seed, so a tool recorded only in the log is searchable.
+    const loggedTool = calibrationStatus(state, q);
+    const tool = loggedTool ? { tag: loggedTool.tag, description: loggedTool.description, serial: loggedTool.serial, calibratedAt: loggedTool.calibratedAt, expires: loggedTool.expires, status: loggedTool.status, location: loggedTool.location, calibrationEntry: loggedTool.id } : CAL_TOOLS.find(t => up(t.tag) === q) || null;
     const toolIn = op => !!op && ((op.buyoff && Array.isArray(op.buyoff.tools) && op.buyoff.tools.some(t => up(typeof t === 'string' ? t : (t && t.tag)).startsWith(q))) || (plain(op.stepChecks) && Object.values(op.stepChecks).some(c => c && c.torque && up(c.torque.tool) === q)));
     let kind = 'text';
     if (tool) kind = 'tool';

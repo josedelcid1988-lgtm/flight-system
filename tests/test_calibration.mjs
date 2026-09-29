@@ -187,4 +187,16 @@ for (const [name, source] of pageSources) {
   const calls = [...source.matchAll(/MES\.toolCheck\(((?:[^()]|\([^()]*\))*)\)/g)].map(m => m[1].trim());
   check(`${name} passes the workspace to every MES.toolCheck call`, calls.length > 0 && calls.every(args => /,\s*state$/.test(args)));
 }
+// #54: traceability search resolves a tag through the live calibration log, not only the seed.
+const traceState = structuredClone(state);
+const traceOrder = { id: 'WO-TRACE-1', status: 'In Work', partNumber: 'PN-TRACE', revision: 'A', pedigree: 'Production', subcategory: 'Mfg.', materials: [], tickets: [], history: [], operations: [{ id: 'OP-1', title: 'Torque fasteners', buyoff: { at: '2026-09-30T18:00:00.000Z', name: 'Sam Tech', tools: [{ tag: 'B2-TOOL', description: 'MICROMETER' }] } }, { id: 'OP-2', title: 'Inspect', buyoff: { at: '2026-09-30T19:00:00.000Z', name: 'Sam Tech', tools: [{ tag: 'NONE-175', description: 'TORQUE WRENCH' }] } }] };
+traceState.orders = [traceOrder];
+const traceLog = MES.traceSearch(traceState, 'b2-tool');
+check('searching a log-only tool tag resolves it as a tool', traceLog.kind === 'tool' && !!traceLog.tool && traceLog.tool.tag === 'B2-TOOL' && traceLog.tool.description === 'MICROMETER');
+check('searching a log-only tool tag finds the operations that used it', traceLog.orders.length === 1 && traceLog.orders[0].why.includes('tool used') && traceLog.orders[0].ops.map(op => op.id).join() === 'OP-1');
+const traceSeed = MES.traceSearch(traceState, 'NONE-175');
+check('searching a seed tool tag still finds its operations', traceSeed.kind === 'tool' && traceSeed.orders.length === 1 && traceSeed.orders[0].ops.map(op => op.id).join() === 'OP-2');
+const traceCorrected = MES.traceSearch(traceState, 'SUG-001');
+check('a corrected tool shows its current log values in the search result', traceCorrected.kind === 'tool' && traceCorrected.tool.description === 'THREAD GAGE' && traceCorrected.tool.expires === '2027-06-30');
+check('an unknown tag is not treated as a tool', MES.traceSearch(traceState, 'NO-SUCH-TOOL').kind !== 'tool');
 console.log(`calibration: ${checks} checks, all passed`);
