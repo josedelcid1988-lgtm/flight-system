@@ -7,7 +7,12 @@ const SCHEMA = `
 CREATE TABLE IF NOT EXISTS documents (tenant TEXT PRIMARY KEY, json TEXT NOT NULL, etag TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, updated_by TEXT);
 CREATE TABLE IF NOT EXISTS accounts (username TEXT PRIMARY KEY, display_name TEXT NOT NULL, salt TEXT NOT NULL, hash TEXT NOT NULL, role TEXT NOT NULL, created_at TEXT NOT NULL, created_by TEXT, sso INTEGER NOT NULL DEFAULT 0, roles TEXT NOT NULL DEFAULT '[]', profile TEXT NOT NULL DEFAULT '{}');
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS profile TEXT NOT NULL DEFAULT '{}';
-CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, username TEXT NOT NULL, issued_at TEXT NOT NULL, last_seen TEXT NOT NULL);
+-- A session is kept as the SHA-256 of its token. A table from before that keeps plaintext tokens; it is dropped, which
+-- ends those sessions: everyone signs in again once after the upgrade.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'sessions' AND column_name = 'token') THEN DROP TABLE sessions; END IF;
+END $$;
+CREATE TABLE IF NOT EXISTS sessions (token_sha256 TEXT PRIMARY KEY, username TEXT NOT NULL, issued_at TEXT NOT NULL, last_seen TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS lockouts (username TEXT PRIMARY KEY, fails INTEGER NOT NULL DEFAULT 0, locked_until BIGINT NOT NULL DEFAULT 0, last_failed_at TEXT);
 CREATE TABLE IF NOT EXISTS audit (id BIGINT PRIMARY KEY, at TEXT NOT NULL, username TEXT, action TEXT NOT NULL, detail TEXT, prev_hash TEXT, hash TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS evidence (id TEXT PRIMARY KEY, sha256 TEXT NOT NULL, size INTEGER NOT NULL, mime TEXT NOT NULL, file_name TEXT, uploaded_by TEXT NOT NULL, uploaded_at TEXT NOT NULL, bytes BYTEA NOT NULL, superseded_by TEXT, superseded_at TEXT, superseded_reason TEXT);
@@ -43,6 +48,7 @@ CREATE TABLE IF NOT EXISTS skill_runs (id BIGSERIAL PRIMARY KEY, at TEXT NOT NUL
 const json = value => JSON.stringify(value);
 const parsed = value => typeof value === 'string' ? JSON.parse(value) : value;
 const hashAudit = row => createHash('sha256').update(JSON.stringify({ id: Number(row.id), at: row.at, username: row.username, action: row.action, detail: row.detail, prevHash: row.prev_hash || null })).digest('hex');
+const tokenHash = token => createHash('sha256').update(String(token)).digest('hex');
 const etagFor = (value, revision) => `"${revision}-${createHash('sha256').update(value).digest('hex').slice(0, 16)}"`;
 
 export async function openPostgres(connectionString, options = {}) {
@@ -160,21 +166,21 @@ function makeStore(pool, query, inTransaction, connectionString) {
         await tx._query('SELECT pg_advisory_xact_lock(hashtext($1))', [`session:${username}`]);
         await tx._query('DELETE FROM sessions WHERE username=$1', [username]);
         const token = randomBytes(24).toString('base64url'), at = new Date(when).toISOString();
-        await tx._query('INSERT INTO sessions (token,username,issued_at,last_seen) VALUES ($1,$2,$3,$4)', [token, username, at, at]);
+        await tx._query('INSERT INTO sessions (token_sha256,username,issued_at,last_seen) VALUES ($1,$2,$3,$4)', [tokenHash(token), username, at, at]);
         return { token, issuedAt: at };
       });
     },
     async session(token, { idleMs = Infinity, maxMs = Infinity, touch = true, at = Date.now() } = {}) {
       if (!token) return null;
-      const row = (await query('SELECT token,username,issued_at,last_seen FROM sessions WHERE token=$1', [token])).rows[0];
+      const key = tokenHash(token), row = (await query('SELECT username,issued_at,last_seen FROM sessions WHERE token_sha256=$1', [key])).rows[0];
       if (!row) return null;
       const expired = at - Date.parse(row.issued_at) >= maxMs ? 'absolute' : at - Date.parse(row.last_seen) >= idleMs ? 'idle' : null;
-      if (expired) { await query('DELETE FROM sessions WHERE token=$1', [token]); return { expired, username: row.username }; }
-      if (touch) await query('UPDATE sessions SET last_seen=$1 WHERE token=$2', [new Date(at).toISOString(), token]);
-      return { token: row.token, username: row.username, issuedAt: row.issued_at, lastSeen: row.last_seen };
+      if (expired) { await query('DELETE FROM sessions WHERE token_sha256=$1', [key]); return { expired, username: row.username }; }
+      if (touch) await query('UPDATE sessions SET last_seen=$1 WHERE token_sha256=$2', [new Date(at).toISOString(), key]);
+      return { token, username: row.username, issuedAt: row.issued_at, lastSeen: row.last_seen };
     },
-    async closeSession(token) { await query('DELETE FROM sessions WHERE token=$1', [token]); },
-    async closeSessionsOf(username, exceptToken = null) { return (await query('DELETE FROM sessions WHERE username=$1 AND token IS DISTINCT FROM $2', [username, exceptToken])).rowCount; },
+    async closeSession(token) { await query('DELETE FROM sessions WHERE token_sha256=$1', [tokenHash(token)]); },
+    async closeSessionsOf(username, exceptToken = null) { return (await query('DELETE FROM sessions WHERE username=$1 AND token_sha256 IS DISTINCT FROM $2', [username, exceptToken ? tokenHash(exceptToken) : null])).rowCount; },
     async lockout(username) { const r = (await query('SELECT username,fails,locked_until,last_failed_at FROM lockouts WHERE username=$1', [username])).rows[0]; return r ? { username: r.username, fails: Number(r.fails), until: Number(r.locked_until), lastFailedAt: r.last_failed_at } : { username, fails: 0, until: 0, lastFailedAt: null }; },
     // One statement counts the failure and, at the limit, locks the account: concurrent wrong passwords cannot all read
     // the same count and write back the same next value.

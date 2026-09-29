@@ -49,6 +49,10 @@ try {
   const login = await call('/auth/session', { method: 'POST', body: { username: 'pg-admin', password: 'pg-test-password-123' } });
   assert.equal(login.status, 200, JSON.stringify(login.json));
   const token = login.json.token;
+  const sessionRows = (await server.store._query('SELECT * FROM sessions')).rows.flatMap(row => Object.values(row).map(String));
+  assert.ok(!sessionRows.includes(token), 'the PostgreSQL sessions table does not hold the token itself');
+  assert.ok(sessionRows.includes(createHash('sha256').update(token).digest('hex')), 'it holds the SHA-256 of the token');
+  for (const value of sessionRows.filter(v => v.length === 64)) assert.equal((await call('/auth/session', { token: value })).status, 401, 'a stored value does not work as a token');
   const lockUntil = Date.now() + 300000;
   const failures = await Promise.all(Array.from({ length: 5 }, () => server.store.noteFailedSignin('pg-race-user', 5, lockUntil)));
   assert.equal(failures.filter(item => item.locked).length, 1, 'five concurrent failed sign-ins lock the account exactly once');

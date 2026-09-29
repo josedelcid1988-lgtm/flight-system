@@ -47,6 +47,13 @@ A closed work order leaves the live workspace once it is stocked, or when it can
 
 The export's `extractSha256` covers the order, its activity, the archive hash and the metadata of each recording, including that recording's SHA-256. The recording bytes are streamed one at a time, so a large archive never has to fit in server memory. To verify a download, check each recording's base64 bytes against its `sha256`, then hash the rest of the extract as described in `extractHashCovers`.
 
+## Sessions at rest
+
+Each session is stored as the SHA-256 of its token, in SQLite and PostgreSQL alike, so a copy of the
+database or a backup holds no session that can be used. The browser keeps the token for its tab and
+the server hashes it on every request. Upgrading a database made before this ends its stored sessions:
+each person signs in again once.
+
 ## First-run setup code
 
 The first account on a new server becomes Master Access, so creating it needs a setup code that only

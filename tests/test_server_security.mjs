@@ -4,6 +4,10 @@
 // request it is meant to refuse.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { Readable, Writable } from 'node:stream';
 import { createServer, makeHash, DEFAULT_HOST } from '../server/server.mjs';
 
@@ -73,9 +77,43 @@ try {
     assert.deepEqual(r.json.users.map(u => u.username).sort(), ['sec-admin', 'sec-tech']);
     assert.equal((await api('GET', '/auth/accounts')).status, 401, 'the account list needs a session');
   });
+
+  // #28: the sessions table holds a SHA-256 of each token, never the token a caller presents.
+  await check('session tokens are stored only as SHA-256 hashes', async () => {
+    const token = await signIn('sec-tech', 'sec-tech-pass-1');
+    const rows = server.store.db.prepare('SELECT * FROM sessions').all();
+    const values = rows.flatMap(row => Object.values(row).map(String));
+    assert.ok(!values.includes(token), 'the token itself is not at rest');
+    assert.ok(values.includes(createHash('sha256').update(token).digest('hex')), 'its SHA-256 is');
+    assert.equal((await api('GET', '/auth/session', { token })).status, 200, 'the token still signs the caller in');
+  });
+  await check('a value copied out of the sessions table does not work as a token', async () => {
+    for (const row of server.store.db.prepare('SELECT * FROM sessions').all()) {
+      for (const value of Object.values(row).map(String).filter(v => v.length >= 32)) assert.equal((await api('GET', '/auth/session', { token: value })).status, 401, 'a stored value is refused');
+    }
+  });
 } finally {
   await server.closeAsync().catch(() => {});
 }
+
+await check('sessions stored in plaintext by an older server are ended on upgrade', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flight-session-upgrade-'));
+  try {
+    const file = path.join(dir, 'flight.sqlite');
+    const old = new DatabaseSync(file);
+    old.exec('CREATE TABLE sessions (token TEXT PRIMARY KEY, username TEXT NOT NULL, issued_at TEXT NOT NULL, last_seen TEXT NOT NULL)');
+    const at = new Date().toISOString();
+    old.prepare('INSERT INTO sessions VALUES (?, ?, ?, ?)').run('legacy-plaintext-session-token-0001', 'someone', at, at);
+    old.close();
+    const upgraded = createServer({ dbPath: file, quiet: true, setupCode: 'upgrade-test' });
+    await upgraded.ready;
+    try {
+      const values = upgraded.store.db.prepare('SELECT * FROM sessions').all().flatMap(row => Object.values(row).map(String));
+      assert.ok(!values.includes('legacy-plaintext-session-token-0001'), 'no plaintext token survives the upgrade');
+      assert.equal(await upgraded.store.session('legacy-plaintext-session-token-0001'), null, 'the old token no longer opens a session');
+    } finally { upgraded.store.close(); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
 
 // #27: with no host named, the server listens on loopback only; a wider bind must be asked for.
 await check('the server binds 127.0.0.1 unless a host is named', async () => {
