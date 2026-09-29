@@ -179,6 +179,46 @@ await check('sessions stored in plaintext by an older server are ended on upgrad
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+// #33: a failure is logged on the server with a reference; the caller gets the reference, never the error text.
+await check('an unexpected failure returns a generic message and a reference, and logs the detail', async () => {
+  const noisy = createServer({ dbPath: ':memory:', setupCode: 'error-test' });
+  await noisy.ready;
+  const lines = [], realLog = console.log;
+  console.log = (...parts) => { lines.push(parts.map(String).join(' ')); };
+  try {
+    const seeded = noisy.host.MES.ensureMasterWIs(noisy.host.MES.seed());
+    await noisy.store.putDoc('default', JSON.stringify(seeded), null, 'error-test');
+    await noisy.store.upsertAccount({ username: 'err-admin', displayName: 'Error Admin', salt: '', hash: await makeHash('err-admin-pass-1'), role: 'admin', roles: ['admin'] });
+    const call = async (method, url, token, body) => {
+      const incoming = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]); incoming.method = method; incoming.url = url;
+      incoming.headers = { ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...(token ? { authorization: `Bearer ${token}` } : {}), ...(method === 'POST' && url.includes('/actions/') ? { 'if-match': (await noisy.store.getDoc('default')).etag } : {}) };
+      const chunks = [], outgoing = new Writable({ write(c, e, cb) { chunks.push(Buffer.from(c)); cb(); } });
+      outgoing.writeHead = status => { outgoing.statusCode = status; return outgoing; };
+      const done = new Promise((resolve, reject) => { outgoing.once('finish', resolve); outgoing.once('error', reject); });
+      noisy.listeners('request')[0](incoming, outgoing); await done;
+      const text = Buffer.concat(chunks).toString('utf8'); return { status: outgoing.statusCode, text, json: text ? JSON.parse(text) : null };
+    };
+    const token = (await call('POST', '/api/auth/session', null, { username: 'err-admin', password: 'err-admin-pass-1' })).json.token;
+    const secret = 'SQLITE_CORRUPT reading /srv/flight/private/flight.sqlite page 7';
+    const realSearch = noisy.store.archiveSearch;
+    noisy.store.archiveSearch = () => { throw new Error(secret); };
+    const failed = await call('GET', '/api/archive', token);
+    noisy.store.archiveSearch = realSearch;
+    assert.equal(failed.status, 500);
+    assert.ok(!failed.text.includes('SQLITE') && !failed.text.includes('/srv/flight'), `the error text stays on the server: ${failed.text}`);
+    assert.match(failed.json.error, /reference [0-9A-F]{12}/);
+    assert.ok(lines.some(line => line.includes(failed.json.reference) && line.includes(secret)), 'the server log carries the reference and the detail');
+    const realPriority = noisy.host.MES.setPriority;
+    noisy.host.MES.setPriority = () => { throw new Error('engine internals: state.orders[3].operations is undefined'); };
+    const thrown = await call('POST', '/api/workspace/actions/MES.setPriority', token, { args: ['WO-10001', 'High'] });
+    noisy.host.MES.setPriority = realPriority;
+    assert.equal(thrown.status, 500);
+    assert.ok(!thrown.text.includes('engine internals'), `an engine exception is not echoed: ${thrown.text}`);
+    assert.match(thrown.json.error, /Nothing was saved/);
+    assert.ok(lines.some(line => line.includes(thrown.json.reference) && line.includes('engine internals')));
+  } finally { console.log = realLog; noisy.store.close(); }
+});
+
 // #27: with no host named, the server listens on loopback only; a wider bind must be asked for.
 await check('the server binds 127.0.0.1 unless a host is named', async () => {
   assert.equal(DEFAULT_HOST, '127.0.0.1');

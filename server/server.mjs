@@ -183,6 +183,13 @@ export function createServer(options = {}) {
 
   // ---- helpers ----
   const send = (res, status, body, headers = {}) => { const json = body === undefined ? '' : JSON.stringify(body); res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers }); res.end(json); };
+  // An unexpected failure is logged here with its detail and a reference. The caller gets the reference and a
+  // plain next step, never the error text: it can name files, SQL, or engine internals.
+  const internalError = (res, req, error, what = 'The server could not complete this request.') => {
+    const reference = randomBytes(6).toString('hex').toUpperCase();
+    log('error', reference, req.method, req.url, error && error.stack ? error.stack : String(error));
+    send(res, 500, { error: `${what} Try again; if it keeps failing, give your administrator reference ${reference}.`, reference });
+  };
   // Bodies are counted in bytes against MAX_REQUEST_BYTES; a declared Content-Length over it is refused before reading.
   const readBody = req => new Promise((resolve, reject) => {
     if (Number(req.headers['content-length']) > MAX_REQUEST_BYTES) { reject(tooLarge()); req.resume(); return; }
@@ -790,7 +797,7 @@ export function createServer(options = {}) {
         if (!ifMatch) { send(res, 428, { error: 'Include the current workspace ETag in If-Match before running an action.' }); return; }
         if (ifMatch && ifMatch !== etag) { send(res, 409, { error: 'The workspace changed on another device. Reload to continue.', etag }); return; }
         let result;
-        try { result = host.withAccount(session.account, () => fn(state, ...args), state); } catch (e) { send(res, 500, { error: `The action failed: ${e.message}` }); return; }
+        try { result = host.withAccount(session.account, () => fn(state, ...args), state); } catch (e) { internalError(res, req, e, 'The action could not run. Nothing was saved.'); return; }
         if (!result || result.ok === false) { await store.audit(session.username, 'action-refused', { action: action[1], message: result && result.message }); send(res, 403, { error: result ? result.message : 'Refused.', result }); return; }
         const invalid = validState(state); if (invalid) { send(res, 422, { error: `The action would leave the workspace invalid: ${invalid}` }); return; }
         { const bad = await evidenceProblem(raw, state); if (bad) { await store.audit(session.username, 'evidence-refused', { action: action[1], message: bad }); send(res, 422, { error: bad }); return; } }
@@ -881,7 +888,7 @@ export function createServer(options = {}) {
         if (!arc[2]) { send(res, 200, { ...a.entry, sha256: a.sha256, schema: a.schema, archivedAt: a.archivedAt, archivedBy: a.archivedBy, readOnly: true, extractHistory: await store.extractHistory('work-order', a.id) }); return; }
         if (arc[2] === '/print') {
           const mode = url.searchParams.get('mode') === 'external' ? 'external' : 'internal';
-          let html; try { html = host.MESPrint.document(a.entry.order, mode); } catch (e) { send(res, 500, { error: `The record could not be printed: ${e.message}` }); return; }
+          let html; try { html = host.MESPrint.document(a.entry.order, mode); } catch (e) { internalError(res, req, e, 'The record could not be printed.'); return; }
           const summary = { orderId: a.id, partNumber: a.entry.order.partNumber, status: a.entry.order.status, operationCount: (a.entry.order.operations || []).length, closedAt: a.entry.order.closure && a.entry.order.closure.at || null };
           const stamp = await recordExtract(a.id, 'print', session.username, { order: a.entry.order, activity: a.entry.activity, archiveSha256: a.sha256, mode }, summary);
           html = html.replace('</body>', `${printExtractStamp(stamp)}</body>`);
@@ -966,8 +973,7 @@ export function createServer(options = {}) {
     } catch (e) {
       if (e.status === 413) { send(res, 413, { error: e.message, limit: MAX_REQUEST_BYTES }, { Connection: 'close' }); return; }
       if (e.status === 400) { send(res, 400, { error: e.message }); return; }
-      log('error', m, p, e.message);
-      send(res, 500, { error: e.message });
+      internalError(res, req, e);
     }
   }
 
