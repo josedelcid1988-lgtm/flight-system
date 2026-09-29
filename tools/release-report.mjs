@@ -51,13 +51,15 @@ function assertReleasable() {
   let headVersion, headIndex;
   try { headVersion = git('show', 'HEAD:VERSION.md'); headIndex = git('show', 'HEAD:index.html'); }
   catch { throw new Error('the release record needs a git checkout of the release commit.'); }
-  const problem = releaseProblem(html, headVersion, headIndex) || assetsProblem(git('status', '--porcelain', '--untracked-files=all', '--', 'assets'));
+  const problem = releaseProblem(html, headVersion, headIndex) || assetsProblem(git('status', '--porcelain', '--untracked-files=all', '--ignored', '--', 'assets'));
   if (problem) throw new Error(problem);
 }
 
-// The release zips carry assets/ as it is on disk, so it must be exactly what the named commit holds.
+// The release zips carry every file in assets/ as it is on disk, except dotfiles (package-release manifest()), so each
+// packaged file must be exactly what the named commit holds: modified, untracked and ignored files are all refused.
 export function assetsProblem(status) {
-  const changed = String(status || '').split('\n').map(line => line.trim()).filter(Boolean);
+  const packaged = line => !line.slice(3).split('/').pop().startsWith('.');
+  const changed = String(status || '').split('\n').filter(line => line.trim() && packaged(line)).map(line => line.trim());
   return changed.length ? `assets/ differs from HEAD (${changed.slice(0, 5).join('; ')}${changed.length > 5 ? '; ...' : ''}), so the release commit would not reproduce the packaged files. Commit or discard those changes, then stamp from that commit.` : null;
 }
 

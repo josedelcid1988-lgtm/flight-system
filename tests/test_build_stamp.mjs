@@ -39,7 +39,8 @@ ok('the release record refuses a stamp that does not match the file',/computes/.
 ok('the release record refuses a build id that is not committed',/Commit the build id first/.test(releaseProblem(stamp(committed,build+'-next'),headVersion,committed)||''));
 ok('the release record refuses a stamp generated from uncommitted source',/not generated from the committed/.test(releaseProblem(stamp(committed.replace('</body>',' </body>'),build),headVersion,committed)||''));
 ok('the release record refuses packaged assets that differ from the named commit',/assets\/ differs from HEAD/.test(assetsProblem(' M assets/flight-ui.js\n?? assets/extra.png')||''));
-ok('the release record accepts assets that match the named commit',assetsProblem('')===null);
+ok('the release record refuses a packaged asset that git ignores',/assets\/release-extra\.tmp/.test(assetsProblem('!! assets/release-extra.tmp')||''));
+ok('the release record accepts assets that match the named commit, and a dotfile the packager leaves out',assetsProblem('')===null&&assetsProblem('!! assets/.DS_Store')===null);
 ok('the release packager refuses the unstamped committed form',refuses(()=>packageBuildId(committed),/not stamped/));
 ok('the release packager refuses a stamp that does not match the file',refuses(()=>packageBuildId(stamped.replace('</body>',' </body>')),/computes/));
 ok('the release packager accepts a verified stamp',packageBuildId(stamped)===build);
