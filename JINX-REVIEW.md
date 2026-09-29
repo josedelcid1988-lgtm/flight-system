@@ -1,4 +1,4 @@
-# JINX-REVIEW.md (PR #35, head 56734f12, updated 2026-09-29T15:45Z; Jinx review 5354904522)
+# JINX-REVIEW.md (PR #35, head 56734f12, updated 2026-09-29T15:52Z; scope call on Codex's two new P1s, head unchanged since Jinx review 5354904522)
 
 ## Owner direction 2026-09-28 (evening): record-coverage fixes before Oct 7 handoff (read first)
 
@@ -37,16 +37,37 @@ Commit 56734f12 adds the write-path invariant to the load path: `calibrationEntr
 - Cost: the new check is linear in buy-off citation count, negligible next to the existing full-validate pass.
 - Behavior: previously valid workspaces can only newly fail validation when a buy-off cites a log entry that no longer exists, which is exactly the integrity gap closed. No silent repair; diagnose directs a QA Manager review, matching the other unrepairable record problems.
 
-## New P2 filed from cross-review (does not block this PR)
+## Jinx scope call on Codex's two new P1s (15:52Z, answering relay comment 5893557585)
+
+Call: **B**. Add the cheap chronology check for (2) on this branch; file (1) as a P2 issue (done, #116). Do not build the hash-chained log.
+
+### Claude's reply claims, verified by Jinx against head 56734f12
+
+- 4135312421 (postdated calibration fix in 56734f1): CONFIRMED. `calibrationEntryValid` (index.html:2546) requires `entry.calibratedAt <= pacificDay(entry.recordedAt)`; `calibrationInvalidField` (~2561) names `calibratedAt`.
+- 4135312860 (B2 fix in 70a06cd): CONFIRMED. `calibrationReferenceProblem` (index.html:2679) walks `state.orders`, checks every `calibrationEntry` cited by buy-off tools and ATP test assets against the log, diagnose names work order and operation.
+- 4135313200 (P2 4134619485): accurate, already filed as issue #114. No action.
+
+### (2) 4135389174, retroactive evidence: FIX ON THIS BRANCH
+
+Codex's code reading is CONFIRMED: the `logged` map in `calibrationReferenceProblem` retains only `e.id -> e.tag` (index.html:2680), so it never compares the cited row's `recordedAt`/`calibratedAt` against the buy-off's `at`. Jinx rates it P2, not P1: citing an entry that did not exist when the buy-off was signed requires a hand-crafted or hand-edited workspace, which the #109 scope line (catches mistakes, does not defeat a determined bad actor) excludes; and the buy-off `at` is not part of the signed `buyoffSubject` (index.html:2847), so this check catches mistakes, never forgery. But the fix is cheap and squarely in the Option 1 pattern for this branch: retain the cited entry (not just its tag) in the map and require `entry.recordedAt <= buyoff.at` and `entry.calibratedAt <= pacificDay(buyoff.at)`, with the same diagnose naming. `buyoff.at` is always set at write time (index.html:6649) and every legitimate UI flow satisfies the invariant, because a buy-off cites the entry that was current at use. Add regression checks in tests/test_calibration.mjs (entry recorded after the buy-off refused; later calibratedAt refused; normal citation still valid). This does not block the merge beyond the one push; severity stays P2.
+
+### (1) 4135389160, truncated calibration history: FILED, NOT FIXED ON THIS BRANCH
+
+Codex's code reading is CONFIRMED: deleting a tag's final `Retired` or `Quarantined` row leaves surviving ids strictly ordered (`calibrationSequenceProblem`, index.html:2562, finds nothing) and every remaining entry's per-entry manifest still verifies, so `verifyManifests` passes; `calibrationIndex` (index.html:2701) then makes the earlier `In Calibration` row current and `toolCheck` permits the tool again. Jinx rates it P2: the UI is append-only (no delete path), so this requires post-signing hand-editing, the class the #109 scope line excludes, and under the unkeyed SHA-256 signature design no client-side validator can defeat a determined editor anyway (the editor can rewrite any chain). Filed as issue #116; backlog. The hash-chained log is a design change, hours of work, not for this branch.
+
+## New P2s filed from cross-review (do not block this PR)
 
 Codex 4134619485 is CONFIRMED correct and filed by Jinx as issue #115. `updateSkillDraft` still records `bodyHash: sha256(canonical(body))` (index.html:3501) while `canonical` drops every key named `manifest` (index.html:2831). Two draft revisions differing only in an ordinary payload key such as `body.manifest.revision` get identical editHistory bodyHashes, so the history rows cannot distinguish them. The key-preserving `bodyDigest` in `draftSubject` (index.html:3500) already binds the current body in the signed manifest; only the history trail is weakened. Suggested fix: use the key-preserving canonicalization for the recorded edit hash as well. P2 is the right severity; it never blocks the merge.
+
+Codex 4135389160 (truncated calibration history) is CONFIRMED correct and filed by Jinx as issue #116. See the scope-call section above for the full reading and why it is a P2 backlog item, not a branch fix.
 
 ## Do-not-merge checklist
 
 - [x] B2 fix verified on the exact head
 - [x] Postdated-calibration fix verified on the exact head
-- [ ] CI (`suites`) green on the exact head 56734f12 (in progress as of 15:44Z)
-- [ ] Jinx Final approval posted (follows CI green)
+- [ ] (2) retroactive-evidence chronology check added on this branch (Jinx scope call, option B)
+- [ ] CI (`suites`) green on the exact head 56734f12 (in progress as of 15:52Z)
+- [ ] Jinx Final approval posted (follows CI green, after the (2) fix push and re-review)
 - [ ] Claudia merges through the PR button after both are done
 
 ## Verified good (this head, no action)
