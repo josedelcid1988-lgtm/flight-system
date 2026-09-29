@@ -27,6 +27,20 @@ ok('the committed form carries the build id and the "unstamped" placeholder',com
 ok('an unstamped file fails verification, so a stamp step that does nothing is caught',!verify(committed).ok);
 ok('stamping the committed form reproduces this stamp, and clearing it gives the committed form back',stamp(committed,build)===stamp(index,build)&&clear(stamp(committed,build),build)===committed);
 ok('the demo build carries the same build id and index.html SHA-256',(()=>{const d=fs.readFileSync(path.join(ROOT,'demo.html'),'utf8');return d.includes(`<meta name="fs-build" content="${build}">`)&&d.includes(`<meta name="fs-build-sha256" content="${v.stamped}">`);})());
+// Release tooling refuses what cannot be traced: an unstamped or mismatched file, or a stamp not generated
+// from the committed source and build id in the commit the release record names.
+const {releaseProblem}=await import(path.join(ROOT,'tools/release-report.mjs'));
+const {buildId:packageBuildId}=await import(path.join(ROOT,'tools/package-release.mjs'));
+const headVersion=fs.readFileSync(path.join(ROOT,'VERSION.md'),'utf8'),stamped=stamp(committed,build);
+const refuses=(fn,re)=>{try{fn();return false;}catch(e){return re.test(e.message);}};
+ok('the release record accepts a stamp generated from the committed file and build id',releaseProblem(stamped,headVersion,committed)===null,releaseProblem(stamped,headVersion,committed));
+ok('the release record refuses the unstamped committed form',/not stamped/.test(releaseProblem(committed,headVersion,committed)||''));
+ok('the release record refuses a stamp that does not match the file',/computes/.test(releaseProblem(stamped.replace('</body>',' </body>'),headVersion,committed)||''));
+ok('the release record refuses a build id that is not committed',/Commit the build id first/.test(releaseProblem(stamp(committed,build+'-next'),headVersion,committed)||''));
+ok('the release record refuses a stamp generated from uncommitted source',/not generated from the committed/.test(releaseProblem(stamp(committed.replace('</body>',' </body>'),build),headVersion,committed)||''));
+ok('the release packager refuses the unstamped committed form',refuses(()=>packageBuildId(committed),/not stamped/));
+ok('the release packager refuses a stamp that does not match the file',refuses(()=>packageBuildId(stamped.replace('</body>',' </body>')),/computes/));
+ok('the release packager accepts a verified stamp',packageBuildId(stamped)===build);
 ok('the production fixture is the stamped index.html',fs.readFileSync(TESTS+'fixtures/publish.html','utf8').includes(`<meta name="fs-build-sha256" content="${v.stamped}">`));
 
 // ---- the app ----

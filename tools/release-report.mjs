@@ -12,13 +12,15 @@
 //   node tools/release-report.mjs --check    exit 1 unless the record in VERSION.md names the build and
 //                                            the hashes of the index.html and demo.html in the tree
 //
-// It refuses to write a record from results that failed, carry an unexplained skip, or were produced
-// against different files than the ones in the tree. Node built-ins only.
+// It refuses to write a record from an unstamped index.html, a stamp generated from uncommitted source
+// (see assertReleasable), or results that failed, carry an unexplained skip, or were produced against
+// different files than the ones in the tree. Node built-ins only.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { buildId, clear, verify } from './stamp-build.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const VERSION = path.join(ROOT, 'VERSION.md');
@@ -28,6 +30,31 @@ const END = '<!-- release-record:end -->';
 const fileSha = f => crypto.createHash('sha256').update(fs.readFileSync(path.join(ROOT, f))).digest('hex');
 // The commit the stamp was generated from: FLIGHT_SOURCE_COMMIT when the release job sets it, else HEAD.
 const sourceCommit = () => { try { return process.env.FLIGHT_SOURCE_COMMIT || execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim(); } catch { return 'unknown'; } };
+const git = (...args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+
+// A record is written only for a stamped index.html whose stamp matches the file, generated from committed
+// source: the committed form of the stamped file and the build id in VERSION.md must both be in HEAD, so the
+// commit the record names reproduces the released file exactly.
+export function releaseProblem(html, headVersion, headIndex) {
+  const v = verify(html);
+  if (v.stamped === 'unstamped') return 'index.html is not stamped. Run node tools/stamp-build.mjs, node tools/build-demo.mjs and the suites first.';
+  if (!v.ok) return `index.html carries SHA-256 ${v.stamped} but the file computes ${v.actual}. Run node tools/stamp-build.mjs again.`;
+  const committedBuild = buildId(headVersion);
+  if (committedBuild !== v.build) return `index.html is stamped with build ${v.build} but HEAD's VERSION.md sets ${committedBuild}. Commit the build id first, then stamp.`;
+  if (clear(html, v.build) !== headIndex) return 'the stamped index.html was not generated from the committed index.html in HEAD. Commit the change, then stamp from that commit.';
+  return null;
+}
+
+function assertReleasable() {
+  const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  if (verify(html).stamped === 'unstamped') throw new Error(releaseProblem(html, '', ''));
+  let headVersion, headIndex;
+  try { headVersion = git('show', 'HEAD:VERSION.md'); headIndex = git('show', 'HEAD:index.html'); }
+  catch { throw new Error('the release record needs a git checkout of the release commit.'); }
+  const problem = releaseProblem(html, headVersion, headIndex);
+  if (problem) throw new Error(problem);
+}
+
 const stampOf = (html, name) => (html.match(new RegExp(`<meta name="${name}" content="([^"]*)">`)) || [])[1] || 'unstamped';
 
 export function current() {
@@ -108,11 +135,11 @@ function main() {
     console.log(`VERSION.md release record matches the tree: build ${now.build}, index.html ${now.indexFileSha256}, demo.html ${now.demoFileSha256}`);
     return;
   }
+  assertReleasable();
   const off = readResults('suite_results.json'), on = readResults('suite_results_mirror.json');
   assertUsable(off, 'mirror off', now); assertUsable(on, 'mirror on', now);
   const block = record(now, off, on);
   if (process.argv.includes('--dry-run')) {
-    if (now.indexStamp === 'unstamped') throw new Error('index.html is not stamped. Run node tools/stamp-build.mjs and the suites first.');
     console.log(block);
     console.log(`Release record built (dry run, VERSION.md not written): build ${now.build}, ${off.suites.length} suites, ${off.skips.length + on.skips.length} explained skips`);
     return;

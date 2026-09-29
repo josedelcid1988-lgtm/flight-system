@@ -13,14 +13,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
+import { verify } from './stamp-build.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DOS_TIME = 0, DOS_DATE = (2026 - 1980) << 9 | 1 << 5 | 1; // 2026-01-01 00:00, fixed for reproducible zips
 
-export function buildId() {
-  const m = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8').match(/<meta name="fs-build" content="([^"]*)">/);
-  if (!m || !m[1] || m[1] === 'unstamped') throw new Error('index.html is not stamped. Run node tools/stamp-build.mjs first.');
-  return m[1];
+// The build id of the stamped index.html. Refuses the committed form (hash placeholder "unstamped") and a
+// stamp that does not match the file, so a release zip always carries a verifiable SHA-256.
+export function buildId(html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8')) {
+  const v = verify(html);
+  if (!v.build || v.build === 'unstamped' || v.stamped === 'unstamped') throw new Error('index.html is not stamped. Run node tools/stamp-build.mjs, then node tools/build-demo.mjs, first.');
+  if (!v.ok) throw new Error(`index.html carries SHA-256 ${v.stamped} but the file computes ${v.actual}. Run node tools/stamp-build.mjs, then node tools/build-demo.mjs.`);
+  return v.build;
 }
 
 // The files each zip carries: [path inside the zip, path in the tree].

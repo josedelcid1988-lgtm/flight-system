@@ -196,18 +196,22 @@ with `release-report --dry-run`. The results are kept as a run artifact.
 
 ## 10. Release process
 
-1. Set the new build id on the `build:` line of `VERSION.md` and describe the change in `CHANGELOG.md`.
+1. Set the new build id on the `build:` line of `VERSION.md`, describe the change in `CHANGELOG.md`, and
+   merge that in a pull request. This merge is the release commit: the stamp is generated from it, and
+   the release record names it.
 2. From a clean checkout of the release commit, generate the stamp: `node tools/stamp-build.mjs`, then
    `node tools/build-demo.mjs`. The stamp is not committed.
 3. Run `node tools/run-suites.mjs` and `node tools/run-suites.mjs --mirror`. Both must pass.
 4. Run `node tools/release-report.mjs`. It writes the release record (build, the commit the stamp was
-   generated from, hashes, results, skips) into `VERSION.md`, and refuses a failed run or results from
-   different files.
+   generated from, hashes, results, skips) into `VERSION.md`. It refuses an unstamped `index.html`, a
+   stamp that was not generated from the `index.html` and build id committed in HEAD, a failed run, or
+   results from different files. `tools/package-release.mjs` also refuses an unstamped or mismatched
+   `index.html`.
 5. `node tools/package-release.mjs` writes `release/flight-system-<build>.zip` and the demo zip from the
    stamped files. Deploy from the production zip, not from `main`, and check the deployed copy with
    `node tools/stamp-build.mjs --verify <deployed index.html>`.
 6. Put the committed form back (`node tools/stamp-build.mjs --clear`, then `node tools/build-demo.mjs`),
-   commit only `VERSION.md` and `CHANGELOG.md` in a pull request, and merge it once CI is green.
+   commit only the release record in `VERSION.md` in a pull request, and merge it once CI is green.
 7. Record the build id and the SHA-256 from the release record in the quality system's software
    configuration record.
 
