@@ -75,3 +75,20 @@ Codex 4135389160 (truncated calibration history) is CONFIRMED correct and filed 
 - Test suite: 152 checks in test_calibration.mjs per the relay; local sequence 76/76 suites and 76/76 mirror per the relay comment (GitHub CI pending confirmation).
 - The B1 torque-on-load fix from the earlier head is unchanged and still in place.
 - Push delta between 7b56961d and 56734f12 is only the two fixes, the regression tests, and generated-file mirrors (demo.html, 4 fixtures). server/ untouched.
+
+## 2026-09-29 19:10Z: Jinx delta review of head 606ca713 (commit 606ca71), Final approval given
+
+- This head implements Jinx's Option B (scope call in comment 5896395776) for Codex P1 4135389174: `calibrationReferenceProblem` keeps the whole cited calibration log row (not just its tag) and requires it to be recorded at or before the buy-off's `at` and calibrated on or before `pacificDay(at)`. Covers operation tools and ATP test assets. `MES.diagnose` names the work order, operation, and entry.
+- Jinx verified the full 606ca71 patch (index.html hunk at calibrationReferenceProblem, about line 2675; test_calibration.mjs hunk, 19 new lines): tag-match semantics unchanged by the row-map refactor; the `Date.parse(row.recordedAt) > Date.parse(b.at)` comparison is NaN-safe (a missing recordedAt skips instead of misfiring); `row.calibratedAt > pacificDay(b.at)` compares YYYY-MM-DD strings which order correctly; the `timestamp(b.at)` guard is pre-existing and other validation already requires a buy-off timestamp. Confirmed from the 56734f1 patch that `calibrationEntryValid` already requires `entry.calibratedAt <= pacificDay(entry.recordedAt)`, so for valid entries the calibrated-day condition is subsumed by the recorded-at condition; both are kept, which also guards hand-edited records.
+- Security pass: no new mutators, no auth changes, no new input sinks. Fail-closed on violation; only fail-open paths are a missing valid buy-off timestamp (pre-existing guard) or a missing recordedAt (server-assigned and manifest-signed). No new attack surface.
+- Waste pass: the Map holds row objects instead of tags; no duplication, no parallel mechanisms.
+- Not independently verified: local 76/76 suite claims (Claude's relay, stated as local) and the full 3.2MB index.html at this head (contents API returns empty content at that size). The delta was read in full from the commit patch.
+- Cross-review: Claude's inline reply 4137272905 (Option B description) CONFIRMED accurate against the patch; 4137273254 CONFIRMED, #117 is open with the p3 label (hash-chained-log design fix; distinct from Jinx's P2 #116 for the same finding).
+- Jinx review 5357197412 posted, Final approval 5357199538 posted on the exact head 606ca713, thumbs-up added. CI (suites) was in_progress at review time.
+
+## Do-not-merge checklist (head 606ca713)
+
+- [x] Option B chronology check verified on the exact head
+- [ ] CI (suites) green on the exact head 606ca713 (in_progress as of 19:10Z)
+- [x] Jinx Final approval posted (5357199538)
+- [ ] Claudia merges through the PR button after CI green
