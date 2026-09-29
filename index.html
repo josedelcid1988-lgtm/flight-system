@@ -2505,7 +2505,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // supersedes the original; the original stays in the log untouched.
   const CALIBRATION_STATUSES = Object.freeze(['In Calibration', 'Out for Calibration', 'Quarantined', 'Retired']);
   const CALIBRATION_TAG_RE = /^[A-Z0-9][A-Z0-9-]{1,38}$/;
-  const calibrationEntryValid = entry => plain(entry) && /^CALLOG-\d{5}$/.test(entry.id) && CALIBRATION_TAG_RE.test(entry.tag) && str(entry.description, 80) && str(entry.serial, 40, 0) && dateOnly(entry.calibratedAt) && dateOnly(entry.expires) && entry.expires > entry.calibratedAt && CALIBRATION_STATUSES.includes(entry.status) && str(entry.location, 80, 0) && str(entry.note, 300, 0) && str(entry.recordedBy, 140) && timestamp(entry.recordedAt) && (entry.supersedes === undefined || /^CALLOG-\d{5}$/.test(entry.supersedes));
+  const calibrationEntryValid = entry => plain(entry) && /^CALLOG-\d{5}$/.test(entry.id) && CALIBRATION_TAG_RE.test(entry.tag) && str(entry.description, 80) && str(entry.serial, 40, 0) && dateOnly(entry.calibratedAt) && dateOnly(entry.expires) && entry.expires > entry.calibratedAt && CALIBRATION_STATUSES.includes(entry.status) && str(entry.location, 80, 0) && str(entry.note, 300, 0) && str(entry.recordedBy, 140) && timestamp(entry.recordedAt) && (entry.supersedes === undefined || /^CALLOG-\d{5}$/.test(entry.supersedes)) && plain(entry.calibrationSignature) && plain(entry.calibrationSignature.manifest);
   const calibrationSubject = e => ({ id: e.id, tag: e.tag, description: e.description, serial: e.serial, calibratedAt: e.calibratedAt, expires: e.expires, status: e.status, location: e.location, note: e.note, recordedAt: e.recordedAt, recordedBy: e.recordedBy, supersedes: e.supersedes || null });
   const calibrationFieldError = f => {
     if (!CALIBRATION_TAG_RE.test(f.tag)) return 'Enter the tool asset tag, 2 to 40 capital letters, digits, or dashes.';
@@ -2539,6 +2539,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const log = Array.isArray(state.calibrationLog) ? state.calibrationLog : [];
     const prior = log.find(e => e && e.id === String(id));
     if (!prior) return fail('That calibration entry was not found.');
+    if (log.some(e => e && e.supersedes === prior.id)) return fail('That entry was already corrected. Correct the latest entry for this tool instead.');
+    if (log.length >= 5000) return fail('The calibration log is full (5,000 entries). Archive older entries first.');
     const fields = { tag: prior.tag, description: patch?.description === undefined ? prior.description : String(patch.description).trim(), serial: patch?.serial === undefined ? prior.serial : String(patch.serial).trim(), calibratedAt: prior.calibratedAt, expires: patch?.expires === undefined ? prior.expires : String(patch.expires).trim(), status: patch?.status === undefined ? prior.status : String(patch.status).trim(), location: patch?.location === undefined ? prior.location : String(patch.location).trim(), note: patch?.note === undefined ? prior.note : String(patch.note).trim() };
     const bad = calibrationFieldError(fields);
     if (bad) return fail(bad);
@@ -2702,7 +2704,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     (state.qualityVerdicts||[]).forEach(record=>{if(plain(record.manifest))recheck(record.id,record.manifest,{id:record.id,kind:record.kind,valueId:record.valueId,value:record.value,verdict:record.verdict});});
     (state.controlledDocuments||[]).forEach(doc=>{if(!controlledDocumentFileValid(doc.file))failures.push({where:`${doc.id} file`,reason:'stored file SHA-256 does not match'});const verifyDocumentManifest=(label,manifest,subject)=>{if(!plain(manifest))return;if(!shapeOk(manifest))failures.push({where:`${doc.id} ${label}`,reason:'manifest shape is invalid'});else if(manifest.build!==undefined&&!buildStampValid(manifest.build))failures.push({where:`${doc.id} ${label}`,reason:'build stamp is malformed'});recheck(`${doc.id} ${label}`,manifest,subject);};verifyDocumentManifest('author',doc.authorManifest,controlledDocumentSubject(doc));if(doc.reviewManifest)verifyDocumentManifest('review',doc.reviewManifest,controlledDocumentReviewSubject(doc));if(doc.releaseManifest)verifyDocumentManifest('release',doc.releaseManifest,controlledDocumentReleaseSubject(doc));});
     (state.trainingRecords||[]).forEach(record=>{if(record.certificate&&!trainingCertificateValid(record.certificate))failures.push({where:`${record.id} certificate`,reason:'stored file SHA-256 does not match'});});
-    (state.calibrationLog||[]).forEach(record=>{if(plain(record.calibrationSignature&&record.calibrationSignature.manifest))recheck(record.id,record.calibrationSignature.manifest,calibrationSubject(record));});
+    (state.calibrationLog||[]).forEach(record=>{const m=record.calibrationSignature&&record.calibrationSignature.manifest;if(!plain(m))failures.push({where:record.id,reason:'calibration entry is not signed'});else recheck(record.id,m,calibrationSubject(record));});
     (state.orders || []).forEach(order => {
       (order.operations || []).forEach(op => {
         const b = op.buyoff; if (!plain(b) || !plain(b.manifest)) return;
@@ -6353,7 +6355,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const today = pacificDay(at), out = [];
     for (const r of list) {
       if (r.asset.length > 40) return fail(`${r.asset.slice(0, 40)}…: keep the asset ID under 40 characters.`);
-      const logged = CAL_TOOLS.find(t => t.tag.toUpperCase() === r.asset);
+      const logged = (state ? calibrationStatus(state, r.asset) : null) || CAL_TOOLS.find(t => t.tag.toUpperCase() === r.asset);
       if (logged) { const c = toolCheck(logged.tag, at, state); if (!c.ok) return fail(`Test asset ${c.message}`); out.push({ asset: logged.tag, description: logged.description, serial: logged.serial || '', calDue: logged.expires, source: 'Calibrated Tool Log' }); continue; }
       if (!str(r.description, 120)) return fail(`${r.asset}: describe the asset (for example, ATP test stand, power supply).`);
       if (r.noCal) { out.push({ asset: r.asset, description: r.description, serial: '', calDue: '', source: 'Not calibration-controlled' }); continue; }

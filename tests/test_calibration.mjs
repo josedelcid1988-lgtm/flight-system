@@ -47,4 +47,23 @@ check('editing a signed calibration field is detected by manifest verification',
 const broken = structuredClone(state);
 broken.calibrationLog[2].expires = 'not-a-date';
 check('a malformed calibration entry invalidates the workspace', !MES.validate(broken));
+
+// B1 regression: a correction to an already-superseded entry is refused, so a
+// quarantined tool cannot be silently restored to usable by correcting the old entry.
+const b1rec = run(qa, () => MES.recordCalibration(state, { tag: 'B1-TOOL', description: 'TORQUE WRENCH', serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }));
+const b1quar = run(qa, () => MES.updateCalibration(state, b1rec.id, { status: 'Quarantined', note: 'dropped on floor' }));
+check('a correction to a superseded entry is refused', b1rec.ok && b1quar.ok && !run(qa, () => MES.updateCalibration(state, b1rec.id, { note: 'sneaky restore' })).ok);
+check('the quarantined tool still reads unusable after the refused correction', !MES.toolCheck('B1-TOOL', now, state).ok && MES.calibrationStatus(state, 'B1-TOOL').status === 'Quarantined');
+
+// B2 regression: atpAssets resolves through the calibration log first and fails closed.
+check('atpAssets refuses a quarantined tool that exists only in the calibration log', !MES.atpAssets([{ asset: 'B1-TOOL', description: 'torque wrench' }], now, state).ok);
+const b2rec = run(qa, () => MES.recordCalibration(state, { tag: 'B2-TOOL', description: 'MICROMETER', serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }));
+const b2res = MES.atpAssets([{ asset: 'b2-tool', description: 'micrometer' }], now, state);
+check('atpAssets accepts a usable logged tool from the calibration log', b2rec.ok && b2res.ok && b2res.list[0].asset === 'B2-TOOL' && b2res.list[0].source === 'Calibrated Tool Log');
+
+// B3 regression: an unsigned calibration entry fails validation and manifest verification.
+const unsigned = structuredClone(state);
+delete unsigned.calibrationLog[unsigned.calibrationLog.length - 1].calibrationSignature;
+check('a calibration entry without a signature invalidates the workspace', !MES.validate(unsigned));
+check('verifyManifests fails on an unsigned calibration entry instead of skipping it', !MES.verifyManifests(unsigned).ok);
 console.log(`calibration: ${checks} checks, all passed`);
