@@ -94,8 +94,10 @@ export async function unlockAccount(store, username, reason, by) {
   return { status: 200, body: { username, unlocked: true, by, reason } };
 }
 
+// Bind address when none is named: loopback only, so a server started with the defaults is reachable from this
+// machine and its reverse proxy, never from the network. --host, FLIGHT_HOST or options.host binds wider.
+export const DEFAULT_HOST = '127.0.0.1';
 // Session lifetime: minutes without activity and hours since sign-in. Options, then environment, then defaults.
-export const DEFAULT_HOST = '0.0.0.0';
 export const SESSION_DEFAULTS = Object.freeze({ idleMinutes: 30, maxHours: 12 });
 const positive = (...values) => { for (const v of values) { const n = Number(v); if (v !== undefined && v !== null && v !== '' && Number.isFinite(n) && n > 0) return n; } return null; };
 
@@ -947,7 +949,7 @@ export function createServer(options = {}) {
 
   server = http.createServer((req, res) => { handle(req, res); });
   server.store = store; server.host = host; server.ready = storeReady.then(async () => { await wrapped; void drainExports(); });
-  // Bind address: behind a reverse proxy, bind 127.0.0.1 so only that proxy can connect.
+  // Bind address: 127.0.0.1 unless options.host, FLIGHT_HOST or --host names another.
   server.listenAsync = async (port, host = options.host || process.env.FLIGHT_HOST || DEFAULT_HOST) => { await server.ready; return new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, () => { server.off('error', reject); resolve(server.address().port); }); }); };
   // The code to show in the server console, or null once the first account exists.
   server.firstRunSetupCode = async () => { await storeReady; return (await store.accounts()).length ? null : setupCode; };
@@ -986,7 +988,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   const server = createServer({ dbPath, databaseUrl, host });
   server.listenAsync(Number(arg('port', process.env.PORT || 8080)), host).then(port => {
     const a = server.address();
-    console.log(`Flight System server listening on ${a.address}:${port} (${a.address === '127.0.0.1' || a.address === '::1' ? 'loopback only: this machine and its reverse proxy' : 'all interfaces: bind 127.0.0.1 with --host behind a reverse proxy'}) (db ${server.store.db.location ? server.store.db.location() : 'sqlite'})`);
+    console.log(`Flight System server listening on ${a.address}:${port} (${a.address === '127.0.0.1' || a.address === '::1' ? 'loopback only: this machine and its reverse proxy' : 'bound as --host or FLIGHT_HOST asked: allow it only behind a firewall or on a trusted network'}) (db ${server.store.db.location ? server.store.db.location() : 'sqlite'})`);
     server.firstRunSetupCode().then(code => { if (code) console.log(`First-run setup code: ${code}\nEnter it on the Set up Master Access screen to create the first account. It is not needed again once that account exists.`); }).catch(() => {});
   }, e => { console.error(`Flight System server could not listen on ${host}: ${e.message}. Check --host names an address on this machine and the port is free.`); process.exit(1); });
   }

@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { Readable, Writable } from 'node:stream';
-import { createServer, makeHash } from '../server/server.mjs';
+import { createServer, makeHash, DEFAULT_HOST } from '../server/server.mjs';
 
 const fails = [];
 let checks = 0;
@@ -76,6 +76,17 @@ try {
 } finally {
   await server.closeAsync().catch(() => {});
 }
+
+// #27: with no host named, the server listens on loopback only; a wider bind must be asked for.
+await check('the server binds 127.0.0.1 unless a host is named', async () => {
+  assert.equal(DEFAULT_HOST, '127.0.0.1');
+  const saved = process.env.FLIGHT_HOST;
+  delete process.env.FLIGHT_HOST;
+  const local = createServer({ dbPath: ':memory:', quiet: true, setupCode: 'bind-test' });
+  try { await local.listenAsync(0); assert.equal(local.address().address, '127.0.0.1'); } finally { await local.closeAsync(); if (saved !== undefined) process.env.FLIGHT_HOST = saved; }
+  const wide = createServer({ dbPath: ':memory:', quiet: true, setupCode: 'bind-test', host: '0.0.0.0' });
+  try { await wide.listenAsync(0); assert.equal(wide.address().address, '0.0.0.0', 'an explicit host is still honoured'); } finally { await wide.closeAsync(); }
+});
 console.log(`server security: ${checks} checks passed`);
 console.log('FAILS', JSON.stringify(fails));
 process.exit(fails.length ? 1 : 0);
