@@ -1013,9 +1013,15 @@ function MnvTable({ caption, columns, rows, empty, className }) {
   return <div className="table-wrap" tabIndex="0" role="region" aria-label={caption}><table className={`data-table${className ? ` ${className}` : ''}`}><caption className="sr-only">{caption}</caption><thead><tr>{columns.map(c => <th scope="col" key={c.col}>{c.label}</th>)}</tr></thead><tbody>{rows.length ? rows : <tr><td colSpan={columns.length} className="muted">{empty}</td></tr>}</tbody></table></div>;
 }
 
+// A signer as "name · credential", shared by the Flight Maneuver detail views.
+const mnvWho = a => a ? <>{a.name} · {a.credentialId}</> : '';
+
 function ManeuverDetail({ state, MES, FM, sel, skCan, helpers, view }) {
-  const { dt, historyList, mrbProposalNote } = helpers;
-  const who = a => a ? <>{a.name} · {a.credentialId}</> : '';
+  const { dt } = helpers;
+  const who = mnvWho;
+  // A record's history, newest first, as the legacy Flight Maneuver view shows it. helpers.historyList is that view's
+  // HTML string, which React would print as text, so the same markup is built here.
+  const historyList = h => <details className="resolve-details"><summary>History ({h.length})</summary><ol className="task-list mnv-history">{h.slice().reverse().map((e, i) => <li key={i}><span className="task-main"><strong>{e.action}</strong><small>{e.actor} · {dt(e.at)}</small></span></li>)}</ol></details>;
   const carLink = id => id ? <button className="order-link" data-action="mnv-open-car" data-car={id}>{id}</button> : <span className="muted">None</span>;
   const waitNote = m => <MnvWait>{m}</MnvWait>;
   const pfmeaEditorCan = () => skCan('edit-wi') || skCan('approve-wi');
@@ -1128,7 +1134,7 @@ function ManeuverDetail({ state, MES, FM, sel, skCan, helpers, view }) {
 }
 
 function ManeuverDetailPfmeaList({ state, MES, FM, sel, skCan, helpers }) {
-  const { dt, who } = helpers;
+  const { dt } = helpers, who = mnvWho;
   const rows = FM.list(state, 'pfmeas').slice().sort((a, b) => b.openedAt.localeCompare(a.openedAt));
   return <section aria-labelledby="mnv-pfm-h"><div className="page-heading"><div><h1 id="mnv-pfm-h">PFMEA</h1><p className="small muted">Critical safety work instructions move here after QA review. The Safety Team buy-off releases the WI.</p></div></div>
     <div className="panel"><MnvTable caption="PFMEA tickets" columns={[{col:'PFMEA',label:'PFMEA'},{col:'Work instruction',label:'Work instruction'},{col:'Step',label:'Step'},{col:'Rows',label:'Rows'},{col:'High risk',label:'High risk'},{col:'Opened',label:'Created'},{col:'Safety',label:'Safety'}]} rows={rows.map(t => { const high = t.rows.filter(FM.pfmeaHigh), doneHigh = high.filter(r => r.done).length; return <tr key={t.id}><td><button className="order-link" data-action="mnv-open-pfmea" data-id={t.id}><strong className="mono">{t.id}</strong></button><small>{t.title}</small></td><td><button className="order-link" data-action="wi-open" data-wi={t.wiId} data-rev={t.wiRevision}>{t.wiId} Rev {t.wiRevision}</button><small className="mono">{t.partNumber}</small></td><td><Pill>{t.status}</Pill></td><td>{t.rows.length}</td><td>{high.length}{doneHigh ? <small> {doneHigh} closed</small> : ''}</td><td>{dt(t.openedAt)}<small>{who(t.openedBy)}</small></td><td>{t.safety ? <>{who(t.safety.by)}<small>{dt(t.safety.at)}</small></> : <span className="muted">Pending</span>}</td></tr>; })} empty="No PFMEA yet. Flag a draft WI as a critical safety part; after ME peer review, QA review opens its PFMEA here."/></div></section>;
