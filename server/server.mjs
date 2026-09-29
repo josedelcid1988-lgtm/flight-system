@@ -13,6 +13,7 @@ import { createHash, randomBytes, scrypt as scryptCb, timingSafeEqual } from 'no
 import { openDb } from './db.mjs';
 import { openPostgres } from './db-postgres.mjs';
 import { createHost } from './mes-host.mjs';
+import { stamp, verify } from '../tools/stamp-build.mjs';
 
 process.on('warning', w => { if (w.name === 'ExperimentalWarning' && /SQLite/.test(w.message)) return; console.warn(w); });
 
@@ -50,6 +51,11 @@ export const MAX_REQUEST_BYTES = 100 * 1024 * 1024;
 export const MAX_REQUEST_MIB = MAX_REQUEST_BYTES / 1048576;
 const tooLarge = () => Object.assign(new Error(`The request is larger than the ${MAX_REQUEST_MIB} MiB limit (${MAX_REQUEST_BYTES} bytes). Send a smaller document or recording: remove large inline files, or trim or re-encode the video.`), { status: 413 });
 const EVIDENCE_TYPES = ['video/webm', 'video/mp4', 'video/quicktime'];
+const ORPHAN_AUDIT_IDS = 80;
+// A multiple of 3, so each chunk base64-encodes on its own without padding in the middle of the stream.
+const EXPORT_CHUNK_BYTES = 3 * 1024 * 1024;
+// Audit details are stored capped at 4,000 characters; an older entry cut mid-string is reported as truncated, never thrown.
+const auditDetail = text => { try { return JSON.parse(text || '{}'); } catch { return { truncated: true }; } };
 const EVIDENCE_ID = /^EV-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EXPORT_RECORD_TYPES = Object.freeze(['work-order', 'fair', '8130-9', 'nc-idr', 'car', 'mrb', 'stamp', 'training', 'pfmea']);
 const GRANTED_AUTHORITY_CAPS = Object.freeze(['conformity', 'aqi-sign']);
@@ -113,6 +119,17 @@ export function parseExportCredentials(value) {
   return out;
 }
 
+// The committed index.html carries the hash placeholder "unstamped"; a release zip carries the real stamp.
+// A checkout is stamped in memory at start, with the same tool and result as a release, so the page served
+// and every record it writes carry the build's SHA-256. A stamped file is served as it is only when its stamp
+// verifies: a file edited after stamping would record a SHA-256 that does not match the code being served.
+export function servedIndex(indexPath) {
+  const html = fs.readFileSync(indexPath, 'utf8'), v = verify(html);
+  if (v.stamped === 'unstamped') return stamp(html, v.build);
+  if (!v.ok) throw new Error(`${indexPath} carries SHA-256 ${v.stamped} but its content computes ${v.actual}: it was changed after stamping. Deploy the release zip again, or run node tools/stamp-build.mjs --clear to serve this checkout.`);
+  return html;
+}
+
 export function createServer(options = {}) {
   const indexPath = options.indexPath || path.join(ROOT, 'index.html');
   const dbPath = options.dbPath || process.env.FLIGHT_DB || path.join(ROOT, 'data', 'flight.sqlite');
@@ -125,7 +142,7 @@ export function createServer(options = {}) {
   const maxHours = positive(options.sessionMaxHours, process.env.FLIGHT_SESSION_MAX_HOURS) || SESSION_DEFAULTS.maxHours;
   const lifetime = { idleMs: idleMinutes * 60000, maxMs: maxHours * 3600000 };
   const clock = options.clock || (() => Date.now());
-  const host = createHost(indexPath);
+  const host = createHost(indexPath, servedIndex(indexPath));
   // Expanded roles, named grants and new trained accounts all cite a training: it must be an active catalog
   // entry and the person must hold a current record of it on the shared workspace.
   const trainingQualifies = (state, username, code) => !!state && !!code && host.MES.trainingCatalog(state).some(item => item.status === 'Active' && item.code === code) && host.MES.trainingCurrentFor(state, username, code).ok;
@@ -274,6 +291,31 @@ export function createServer(options = {}) {
     const ctx = { api: '/api', etag: null, workspace: null, workspaceAvailable: !!row, jiraConfigured, auth: { users: (await store.accounts()).map(publicAccount) }, account: session ? publicAccount(session.account) : null, served: new Date().toISOString() };
     const script = `<script id="flight-server">window.FLIGHT_SERVER=${JSON.stringify(ctx).replace(/</g, '\\u003c')};</script>`;
     return host.html.replace('<head>', `<head>${script}`);
+  };
+  // Writes the archive export JSON with each recording's bytes base64-encoded in bounded chunks, one recording at a
+  // time and respecting backpressure, so an evidence-heavy archive never has to fit in memory as one object.
+  const streamArchiveExport = async (res, head, evidence) => {
+    // Under backpressure wait for drain, but settle on close or error too: a cancelled download may never drain.
+    const write = text => new Promise((resolve, reject) => {
+      if (res.destroyed) { reject(new Error('The client closed the export.')); return; }
+      if (res.write(text)) { resolve(); return; }
+      const settle = error => { res.off('drain', onDrain); res.off('close', onClose); res.off('error', settle); if (error) reject(error); else resolve(); };
+      const onDrain = () => settle(), onClose = () => settle(new Error('The client closed the export.'));
+      res.once('drain', onDrain); res.once('close', onClose); res.once('error', settle);
+    });
+    try {
+      await write(`${JSON.stringify(head).slice(0, -1)},"evidence":{`);
+      let first = true;
+      for (const [key, meta] of Object.entries(evidence)) {
+        await write(`${first ? '' : ','}${JSON.stringify(key)}:${JSON.stringify(meta).slice(0, -1)},"base64":"`);
+        first = false;
+        const bytes = await store.evidenceBytes(key);
+        for (let at = 0; at < bytes.length; at += EXPORT_CHUNK_BYTES) await write(bytes.subarray(at, at + EXPORT_CHUNK_BYTES).toString('base64'));
+        await write('"}');
+      }
+      await write('}}');
+      res.end();
+    } catch (error) { res.destroy(error); }
   };
   const recordExtract = async (recordId, kind, username, content, summary) => {
     const stamp = { exportId: `EXT-${randomBytes(16).toString('hex').toUpperCase()}`, recordType: 'work-order', recordId, kind, exportedAt: new Date(clock()).toISOString(), exportedBy: username, sha256: sha256hex(JSON.stringify(content)), summary };
@@ -502,10 +544,15 @@ export function createServer(options = {}) {
           const passwordChanged = [];
           let refusal = null;
           await store.transaction(async tx => {
+            // Same lock as /auth/access, and fresh rows: a concurrent role or grant change must not be overwritten
+            // with the authority profile this request read before the transaction.
+            await tx.lockAuthority();
+            const current = await tx.accounts();
+            if (firstRun && current.length) { refusal = { status: 409, error: 'An account was created on this server while you were setting it up. Sign in with it instead.' }; return false; }
             for (const u of incoming) {
               const username = String(u.username || '').trim().toLowerCase();
               if (!/^[a-z0-9._-]{3,40}$/.test(username) || !String(u.displayName || '').trim()) { refusal = { status: 400, error: `Account ${username || '(blank)'}: username is 3 to 40 characters and the name is required.` }; return false; }
-              const cur = existing.find(x => x.username === username);
+              const cur = current.find(x => x.username === username);
               if (cur) {
                 const changed = (Object.hasOwn(u, 'role') && u.role !== cur.role) ||
                   (Object.hasOwn(u, 'roles') && JSON.stringify(u.roles) !== JSON.stringify(cur.roles)) ||
@@ -763,6 +810,8 @@ export function createServer(options = {}) {
         if (!EVIDENCE_ID.test(by) || by === ev[1] || !await store.evidenceMeta(by)) { send(res, 400, { error: 'Upload the replacement recording first, then name its EV ID in "by".' }); return; }
         if (reason.length < 3 || reason.length > 300) { send(res, 400, { error: 'Give the reason for superseding (3 to 300 characters).' }); return; }
         const out = await store.supersedeEvidence(ev[1], by, reason);
+        // The update applies only while the row is unsuperseded; a request that lost that race changes nothing and is not audited.
+        if (!out) { const now = await store.evidenceMeta(ev[1]); send(res, 409, { error: `${ev[1]} was already superseded by ${now?.supersededBy || 'another recording'}.` }); return; }
         await store.audit(session.username, 'evidence-supersede', { id: ev[1], by, reason });
         send(res, 200, out); return;
       }
@@ -774,13 +823,14 @@ export function createServer(options = {}) {
           stored: rows.length,
           missing: (await Promise.all(refs.map(async r => ({ ref: r, meta: await store.evidenceMeta(r.e.copyOf || r.e.id) })))).filter(row => !row.meta).map(({ ref: r }) => ({ id: r.e.id, orderId: r.orderId, opId: r.opId, signed: r.signed })),
           unreferenced: rows.filter(r => !named.has(r.id)).map(r => ({ id: r.id, sha256: r.sha256, uploadedBy: r.uploadedBy, uploadedAt: r.uploadedAt })),
-          orphansReported: (await store.auditRows(1000)).filter(r => r.action === 'evidence-orphans').map(r => ({ at: r.at, username: r.username, detail: JSON.parse(r.detail || '{}') }))
+          orphansReported: (await store.auditRows(1000)).filter(r => r.action === 'evidence-orphans').map(r => ({ at: r.at, username: r.username, detail: auditDetail(r.detail) }))
         }); return;
       }
       if (route === '/evidence/orphans' && m === 'POST') {
         // A browser that migrated its local recordings reports what it holds that no record names.
         const body = await readJson(req), ids = (Array.isArray(body.ids) ? body.ids : []).filter(id => EVIDENCE_ID.test(String(id))).slice(0, 500);
-        await store.audit(session.username, 'evidence-orphans', { ids, uploaded: Number(body.uploaded) || 0 });
+        // Audit details are capped at 4,000 characters, so the entry keeps the count and the first IDs, which always fit.
+        await store.audit(session.username, 'evidence-orphans', { count: ids.length, ids: ids.slice(0, ORPHAN_AUDIT_IDS), more: Math.max(0, ids.length - ORPHAN_AUDIT_IDS), uploaded: Number(body.uploaded) || 0 });
         send(res, 200, { recorded: ids.length }); return;
       }
 
@@ -809,18 +859,22 @@ export function createServer(options = {}) {
           await store.audit(session.username, 'archive-print', { orderId: a.id, mode });
           res.writeHead(200, { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-store' }); res.end(html); return;
         }
-        // Export: the order with its signatures and history, its activity, and the bytes of its evidence.
+        // Export: the order with its signatures and history, its activity, and the bytes of its evidence. The extract
+        // hash covers each recording's stored metadata, including its SHA-256, so the bytes are bound to the stamped
+        // extract without holding every recording in memory: they are streamed one at a time as base64.
         const evidence = {};
         for (const op of a.entry.order.operations || []) for (const e of [...(op.evidence || []), ...(op.quarantinedEvidence || [])]) {
           const key = e.copyOf || e.id, meta = await store.evidenceMeta(key); if (!meta || evidence[key]) continue;
-          evidence[key] = { ...meta, base64: (await store.evidenceBytes(key)).toString('base64') };
+          evidence[key] = meta;
         }
         const summary = { orderId: a.id, partNumber: a.entry.order.partNumber, status: a.entry.order.status, operationCount: (a.entry.order.operations || []).length, activityCount: (a.entry.activity || []).length, evidenceCount: Object.keys(evidence).length, closedAt: a.entry.order.closure && a.entry.order.closure.at || null };
         const content = { order: a.entry.order, activity: a.entry.activity, evidence, archiveSha256: a.sha256, archivedAt: a.archivedAt, archivedBy: a.archivedBy, schema: a.schema };
         const stamp = await recordExtract(a.id, 'json-download', session.username, content, summary);
         await store.audit(session.username, 'archive-export', { orderId: a.id, exportId: stamp.exportId, sha256: stamp.sha256 });
-        const body = JSON.stringify({ application: 'Flight System', kind: 'archived-work-order', exportId: stamp.exportId, exportedAt: stamp.exportedAt, exportedBy: stamp.exportedBy, hashAlgorithm: 'SHA-256', extractSha256: stamp.sha256, dataSummary: summary, ...content });
-        res.writeHead(200, { 'Content-Type': MIME['.json'], 'Content-Disposition': `attachment; filename="${a.id}-archive.json"`, 'Cache-Control': 'no-store' }); res.end(body); return;
+        const head = { application: 'Flight System', kind: 'archived-work-order', exportId: stamp.exportId, exportedAt: stamp.exportedAt, exportedBy: stamp.exportedBy, hashAlgorithm: 'SHA-256', extractSha256: stamp.sha256, extractHashCovers: 'order, activity, evidence metadata including each recording SHA-256, archiveSha256, archivedAt, archivedBy, schema', dataSummary: summary, ...content, evidence: undefined };
+        res.writeHead(200, { 'Content-Type': MIME['.json'], 'Content-Disposition': `attachment; filename="${a.id}-archive.json"`, 'Cache-Control': 'no-store' });
+        await streamArchiveExport(res, head, evidence);
+        return;
       }
 
       // -- read-only reports the engine already computes --

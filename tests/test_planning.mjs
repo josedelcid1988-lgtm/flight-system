@@ -255,6 +255,38 @@ if (productionExternal) {
   assert.equal(raise(qm, 'High').ok, true, 'QA Manager can raise project sensitivity');
 }
 {
+  // On the shared server the stored profile can name whoever last selected it; planning records name the signed-in person.
+  const savedProfile = state.profile;
+  state.profile = { ...savedProfile, name: 'Earlier Manager', role: 'QA Manager', credentialId: 'STORED-EARLIER' };
+  const second = { username: 'second-planner', displayName: 'Second Planner', role: 'qm', roles: ['qm'] };
+  const as = fn => host.withAccount(second, fn, state);
+  const plan = as(() => host.MES.createProject(state, { name: 'Attribution check', lifecycle: 'Development', sensitivity: 'Low', startDate: date, dueDate: '2026-11-30', partNumbers: [] }));
+  assert.equal(plan.ok, true, plan.message);
+  const goal = as(() => host.MES.addProjectObjective(state, { title: 'Attribution objective', dueDate: '2026-11-30' }));
+  const mark = as(() => host.MES.addProjectMilestone(state, { title: 'Attribution milestone', projectId: plan.id, objectiveId: goal.id, dueDate: '2026-11-15' }));
+  const find = (list, id) => (Array.isArray(list) ? list : []).find(item => item.id === id);
+  const projects = host.MES.ensureProjects(state);
+  const credentials = [find(projects.projects, plan.id).by, find(projects.objectives, goal.id).by, find(projects.milestones, mark.id).by].map(by => by && by.credentialId);
+  assert.equal(JSON.stringify(credentials), JSON.stringify(Array(3).fill('ACCT-second-planner')), 'project, objective and milestone name the signed-in account, not the stored profile');
+  // Flight Plan keeps its own history: planned orders name the signed-in person too.
+  const wi = state.masterWIs.find(item => item.status === 'Released');
+  const need = new Date(Date.now() + 21 * 86400000).toISOString().slice(0, 10);
+  const planned = as(() => host.FlightPlan.addPlannedOrder(state, { masterWI: `${wi.id}|${wi.revision}`, partNumber: wi.partNumber, revision: host.MES.partDefinition(wi.partNumber)?.revision, quantity: 1, needDate: need, need, pedigree: 'Production', subcategory: 'Mfg.', aircraft: host.MES.AIRCRAFT[0], site: host.MES.SITES[0], source: 'Attribution test' }));
+  assert.equal(planned.ok, true, planned.message);
+  const po = host.FlightPlan.get(state, planned.id);
+  assert.equal(JSON.stringify([po.createdBy.credentialId, po.history.length > 0 && po.history.every(entry => entry.actor.endsWith('ACCT-second-planner'))]), JSON.stringify(['ACCT-second-planner', true]), 'a planned order and its history name the signed-in account');
+  // Controlled evidence names the signed-in reviewer on the record itself, not only in its history.
+  const evidenceOrder = state.orders.find(order => order.status === 'Building' && order.operations.some(op => !op.done));
+  const evidenceOp = evidenceOrder.operations.find(op => !op.done);
+  const reviewed = `EV-${'1'.repeat(8)}-1111-4111-8111-${'1'.repeat(12)}`, rejected = `EV-${'2'.repeat(8)}-2222-4222-8222-${'2'.repeat(12)}`;
+  for (const id of [reviewed, rejected]) assert.equal(host.MES.attachEvidence(state, evidenceOrder.id, evidenceOp.id, { id, fileName: `${id}.webm`, mimeType: 'video/webm', size: 10, source: 'upload', description: 'Attribution evidence.' }).ok, true);
+  assert.equal(as(() => host.MES.reviewEvidence(state, evidenceOrder.id, evidenceOp.id, reviewed)).ok, true);
+  assert.equal(as(() => host.MES.rejectEvidence(state, evidenceOrder.id, evidenceOp.id, rejected, 'Wrong operation in frame.')).ok, true);
+  const byId = id => evidenceOp.evidence.find(item => item.id === id);
+  assert.equal(JSON.stringify([byId(reviewed).reviewedBy.credentialId, byId(rejected).rejectedBy.credentialId]), JSON.stringify(['ACCT-second-planner', 'ACCT-second-planner']), 'evidence reviewedBy and rejectedBy name the signed-in account');
+  state.profile = savedProfile;
+}
+{
   // Stocking is the step after QA closure, so a closed order that is ready to stock stays live until it is stocked.
   const closed = state.orders.filter(order => order.status === 'Closed');
   const waiting = closed.find(order => !order.inventory && host.MES.inventoryReadiness(state, order).ready);

@@ -40,26 +40,28 @@ export function inspectMigration(input, host = createHost(path.join(ROOT, 'index
   // The server creates an account whose role carries inspection or MRB authority only when it cites a current training
   // record for that person in the shared workspace. Cite one from the migrated workspace; name anyone who has none.
   const activeCodes = host.MES.trainingCatalog(state).filter(item => item.status === 'Active').map(item => item.code);
-  const rolesOf = user => Array.isArray(user.roles) && user.roles.length ? user.roles : [user.role || 'general'];
+  // Browser accounts keep secondary roles in extraRoles as well as roles; both carry into the audited follow-up.
+  const rolesOf = user => [...new Set([...(Array.isArray(user.roles) && user.roles.length ? user.roles : [user.role || 'general']), ...(Array.isArray(user.extraRoles) ? user.extraRoles : [])].map(String))];
   const gated = user => rolesOf(user).some(role => (host.roles.ROLE_CAPS[role] || host.roles.EVERYONE).some(cap => TRAINING_GATED_ROLE_CAPS.has(cap)));
   // A new server account never arrives with authority attached: that is how self-granted access is refused. Each
   // account is imported with its primary role; its other roles are then added through the server's audited role-change
   // route, citing the person's current training. Individually granted authority (conformity, AQI signature) and Support
   // Access are signed by the person who granted them, so a QA Manager or Master Access account grants them again.
   const qualifyingCode = user => activeCodes.find(item => host.MES.trainingCurrentFor(state, String(user.username || '').toLowerCase(), item).ok) || null;
-  const isAdmin = user => rolesOf(user).includes('admin');
   const users = auth.users.map(user => {
     const roles = rolesOf(user), code = qualifyingCode(user);
     const { roles: _roles, extraRoles: _extra, roleTraining: _training, grants: _grants, grantHistory: _history, supportAccess: _support, trainingCode: _code, ...base } = user;
     return { ...base, role: roles[0], roles: [roles[0]], ...(code && gated({ role: roles[0] }) ? { trainingCode: code } : {}) };
   });
   const roleFollowUps = auth.users.filter(user => rolesOf(user).length > 1).map(user => ({ username: String(user.username), roles: rolesOf(user), trainingCode: qualifyingCode(user) }));
-  const needsTraining = auth.users.filter(user => !isAdmin(user) && !qualifyingCode(user) && (gated({ role: rolesOf(user)[0] }) || rolesOf(user).length > 1)).map(user => user.username);
+  // Master Access is training-gated like any other authority. An account that already exists on the target server (the
+  // migrating account, for one) is not created again; the apply step drops it from this list after it signs in.
+  const needsTraining = auth.users.filter(user => !qualifyingCode(user) && (gated({ role: rolesOf(user)[0] }) || rolesOf(user).length > 1)).map(user => user.username);
   const manualAfterMigration = auth.users.flatMap(user => [
     ...Object.keys(user.grants && typeof user.grants === 'object' ? user.grants : {}).filter(cap => !user.grants[cap]?.revokedAt).map(cap => `${user.username}: grant ${cap} again`),
     ...(user.supportAccess === true ? [`${user.username}: grant Support Access again`] : [])
   ]);
-  const multipleRoles = auth.users.filter(user => Array.isArray(user.roles) && user.roles.length > 1).map(user => user.username);
+  const multipleRoles = auth.users.filter(user => rolesOf(user).length > 1).map(user => user.username);
   let planned = 0;
   try { planned = host.FlightPlan.list(state).length; } catch {}
   const maneuver = state.maneuver && typeof state.maneuver === 'object' ? state.maneuver : {};
@@ -73,16 +75,17 @@ export function inspectMigration(input, host = createHost(path.join(ROOT, 'index
       closedWorkOrders: state.orders.filter(order => order.status === 'Closed').length,
       masterWorkInstructions: (state.masterWIs || []).length,
       plannedOrders: planned,
-      maneuverRecords: Object.fromEntries(['tickets', 'mrb', 'cars', 'scars', 'sprs', 'fracas', 'escapes', 'pfmea'].map(key => [key, Array.isArray(maneuver[key]) ? maneuver[key].length : 0])),
+      // Counted after upgrade, from the current collections: legacy FRACAS and escapes are converted into ncs, and a SCAR lives on its CAR.
+      maneuverRecords: { ...Object.fromEntries(['ncs', 'mrb', 'cars', 'sprs', 'pfmeas'].map(key => [key, Array.isArray(maneuver[key]) ? maneuver[key].length : 0])), scars: (Array.isArray(maneuver.cars) ? maneuver.cars : []).filter(car => car && car.scar).length },
       evidenceRecords: evidence.length
     },
-    accounts: { count: auth.users.length, roles: Object.fromEntries([...new Set(auth.users.flatMap(user => Array.isArray(user.roles) && user.roles.length ? user.roles : [user.role || 'general']))].map(role => [role, auth.users.filter(user => (Array.isArray(user.roles) && user.roles.length ? user.roles : [user.role || 'general']).includes(role)).length])), multipleRoles: multipleRoles },
+    accounts: { count: auth.users.length, roles: Object.fromEntries([...new Set(auth.users.flatMap(rolesOf))].map(role => [role, auth.users.filter(user => rolesOf(user).includes(role)).length])), multipleRoles: multipleRoles },
     manifests: { verified: manifests.checked, legacyUnverifiable: manifests.legacy, complete: manifests.complete },
     evidence: { bytesIncluded: evidence.length - missingMedia.length, missingMedia },
     warnings: [
       ...(manifests.legacy ? [`${manifests.legacy} pre-existing signature manifest(s) have no stored subject and cannot be cryptographically recomputed.`] : []),
       ...(missingMedia.length ? [`${missingMedia.length} IndexedDB recording(s) are absent from the export. Their metadata and signatures will be preserved, but their bytes cannot be migrated.`] : []),
-      ...(needsTraining.length ? [`These accounts hold a role with inspection or MRB authority but have no current training record in the workspace, so the server will not create them: ${needsTraining.join(', ')}. Record their training, export again, or migrate them with a role that does not carry that authority.`] : []),
+      ...(needsTraining.length ? [`These accounts hold a role with inspection, MRB or Master Access authority, or more than one role, but have no current training record in the workspace, so the server will not create them unless they already exist there: ${needsTraining.join(', ')}. Record their training, export again, or migrate them with a role that does not carry that authority.`] : []),
       ...(multipleRoles.length ? [`These accounts carry multiple roles. The server preserves each assigned role: each is created with its first role, then the others are added through the audited role-change route citing the person's current training: ${multipleRoles.join(', ')}.`] : []),
       ...(manualAfterMigration.length ? [`Individually granted authority and Support Access are signed by the person who granted them and are not copied. After migration, a QA Manager or Master Access account grants them again: ${manualAfterMigration.join('; ')}.`] : [])
     ]
@@ -104,7 +107,6 @@ export async function applyMigration(migration, env = process.env) {
   if (migration.report.evidence.missingMedia.length) {
     throw new Error(`Migration is incomplete: ${migration.report.evidence.missingMedia.length} linked recording(s) have no exported bytes. Export them from the browser that holds them, then run the dry-run again.`);
   }
-  if (migration.report.accounts.needsTraining?.length) throw new Error(`Migration is incomplete: ${migration.report.accounts.needsTraining.join(', ')} hold a role with inspection or MRB authority but have no current training record. Resolve them, then run the dry-run again.`);
   const preparedMedia = new Map();
   const evidenceById = new Map(linkedEvidence(migration.state).map(entry => [entry.id, entry]));
   for (const [id, item] of Object.entries(migration.media)) {
@@ -128,6 +130,12 @@ export async function applyMigration(migration, env = process.env) {
   const current = await request(base, '/workspace', { token });
   if (current.status === 200) throw new Error('The server already has a workspace. This tool will not overwrite it. Back it up and choose an approved merge path first.');
   if (current.status !== 404) throw new Error(current.json?.error || 'Could not read the target workspace.');
+  // Checked before anything is written: an account the server would refuse must stop the migration here, not after the workspace moved.
+  const onServer = await request(base, '/auth/accounts', { token });
+  if (onServer.status !== 200 || !Array.isArray(onServer.json?.users)) throw new Error(onServer.json?.error || 'Could not read the accounts on the target server.');
+  const existingUsernames = new Set(onServer.json.users.map(user => String(user.username).toLowerCase()));
+  const untrained = (migration.report.accounts.needsTraining || []).filter(name => !existingUsernames.has(String(name).toLowerCase()));
+  if (untrained.length) throw new Error(`Migration is incomplete: ${untrained.join(', ')} hold a role with inspection, MRB or Master Access authority but have no current training record. Resolve them, then run the dry-run again. Nothing was changed on the server.`);
 
   for (const [id, media] of preparedMedia) {
     const evidence = linkedEvidence(migration.state).find(entry => entry.id === id);
@@ -145,16 +153,21 @@ export async function applyMigration(migration, env = process.env) {
   if (saved.status !== 204) throw new Error(`Recordings were uploaded, but the workspace migration failed and no accounts were imported: ${saved.json?.error || saved.status}.`);
   // Accounts go in after the workspace: an account whose role carries inspection or MRB authority is created only
   // against the training record it cites, and those records arrive with the workspace.
-  const accountResult = await request(base, '/auth/accounts', { method: 'PUT', token, body: { users: migration.users } });
+  // Accounts that already exist on the target (the migrating account, for one) are left exactly as the server has them:
+  // re-sending one would replace its password hash and name with the browser's copy, or fail on a role difference.
+  const newUsers = migration.users.filter(user => !existingUsernames.has(String(user.username).toLowerCase()));
+  const skippedExisting = migration.users.filter(user => existingUsernames.has(String(user.username).toLowerCase())).map(user => user.username);
+  const accountResult = newUsers.length ? await request(base, '/auth/accounts', { method: 'PUT', token, body: { users: newUsers } }) : { status: 200 };
   if (accountResult.status !== 200) throw new Error(`The workspace was migrated, but the account import failed: ${accountResult.json?.error || accountResult.status}. Fix the accounts named in the error and import them again; the workspace does not need to be migrated again.`);
   // Additional roles go through the same audited route a manager uses, each citing the person's current training.
   const rolesNotApplied = [];
-  for (const followUp of migration.roleFollowUps || []) {
+  for (const followUp of (migration.roleFollowUps || []).filter(item => !existingUsernames.has(item.username.toLowerCase()))) {
     if (followUp.username.toLowerCase() === username.toLowerCase()) { rolesNotApplied.push(`${followUp.username}: nobody changes their own roles; another QA Manager or Master Access account adds ${followUp.roles.slice(1).join(', ')}`); continue; }
     const changed = await request(base, '/auth/access', { method: 'POST', token, body: { action: 'roles', username: followUp.username, roles: followUp.roles, trainingCode: followUp.trainingCode, reason: 'Roles as assigned in the migrated browser workspace.' } });
     if (changed.status !== 200) rolesNotApplied.push(`${followUp.username}: ${changed.json?.error || changed.status}`);
   }
-  return { status: 'applied', etag: saved.etag, accountsImported: migration.users.length, evidenceUploaded: Object.keys(migration.media).length, rolesAdded: (migration.roleFollowUps || []).length - rolesNotApplied.length, rolesNotApplied, manualAfterMigration: migration.report.accounts.manualAfterMigration || [] };
+  const followUps = (migration.roleFollowUps || []).filter(item => !existingUsernames.has(item.username.toLowerCase()));
+  return { status: 'applied', etag: saved.etag, accountsImported: newUsers.length, accountsAlreadyOnServer: skippedExisting, evidenceUploaded: Object.keys(migration.media).length, rolesAdded: followUps.length - rolesNotApplied.length, rolesNotApplied, manualAfterMigration: migration.report.accounts.manualAfterMigration || [] };
 }
 
 function arg(name) { const index = process.argv.indexOf(name); return index >= 0 ? process.argv[index + 1] : null; }

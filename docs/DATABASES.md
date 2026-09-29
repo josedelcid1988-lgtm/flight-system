@@ -41,6 +41,12 @@ FLIGHT_DATABASE_URL='postgresql://flight:password@localhost:5432/flight_system' 
 
 The PostgreSQL test is intentionally separate from the SQLite-only local suite runner so it never reports a skip when no PostgreSQL service is available. CI always provides the service and runs the integration test.
 
+## Archived work orders
+
+A closed work order leaves the live workspace once it is stocked, or when it cannot be stocked, and and is kept read-only in the archive. Trace search lists archive matches beside live records, with Print and Export on each row. Print opens the stamped record. Export downloads `WO-...-archive.json` with the order, its signatures and history, its activity and the bytes of every linked recording, including removed (quarantined) ones. Each print and export is recorded in the order's extract history and the audit log.
+
+The export's `extractSha256` covers the order, its activity, the archive hash and the metadata of each recording, including that recording's SHA-256. The recording bytes are streamed one at a time, so a large archive never has to fit in server memory. To verify a download, check each recording's base64 bytes against its `sha256`, then hash the rest of the extract as described in `extractHashCovers`.
+
 ## First-run setup code
 
 The first account on a new server becomes Master Access, so creating it needs a setup code that only

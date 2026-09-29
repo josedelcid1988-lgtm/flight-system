@@ -1,4 +1,4 @@
-<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v82"><meta name="fs-build-sha256" content="492b671c358568b6d35802d351bb218e7c6df5cd1b4967ab70343c7ae1dc949a"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><!-- FLIGHT REACT ASSETS BEGIN -->
+<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v82"><meta name="fs-build-sha256" content="unstamped"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><!-- FLIGHT REACT ASSETS BEGIN -->
 <link rel="stylesheet" href="assets/flight-ui-fonts.css">
 <link rel="stylesheet" href="assets/flight-ui.css">
 <link rel="stylesheet" href="assets/flight-plan-react.css">
@@ -3890,7 +3890,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const wiRef = wi => ({ id: wi.id, revision: wi.revision, title: wi.title });
   const findWI = (state, id, revision) => (Array.isArray(state?.masterWIs) ? state.masterWIs: []).find(wi => wi.id === id && wi.revision === revision) || null;
   const nextWIRevision = (state, id) => { const last = state.masterWIs.filter(wi => wi.id === id).map(wi => wi.revision).sort().pop() || '@'; return /^[A-Y]$/.test(last) ? String.fromCharCode(last.charCodeAt(0) + 1) : last === '@' ? 'A' : `${last}1`; };
-  const wiLog = (state, wi, action) => { wi.history = [...(wi.history || []), { at: new Date().toISOString(), action, actor: `${state.profile.name} · ${state.profile.credentialId}` }].slice(-200); };
+  const wiLog = (state, wi, action) => { wi.history = [...(wi.history || []), { at: new Date().toISOString(), action, actor: `${actor(state).name} · ${actor(state).credentialId}` }].slice(-200); };
   // Separation of duties: the author of a WI cannot release it. Every edit to a draft revision records the
   // editor's credential in wi.authors; for a revision edited before that was recorded, the history entries of
   // its edits name them. The check covers QA release, release against the drawing ECO and the Safety Team
@@ -4645,10 +4645,10 @@ const OP_BOM_MAX = 12;
       t.status = 'Resolved'; t.resolution = t.reworkPlan.approval; t.resolvedBy = t.reworkPlan.approvedBy; t.resolvedAt = at;
       record(state, order, `${t.id} closed: QA released the ${t.reworkPlan.decision} operation Op ${opNumber(order, t.reworkPlan.opId)}. Hold lifted.`, 'Quality reviewer');
     });
-    const approver = profileSnapshot(state.profile);
+    const approver = actor(state);
     const entry = rollWorkOrderRevision(state, order, `Operation sequence changed (${pending.entries.length} change${pending.entries.length === 1 ? '' : 's'}).`,
       pending.entries.map(item => `${item.type === 'add' ? 'Added' : item.type === 'remove' ? 'Removed' : 'Edited'} Op ${item.position || ''} ${item.title || ''}`.replace(/\s+/g, ' ').trim()), approver);
-    record(state, order, `QA released the updated operation sequence (${pending.entries.length} change${pending.entries.length === 1 ? '' : 's'}) · ${state.profile.name}.${entry ? ` Work order revision rolled to ${woRevLabel(entry.rev)}.` : ''}`);
+    record(state, order, `QA released the updated operation sequence (${pending.entries.length} change${pending.entries.length === 1 ? '' : 's'}) · ${actor(state).name}.${entry ? ` Work order revision rolled to ${woRevLabel(entry.rev)}.` : ''}`);
     return { ok: true, message: `Sequence released by QA. Work can continue.${entry ? ` Revision is now ${woRevLabel(entry.rev)}.` : ''}` };
   }
 
@@ -4805,9 +4805,9 @@ const OP_BOM_MAX = 12;
       schedule: { start: order.start || null, due: order.due },
       aircraft: order.aircraft || null, sourceBuild: order.sourceBuild || null,
       qaClosure: closure ? { at: closure.at, by: closure.actor } : null,
-      stockedAt: at, stockedBy: `${state.profile.name} · ${state.profile.credentialId}`, location: input.location, bin: bin || null
+      stockedAt: at, stockedBy: `${actor(state).name} · ${actor(state).credentialId}`, location: input.location, bin: bin || null
     };
-    order.inventory = { lotNumber, stockedAt: at, stockedBy: profileSnapshot(state.profile), location: input.location, bin, quantity: order.quantity, serials, trace, netsuite: { status: 'Ready to post', payload: netsuitePayload(order, lotNumber, serials, input.location, bin, at), postedRef: null } };
+    order.inventory = { lotNumber, stockedAt: at, stockedBy: actor(state), location: input.location, bin, quantity: order.quantity, serials, trace, netsuite: { status: 'Ready to post', payload: netsuitePayload(order, lotNumber, serials, input.location, bin, at), postedRef: null } };
     record(state, order, `Moved to inventory as ${lotNumber}: ${order.quantity} unit${order.quantity === 1 ? '' : 's'} at ${input.location}${bin ? ` bin ${bin}` : ''}. NetSuite posting prepared.`);
     return { ok: true, message: `Stocked as ${lotNumber}. The NetSuite payload is ready to post.` };
   }
@@ -6110,7 +6110,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const number = (order.engineeringChanges?.length || 0) + 1;
     const change = { id: `${order.id}-EC-${number}`, before, after, reason: input.reason.trim(), requestedBy: actor(state), requestedAt: new Date(Math.max(Date.now(), Date.parse(order.engineeringChanges?.at(-1)?.qaApproval?.at || 0))).toISOString(), virtual: true, needsECR, pedigree: order.pedigree, subcategory: order.subcategory, ecrId: needsECR ? `ECR-${order.id.slice(3)}-${number}` : null, status: needsECR ? 'Awaiting ECR' : 'Awaiting QA', ecrApproval: null, qaApproval: null, priorReleaseApproval: releaseApproval(order) ? JSON.parse(JSON.stringify(releaseApproval(order))) : null };
     order.engineeringChanges = [...(order.engineeringChanges || []), change];
-    record(state, order, `Engineering edit requested by ${state.profile.name}. ${needsECR ? `${change.ecrId} submitted; ECR approval and QA re-release required.` : 'QA re-release required; no ECR required.'} Work paused; proposed edits have not been applied.`);
+    record(state, order, `Engineering edit requested by ${actor(state).name}. ${needsECR ? `${change.ecrId} submitted; ECR approval and QA re-release required.` : 'QA re-release required; no ECR required.'} Work paused; proposed edits have not been applied.`);
     return { ok: true, message: needsECR ? ' ECR submitted. ECR approval and QA re-release are required before edits apply.' : 'Engineering edit submitted for QA re-release. Work is paused until approval.', id: change.id };
   }
 
@@ -6152,7 +6152,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (!revChanges.length) revChanges.push('Engineering edit applied with no field-level differences recorded.');
     const revEntry = rollWorkOrderRevision(state, order, `Engineering change ${change.id}${change.ecrId ? ` (${change.ecrId})` : ''} applied.`, revChanges, { ...change.qaApproval });
     if (requiresReleaseQA(order) && releaseApproval(order)) order.releaseApproval = { ...change.qaApproval, configuration: releaseConfiguration(order) };
-    record(state, order, `QA re-release by ${state.profile.name}. Engineering edit ${change.id} applied; revision ${change.before.revision} → ${change.after.revision}, planned quantity ${change.before.quantity} → ${change.after.quantity}, ${change.after.instructions.length} unfinished instruction(s) changed. Prior evidence retained; no production authorization.`, 'Quality reviewer');
+    record(state, order, `QA re-release by ${actor(state).name}. Engineering edit ${change.id} applied; revision ${change.before.revision} → ${change.after.revision}, planned quantity ${change.before.quantity} → ${change.after.quantity}, ${change.after.instructions.length} unfinished instruction(s) changed. Prior evidence retained; no production authorization.`, 'Quality reviewer');
     return { ok: true, message: `Engineering edits applied after QA re-release.${revEntry ? ` Work order revision rolled to ${woRevLabel(revEntry.rev)}.` : ''} The original work-order stage is retained.` };
   }
 
@@ -6762,8 +6762,8 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (evidence.reviewedAt !== null) return fail('This application video has already been marked reviewed.');
     if (evidence.rejectedAt) return fail(`${evidence.id} was rejected (${evidence.rejectReason}). Remove it and attach a new recording.`);
     evidence.reviewedAt = new Date(Math.max(Date.now(), Date.parse(evidence.addedAt))).toISOString();
-    evidence.reviewedBy = profileSnapshot(state.profile);
-    record(state, order, `Video ${evidence.id} on ${opId} marked reviewed by ${state.profile.name}.`, 'Quality reviewer');
+    evidence.reviewedBy = actor(state);
+    record(state, order, `Video ${evidence.id} on ${opId} marked reviewed by ${actor(state).name}.`, 'Quality reviewer');
     return { ok: true, message: 'Video marked reviewed for this record.' };
   }
 
@@ -6780,9 +6780,9 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const text = String(reason ?? '').trim();
     if (!str(text, 300) || text.length < 3) return fail('Enter why the recording is rejected (3 to 300 characters).');
     evidence.rejectedAt = new Date(Math.max(Date.now(), Date.parse(evidence.addedAt))).toISOString();
-    evidence.rejectedBy = profileSnapshot(state.profile);
+    evidence.rejectedBy = actor(state);
     evidence.rejectReason = text;
-    record(state, order, `Video ${evidence.id} on ${opId} rejected by ${state.profile.name}: ${text}`, 'Quality reviewer');
+    record(state, order, `Video ${evidence.id} on ${opId} rejected by ${actor(state).name}: ${text}`, 'Quality reviewer');
     return { ok: true, message: `${evidence.id} rejected. Remove it and attach a replacement recording before buy-off.` };
   }
 
@@ -7528,14 +7528,14 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const p = ensureProjects(state), name = String(input?.name || '').trim(), startDate = String(input?.startDate || ''), dueDate = String(input?.dueDate || ''), lifecycle = String(input?.lifecycle || 'Development'), sensitivity = String(input?.sensitivity || 'None'), parentId = input?.parentId || null;
     if (!str(name, 100) || !dateOnly(startDate) || !dateOnly(dueDate) || dueDate < startDate || !PROJECT_LIFECYCLES.includes(lifecycle) || !PROJECT_SENSITIVITY.includes(sensitivity)) return fail('Enter a project name, valid dates, lifecycle and sensitivity.');
     if (parentId && !p.projects.some(row => row.id === parentId)) return fail('Choose a registered parent project.');
-    const row = { id: nextPlanId(p.projects, 'PRJ'), name, parentId, lifecycle, sensitivity, sensitivityHistory: [], startDate, dueDate, partNumbers: [...new Set((input.partNumbers || []).map(value => String(value).trim()).filter(Boolean))].slice(0, 100), by: { name: state.profile.name, role: state.profile.role, credentialId: state.profile.credentialId }, at: new Date().toISOString() };
+    const row = { id: nextPlanId(p.projects, 'PRJ'), name, parentId, lifecycle, sensitivity, sensitivityHistory: [], startDate, dueDate, partNumbers: [...new Set((input.partNumbers || []).map(value => String(value).trim()).filter(Boolean))].slice(0, 100), by: actor(state), at: new Date().toISOString() };
     p.projects.push(row); return { ok: true, id: row.id, message: `${row.id} added to the project WBS.`, project: row };
   }
   function addProjectObjective(state, input) {
     const d = denied('configure-org', 'add a project objective'); if (d) return d;
     const p = ensureProjects(state), title = String(input?.title || '').trim(), dueDate = String(input?.dueDate || '');
     if (!str(title, 120) || !dateOnly(dueDate)) return fail('Enter an objective and a valid due date.');
-    const row = { id: nextPlanId(p.objectives, 'OBJ'), title, status: 'Proposed', dueDate, by: { name: state.profile.name, role: state.profile.role, credentialId: state.profile.credentialId }, at: new Date().toISOString() };
+    const row = { id: nextPlanId(p.objectives, 'OBJ'), title, status: 'Proposed', dueDate, by: actor(state), at: new Date().toISOString() };
     p.objectives.push(row); return { ok: true, id: row.id, message: `${row.id} objective recorded.`, objective: row };
   }
   function addProjectMilestone(state, input) {
@@ -7544,7 +7544,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (!str(title, 120) || !dateOnly(dueDate) || !projectId && !objectiveId) return fail('Enter a milestone title, due date and project or objective.');
     if (projectId && !p.projects.some(row => row.id === projectId) || objectiveId && !p.objectives.some(row => row.id === objectiveId)) return fail('Choose a registered project and objective.');
     if (workOrderId && !MES.getOrder(state, workOrderId)) return fail('Milestone work order not found.');
-    const row = { id: nextPlanId(p.milestones, 'MIL'), title, projectId, objectiveId, dueDate, status: 'Open', mustStart: input?.mustStart === true, workOrderId, by: { name: state.profile.name, role: state.profile.role, credentialId: state.profile.credentialId }, at: new Date().toISOString() };
+    const row = { id: nextPlanId(p.milestones, 'MIL'), title, projectId, objectiveId, dueDate, status: 'Open', mustStart: input?.mustStart === true, workOrderId, by: actor(state), at: new Date().toISOString() };
     p.milestones.push(row); return { ok: true, id: row.id, message: `${row.id} milestone recorded.`, milestone: row };
   }
   function milestoneRisks(state, date = new Date().toISOString().slice(0, 10)) {
@@ -7560,7 +7560,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const rank = Object.fromEntries(PROJECT_SENSITIVITY.map((value, index) => [value, index]));
     if (rank[level] <= rank[project.sensitivity]) return fail('Project sensitivity overrides only raise the current level.');
     const note = String(reason || '').trim(); if (note.length < 3 || note.length > 300) return fail('Give a reason of 3 to 300 characters for raising project sensitivity.');
-    project.sensitivityHistory ||= []; project.sensitivityHistory.push({ from: project.sensitivity, to: level, reason: note, by: { name: state.profile.name, role: state.profile.role, credentialId: state.profile.credentialId }, at: new Date().toISOString() });
+    project.sensitivityHistory ||= []; project.sensitivityHistory.push({ from: project.sensitivity, to: level, reason: note, by: actor(state), at: new Date().toISOString() });
     project.sensitivity = level;
     return { ok: true, message: `${project.id} sensitivity set to ${level}.`, project };
   }
@@ -7591,7 +7591,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     for (const ref of backlog) { const order = MES.getOrder(state, ref.workOrderId), op = order?.operations.find(item => item.id === ref.operationId); if (!op || op.done || op.workCenterId !== workCenterId) return fail('Every sprint backlog operation must be open and assigned to this work center.'); }
     const estimate = backlog.reduce((sum, ref) => { const order = MES.getOrder(state, ref.workOrderId), op = order.operations.find(item => item.id === ref.operationId); return sum + (Number.isFinite(op.standardHours) ? Math.max(0, op.standardHours * order.quantity - (MES.laborMinutes(op) || 0) / 60) : 0); }, 0);
     if (estimate > capacity.capacityHours) return fail(`Sprint backlog needs ${estimate} hours but only ${capacity.capacityHours} hours are available.`);
-    const row = { id: nextPlanId(p.sprints, 'SPT'), name, workCenterId, startDate, endDate, capacityHours: capacity.capacityHours, backlog, by: { name: state.profile.name, role: state.profile.role, credentialId: state.profile.credentialId }, at: new Date().toISOString() };
+    const row = { id: nextPlanId(p.sprints, 'SPT'), name, workCenterId, startDate, endDate, capacityHours: capacity.capacityHours, backlog, by: actor(state), at: new Date().toISOString() };
     p.sprints.push(row); return { ok: true, id: row.id, message: `${row.id} scheduled within ${capacity.capacityHours} available hours.`, sprint: row, estimateHours: estimate };
   }
   function sprintReport(state, sprintId) {
@@ -7736,7 +7736,9 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   const dateOnly = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && Number.isFinite(Date.parse(v));
   const today = () => new Date().toISOString().slice(0, 10);
   const snapshot = p => ({ name: p.name, role: p.role, credentialId: p.credentialId });
-  const log = (state, po, action, actor) => { po.history = [...po.history, { at: new Date().toISOString(), action, actor: actor || `${state.profile.name} · ${state.profile.credentialId}` }].slice(-100); };
+  // The signed-in account on a shared server, the device profile only when standalone.
+  const who = state => { const a = root && root.skAuth && root.skAuth.actor && root.skAuth.actor(); return a ? { name: a.name, role: a.role, credentialId: a.credentialId } : snapshot(state.profile); };
+  const log = (state, po, action, actor) => { po.history = [...po.history, { at: new Date().toISOString(), action, actor: actor || `${who(state).name} · ${who(state).credentialId}` }].slice(-100); };
   const wiKey = po => `${po.masterWI.id}|${po.masterWI.revision}`;
   const netsuiteRead = partNumber => ({ snapshotAt: NETSUITE_SNAPSHOT, onHand: MES.NETSUITE_STOCK[partNumber] ? MES.NETSUITE_STOCK[partNumber].reduce((n, lot) => n + lot.onHand, 0) : (DEMO_FINISHED_STOCK[partNumber] || 0) });
   const list = state => Array.isArray(state?.plannedOrders) ? state.plannedOrders : [];
@@ -7772,7 +7774,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
       id: `PO-${number}`, masterWI: { id: wi.id, revision: wi.revision, title: wi.title },
       configuration: { partNumber: wi.partNumber, partRevision: wi.partRevision, pedigree: input.pedigree, subcategory: input.subcategory, site: input.site ?? null, aircraft: input.aircraft },
       quantity: input.quantity, needDate: input.needDate, status: 'Planned', workOrder: null, netsuite: netsuiteRead(wi.partNumber),
-      createdAt: new Date().toISOString(), createdBy: actor ? { name: actor, role: 'Flight Plan', credentialId: 'DEMO' } : snapshot(state.profile), history: []
+      createdAt: new Date().toISOString(), createdBy: actor ? { name: actor, role: 'Flight Plan', credentialId: 'DEMO' } : who(state), history: []
     };
     log(state, po, `Planned from ${MES.wiKey(wi)} · ${wi.partNumber} Rev ${wi.partRevision}. NetSuite on hand ${po.netsuite.onHand} at snapshot ${NETSUITE_SNAPSHOT}.`, actor && `${actor} · DEMO`);
     if (!Array.isArray(state.plannedOrders)) state.plannedOrders = [];
@@ -7819,7 +7821,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     order.plannedOrder = { id: po.id, needDate: po.needDate, convertedAt: at };
     MES.addNote(state, order.id, `Converted from Flight Plan ${po.id}: ${wiKey(po)} · ${c.partNumber} Rev ${c.partRevision} · need date ${po.needDate}.`);
     po.status = 'Converted';
-    po.workOrder = { id: order.id, convertedAt: at, convertedBy: snapshot(state.profile) };
+    po.workOrder = { id: order.id, convertedAt: at, convertedBy: who(state) };
     log(state, po, `Converted to ${order.id} from ${wiKey(po)}.`);
     return { ok: true, message: `${po.id} converted to ${order.id}.`, id: order.id };
   }
@@ -10858,8 +10860,23 @@ let serverPush=Promise.resolve();
 let serverWorkspaceReady=false,serverActionQueue=[],serverActionPending=0,serverActionStopped=false,serverSnapshotRetryPending=false,serverReconcilePending=false,serverActionChain=Promise.resolve();
 const serverMutatorName=/^(?:run|add|update|remove|delete|create|complete|close|issue|approve|reject|sign|mark|assign|advance|resolve|disposition|request|release|record|submit|start|stop|review|accept|return|void|reopen|split|move|link|verify|raise|cancel|withdraw|incorporate|peer|roll|set|save|store|open|finish|grant|revoke|capture|attach|detach|quarantine|repair|replace|send|change|configure|stamp|buyoff|log|tick|decide|vote|reset|publish|apply|import|reinspect|firm|convert|carry|propose|escalate|select|clock|aqi|post|acknowledge|edit|revise|ping|push|ical|check|notify|qa|note)/i;
 const serverMutatorExact=new Set(['containNC','effectivenessCheck','pfmeaSafetyBuyoff','pruneExpiredNotices']);
-const serverMutatorExclude=new Set(['repair','signManifest','verifyManifests','verifyAIActionLog','stampCheck','stampRegister','stampRegisterCsv','stampCredential','stampHolderFor','ticketAttachments','openProcessECRs','syncAssignments','buyoffCredential','ensure','seedDemoRecords','icalExport']);
+const serverMutatorExclude=new Set(['repair','signManifest','verifyManifests','verifyAIActionLog','stampCheck','stampRegister','stampRegisterCsv','stampCredential','stampHolderFor','ticketAttachments','openProcessECRs','syncAssignments','buyoffCredential','ensure','seedDemoRecords','icalExport','recordAIAction','logSupport','noteDemoBypassRemoved']);
 const serverCommandStates=new WeakSet([state]);
+// Commands are queued as engine calls succeed, before their change is committed. A refused change must not leave
+// its commands behind for the next flush: commits mark what is queued, refusals drop everything unmarked.
+const serverCommittedCommands=new WeakSet();
+function markServerCommandsCommitted(){serverActionQueue.forEach(command=>serverCommittedCommands.add(command));}
+function dropUncommittedServerCommands(){for(let i=serverActionQueue.length-1;i>=0;i--)if(!serverCommittedCommands.has(serverActionQueue[i]))serverActionQueue.splice(i,1);}
+// With a server configured, the server is the only record store: a record change that cannot be sent to it is
+// refused before it runs, never kept on this device alone. Standalone use (no server) keeps browser storage. The
+// refusal is returned like any engine refusal, so the caller shows it; the sync status keeps reporting the server.
+function serverRecordBlocker(){
+  if(!(window.skServer&&window.skServer.active))return null;
+  if(!window.skServer.token())return 'Sign in to the shared server to record this change. Nothing was saved.';
+  if(!serverWorkspaceReady)return 'The shared workspace has not loaded from the server. Wait for it to load, or reload once the server can be reached. Nothing was saved.';
+  if(serverActionStopped||serverReconcilePending)return 'An earlier change is not confirmed by the server. Reload the shared workspace, then make this change again. Nothing was saved.';
+  return null;
+}
 function trackServerMutations(namespace,engine){
   if(!engine)return;
   Object.keys(engine).forEach(name=>{
@@ -10867,19 +10884,27 @@ function trackServerMutations(namespace,engine){
     if(typeof original!=='function'||(!serverMutatorName.test(name)&&!serverMutatorExact.has(name))||serverMutatorExclude.has(name)||original.__serverCommandWrapped)return;
     const wrapped=function(){
       const args=Array.from(arguments),candidate=args[0];
-      let eligible=!!(window.skServer&&window.skServer.active&&window.skServer.token()&&candidate&&typeof candidate==='object'&&(candidate===state||serverCommandStates.has(candidate)));
-      if(!eligible&&candidate&&typeof candidate==='object'){
-        try{eligible=JSON.stringify(candidate)===JSON.stringify(lastSaved);if(eligible)serverCommandStates.add(candidate);}catch(e){}
+      // A change to the live workspace, or to a proposed copy of it that a caller will commit. The copy is
+      // compared against the live workspace, not the last saved snapshot: render-time ensure passes (for example
+      // FlightManeuver.ensure in render) can move the live workspace ahead of the last saved snapshot, and a
+      // pristine proposed copy must still be recognized so its action is queued instead of dropped by reconcile.
+      let record=!!(candidate&&typeof candidate==='object'&&(candidate===state||serverCommandStates.has(candidate)));
+      if(!record&&candidate&&typeof candidate==='object'){
+        try{record=JSON.stringify(candidate)===JSON.stringify(state);if(record)serverCommandStates.add(candidate);}catch(e){}
       }
-      const outer=serverCommandDepth++===0;
+      const server=!!(window.skServer&&window.skServer.active),outer=serverCommandDepth===0;
+      let actionArgs=null;
+      if(record&&server&&outer){
+        const blocker=serverRecordBlocker();
+        if(blocker)return {ok:false,message:blocker,serverRequired:true};
+        actionArgs=args.slice(1);while(actionArgs.length&&actionArgs[actionArgs.length-1]===undefined)actionArgs.pop();
+        try{actionArgs=JSON.parse(JSON.stringify(actionArgs));}
+        catch(error){return {ok:false,message:'This change cannot be encoded for the shared server. Nothing was saved.',serverRequired:true};}
+      }
+      serverCommandDepth++;
       let result;
       try{result=original.apply(this,args);}finally{serverCommandDepth--;}
-      if(eligible&&outer&&result&&result.ok===true&&!serverActionStopped){
-        let actionArgs=args.slice(1);while(actionArgs.length&&actionArgs[actionArgs.length-1]===undefined)actionArgs.pop();
-        try{actionArgs=JSON.parse(JSON.stringify(actionArgs));serverActionQueue.push({action:namespace+'.'+name,args:actionArgs});}
-        catch(error){setServerSync('error','This change cannot be encoded for the shared server. It remains only on this device.');notify('The server action was not sent because its input could not be encoded.');}
-      }
-      if(eligible&&outer&&result&&result.ok===true&&serverActionStopped){setServerSync('error','A prior server action needs review. Reload the shared workspace before trying this change again.');notify('This change remains on this device because a previous server action needs review. Reload the shared workspace first.');}
+      if(actionArgs&&result&&result.ok===true)serverActionQueue.push({action:namespace+'.'+name,args:actionArgs});
       return result;
     };
     wrapped.__serverCommandWrapped=true;
@@ -10926,9 +10951,9 @@ function flushServerActions(){
 function pushWorkspace(){if(!(window.skServer&&window.skServer.active)||!window.skServer.token())return;if(!serverWorkspaceReady)return;if(serverReconcilePending){setServerSync('conflict','The server response is not confirmed. Check the shared workspace before sending more changes.');return;}if(serverActionQueue.length){flushServerActions();return;}if(serverActionPending){setServerSync('saving','Waiting for server-authorized record changes.');return;}if(serverActionStopped){setServerSync('error','A server action needs review. Reload the shared workspace before making another change.');return;}setServerSync('saving','Saved on this device. Waiting for the server to confirm this change.');const body=structuredClone(state);serverPush=serverPush.catch(()=>{}).then(()=>window.skServer.api('/workspace',{method:'PUT',body:body,headers:serverEtag?{'If-Match':serverEtag}:{}})).then(async r=>{if(r.status===204){serverCommittedJson=JSON.stringify(body);serverEtag=r.etag;window.skServer.etag=r.etag;if(r.archived)dropArchivedLocally(r.archived.split(','));serverSnapshotRetryPending=false;setServerSync('synced','Shared workspace saved on the server.');return;}if(r.status===401){if(window.skServer.ended)window.skServer.ended(r.json);else notify('Your server session ended. Sign in again to continue.');return;}const conflict=r.status===409;serverActionStopped=true;const message=conflict?'The shared workspace changed on another device. The server copy has been reloaded; repeat your change if it is still needed.':`The server refused this change: ${(r.json&&r.json.error)||'status '+r.status}. Unaccepted local edits were discarded.`;await reconcileServerWorkspace(conflict?'conflict':'error',message);}).catch(async error=>{serverReconcilePending=true;serverActionStopped=true;setServerSync('offline','The server could not confirm this write. This device keeps an unconfirmed local copy and will reload the server copy before sending any more changes.');notify('The server could not confirm this change. Do not treat this device copy as shared. '+(error.message||''));});}
 function setServerSync(status,message){if(!window.skServer||!window.skServer.active)return;window.skServer.sync={status,message};let el=document.getElementById('flight-server-sync');if(!el){const anchor=document.getElementById('profile-button');if(!anchor||!anchor.parentNode)return;el=document.createElement('span');el.id='flight-server-sync';el.className='flight-server-sync';el.setAttribute('role','status');el.setAttribute('aria-live','polite');anchor.parentNode.insertBefore(el,anchor);const style=document.createElement('style');style.textContent='.flight-server-sync{display:inline-flex;align-items:center;gap:6px;margin-right:10px;padding:4px 9px;border-radius:999px;background:#e8f3ea;color:#1d5b2e;font:600 12px/18px var(--font,sans-serif);white-space:nowrap}.flight-server-sync::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}.flight-server-sync[data-state=offline],.flight-server-sync[data-state=loading],.flight-server-sync[data-state=saving]{background:#fff4de;color:#7a4b00}.flight-server-sync[data-state=error],.flight-server-sync[data-state=conflict]{background:#fde8e8;color:#8a1c1c}';document.head.appendChild(style);}el.dataset.state=status;el.textContent=status==='synced'?'Server synced':status==='offline'?'Offline copy':status==='conflict'?'Sync conflict':status==='loading'?'Loading server':status==='saving'?'Saving to server':'Sync needs attention';el.title=message;}
 function dropArchivedLocally(ids){const gone=new Set((ids||[]).filter(Boolean));if(!gone.size)return;const strip=s=>{s.orders=(s.orders||[]).filter(o=>!gone.has(o.id));s.activity=(s.activity||[]).filter(a=>!gone.has(a.orderId));};strip(state);strip(lastSaved);try{localStorage.setItem(KEY,JSON.stringify(state));}catch(e){}if(gone.has(selectedId)){selectedId=state.orders[0]?state.orders[0].id:null;if(view==='order')view='orders';}render();notify(gone.size+' closed work order'+(gone.size===1?'':'s')+' moved to the archive.');}
-async function loadServerWorkspace(){if(!(window.skServer&&window.skServer.active)||!window.skServer.token())return;setServerSync('loading','Loading the shared workspace.');try{const r=await window.skServer.api('/workspace');if(r.status===200){const next=MES.upgrade(r.json);if(!next||!MES.validate(next)){storageBlocked=true;setServerSync('error','The server workspace did not pass Flight validation. The stored copy has not been changed.');notify('The shared workspace failed Flight validation. Saving is blocked.');render();return;}state=next;MES.ensureMasterWIs(state);FlightPlan.ensure(state);lastSaved=structuredClone(state);serverCommittedJson=JSON.stringify(state);serverEtag=r.etag;window.skServer.etag=r.etag;serverActionStopped=false;serverActionQueue=[];serverWorkspaceReady=true;storageBlocked=false;try{localStorage.setItem(KEY,JSON.stringify(state));}catch(e){}setServerSync('synced','Shared workspace loaded from the server.');render();showUnconfirmedServerRecovery();return;}if(r.status===404){if(localWorkspaceAtBoot){storageBlocked=true;$('#storage-alert').hidden=false;$('#storage-alert').innerHTML='<strong>Server workspace not initialized.</strong> A browser workspace exists on this device. Review and run the documented migration dry-run before importing it; this copy has not been uploaded or changed.';setServerSync('error','A browser workspace needs an explicit migration before the server can be initialized.');render();return;}setServerSync('synced','Creating the first shared workspace.');serverActionQueue=[];serverWorkspaceReady=true;pushWorkspace();render();return;}if(r.status===401){if(window.skServer.ended)window.skServer.ended(r.json);return;}setServerSync('error',r.json&&r.json.error||'Could not load the shared workspace.');notify('The server did not load the shared workspace. '+(r.json&&r.json.error||''));}catch(error){setServerSync('offline','The server could not be reached. The local copy is available on this device.');notify('The server could not be reached. This device is using its local copy.');}render();}
+async function loadServerWorkspace(){if(!(window.skServer&&window.skServer.active)||!window.skServer.token())return;serverWorkspaceReady=false;setServerSync('loading','Loading the shared workspace.');try{const r=await window.skServer.api('/workspace');if(r.status===200){const next=MES.upgrade(r.json);if(!next||!MES.validate(next)){storageBlocked=true;setServerSync('error','The server workspace did not pass Flight validation. The stored copy has not been changed.');notify('The shared workspace failed Flight validation. Saving is blocked.');render();return;}state=next;MES.ensureMasterWIs(state);FlightPlan.ensure(state);lastSaved=structuredClone(state);serverCommittedJson=JSON.stringify(state);serverEtag=r.etag;window.skServer.etag=r.etag;serverActionStopped=false;serverActionQueue=[];serverWorkspaceReady=true;storageBlocked=false;try{localStorage.setItem(KEY,JSON.stringify(state));}catch(e){}setServerSync('synced','Shared workspace loaded from the server.');if(window.skBindCredential)window.skBindCredential();render();showUnconfirmedServerRecovery();return;}if(r.status===404){if(localWorkspaceAtBoot){storageBlocked=true;$('#storage-alert').hidden=false;$('#storage-alert').innerHTML='<strong>Server workspace not initialized.</strong> A browser workspace exists on this device. Review and run the documented migration dry-run before importing it; this copy has not been uploaded or changed.';setServerSync('error','A browser workspace needs an explicit migration before the server can be initialized.');render();return;}setServerSync('synced','Creating the first shared workspace.');serverActionQueue=[];serverWorkspaceReady=true;pushWorkspace();render();return;}if(r.status===401){if(window.skServer.ended)window.skServer.ended(r.json);return;}setServerSync('error',r.json&&r.json.error||'Could not load the shared workspace.');notify('The server did not load the shared workspace. '+(r.json&&r.json.error||''));}catch(error){setServerSync('offline','The server could not be reached. This device shows its last local copy for reading; changes are refused until the shared workspace loads.');notify('The server could not be reached. Records can be read here, but changes are refused until the shared workspace loads. Reload once the server is back.');}render();}
 window.addEventListener('online',()=>{if(window.skServer&&window.skServer.active){if(!serverWorkspaceReady){loadServerWorkspace();return;}if(serverReconcilePending){serverActionStopped=true;reconcileServerWorkspace('conflict','The server connection returned. The latest shared workspace has been reloaded; review any unconfirmed local changes.');}else if(serverActionQueue.length){serverActionStopped=false;flushServerActions();}else if(serverSnapshotRetryPending)pushWorkspace();}});
-function save(){MES.syncBlockers?.(state);if(!MES.validate(state)){const rep=MES.repair(state);if(!rep.ok){const why=rep.blocker?rep.blocker.detail:'';state=structuredClone(lastSaved);render();notify('Change not saved: it would leave this workspace in an invalid state. '+why);return false;}}try{if(storageBlocked)throw Error('blocked');localStorage.setItem(KEY,JSON.stringify(state));lastSaved=structuredClone(state);pushWorkspace();try{if(window.skMirror)window.skMirror.commit(state);}catch(e){}return true;}catch(error){if(!storageBlocked){storageBlocked=true;$('#storage-alert').hidden=false;$('#storage-alert').textContent='Browser storage is full or unavailable. Free browser storage and reload before making changes.';}state=structuredClone(lastSaved);render();notify('Change not saved. Browser storage is unavailable.');return false;}}
+function save(){MES.syncBlockers?.(state);if(!MES.validate(state)){const rep=MES.repair(state);if(!rep.ok){const why=rep.blocker?rep.blocker.detail:'';dropUncommittedServerCommands();state=structuredClone(lastSaved);render();notify('Change not saved: it would leave this workspace in an invalid state. '+why);return false;}}try{if(storageBlocked)throw Error('blocked');localStorage.setItem(KEY,JSON.stringify(state));lastSaved=structuredClone(state);markServerCommandsCommitted();pushWorkspace();try{if(window.skMirror)window.skMirror.commit(state);}catch(e){}return true;}catch(error){if(!storageBlocked){storageBlocked=true;$('#storage-alert').hidden=false;$('#storage-alert').textContent='Browser storage is full or unavailable. Free browser storage and reload before making changes.';}dropUncommittedServerCommands();state=structuredClone(lastSaved);render();notify('Change not saved. Browser storage is unavailable.');return false;}}
 function paintIcons(root=document){root.querySelectorAll('[data-icon]').forEach(el=>el.innerHTML=icon(el.dataset.icon));}
 function notify(message){clearTimeout(toastTimer);$('#toast p').textContent=message;$('#toast').hidden=false;toastTimer=setTimeout(()=>$('#toast').hidden=true,5500);}
 function order(){return MES.getOrder(state,selectedId)||state.orders[0];}
@@ -11394,9 +11419,9 @@ document.addEventListener('change', event => {
       if ($('.table-wrap')) $('.table-wrap').scrollLeft = scrollLeft;
       document.querySelector(`[data-priority-order="${id}"]`)?.focus({ preventScroll: true });
       notify(result.message);
-    } catch (_) {
+    } catch (error) {
       control.value = previous;
-      notify('Priority was not changed. '+(storageBlocked?'Reload the workspace, then try again.':'Free browser storage, then try again.'));
+      notify(/^Change not saved:/.test(error.message) ? `Priority was not changed. ${error.message}` : 'Priority was not changed. '+(storageBlocked?'Reload the workspace, then try again.':'Free browser storage, then try again.'));
     }
     return;
   }
@@ -11441,7 +11466,7 @@ document.addEventListener('change',event=>{if(event.target.closest('#support-fil
 // Grants come from the account layer; the workspace records them through the engine.
 window.addEventListener('sk-support-access',event=>{try{const d=event.detail||{};const r=MES.recordSupportAccess(state,d);if(r.ok){save();render();}notify(r.message);}catch(e){}});
 // One-time note: an account named demo on this device no longer carries a bypass in this build.
-function noteDemoAccount(){try{const users=window.skAuth?.users?.()||[];const d=users.find(u=>u.username==='demo');if(!d)return;const label=(window.skAuth.ROLES.find(r=>r.key===d.role)||{label:d.role}).label;const r=MES.noteDemoBypassRemoved(state,d.username,label);if(r.ok&&r.noted)save();}catch(e){}}
+function noteDemoAccount(){try{if(window.skServer&&window.skServer.active)return;const users=window.skAuth?.users?.()||[];const d=users.find(u=>u.username==='demo');if(!d)return;const label=(window.skAuth.ROLES.find(r=>r.key===d.role)||{label:d.role}).label;const r=MES.noteDemoBypassRemoved(state,d.username,label);if(r.ok&&r.noted)save();}catch(e){}}
 window.addEventListener('sk-auth',()=>setTimeout(noteDemoAccount,80));
 function renderActivity(){return `<section><div class="page-heading"><div><h1>Activity record</h1></div></div><div class="panel">${state.activity.length?historyList(state.activity):'<div class="empty"><h2>No activity yet</h2><p>Complete an operation to create a local event.</p></div>'}</div></section>`;}
 function openDialog(title,content){cleanupMediaSession();$('#dialog').classList.remove('media-dialog');if($('#dialog').open)$('#dialog').close();$('#dialog-title').textContent=title;$('#dialog-body').innerHTML=content;paintIcons($('#dialog'));$('#dialog').showModal();}
@@ -11466,7 +11491,7 @@ function help(){openDialog('Using Flight System · Flight Control',`<p>Work orde
 function reviewDialog(){const o=order();if(!skCan('approve-wo')){openDialog('QA closure review',`<p>Only a Quality Engineering or QA Manager account can close the quality review. You are signed in as ${esc(skRoleLabel())}.</p><div class="dialog-actions"><button class="btn primary" data-action="close-dialog">OK</button></div>`);return;}const faiBlock=o.fai&&o.fai.required&&!(o.fair&&o.fair.status==='Approved');openDialog('Quality review',`<p><strong>${esc(o.id)}</strong> has ${doneCount(o)} of ${o.operations.length} operations recorded.</p>${faiBlock?`<div class="inline-info warning" role="alert">${icon('alert')}<div><p><strong>Not ready to close: the AS9102 FAIR is ${o.fair?esc(o.fair.status):'not started'}.</strong> This is an FAI order. Skyryse QA ${o.fair?'':'starts the FAIR, '}completes Forms 1 to 3, then verifies and approves it before the order can close.</p><button class="btn primary" type="button" data-action="goto-fair">Go to the FAIR</button></div></div>`:''}<div class="inline-info">${icon('shield')}<p>Real closure requires an authorized quality decision. This action only closes a browser record.</p></div><form id="review-form"><label class="check-label" style="margin-top:18px"><input name="acknowledge" type="checkbox" required><span>I have reviewed the record and understand this is not a real release or signature.</span></label><div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Cancel</button><button class="btn primary" type="submit" ${faiBlock?'disabled title="Approve the FAIR first"':''}>Close work order</button></div></form>`);}
 document.addEventListener('click',e=>{const b=e.target.closest('[data-action="goto-fair"]');if(!b)return;e.preventDefault();e.stopPropagation();if($('#dialog').open)$('#dialog').close();tab='quality';render();setTimeout(()=>{const el=document.getElementById('fair-panel');if(el){el.scrollIntoView({behavior:'smooth',block:'start'});el.classList.add('flash-target');setTimeout(()=>el.classList.remove('flash-target'),1600);}},60);},true);
 function resetDialog(){if($('#dialog').open)$('#dialog').close();openDialog('Reset this application?',`<p>This replaces only this app’s saved work orders, operation notes, team messages, Slack thread links, history, and locally saved recordings. Other browser data is not affected.</p><p>Export any record you want to keep first.</p><div class="dialog-actions"><button class="btn" data-action="close-dialog">Keep my changes</button><button class="btn primary" data-action="confirm-reset">Reset data</button></div>`);}
-function resetWorkspace(){discussionDrafts.clear();slackDrafts.clear();messageTargetDrafts.clear();siteFilter='All';MESMedia.clear().catch(()=>notify('Records reset, but local recordings could not be erased.'));state=FlightPlan.ensure(MES.ensureMasterWIs(MES.seed()));storageBlocked=false;$('#storage-alert').hidden=true;drafts.clear();selectedOp=null;selectedId=null;view='order';tab='operations';lastSaved=structuredClone(state);save();$('#dialog').close();render();notify('Workspace reset.');}
+function resetWorkspace(){if(window.skServer&&window.skServer.active){$('#dialog').close();notify('The shared server workspace cannot be reset from this page. Nothing was changed.');return;}discussionDrafts.clear();slackDrafts.clear();messageTargetDrafts.clear();siteFilter='All';MESMedia.clear().catch(()=>notify('Records reset, but local recordings could not be erased.'));state=FlightPlan.ensure(MES.ensureMasterWIs(MES.seed()));storageBlocked=false;$('#storage-alert').hidden=true;drafts.clear();selectedOp=null;selectedId=null;view='order';tab='operations';lastSaved=structuredClone(state);save();$('#dialog').close();render();notify('Workspace reset.');}
 function syncGroundingBlocks(root=document){root.querySelectorAll('.callout-fieldset').forEach(fs=>{const g=fs.querySelector('[data-grounding]'),cb=fs.querySelector('input[type=checkbox][value=ESD]');if(g&&cb)g.hidden=!cb.checked;const f=fs.querySelector('[data-fod]'),fb=fs.querySelector('input[type=checkbox][value=FOD]');if(f&&fb)f.hidden=!fb.checked;});}
 function pedigreeChips(o){
   const c=o.pedigreeChange; if(!c) return '';
@@ -12064,9 +12089,20 @@ function renderMediaEvidence(o, op) {
 function mediaError(message) { const el = $('#media-error'); if (el) { el.textContent = message; el.focus(); } else notify(message); }
 function mediaStatus(message) { if ($('#media-status')) $('#media-status').textContent = message; }
 function mediaCommit(next) {
-  if (storageBlocked) throw Error('Saved workspace is unavailable or changed in another tab. Reload before making changes; download any unsaved recording first.');
-  try { localStorage.setItem(KEY, JSON.stringify(next)); } catch (_) { throw Error('Changes could not be saved. Free browser storage and retry; download any unsaved recording first.'); }
+  const serverBlocker = serverRecordBlocker();
+  if (serverBlocker) { dropUncommittedServerCommands(); throw Error(serverBlocker); }
+  if (storageBlocked) { dropUncommittedServerCommands(); throw Error('Saved workspace is unavailable or changed in another tab. Reload before making changes; download any unsaved recording first.'); }
+  // Nothing is persisted, pushed or mirrored unless the proposed workspace is valid. A proposed write is refused, never
+  // repaired: repair can set aside whole records, which is for recovering stored data, not for accepting a new change.
+  // Callers pass a clone, so refusing leaves the live workspace exactly as it was.
+  if (!MES.validate(next)) {
+    dropUncommittedServerCommands();
+    const blocker = MES.diagnose?.(next);
+    throw Error(`Change not saved: it would leave this workspace in an invalid state. ${blocker && blocker.detail ? blocker.detail : ''}`.trim());
+  }
+  try { localStorage.setItem(KEY, JSON.stringify(next)); } catch (_) { dropUncommittedServerCommands(); throw Error('Changes could not be saved. Free browser storage and retry; download any unsaved recording first.'); }
   state = next; lastSaved = structuredClone(next);
+  markServerCommandsCommitted();
   pushWorkspace();
   // The mirror only ever sees a committed, valid workspace.
   try { if (window.skMirror && window.skMirror.enabled && MES.validate(next)) window.skMirror.commit(next); } catch (e) { /* the mirror never blocks a write */ }
@@ -12287,7 +12323,7 @@ document.addEventListener('click', async event => {
   }
   if (action === 'confirm-remove-media') {
     mediaLock(true);
-    try { const reason = document.getElementById('remove-media-reason')?.value || ''; const next = structuredClone(state), result = MES.removeEvidence(next, selectedId, b.dataset.op, b.dataset.evidence, reason); if (!result.ok) { const err = document.getElementById('remove-media-error'); if (err) err.textContent = result.message; throw Error(result.message); } mediaCommit(next); mediaLock(false); $('#dialog').close(); render(); notify(result.message); } catch (error) { mediaLock(false); if (!document.getElementById('remove-media-error')) notify(error.message); }
+    try { const reason = document.getElementById('remove-media-reason')?.value || ''; const next = structuredClone(state), result = MES.removeEvidence(next, selectedId, b.dataset.op, b.dataset.evidence, reason); if (!result.ok) { const err = document.getElementById('remove-media-error'); if (err) err.textContent = result.message; throw Error(result.message); } mediaCommit(next); mediaLock(false); $('#dialog').close(); render(); notify(result.message); } catch (error) { mediaLock(false); const err = document.getElementById('remove-media-error'); if (err) err.textContent = error.message; else notify(error.message); }
   }
 });
 document.addEventListener('change', event => { if (event.target.id === 'evidence-file') uploadRecording(event.target); });
@@ -12344,7 +12380,7 @@ function commitDiscussion(change) {
   const next = structuredClone(state), result = change(next);
   if (!result.ok) throw Error(result.message);
   // Reuse the evidence flow's atomic storage commit: retain the draft if saving fails.
-  try { mediaCommit(next); } catch (_) { throw Error('Your change could not be saved. Copy your draft and free browser storage before retrying.'); }
+  try { mediaCommit(next); } catch (error) { throw Error(/^Change not saved:/.test(error.message) ? `${error.message} Copy your draft before retrying.` : 'Your change could not be saved. Copy your draft and free browser storage before retrying.'); }
   return result;
 }
 
@@ -12357,11 +12393,14 @@ function printTraveler(orderId, silent) {
   const o = MES.getOrder(state, orderId); if (!o) return;
   const serials = MES.orderSerials(state, o).map(e => e.serial);
   const html = markDocument(MESPrint.traveler(o, { serials, printedAt: new Date().toISOString(), printedBy: (window.skAuth && skAuth.actor && skAuth.actor() ? skAuth.actor().name : state.profile.name) }));
+  // The print is recorded in the order history first: when the server cannot take that record, nothing is printed.
+  let printLog = null;
+  try { printLog = MES.logTravelerPrint ? MES.logTravelerPrint(state, o.id) : null; } catch (e) {}
+  if (printLog && printLog.ok === false && printLog.serverRequired) { notify(printLog.message); return; }
+  if (printLog && printLog.ok && !save()) return;
   const w = window.open('', '_blank');
   if (w) { w.opener = null; w.document.open(); w.document.write(html); w.document.close(); w.document.querySelector('.print-action')?.addEventListener('click', () => { w.focus(); w.print(); }); }
   else { const blob = new Blob([html], { type: 'text/html' }); const u = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = u; a.download = `traveler-${o.id}.html`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 2000); }
-  MES.addNote ? null : null;
-  try { const r = MES.logTravelerPrint ? MES.logTravelerPrint(state, o.id) : null; if (r) save(); } catch (e) {}
   if (!silent) notify(w ? 'Traveler opened. Use Print in the preview.' : 'Pop-ups are blocked, so the traveler was downloaded as a file to print.');
 }
 // Prompt the traveler when an order is issued to kitting (Draft to Kitting), however it got there.
@@ -13388,6 +13427,8 @@ window.SK_INTEGRATIONS = window.SK_INTEGRATIONS || {
       if (pick) { var r = window.MES.selectProfile(state, pick.id); if (r.ok && typeof save === 'function') save(); }
     } catch (e) { /* the stamp rules still report anything wrong at buy-off */ }
   }
+  // The shared workspace load calls this again once it succeeds: binding is refused while the workspace loads.
+  window.skBindCredential = bindCredential;
   window.addEventListener('sk-auth', function () { setTimeout(function () { bindCredential(); if (typeof render === 'function') render(); }, 50); });
   window.addEventListener('sk-role-change', function (event) {
     var dialog=document.getElementById('dialog'),open=dialog&&dialog.open&&document.getElementById('profile-form');
