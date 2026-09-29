@@ -395,4 +395,11 @@ check('calibrationCurrentIds holds exactly the current entry for every logged ta
 check('calibrationCurrentIds is read-only and not remotely callable', host.resolveAction('MES.calibrationCurrentIds') === null);
 check('the log views take the current entries from the engine, not an inline supersede rule', /MES\.calibrationCurrentIds\(state\)/.test(pageSource) && !/calSuperseded/.test(pageSource) && /MES\.calibrationCurrentIds\(state\)/.test(readFileSync(new URL('../src/react/flight-ui.jsx', import.meta.url), 'utf8')));
 
+// #35 review (Codex 4134256601): the torque answer is required on load too, not only in recordCalibration, so an
+// imported log-only entry without it cannot be read as a non-torque tool. Seeded tags may omit it.
+const noFlag = structuredClone(state), cwRow = MES.calibrationStatus(noFlag, 'NT-TOOL');
+noFlag.calibrationLog.push(host.withAccount(qa, () => { const e = { ...cwRow, id: 'CALLOG-09994', tag: 'CW-IMPORT', description: 'CLICK WRENCH', note: '', recordedAt: new Date().toISOString() }; delete e.supersedes; delete e.torque; delete e.calibrationSignature; e.calibrationSignature = { manifest: MES.signManifest(noFlag, 'Calibration recorded', calSubject(e), e.recordedAt) }; return e; }, noFlag));
+check('an imported log-only entry without a torque answer fails validation and diagnose names it', !MES.validate(noFlag) && MES.diagnose(noFlag)?.where === 'CALLOG-09994' && /torque/.test(MES.diagnose(noFlag)?.detail || ''));
+check('seeded tags recorded without a torque answer still validate', state.calibrationLog.some(e => MES.CAL_TOOLS.some(t => t.tag === e.tag) && e.torque === undefined) && MES.validate(state));
+
 console.log(`calibration: ${checks} checks, all passed`);

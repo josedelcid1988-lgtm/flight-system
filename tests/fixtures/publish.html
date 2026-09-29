@@ -2581,6 +2581,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
         previous = e.id;
       }
       const cur = current.get(e.tag);
+      if (e.torque === undefined && !CAL_TOOLS.some(t => t.tag.toUpperCase() === e.tag)) return { id: e.id, detail: `Calibration entry ${e.id} does not say whether ${e.tag} is a torque tool. A tool that is not in the shipped snapshot needs that answer.` };
       if (cur && cur.torque === true && e.torque !== true) return { id: e.id, detail: `Calibration entry ${e.id} removes the torque classification from ${e.tag}, which ${cur.id} records as a torque tool.` };
       if (e.supersedes !== undefined) {
         if (!cur || cur.id !== e.supersedes) return { id: e.id, detail: `Calibration entry ${e.id} corrects ${e.supersedes}, which is not the current entry for ${e.tag}.` };
