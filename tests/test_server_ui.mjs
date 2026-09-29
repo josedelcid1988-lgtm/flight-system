@@ -115,10 +115,11 @@ try {
   assert.equal(aqiGaps.length, 0, `the AQI package fixture has no open checklist gaps: ${JSON.stringify(aqiGaps)}`);
   const aqiStamp = fixture.stamps.find(stamp => stamp.buyoffType === '8130-9 Authorized Inspector');
   assert.ok(aqiStamp, 'the fixture has an AQI stamp record');
-  Object.assign(aqiStamp, { account: 'aqi-inspector', name: 'AQI Test Inspector', status: 'Active', expires: '2027-12-31' });
+  const credentialExpires = new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 10);
+  Object.assign(aqiStamp, { account: 'aqi-inspector', name: 'AQI Test Inspector', status: 'Active', expires: credentialExpires });
   const pinResult = server.host.withAccount(server.store.account('server-ui-admin'), () => server.host.MES.setStampPin(fixture, aqiStamp.id, '2468', '2468'), fixture);
   assert.equal(pinResult.ok, true, 'the QA manager sets a valid test PIN using the production PIN hashing path');
-  const trainingResult = server.host.withAccount(server.store.account('server-ui-qa'), () => server.host.MES.recordTraining(fixture, { account: 'aqi-inspector', code: 'ESD', expires: '2027-12-31', note: 'Server UI authorization fixture' }), fixture);
+  const trainingResult = server.host.withAccount(server.store.account('server-ui-qa'), () => server.host.MES.recordTraining(fixture, { account: 'aqi-inspector', code: 'ESD', expires: credentialExpires, note: 'Server UI authorization fixture' }), fixture);
   assert.equal(trainingResult.ok, true, 'the QA manager records current training for the AQI test inspector');
   const adminAccount = server.store.account('server-ui-admin');
   const inspectorAccount = { ...adminAccount, username: 'aqi-inspector', displayName: 'AQI Test Inspector', role: 'qe', roles: ['qe'], extraRoles: [], roleTraining: {}, grants: {}, grantHistory: [], supportAccess: false, createdBy: 'server-ui-admin' };

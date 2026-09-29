@@ -116,10 +116,15 @@ const unit = host.MES.EQUIPMENT_UNITS.find(item => item.workCenterId === 'NASH-P
 const capacityBeforeService = host.MES.workCenterCapacity(state, unit.workCenterId, date);
 const equipmentArea = host.MES.addEquipmentArea(state, { name: 'Integration bay', site: 'NASH' });
 assert.equal(equipmentArea.ok, true, 'organization setup can add a site-scoped equipment area');
-// Seed tools carry real calibration due dates, so pick one that is usable today; a lapsed tool would make the refusal checks below pass for the wrong reason.
-const usableTool = () => host.MES.CAL_TOOLS.find(tool => host.MES.toolCheck(tool.tag, new Date().toISOString(), state).ok);
-const linkedTool = usableTool();
-assert.ok(linkedTool, 'a seed calibrated tool is in calibration today');
+// Seed tools carry real calibration due dates that lapse. Record a current calibration for one through the real write path,
+// so the tool is in calibration whatever the date and the refusal checks below test maintenance, not expiry.
+const dayOffset = days => new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
+const seedTool = host.MES.CAL_TOOLS.find(tool => !host.MES.isTorqueTool(tool));
+const calibrationRecorder = { username: 'cal-recorder', displayName: 'Calibration Recorder', role: 'qm', roles: ['qm'] };
+const currentCalibration = host.withAccount(calibrationRecorder, () => host.MES.recordCalibration(state, { tag: seedTool.tag, description: seedTool.description, serial: seedTool.serial, calibratedAt: dayOffset(-1), expires: dayOffset(365), status: 'In Calibration', location: seedTool.location, note: 'Test-owned current calibration' }), state);
+assert.equal(currentCalibration.ok, true, currentCalibration.message);
+const linkedTool = seedTool;
+assert.equal(host.MES.toolCheck(linkedTool.tag, new Date().toISOString(), state).ok, true, 'the tool is in calibration before any maintenance is opened');
 const customUnit = host.MES.addEquipmentUnit(state, { name: 'Bench 4', workCenterId: unit.workCenterId, areaId: equipmentArea.area.id, toolTag: linkedTool?.tag });
 assert.equal(customUnit.ok, true, 'organization setup can add a work unit and link its calibrated tool');
 assert.equal(host.MES.workCenterCapacity(state, unit.workCenterId, date).availableHours, capacityBeforeService.availableHours * 2, 'an additional unit doubles the work center capacity');
@@ -140,8 +145,8 @@ assert.equal(host.MES.closeMaintenance(state, maintenance.id, 'Service inspected
 state.profile = { ...savedProfile, name: 'Second Verifier', credentialId: 'SECOND-VERIFIER' };
 assert.equal(host.MES.closeMaintenance(state, maintenance.id, 'Service inspected and accepted').ok, true, 'a second credential can verify the maintenance result and return the unit to service');
 state.profile = savedProfile;
-const calibratedTool = usableTool();
-assert.ok(calibratedTool, 'a seed calibrated tool is in calibration today');
+const calibratedTool = seedTool;
+assert.equal(host.MES.toolCheck(calibratedTool.tag, new Date().toISOString(), state).ok, true, 'the tool is back in calibration after its work unit was returned to service');
 if (calibratedTool) {
   const toolService = host.MES.recordMaintenance(state, { assetTag: calibratedTool.tag, type: 'Calibration', description: 'Calibration inspection required' });
   assert.equal(toolService.ok, true, 'calibrated tools can be placed under maintenance control');
