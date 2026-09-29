@@ -1,4 +1,4 @@
-# JINX-REVIEW.md (PR #35, head b88be197, updated 2026-09-29T14:05Z; Jinx review 5353568768 plus cross-review of the 5 new Codex comments)
+# JINX-REVIEW.md (PR #35, head 7b56961d, updated 2026-09-29T14:22Z; Jinx review 5353924076 plus cross-review of the 5 new Codex replies)
 
 ## Owner direction 2026-09-28 (evening): record-coverage fixes before Oct 7 handoff (read first)
 
@@ -16,39 +16,43 @@ Owner direction 2026-09-29 (option 1, relayed on the PR): the ~15 calibration-lo
 
 Fetch with `git fetch origin jinx/review-notes`, read this file, apply fixes on the PR branch (`jinx/calibration-write-path`), push. Never commit to `jinx/review-notes`. This file is replaced after every Jinx review.
 
-## Cross-review update 2026-09-29T14:05Z (5 new Codex comments on this exact head, all evaluated by Jinx)
+## Cross-review update 2026-09-29T14:20Z (5 new Codex inline replies on this head, all evaluated by Jinx)
 
-Five Codex inline comments landed 13:51:51Z, after review 5353568768. Verdicts:
+- 4134529332 (reply to B1 finding): "Fixed in 7b56961" CONFIRMED correct. Jinx verified the fix below.
+- 4134529968 (reply to #112): "Not changed in this push; I've asked for a scope decision. The finding is accurate." Correct: calibrationManifestValid binds signer identity but not signer role (index.html:2542). Stays filed as #112 (P2).
+- 4134530675 (reply to B2): "Not changed in this push; I've asked for a scope decision. The finding is accurate." Correct: nothing checks that a buy-off's calibrationEntry still resolves to a log row. B2 is still open and needs an owner scope decision (Jose).
+- 4134531042 (reply to #111): "Not changed in this push. This is a P2 for Jinx to file." Correct; already filed as #111.
+- 4134531479 (reply to #113): "Not changed in this push. This is a P2 for Jinx to file." Correct; already filed as #113.
 
-**B1 (P1, pre-merge): torque classification gap on live-only entries.** Codex 4134256601, CONFIRMED. `calibrationEntryValid` (index.html:2546) permits `torque` to be absent, but the record-time mutator `calibrationTorque` (index.html:2623) forces every new tag to declare torque Yes or No. The validator is looser than the mutator: a crafted or imported log-only entry without the flag and without TORQUE in the description passes `MES.validate` and `verifyManifests` (manifest hashes are unkeyed SHA-256, index.html:3095), and `resolveToolCheck` (index.html:2513) plus `isTorqueTool` (index.html:2709) then classify it as non-torque, so the buy-off `missingTorque` gate (index.html:6611) is skipped. A torque tool can be bought off with no torque value recorded. Fix: in `calibrationEntryValid`, require `torque` to be boolean whenever the tag is not in `CAL_TOOLS`, mirroring the mutator rule. Add a regression test (log-only entry without the flag must be refused by validate).
+## B1 status: FIXED on this head (verified by Jinx, review 5353924076)
 
-**B2 (P1, pre-merge): dangling calibrationEntry references are never validated.** Codex 4134256621, CONFIRMED. `qualityRecordsValid` (index.html:3100) checks each log entry but nothing checks that a buy-off's stored `calibrationEntry` id resolves to a signed log row; an empty log is valid. If the row goes missing (import path or manual edit), signed operation and ATP buy-offs citing it still pass validate and verifyManifests: calibration evidence disappears while acceptance records stay valid. Fix: at buy-off validation, require every stored `calibrationEntry` reference to resolve to a matching signed log row. Add a regression test.
+Commit 7b56961d ("fix: require the torque answer on load for log-only calibration tags") implements the fix exactly as specified: the log-validation walk now refuses any entry with `torque === undefined` when the tag is not in the shipped CAL_TOOLS snapshot (tag matched case-insensitively). The refusal names the entry id and tag and explains the answer is required. It runs at load validation, not just in recordCalibration, closing the crafted or imported log-only hole. The seeded-tag exemption is narrow: only tags present in CAL_TOOLS may omit torque, and the existing guard still refuses any entry that removes a torque classification a current entry records. Regression test added in tests/test_calibration.mjs: an imported log-only entry without the torque answer (CW-IMPORT) fails validate and diagnose names CALLOG-09994 with a torque detail; seeded tags recorded without a torque answer still validate. Push delta is only this change plus generated-file mirrors (demo.html, 4 fixtures) and the test; server/ untouched.
 
-**P2s, all confirmed and filed (non-blocking, fix on this branch or in cleanup):**
-- #111: trace search matches buy-off tools by prefix (Codex 4134256612, index.html:5098). Searching `CAL-1` false-matches operations that used only `CAL-10`. Fix: compare normalized tags for equality, like the testAssets and torque branches on the same line. Correction to the earlier review note: this asymmetry is NOT harmless.
-- #112: calibration entry signer role never validated on load (Codex 4134256633, index.html:2542). The manifest carries `signer.role` (index.html:2821) but `calibrationManifestValid` only binds name and credentialId. Cheap hardening: require the manifest signer role to hold `configure-qms` authority. (Codex badge P1 is generous: natural creation always goes through the gated mutators, so exploitation needs manual crafting; filed as P2.)
-- #113: the 5,000-entry limit tells the operator to archive, but no archive path exists (Codex 4134256644, index.html:2639, 2653; same dead instruction at 2610). Implement an archive mechanism that preserves referenced signed history, or define the real capacity strategy.
+## B2 status: still OPEN, awaiting owner scope decision
 
-## Current status (Jinx review 5353568768 on head b88be197, plus the cross-review above)
+Codex 4134256621 (P1 per the 2026-09-29 decision), CONFIRMED still present: `qualityRecordsValid` (index.html:3100) checks each log entry but nothing checks that a buy-off's stored `calibrationEntry` id resolves to a signed log row; an empty log is valid. If the row goes missing (import path or manual edit), signed operation and ATP buy-offs citing it still pass validate and verifyManifests: calibration evidence disappears while acceptance records stay valid. Codex's inline reply states a scope decision was asked of the owner (Jose). Fix when decided: at buy-off validation, require every stored `calibrationEntry` reference to resolve to a matching signed log row, plus a regression test.
 
-Final approval is WITHHELD for three reasons: (1) the GitHub 'suites' check is still in_progress on this exact head; (2) B1 must be fixed on the branch; (3) B2 must be fixed on the branch. Eyes reaction is up, no thumbs-up. All 20 calibration-log issues in the PR body (#38, #39, #40, #41, #47, #48, #49, #53, #54, #56, #57, #58, #59, #64, #65, #66, #67, #106, #107, #108) remain verified fixed on this head, each with a regression check in tests/test_calibration.mjs.
+## Current status (Jinx review 5353924076 on head 7b56961d, plus the cross-review above)
+
+Final approval is WITHHELD for three reasons: (1) the GitHub 'suites' check is in_progress on this exact head; (2) B2 is open and needs an owner scope decision (Codex asked Jose directly); (3) the do-not-merge checklist below. Eyes reaction is up, no thumbs-up. All 20 calibration-log issues in the PR body remain verified fixed on this head, each with a regression check in tests/test_calibration.mjs, and B1 (the torque live-only gap) is now fixed with its own regression test.
 
 ## Do-not-merge checklist
 
-- [ ] Fix B1 (require boolean torque for non-seed tags in calibrationEntryValid) with regression test.
-- [ ] Fix B2 (calibrationEntry references must resolve to a signed log row) with regression test.
-- [ ] CI suites GREEN on the exact head b88be197 (in_progress at last check 14:00Z).
+- [x] Fix B1 (require boolean torque for non-seed tags at load validation) with regression test. Done in 7b56961d, verified by Jinx.
+- [ ] Owner scope decision on B2 (dangling calibrationEntry references). Codex asked Jose; no decision recorded yet.
+- [ ] CI suites GREEN on the exact head 7b56961d (in_progress at last check 14:20Z).
 - [ ] Jinx Final approval on the exact head (not yet posted).
 - [ ] PR body: add `Closes #110` (per-row index rebuild, fixed on branch by calibrationCurrentIds but not listed), plus `Closes #111 #112 #113` if fixed on the branch.
 - [ ] When green and approved, Claudia merges through the PR button.
 
-## Verified this head (Jinx review 5353568768)
+## Verified this head (Jinx review 5353924076)
 
-- Every one of the 20 issues was checked against the code at b88be197 and the regression tests: tag regex accepts 2 to 40 chars (#38); updateCalibration enforces the 5,000-entry cap (#39); future calibration dates are refused (#40); one engine rule (calibrationCurrentIds) decides current entries in both views (#41); updateCalibration applies a patched calibratedAt (#47); step tool renderer and torque dropdown come from calibratedToolChecks (#48); diagnose has a calibrationLog branch (#49); atpAssetBlock and buy-off datalists suggest from calibratedToolChecks (#53, #59, #65); traceSearch checks the log before the seed (#54); buy-off and ATP lists record the checked calibrationEntry (#56); recordMaintenance accepts seed plus log tools (#57); renderStepTorque uses the shared check set, no per-tag rescan (#58); retirement is the removal path, tested, and the form documents it (#64); verifyManifests treats an AI draft body manifest key as payload (#66); tests run at a fixed reference time (#67); nextCalibrationId returns null past CALLOG-99999 (#106); #107 and #108 as above.
-- Security pass on the new delta: calibrationEntryValid rejects any supersedes that is not undefined or a CALLOG id, and recordCalibration never sets supersedes, so the meaning binding cannot be spoofed. The manifest subject already hashes supersedes; the meaning check is defense in depth. calibrationCurrentIds is read-only and matches no server mutator prefix (the test asserts host.resolveAction returns null). toolIn handles non-string asset values safely.
-- Waste pass: calibrationCurrentIds and calibrationStatus share calibrationIndex as the single source of current-entry truth.
-- Not independently verified: the relay comment's local verification claims (76/76 suites, dry-run record, generator checks, test count). The GitHub 'suites' run is the authority and it is still in_progress.
+- B1 fix verified: load-time torque-answer requirement for non-seed tags, seeded-tag exemption, seeded classification-removal guard intact, CW-IMPORT regression test and seeded-validation test.
+- All 20 issues in the PR body (#38, #39, #40, #41, #47, #48, #49, #53, #54, #56, #57, #58, #59, #64, #65, #66, #67, #106, #107, #108) were previously checked against the code at b88be197 and the regression tests; this push changes none of that code. Spot-check: none of those code regions are in this push's diff.
+- Security pass on the new delta: the new refusal rule only adds a stricter refusal in the validation walk; it widens no input path, introduces no new remote action, and touches no auth or upload handling.
+- Waste pass: the new rule reuses the existing CAL_TOOLS snapshot and the same tag-normalization convention as neighboring guards; no parallel mechanism.
+- Not independently verified: the suite was not executed by Jinx. The GitHub 'suites' run is the authority and it is in_progress.
 
 ## Open issue counts
 
-P2 open: 28 (was 25; +3 this run: #111, #112, #113). P3 open: 7 (unchanged). The 20 calibration-log issues close on merge.
+P2 open: 28 (unchanged: #38, #39, #40, #47, #48, #49, #53, #54, #56, #57, #64, #66, #67, #94, #97, #98, #99, #100, #101, #102, #105, #106, #107, #108, #110, #111, #112, #113). P3 open: 7 (unchanged: #41, #58, #59, #65, #95, #103, #104). The 20 calibration-log issues close on merge.
