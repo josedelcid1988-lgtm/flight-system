@@ -199,4 +199,20 @@ check('searching a seed tool tag still finds its operations', traceSeed.kind ===
 const traceCorrected = MES.traceSearch(traceState, 'SUG-001');
 check('a corrected tool shows its current log values in the search result', traceCorrected.kind === 'tool' && traceCorrected.tool.description === 'THREAD GAGE' && traceCorrected.tool.expires === '2027-06-30');
 check('an unknown tag is not treated as a tool', MES.traceSearch(traceState, 'NO-SUCH-TOOL').kind !== 'tool');
+// #56: a buy-off and an ATP asset list record which calibration entry was checked and where the tool
+// record came from, instead of citing the shipped snapshot for a live-log tool.
+check('toolUseRecords is exported and not remotely callable', typeof MES.toolUseRecords === 'function' && host.resolveAction('MES.toolUseRecords') === null);
+const liveCheck = MES.toolCheck('B2-TOOL', now, state), seedCheck = MES.toolCheck('NONE-175', now, state);
+const liveEntryId = MES.calibrationStatus(state, 'B2-TOOL').id;
+const mixed = MES.toolUseRecords([liveCheck, seedCheck], { 'NONE-175': { value: '25', unit: 'in-lb' } });
+const liveUse = mixed.tools.find(t => t.tag === 'B2-TOOL'), seedUse = mixed.tools.find(t => t.tag === 'NONE-175');
+check('a live-log tool on a buy-off carries its CALLOG entry id and the calibration log as source', liveCheck.ok && liveUse.calibrationEntry === liveEntryId && liveUse.source === 'Calibration log');
+check('a seed tool on a buy-off cites the shipped snapshot and no entry id', seedUse.calibrationEntry === undefined && seedUse.source.includes(MES.CAL_SNAPSHOT) && seedUse.torque.value === 25 && seedUse.torque.unit === 'in-lb');
+check('the buy-off tool log label names both sources when both were used', /Calibration log/.test(mixed.toolLog) && mixed.toolLog.includes(MES.CAL_SNAPSHOT));
+check('a seed-only buy-off keeps the snapshot label', MES.toolUseRecords([seedCheck], { 'NONE-175': { value: '25', unit: 'in-lb' } }).toolLog === MES.CAL_SNAPSHOT);
+check('a log-only buy-off is labeled the calibration log', MES.toolUseRecords([liveCheck], {}).toolLog === 'Calibration log');
+const pageSource = pageSources[0][1];
+check('completeOperation records its tools through toolUseRecords', /const toolUse = toolUseRecords\(toolChecks, execution\.torque\)/.test(pageSource) && /tools: toolUse\.tools, toolLog: toolUse\.toolLog/.test(pageSource));
+const atpLive = MES.atpAssets([{ asset: 'B2-TOOL' }, { asset: 'NONE-175' }], now, state);
+check('an ATP asset from the calibration log carries its CALLOG entry id', atpLive.ok && atpLive.list[0].calibrationEntry === liveEntryId && atpLive.list[1].calibrationEntry === undefined);
 console.log(`calibration: ${checks} checks, all passed`);
