@@ -10,7 +10,7 @@
 //
 // Endpoints (JSON, versioned):
 //   POST /api/v1/writes                 append a batch of records; idempotent on clientWriteId
-//   GET  /api/v1/health                 liveness, row counts, last backup
+//   GET  /api/v1/health                 liveness; with the token, row counts and last backup
 //   GET  /api/v1/verify                 walk the hash chain; report the first break
 //   GET  /api/v1/export?format=json|csv full retention export
 //   GET  /api/v1/records?entity=&id=    every record for one entity, oldest first
@@ -42,8 +42,12 @@ export function settings(argv = process.argv.slice(2), env = process.env) {
     backupDir: path.resolve(arg('backup-dir') ?? env.FS_MIRROR_BACKUP_DIR ?? path.join(HERE, 'backups')),
     backupEveryMinutes: num(arg('backup-every-minutes') ?? env.FS_MIRROR_BACKUP_EVERY_MINUTES, 1440),
     backupKeepDays: num(arg('backup-keep-days') ?? env.FS_MIRROR_BACKUP_KEEP_DAYS, 30),
+    // Fail closed: with no token the mirror does not start, unless --insecure-no-token (FS_MIRROR_INSECURE_NO_TOKEN=1)
+    // is given for a machine nobody else can reach. With no allowed origin, no CORS header is sent, so no other
+    // website can call it from a browser; set it to the address the app is served from.
     token: arg('token') ?? env.FS_MIRROR_TOKEN ?? '',
-    allowOrigin: arg('allow-origin') ?? env.FS_MIRROR_ALLOW_ORIGIN ?? '*',
+    allowNoToken: argv.includes('--insecure-no-token') || env.FS_MIRROR_INSECURE_NO_TOKEN === '1',
+    allowOrigin: arg('allow-origin') ?? env.FS_MIRROR_ALLOW_ORIGIN ?? '',
     maxBodyBytes: num(arg('max-body-bytes') ?? env.FS_MIRROR_MAX_BODY_BYTES, 32 * 1024 * 1024),
     backupNow: argv.includes('--backup-now'),
   };
@@ -177,10 +181,13 @@ export function pruneBackups(dir, keepDays, now = new Date()) {
 // ---- HTTP ------------------------------------------------------------------------------------------
 export function createMirror(options = {}) {
   const cfg = { ...settings([], {}), ...options };
+  if (!cfg.token && !cfg.allowNoToken) throw new Error('The mirror needs a token before it starts: set FS_MIRROR_TOKEN (or --token) and the same value in SK_MIRROR.token. For a machine nobody else can reach, --insecure-no-token runs it open.');
   const db = openDatabase(cfg.dbPath);
+  const authorized = req => !cfg.token || req.headers.authorization === `Bearer ${cfg.token}`;
   let lastBackup = null;
   const send = (res, status, body, type = 'application/json') => {
-    res.writeHead(status, { 'content-type': type === 'application/json' ? 'application/json; charset=utf-8' : type, 'access-control-allow-origin': cfg.allowOrigin, 'access-control-allow-headers': 'content-type, authorization', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'cache-control': 'no-store' });
+    const cors = cfg.allowOrigin ? { 'access-control-allow-origin': cfg.allowOrigin, 'access-control-allow-headers': 'content-type, authorization', 'access-control-allow-methods': 'GET, POST, OPTIONS', vary: 'Origin' } : {};
+    res.writeHead(status, { 'content-type': type === 'application/json' ? 'application/json; charset=utf-8' : type, ...cors, 'cache-control': 'no-store' });
     res.end(type === 'application/json' ? JSON.stringify(body) : body);
   };
   const fail = (res, status, code, message) => send(res, status, { ok: false, error: { code, message } });
@@ -194,7 +201,7 @@ export function createMirror(options = {}) {
     try {
       const url = new URL(req.url, 'http://mirror');
       if (req.method === 'OPTIONS') return send(res, 204, {});
-      if (cfg.token && url.pathname !== `/api/${API_VERSION}/health` && req.headers.authorization !== `Bearer ${cfg.token}`) return fail(res, 401, 'unauthorized', 'Send the mirror token as Authorization: Bearer <token>.');
+      if (url.pathname !== `/api/${API_VERSION}/health` && !authorized(req)) return fail(res, 401, 'unauthorized', 'Send the mirror token as Authorization: Bearer <token>.');
       if (req.method === 'POST' && url.pathname === `/api/${API_VERSION}/writes`) {
         let body; try { body = JSON.parse(await readBody(req)); } catch (e) { return e.status === 413 ? fail(res, 413, 'too_large', `Request body over ${cfg.maxBodyBytes} bytes.`) : fail(res, 400, 'bad_request', 'Body is not valid JSON.'); }
         const r = appendRecords(db, body && body.clientId, body && body.records);
@@ -202,6 +209,8 @@ export function createMirror(options = {}) {
       }
       if (req.method !== 'GET') return fail(res, 405, 'method_not_allowed', 'Use GET, or POST for /api/v1/writes.');
       if (url.pathname === `/api/${API_VERSION}/health`) {
+        // Without the token, liveness only: the counts, write times and backup location are for the operator.
+        if (!authorized(req)) return send(res, 200, { ok: true, api: API_VERSION });
         const c = db.prepare('SELECT COUNT(*) n, MAX(server_ts) last FROM records').get();
         const m = db.prepare('SELECT COUNT(*) n FROM signature_manifests').get();
         return send(res, 200, { ok: true, api: API_VERSION, records: Number(c.n), manifests: Number(m.n), lastWriteAt: c.last || null, backup: { dir: cfg.backupDir, lastFile: lastBackup, everyMinutes: cfg.backupEveryMinutes, keepDays: cfg.backupKeepDays } });
@@ -245,9 +254,9 @@ async function main() {
   }
   const mirror = createMirror(cfg);
   const a = await mirror.listen();
-  console.log(`Flight System mirror listening on http://${a.address}:${a.port} (database ${cfg.dbPath}; backups to ${cfg.backupDir} every ${cfg.backupEveryMinutes} minutes, ${cfg.backupKeepDays} days kept${cfg.token ? '; token required' : ''})`);
+  console.log(`Flight System mirror listening on http://${a.address}:${a.port} (database ${cfg.dbPath}; backups to ${cfg.backupDir} every ${cfg.backupEveryMinutes} minutes, ${cfg.backupKeepDays} days kept${cfg.token ? '; token required' : '; NO TOKEN: anyone who can reach it can write and read'}${cfg.allowOrigin ? `; browser origin ${cfg.allowOrigin}` : '; no browser origin allowed'})`);
   const stop = () => mirror.close().then(() => process.exit(0));
   process.on('SIGINT', stop); process.on('SIGTERM', stop);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch(e => { console.error(e); process.exit(1); });
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch(e => { console.error(e && e.message ? e.message : e); process.exit(1); });

@@ -15,9 +15,10 @@ npm ci
 node server/server.mjs --host 0.0.0.0 --port 8080 --db data/flight.sqlite
 ```
 
-Bind to `127.0.0.1` when placing a reverse proxy on the same host. Use
-`0.0.0.0` only when network access is controlled by a firewall or trusted
-internal network. Configure TLS at the reverse proxy for browser access beyond
+With no `--host` (or `FLIGHT_HOST`) the server binds `127.0.0.1`, so only this
+machine and a reverse proxy on it can connect; that is the setting to use behind
+a proxy. Name `--host 0.0.0.0`, as above, only when network access is controlled
+by a firewall or trusted internal network. Configure TLS at the reverse proxy for browser access beyond
 the local machine.
 
 PostgreSQL is selected with `FLIGHT_DATABASE_URL`. See

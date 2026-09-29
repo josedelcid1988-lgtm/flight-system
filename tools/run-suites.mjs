@@ -58,7 +58,9 @@ function runOne(file, env) {
 async function mirrorFixtures() {
   const { createMirror, verifyChain } = await import(path.join(ROOT, 'server/mirror/server.mjs'));
   const tmp = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'fs-suites-mirror-'));
-  const mirror = createMirror({ dbPath: path.join(tmp, 'mirror.sqlite'), backupDir: path.join(tmp, 'backups'), port: 0, backupEveryMinutes: 0 });
+  // The mirror refuses to start without a token: run it as IT does, with a one-run token the fixtures carry.
+  const token = crypto.randomBytes(18).toString('base64url');
+  const mirror = createMirror({ dbPath: path.join(tmp, 'mirror.sqlite'), backupDir: path.join(tmp, 'backups'), port: 0, backupEveryMinutes: 0, token, allowOrigin: '*' });
   const addr = await mirror.listen();
   const url = `http://127.0.0.1:${addr.port}`;
   // Mirror fixtures keep the repository's tests/fixtures depth because their relative
@@ -69,7 +71,7 @@ async function mirrorFixtures() {
   for (const f of fs.readdirSync(path.join(TESTS, 'fixtures')).filter(f => f.endsWith('.html'))) {
     const html = fs.readFileSync(path.join(TESTS, 'fixtures', f), 'utf8');
     if (!html.includes('<head>')) throw new Error(`${f} has no <head> to add the mirror setting to.`);
-    fs.writeFileSync(path.join(dir, f), html.replace('<head>', `<head><script>window.SK_MIRROR={url:${JSON.stringify(url)},token:'',batchSize:100};</script>`));
+    fs.writeFileSync(path.join(dir, f), html.replace('<head>', `<head><script>window.SK_MIRROR={url:${JSON.stringify(url)},token:${JSON.stringify(token)},batchSize:100};</script>`));
   }
   return { url, dir, tmp, mirror, verifyChain };
 }
