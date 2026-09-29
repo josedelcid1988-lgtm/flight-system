@@ -40,4 +40,74 @@ const roleRefused = result => !!result && result.ok === false && /Your role cann
   check('the workspace is valid after the record file checks', MES.validate(state));
 }
 
+// ---- smaller write paths (#78): each checks the capability of the page control that calls it ----
+{
+  const state = MES.seed();
+  MES.ensureMasterWIs(state);
+  FlightManeuver.ensure(state);
+  const run = (who, fn) => host.withAccount(who, fn, state);
+  const wi = state.masterWIs.find(w => w.status === 'Released' && MES.SERIALIZED_PARTS.includes(w.partNumber));
+  const created = run(qm, () => MES.addOrder(state, { masterWI: `${wi.id}|${wi.revision}`, pedigree: 'Development', subcategory: 'Mfg.', quantity: 2, aircraft: MES.AIRCRAFT[0], site: MES.SITES[0] }));
+  check('a serialized work order is created for the checks', created.ok);
+  const order = () => MES.getOrder(state, created.id);
+  const snapshot = () => JSON.stringify(state);
+
+  // Voiding a serial number: operate, like assigning one.
+  const serial = MES.orderSerials(state, order())[0].serial;
+  const serialStatus = () => state.serialLog.find(e => e.orderId === created.id && e.serial === serial).status;
+  for (const who of [general, technician]) check(`${who.role} cannot void a serial number and it stays assigned`, roleRefused(run(who, () => MES.voidSerial(state, created.id, serial, 'Mislabelled'))) && serialStatus() === 'Assigned');
+  check('Operations (operate) voids a serial number', run(operator, () => MES.voidSerial(state, created.id, serial, 'Mislabelled')).ok && serialStatus() === 'Voided');
+
+  // Recording the NetSuite posting: operate, like moving units to inventory.
+  {
+    const copy = structuredClone(state), stocked = MES.getOrder(copy, created.id);
+    stocked.inventory = { lotNumber: 'LOT-AUTHZ', netsuite: { status: 'Pending' } };
+    const posted = who => host.withAccount(who, () => MES.markNetSuitePosted(copy, created.id, 'IA-1001'), copy);
+    check('a Technician cannot record a NetSuite posting', roleRefused(posted(technician)) && stocked.inventory.netsuite.status === 'Pending');
+    check('Quality cannot record a NetSuite posting', roleRefused(posted(qe)) && stocked.inventory.netsuite.status === 'Pending');
+    check('Operations (operate) records a NetSuite posting', posted(operator).ok && stocked.inventory.netsuite.status === 'Posted');
+  }
+
+  // Storing a computed quality study value: approve-nc, the Quality approval that signs the verdict on it.
+  const values = () => (state.qualityValues || []).length;
+  for (const who of [general, operator, me]) check(`${who.role} cannot store a quality study value`, (() => { const before = values(); return roleRefused(run(who, () => MES.storeQualityValue(state, { kind: 'gage', value: 12.5, name: 'caliper' }))) && values() === before; })());
+  check('Quality (approve-nc) stores a quality study value', run(qe, () => MES.storeQualityValue(state, { kind: 'gage', value: 12.5, name: 'caliper' })).ok && values() === 1);
+
+  // Operation attachments: operate-steps or inspect-steps, like the step media on the same operation.
+  const op = order().operations[0];
+  const opFiles = () => (MES.getOrder(state, created.id).operations[0].attachments || []).map(f => f.id);
+  const file = { name: 'setup.txt', type: 'text/plain', size: 4 };
+  for (const who of [general, qe]) check(`${who.role} without a stamp cannot add an operation attachment`, roleRefused(run(who, () => MES.addAttachment(state, created.id, op.id, file))) && opFiles().length === 0);
+  const attached = run(technician, () => MES.addAttachment(state, created.id, op.id, file));
+  check('a Technician (operate-steps) adds an operation attachment', attached.ok && opFiles().length === 1);
+  check('a General User cannot remove an operation attachment', roleRefused(run(general, () => MES.removeAttachment(state, created.id, op.id, opFiles()[0]))) && opFiles().length === 1);
+  check('a Technician (operate-steps) removes an operation attachment', run(technician, () => MES.removeAttachment(state, created.id, op.id, opFiles()[0])).ok && opFiles().length === 0);
+
+  // Incorporating MCRs into a WI revision: edit-wi, on a draft revision only.
+  const mcr = run(qm, () => MES.submitECRRequest(state, { type: 'process', title: 'Torque callout', description: 'Add the torque value.', reason: 'Missing value.', wiId: wi.id, wiRevision: wi.revision, opId: wi.operations[0].id }));
+  check('an MCR is submitted against the released WI', mcr.ok);
+  const mcrStatus = () => state.ecrRequests.find(e => e.id === mcr.id).status;
+  const draft = state.masterWIs.find(w => w.id === wi.id && w.status === 'Draft') || (() => { const r = run(me, () => MES.reviseMasterWI(state, wi.id, wi.revision)); return state.masterWIs.find(w => w.id === wi.id && w.revision === r.revision); })();
+  check('a Technician cannot incorporate an MCR and it stays open', roleRefused(run(technician, () => MES.incorporateECRs(state, wi.id, draft.revision, [mcr.id]))) && mcrStatus() === 'Open');
+  check('Quality cannot incorporate an MCR', roleRefused(run(qe, () => MES.incorporateECRs(state, wi.id, draft.revision, [mcr.id]))) && mcrStatus() === 'Open');
+  check('an MCR is not incorporated into a released revision', run(me, () => MES.incorporateECRs(state, wi.id, wi.revision, [mcr.id])).ok === false && mcrStatus() === 'Open');
+  check('Manufacturing Engineering (edit-wi) incorporates an MCR into the draft revision', run(me, () => MES.incorporateECRs(state, wi.id, draft.revision, [mcr.id])).ok && mcrStatus() === 'Incorporating');
+
+  // Linking a rework order to an NC: dispo-nc, like the other NC links.
+  const nc = run(qm, () => FlightManeuver.raiseNC(state, { sourceType: 'Serial number', type: 'NC', title: 'Bent bracket', description: 'Bracket bent in handling.', partNumber: 'SR-IH-040', revision: 'A', serial: 'IH-040-AZ2', quantity: 1, foundAt: 'Stock', pedigree: 'Production', escaped: 'no' }));
+  const reworkLink = () => FlightManeuver.get(state, 'ncs', nc.id).reworkOrderId;
+  for (const who of [technician, qe]) check(`${who.role} cannot link a rework order to an NC`, roleRefused(run(who, () => FlightManeuver.linkReworkOrder(state, nc.id, created.id))) && !reworkLink());
+  check('Manufacturing Engineering (dispo-nc) links a rework order to an NC', run(me, () => FlightManeuver.linkReworkOrder(state, nc.id, created.id)).ok && reworkLink() === created.id);
+
+  // The AOG escalation is logged by whichever signed-in page is open when it is due, so it keeps no role check,
+  // but it is refused until the next escalation is due: a direct call cannot inflate the count or post early.
+  check('the order is set AOG', run(qm, () => MES.setPriority(state, created.id, 'AOG')).ok && MES.aogDue(order()));
+  check('a due AOG escalation is logged for any signed-in role', run(general, () => MES.logAogBroadcast(state, created.id)).ok && order().aog.notified === 1);
+  const early = snapshot();
+  const repeat = run(qm, () => MES.logAogBroadcast(state, created.id));
+  check('an AOG escalation that is not yet due is refused and nothing changes', repeat.ok === false && /not due/.test(repeat.message) && snapshot() === early);
+
+  check('the workspace is valid after the write path checks', MES.validate(state));
+}
+
 console.log(`engine authz: ${checks} checks, all passed`);

@@ -3271,7 +3271,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   function closeAudit(state,auditId,input){const bad=qualityAuditReady(state);if(bad)return bad;if(qualityIsAgent(input))return fail('An agent cannot close an audit. A person signs.');const audit=(state.audits||[]).find(a=>a.id===auditId);if(!audit)return fail('Audit not found.');if(audit.status==='Closed')return fail('This audit is already closed.');if((audit.findings||[]).some(f=>f.status!=='Closed'))return fail('Close every open finding before closing the audit.');const who=actor(state);if(!snapshotValid(who))return fail('A person signs the audit closed. Sign in with a name and credential.');if(who.credentialId===audit.openedBy.credentialId)return fail('The person who wrote this audit cannot close it. A different person signs.');const at=new Date().toISOString();audit.status='Closed';audit.closer={...who};audit.closedAt=at;audit.manifest=signManifest(state,'Audit closed',{auditId,scope:audit.scope},at);return {ok:true,message:`${auditId} closed by ${who.name}.`};}
   function issueCertification(state,input){const bad=qualityAuditReady(state);if(bad)return bad;if(qualityIsAgent(input))return fail('An agent cannot issue a certification. A person signs.');const who=actor(state),statement=String(input?.statement||'').trim();if(!snapshotValid(who))return fail('A person signs a certification. Sign in with a name and credential.');if(!str(statement,300)||statement.length<5)return fail('Enter what this certification covers, in 5 to 300 characters.');state.certifications=Array.isArray(state.certifications)?state.certifications:[];if(state.certifications.length>=200)return fail('The workspace holds 200 certifications.');const at=new Date().toISOString(),id=nextQualityId(state.certifications,'CERT-'),record={id,statement,by:{...who},at};record.manifest=signManifest(state,'Certification issued',{id,statement},at);state.certifications.push(record);return {ok:true,id,message:`${id} signed by ${who.name}.`};}
   function approveSupplier(state,input){const bad=qualityAuditReady(state);if(bad)return bad;if(qualityIsAgent(input))return fail('An agent cannot approve a supplier. A person signs.');const who=actor(state),supplier=String(input?.supplier||'').trim();if(!snapshotValid(who))return fail('A person signs a supplier approval. Sign in with a name and credential.');if(!str(supplier,120)||supplier.length<2)return fail('Enter the supplier name, 2 to 120 characters.');state.supplierApprovals=Array.isArray(state.supplierApprovals)?state.supplierApprovals:[];if(state.supplierApprovals.length>=200)return fail('The workspace holds 200 supplier approvals.');const at=new Date().toISOString(),id=nextQualityId(state.supplierApprovals,'SAP-'),record={id,supplier,decision:'Approved',by:{...who},at};record.manifest=signManifest(state,'Supplier approval',{id,supplier},at);state.supplierApprovals.push(record);return {ok:true,id,message:`${id} signed by ${who.name}.`};}
-  function storeQualityValue(state,input){const bad=qualityAuditReady(state);if(bad)return bad;const kind=input?.kind;if(!QUALITY_KINDS.includes(kind))return fail('Choose gage, capability, or sampling.');if(!plain(input)||typeof input.value!=='number'||!Number.isFinite(input.value))return fail(`Enter the computed ${kind} value. This record does not calculate it.`);const name=String(input.name||'').trim().slice(0,80);state.qualityValues=Array.isArray(state.qualityValues)?state.qualityValues:[];if(state.qualityValues.length>=400)return fail('The workspace holds 400 computed values.');const id=nextQualityId(state.qualityValues,'QV-');state.qualityValues.push({id,kind,value:input.value,name});return {ok:true,id,message:`Computed ${kind} value stored.`};}
+  function storeQualityValue(state,input){{const d=denied('approve-nc','store a quality study value');if(d)return d;}const bad=qualityAuditReady(state);if(bad)return bad;const kind=input?.kind;if(!QUALITY_KINDS.includes(kind))return fail('Choose gage, capability, or sampling.');if(!plain(input)||typeof input.value!=='number'||!Number.isFinite(input.value))return fail(`Enter the computed ${kind} value. This record does not calculate it.`);const name=String(input.name||'').trim().slice(0,80);state.qualityValues=Array.isArray(state.qualityValues)?state.qualityValues:[];if(state.qualityValues.length>=400)return fail('The workspace holds 400 computed values.');const id=nextQualityId(state.qualityValues,'QV-');state.qualityValues.push({id,kind,value:input.value,name});return {ok:true,id,message:`Computed ${kind} value stored.`};}
   function recordQualityVerdict(state,input){const bad=qualityAuditReady(state);if(bad)return bad;const kind=input?.kind;if(!QUALITY_KINDS.includes(kind))return fail('Choose gage, capability, or sampling.');const stored=(state.qualityValues||[]).find(v=>v.id===input.valueId&&v.kind===kind&&typeof v.value==='number'&&Number.isFinite(v.value));if(!stored)return fail(`A ${kind} verdict needs a computed value already stored.`);const verdict=String(input.verdict||'').trim();if(!str(verdict,80)||verdict.length<2)return fail('Enter the verdict in 2 to 80 characters.');const who=actor(state);if(!snapshotValid(who))return fail('Sign in with a name and credential before recording a verdict.');state.qualityVerdicts=Array.isArray(state.qualityVerdicts)?state.qualityVerdicts:[];if(state.qualityVerdicts.length>=400)return fail('The workspace holds 400 quality verdicts.');const at=new Date().toISOString(),id=nextQualityId(state.qualityVerdicts,'QVD-'),record={id,kind,valueId:stored.id,value:stored.value,verdict,by:{...who},at};record.manifest=signManifest(state,`${kind} verdict`,{id,kind,valueId:stored.id,value:stored.value,verdict},at);state.qualityVerdicts.push(record);return {ok:true,id,message:`${id} records the stored ${kind} value ${stored.value}.`};}
   function validateVersion(state, version) {
     if (!(plain(state) && state.version === version && Array.isArray(state.orders) && state.orders.length <= MAX_ORDERS && unique(state.orders.map(order => order && order.id)) && state.orders.every(order => orderValid(order, version)) && Array.isArray(state.activity) && state.activity.length <= 500 && unique(state.activity.map(event => event && event.id)) && state.activity.every(event => eventValid(event) && state.orders.some(order => order.id === event.orderId)) && supportLogValid(state.supportLog) && trainingCatalogValid(state.trainingCatalog) && trainingRecordsValid(state.trainingRecords) && qualityRecordsValid(state))) return false;
@@ -3567,9 +3567,14 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // MCRs that apply to one operation of a work instruction (open, or marked for this revision).
   function ecrsForOperation(state, wi, opId) { return ecrList(state).filter(e => e.type === 'process' && e.wiId === wi.id && e.opId === opId && (e.status === 'Open' || (e.status === 'Incorporating' && e.incorporatedIn === wi.revision))); }
   function openProcessECRs(state, wiId) { return ecrList(state).filter(e => e.type === 'process' && e.wiId === wiId && ['Open', 'Incorporating'].includes(e.status)); }
+  // Called by the WI revise form right after reviseMasterWI: the MCRs chosen there are incorporated into the new draft.
   function incorporateECRs(state, wiId, revision, ids) {
+    { const d = denied('edit-wi', 'incorporate MCRs into a work instruction'); if (d) return d; }
+    const { error } = editableWI(state, wiId, revision); if (error) return fail(error);
     const chosen = new Set(Array.isArray(ids) ? ids : []);
-    ecrList(state).filter(e => e.type === 'process' && e.wiId === wiId && e.status === 'Open' && chosen.has(e.id)).forEach(e => { e.status = 'Incorporating'; e.incorporatedIn = revision; });
+    const incorporated = ecrList(state).filter(e => e.type === 'process' && e.wiId === wiId && e.status === 'Open' && chosen.has(e.id));
+    incorporated.forEach(e => { e.status = 'Incorporating'; e.incorporatedIn = revision; });
+    return { ok: true, message: incorporated.length ? `${incorporated.map(e => e.id).join(', ')} incorporated into ${wiId} Rev ${revision}.` : 'No MCRs were incorporated.' };
   }
   function requestWorkOrder(state, input) {
     const list = Array.isArray(state.woRequests) ? state.woRequests : (state.woRequests = []);
@@ -4614,6 +4619,8 @@ const OP_BOM_MAX = 12;
     const ecoNote = !wi ? (wiId ? `No record of ${wiId} Rev ${wiRev}` : 'Ad hoc work order: no master WI') : !design ? 'No design change: work order level change' : eco ? `From ${wi.id} Rev ${wi.revision}${prev ? ' (design change)' : ''}` : `${wi.id} Rev ${wi.revision} has no ECO recorded${wi.status === 'Unreleased' ? ' (written to an unreleased drawing)' : ''}`;
     return { approvedBy, source, eco, ecoNote, design };
   }
+  // Internal: the sequence change and engineering change approvals call it with the order they are changing. It is
+  // not a server action (server/mes-host.mjs actionExclude), and the page never sends it as one.
   function rollWorkOrderRevision(state, order, summary, changes, approver) {
     ensureRevisions(state);
     if (order.revisions.length >= 200) return null;
@@ -4736,6 +4743,7 @@ const OP_BOM_MAX = 12;
   }
 
   function voidSerial(state, orderId, serial, reason) {
+    { const d = denied('operate', 'void serial numbers'); if (d) return d; }
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
     ensureInventory(state);
@@ -5646,6 +5654,7 @@ const OP_BOM_MAX = 12;
     return { ok: true, message: `${e.id}: ${number} recorded from PDM.` };
   }
   function markNetSuitePosted(state, orderId, ref) {
+    { const d = denied('operate', 'record a NetSuite posting'); if (d) return d; }
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
     const inv = order.inventory;
@@ -5662,7 +5671,11 @@ const OP_BOM_MAX = 12;
   const attachmentValid = file => plain(file) && str(file.id, 40) && str(file.name, 160) && str(file.type, 80, 0) && Number.isInteger(file.size) && file.size >= 0 && ['inline', 'reference'].includes(file.storage) && (file.storage === 'reference' || (typeof file.dataUrl === 'string' && file.dataUrl.length <= MAX_ATTACHMENT)) && timestamp(file.addedAt) && profileValid(file.addedBy);
   const attachmentBytes = state => state.orders.reduce((total, order) => total + order.operations.reduce((sum, op) => sum + (Array.isArray(op.attachments) ? op.attachments: []).reduce((n, file) => n + (file.dataUrl ? file.dataUrl.length: 0), 0), 0), 0);
 
+  // Operation attachments follow the step media on the same operation: the person running it (operate-steps) or
+  // inspecting it (inspect-steps).
+  const attachmentDenied = what => can('operate-steps') || can('inspect-steps') ? null : fail(`Your role cannot ${what}. Ask the QA Manager to change your role.`);
   function addAttachment(state, orderId, opId, input) {
+    { const d = attachmentDenied('attach files to an operation'); if (d) return d; }
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
     if (order.status === 'Closed') return fail('A closed work order can’t take new attachments.');
@@ -5719,6 +5732,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     return { ok: true, message: `${file.name} removed.` };
   }
     function removeAttachment(state, orderId, opId, fileId) {
+    { const d = attachmentDenied('remove files from an operation'); if (d) return d; }
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
     if (order.status === 'Closed') return fail('A closed work order can’t be changed.');
@@ -6216,10 +6230,13 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const open = order.operations.find(op => !op.done);
     return `AOG: ${order.id} · ${order.partNumber} Rev ${order.revision} · aircraft ${order.aircraft || 'unassigned'} · ${orderSite(order)}\n${order.title}. Stage: ${order.status}${open ? `, current Op ${opNumber(order, open.id)}: ${open.title}` : ', all operations complete'}. Planned ${order.start || '-'} → ${order.due}.\nEscalation ${(plain(order.aog) ? order.aog.notified: 0) + 1}, repeating every 2 hours until AOG is cleared. Reply in thread with the blocker and who is on it.`;
   }
+  // Logged by whichever signed-in page is open when the escalation is due, so it has no role check. It is refused
+  // until the next escalation is due, so a direct call cannot raise the count or post to the thread early.
   function logAogBroadcast(state, id) {
     const { order, error } = target(state, id);
     if (error) return fail(error);
     if (!aogActive(order)) return fail('This work order is not AOG.');
+    if (!aogDue(order)) return fail('The next AOG escalation is not due yet. It is logged every 2 hours while the work order is AOG.');
     if (!plain(order.aog)) startAog(state, order);
     const text = aogMessage(order);
     const at = new Date().toISOString();
@@ -8592,6 +8609,7 @@ const ATTACH_KINDS = Object.freeze(['mrb','cars','ncs','sprs']);
     return { ok: true, message: `${t.id} approved: ${t.dispo.decision}.${rework ? ' Create the rework order against the serial and link it here.' : ''}` };
   }
   function linkReworkOrder(state, id, orderId) {
+    { const d = denied('dispo-nc', 'link a rework order to an NC'); if (d) return d; }
     const t = get(state, 'ncs', id); if (!t) return fail('NC not found.');
     const o = MES.getOrder(state, clean(orderId)); if (!o) return fail('Work order not found.');
     t.reworkOrderId = o.id; log(state, t, `Rework order ${o.id} linked.`);
@@ -10865,7 +10883,7 @@ let serverPush=Promise.resolve();
 let serverWorkspaceReady=false,serverActionQueue=[],serverActionPending=0,serverActionStopped=false,serverSnapshotRetryPending=false,serverReconcilePending=false,serverActionChain=Promise.resolve();
 const serverMutatorName=/^(?:run|add|update|remove|delete|create|complete|close|issue|approve|reject|sign|mark|assign|advance|resolve|disposition|request|release|record|submit|start|stop|review|accept|return|void|reopen|split|move|link|verify|raise|cancel|withdraw|incorporate|peer|roll|set|save|store|open|finish|grant|revoke|capture|attach|detach|quarantine|repair|replace|send|change|configure|stamp|buyoff|log|tick|decide|vote|reset|publish|apply|import|reinspect|firm|convert|carry|propose|escalate|select|clock|aqi|post|acknowledge|edit|revise|ping|push|ical|check|notify|qa|note)/i;
 const serverMutatorExact=new Set(['containNC','effectivenessCheck','pfmeaSafetyBuyoff','pruneExpiredNotices']);
-const serverMutatorExclude=new Set(['repair','signManifest','verifyManifests','verifyAIActionLog','stampCheck','stampRegister','stampRegisterCsv','stampCredential','stampHolderFor','ticketAttachments','openProcessECRs','syncAssignments','buyoffCredential','ensure','seedDemoRecords','icalExport','recordAIAction','logSupport','noteDemoBypassRemoved','quarantineOrder']);
+const serverMutatorExclude=new Set(['repair','signManifest','verifyManifests','verifyAIActionLog','stampCheck','stampRegister','stampRegisterCsv','stampCredential','stampHolderFor','ticketAttachments','openProcessECRs','syncAssignments','buyoffCredential','ensure','seedDemoRecords','icalExport','recordAIAction','logSupport','noteDemoBypassRemoved','quarantineOrder','rollWorkOrderRevision']);
 const serverCommandStates=new WeakSet([state]);
 // Commands are queued as engine calls succeed, before their change is committed. A refused change must not leave
 // its commands behind for the next flush: commits mark what is queued, refusals drop everything unmarked.

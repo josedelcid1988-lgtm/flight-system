@@ -118,7 +118,9 @@ export function createHost(indexPath, html = fs.readFileSync(indexPath, 'utf8'))
     'recordAIAction','logSupport','noteDemoBypassRemoved',
     // Sets an unreadable work order aside. Only MES.repair calls it, while a workspace opens; as a remote action it
     // would let any signed-in account remove a live work order from the register.
-    'quarantineOrder']);
+    'quarantineOrder',
+    // Rolls a work order revision for the approval that owns the change (sequence change, engineering change).
+    'rollWorkOrderRevision']);
   function resolveAction(name) {
     const functionName = String(name).split('.').at(-1);
     return (actionName.test(functionName) || actionExact.has(functionName)) && !actionExclude.has(functionName) ? resolve(name) : null;
