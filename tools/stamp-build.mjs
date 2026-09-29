@@ -2,14 +2,22 @@
 // Writes the build id and the SHA-256 of index.html into index.html, so every signature, history event,
 // Support Overrides entry, mirrored record and printed document the app produces names the exact build.
 //
-//   node tools/stamp-build.mjs                 stamp index.html from VERSION.md (the build: line)
-//   node tools/stamp-build.mjs --check         exit 1 unless index.html carries the current stamp
+// The stamp is generated, never committed. The committed index.html carries the build id from VERSION.md
+// and the placeholder hash "unstamped", so pull requests do not conflict on it after every merge. CI stamps
+// its working copy on every run and tests the stamped build; the release process stamps the build it ships.
+//
+//   node tools/stamp-build.mjs                 stamp the working copy of index.html (for a test run or a
+//                                              release; do not commit it), then run tools/build-demo.mjs
+//   node tools/stamp-build.mjs --clear         put the committed form back: the VERSION.md build id and the
+//                                              placeholder hash; run tools/build-demo.mjs after it
+//   node tools/stamp-build.mjs --check         exit 1 unless index.html is in its committed form
 //   node tools/stamp-build.mjs --verify FILE   recompute the SHA-256 of any copy of index.html (a deployed
-//                                              file, a copy attached to a record) and compare it to its stamp
+//                                              file, a copy attached to a record) and compare it to its stamp;
+//                                              an unstamped copy fails
 //
 // The hash cannot include itself, so it is defined as the SHA-256 of the file with the content of the
 // fs-build-sha256 meta tag set to "unstamped". Anyone can recompute it: replace that one value, hash the
-// file. Run it after every change to index.html and before tools/build-demo.mjs. Node built-ins only.
+// file. Node built-ins only.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -47,6 +55,12 @@ export function stamp(html, build) {
   return withBuild.replace(SHA_RE, `<meta name="fs-build-sha256" content="${canonicalSha256(withBuild)}">`);
 }
 
+// The committed form: the build id, and the placeholder in place of the generated hash.
+export function clear(html, build) {
+  tags(html);
+  return html.replace(BUILD_RE, `<meta name="fs-build" content="${build}">`).replace(SHA_RE, '<meta name="fs-build-sha256" content="unstamped">');
+}
+
 export function verify(html) {
   const t = tags(html), actual = canonicalSha256(html);
   return { build: t.build, stamped: t.sha256, actual, ok: t.sha256 === actual };
@@ -63,14 +77,20 @@ function main() {
   }
   const html = fs.readFileSync(INDEX, 'utf8');
   const build = buildId(fs.readFileSync(VERSION, 'utf8'));
-  const want = stamp(html, build);
+  const committed = clear(html, build);
   if (argv.includes('--check')) {
-    if (want !== html) { const t = tags(html); console.error(`FAIL index.html is stamped build ${t.build}, ${t.sha256}; it should be build ${build}, ${verify(want).stamped}. Run node tools/stamp-build.mjs, then node tools/build-demo.mjs.`); process.exit(1); }
-    console.log(`index.html stamp is current: build ${build}, SHA-256 ${verify(html).stamped}`);
+    if (committed !== html) { const t = tags(html); console.error(`FAIL index.html carries build ${t.build} and hash ${t.sha256}; the committed file carries build ${build} and the placeholder "unstamped". The stamp is generated in CI and at release, not committed. Run node tools/stamp-build.mjs --clear, then node tools/build-demo.mjs.`); process.exit(1); }
+    console.log(`index.html is in its committed form: build ${build}, hash placeholder "unstamped"`);
     return;
   }
+  if (argv.includes('--clear')) {
+    if (committed !== html) fs.writeFileSync(INDEX, committed);
+    console.log(`index.html cleared to its committed form: build ${build}, hash placeholder "unstamped". Run node tools/build-demo.mjs next.`);
+    return;
+  }
+  const want = stamp(html, build);
   if (want !== html) fs.writeFileSync(INDEX, want);
-  console.log(`index.html stamped: build ${build}, SHA-256 ${verify(want).stamped}`);
+  console.log(`index.html stamped for this run: build ${build}, SHA-256 ${verify(want).stamped}. Do not commit the stamped file; node tools/stamp-build.mjs --clear puts the committed form back.`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

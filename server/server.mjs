@@ -13,6 +13,7 @@ import { createHash, randomBytes, scrypt as scryptCb, timingSafeEqual } from 'no
 import { openDb } from './db.mjs';
 import { openPostgres } from './db-postgres.mjs';
 import { createHost } from './mes-host.mjs';
+import { stamp, verify } from '../tools/stamp-build.mjs';
 
 process.on('warning', w => { if (w.name === 'ExperimentalWarning' && /SQLite/.test(w.message)) return; console.warn(w); });
 
@@ -118,6 +119,17 @@ export function parseExportCredentials(value) {
   return out;
 }
 
+// The committed index.html carries the hash placeholder "unstamped"; a release zip carries the real stamp.
+// A checkout is stamped in memory at start, with the same tool and result as a release, so the page served
+// and every record it writes carry the build's SHA-256. A stamped file is served as it is only when its stamp
+// verifies: a file edited after stamping would record a SHA-256 that does not match the code being served.
+export function servedIndex(indexPath) {
+  const html = fs.readFileSync(indexPath, 'utf8'), v = verify(html);
+  if (v.stamped === 'unstamped') return stamp(html, v.build);
+  if (!v.ok) throw new Error(`${indexPath} carries SHA-256 ${v.stamped} but its content computes ${v.actual}: it was changed after stamping. Deploy the release zip again, or run node tools/stamp-build.mjs --clear to serve this checkout.`);
+  return html;
+}
+
 export function createServer(options = {}) {
   const indexPath = options.indexPath || path.join(ROOT, 'index.html');
   const dbPath = options.dbPath || process.env.FLIGHT_DB || path.join(ROOT, 'data', 'flight.sqlite');
@@ -130,7 +142,7 @@ export function createServer(options = {}) {
   const maxHours = positive(options.sessionMaxHours, process.env.FLIGHT_SESSION_MAX_HOURS) || SESSION_DEFAULTS.maxHours;
   const lifetime = { idleMs: idleMinutes * 60000, maxMs: maxHours * 3600000 };
   const clock = options.clock || (() => Date.now());
-  const host = createHost(indexPath);
+  const host = createHost(indexPath, servedIndex(indexPath));
   // Expanded roles, named grants and new trained accounts all cite a training: it must be an active catalog
   // entry and the person must hold a current record of it on the shared workspace.
   const trainingQualifies = (state, username, code) => !!state && !!code && host.MES.trainingCatalog(state).some(item => item.status === 'Active' && item.code === code) && host.MES.trainingCurrentFor(state, username, code).ok;
