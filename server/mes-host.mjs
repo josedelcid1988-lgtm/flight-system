@@ -32,8 +32,7 @@ export function extractBlocks(html) {
   return found;
 }
 
-export function createHost(indexPath) {
-  const html = fs.readFileSync(indexPath, 'utf8');
+export function createHost(indexPath, html = fs.readFileSync(indexPath, 'utf8')) {
   const blocks = extractBlocks(html);
   const sandbox = { console, TextEncoder, TextDecoder, structuredClone, crypto: webcrypto, setTimeout, clearTimeout, URL };
   sandbox.window = sandbox;

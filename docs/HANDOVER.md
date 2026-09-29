@@ -210,6 +210,9 @@ with `release-report --dry-run`. The results are kept as a run artifact.
 5. `node tools/package-release.mjs` writes `release/flight-system-<build>.zip` and the demo zip from the
    stamped files. Deploy from the production zip, not from `main`, and check the deployed copy with
    `node tools/stamp-build.mjs --verify <deployed index.html>`.
+   The shared server run from a checkout stamps `index.html` in memory at start with the same tool, so
+   its page and records carry the release SHA-256. For standalone use, open `index.html` from the
+   production zip: the repository copy carries the placeholder `unstamped`.
 6. Put the committed form back (`node tools/stamp-build.mjs --clear`, then `node tools/build-demo.mjs`),
    commit only the release record in `VERSION.md` in a pull request, and merge it once CI is green.
 7. Record the build id and the SHA-256 from the release record in the quality system's software
