@@ -1,4 +1,4 @@
-<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v82"><meta name="fs-build-sha256" content="d5443641f92719f0cbecccc380dc557af76bc93d8192103adfd5ff1e4bc85867"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><!-- FLIGHT REACT ASSETS BEGIN -->
+<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v82"><meta name="fs-build-sha256" content="492b671c358568b6d35802d351bb218e7c6df5cd1b4967ab70343c7ae1dc949a"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><!-- FLIGHT REACT ASSETS BEGIN -->
 <link rel="stylesheet" href="assets/flight-ui-fonts.css">
 <link rel="stylesheet" href="assets/flight-ui.css">
 <link rel="stylesheet" href="assets/flight-plan-react.css">
@@ -1673,21 +1673,21 @@ function skBoot(){
   {key:'general', label:'General User', profileRole:'General user', hint:'View only, plus raising an NC and submitting an ECR.'},
   {key:'technician', label:'Technician', profileRole:'Assembly technician', hint:'Run and buy off operations at the bench (stamp), raise an NC, submit an ECR, view everything. No kitting, inventory, AOG, scheduling or stage changes.'},
   {key:'operator', label:'Operations', profileRole:'Operations technician', hint:'Everything a Technician can, plus kit parts and lots, move units to inventory, assign serials, mark AOG, adjust schedule, advance stages, split quantity.'},
-  {key:'ops', label:'Operations Manager', profileRole:'Operations Manager', hint:'Runs the production floor, work orders, assignments, notices, inventory handoffs and planning settings. Records training, sets training requirements on work instructions, and may disposition an NC as Scrap or use a QA-approved standard rework.'},
+  {key:'ops', label:'Operations Manager', profileRole:'Operations Manager', hint:'Runs the production floor, work orders, assignments, notices, inventory handoffs, planning settings and work-center sprints. Records training, sets training requirements on work instructions, and may disposition an NC as Scrap or use a QA-approved standard rework.'},
   {key:'me', label:'Manufacturing Engineering', profileRole:'Manufacturing Engineer', hint:'Everything an Operator can, plus author WIs and WOs, adjust operations, peer-review WIs, record the NC initial disposition, and hold the Manufacturing Engineering MRB seat. No QA approvals.'},
   {key:'swe', label:'Engineering', profileRole:'Engineer', hint:'View, raise an NC, submit an ECR, hold the Engineering MRB seat, push ATP software to an operation, and accept or reject software pushes. No Manufacturing Engineering functions.'},
   {key:'qe', label:'Quality', profileRole:'Quality Engineer', hint:'Quality approvals and access administration. Inspection and the Quality MRB seat follow this role; nobody inspects their own work.'},
   {key:'safety', label:'Safety Team', profileRole:'Safety Engineer', hint:'View, raise an NC, submit an ECR, and give the final Safety Team buy-off on a PFMEA, which releases a critical safety work instruction.'},
   {key:'cert', label:'Certification', profileRole:'Certification Engineer', hint:'View, raise an NC, submit an ECR, and hold the Certification seat on a Material Review Board for Production FAI and Mfg. work orders.'},
   {key:'qs', label:'Quality Supervisor', profileRole:'Quality Supervisor', hint:'Quality approvals plus account and training administration, organization settings, and floor notices. Inspection and the Quality MRB seat follow the Quality role. Can manage standard accounts but cannot manage a QA Manager or Master Access account.'},
-  {key:'qm', label:'QA Manager', profileRole:'Quality Manager', hint:'Quality approvals plus Manufacturing Engineering authoring, the Quality, Manufacturing Engineering and Engineering MRB seats, the Safety Team PFMEA buy-off (never on an analysis they reviewed or wrote), notices and access management. Not the Certification seat.'}
+  {key:'qm', label:'QA Manager', profileRole:'Quality Manager', hint:'Quality approvals plus Manufacturing Engineering authoring, the Quality, Manufacturing Engineering and Engineering MRB seats, the Safety Team PFMEA buy-off (never on an analysis they reviewed or wrote), notices and access management, work-center sprints and project sensitivity. Not the Certification seat.'}
  ];
  var EVERYONE=['view','raise-nc','submit-ecr'];
  var ROLE_CAPS={
   general: EVERYONE,
   technician: EVERYONE.concat(['operate-steps']),
   operator: EVERYONE.concat(['operate','operate-steps','split','request-pedigree','approve-pedigree']),
-  ops: EVERYONE.concat(['operate','operate-steps','split','request-pedigree','approve-pedigree','create-wo','adjust-wo','dispo-nc','assign-work','post-notice','configure-org','configure-training','edit-wi']),
+  ops: EVERYONE.concat(['operate','operate-steps','split','request-pedigree','approve-pedigree','create-wo','adjust-wo','dispo-nc','assign-work','post-notice','configure-org','configure-training','edit-wi','plan-order']),
   // Inspection and MRB seats are role capabilities; optional MRB training tiers can add a disposition-specific check.
   me: EVERYONE.concat(['operate','operate-steps','split','request-pedigree','approve-pedigree','edit-wi','peer-review-wi','create-wo','adjust-wo','dispo-nc','push-software','assign-work','mrb-me']),
   swe: EVERYONE.concat(['push-software','accept-software','mrb-eng']),
@@ -1695,7 +1695,7 @@ function skBoot(){
   cert: EVERYONE.concat(['mrb-cert']),
   qe: EVERYONE.concat(['inspect-steps','conformity','aqi-sign','request-pedigree','approve-pedigree','approve-wo','approve-wi','approve-nc','assign-work','mrb-quality']),
   qs: EVERYONE.concat(['inspect-steps','mrb-quality','conformity','aqi-sign','request-pedigree','approve-pedigree','approve-wo','approve-wi','approve-nc','assign-work','post-notice','manage-access','configure-org','configure-training']),
-  qm: EVERYONE.concat(['operate','operate-steps','split','request-pedigree','approve-pedigree','edit-wi','peer-review-wi','create-wo','adjust-wo','dispo-nc','approve-wo','approve-wi','approve-nc','push-software','accept-software','assign-work','post-notice','manage-access','safety-buyoff','mrb-quality','mrb-me','mrb-eng','conformity','aqi-sign','inspect-steps','configure-org','configure-qms','configure-training'])
+  qm: EVERYONE.concat(['operate','operate-steps','split','request-pedigree','approve-pedigree','edit-wi','peer-review-wi','create-wo','adjust-wo','dispo-nc','approve-wo','approve-wi','approve-nc','push-software','accept-software','assign-work','post-notice','manage-access','safety-buyoff','mrb-quality','mrb-me','mrb-eng','conformity','aqi-sign','inspect-steps','configure-org','configure-qms','configure-training','plan-order','set-sensitivity'])
  };
  ROLE_CAPS.admin=Array.from(new Set(Object.values(ROLE_CAPS).flat()));
  // Conformity work and AQI signatures require a named, training-backed grant.

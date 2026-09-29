@@ -236,6 +236,25 @@ if (productionExternal) {
   state.profile = savedProfile;
 }
 {
+  // Planning authority on accounts: Operations and QA Manager create work-center sprints; only QA Manager raises project
+  // sensitivity. Other roles are refused.
+  const account = (username, role) => ({ username, displayName: username, role, roles: [role] });
+  const ops = account('ops-planner', 'ops'), qm = account('qa-planner', 'qm'), qe = account('qe-planner', 'qe');
+  const workCenterId = host.MES.WORK_CENTERS[0].id;
+  const sprint = (who, name) => host.withAccount(who, () => host.MES.createSprint(state, { name, workCenterId, startDate: date, endDate: '2026-10-09', backlog: [] }), state);
+  assert.equal(sprint(ops, 'Ops sprint').ok, true, 'Operations can create a work-center sprint');
+  assert.equal(sprint(qm, 'QA sprint').ok, true, 'QA Manager can create a work-center sprint');
+  const refusedSprint = sprint(qe, 'QE sprint');
+  assert.equal(refusedSprint.ok, false, 'a Quality Engineer cannot create a work-center sprint');
+  assert.match(refusedSprint.message, /cannot create a work-center sprint/);
+  const project = host.withAccount(qm, () => host.MES.createProject(state, { name: 'Sensitivity authority', lifecycle: 'Development', sensitivity: 'Low', startDate: date, dueDate: '2026-11-30', partNumbers: [] }), state);
+  assert.equal(project.ok, true, project.message);
+  const raise = (who, level) => host.withAccount(who, () => host.MES.setProjectSensitivity(state, project.id, level, 'Customer date moved in'), state);
+  assert.equal(raise(ops, 'Medium').ok, false, 'Operations cannot raise project sensitivity');
+  assert.equal(raise(qe, 'Medium').ok, false, 'a Quality Engineer cannot raise project sensitivity');
+  assert.equal(raise(qm, 'High').ok, true, 'QA Manager can raise project sensitivity');
+}
+{
   // Stocking is the step after QA closure, so a closed order that is ready to stock stays live until it is stocked.
   const closed = state.orders.filter(order => order.status === 'Closed');
   const waiting = closed.find(order => !order.inventory && host.MES.inventoryReadiness(state, order).ready);
