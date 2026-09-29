@@ -18,13 +18,17 @@ Requires Node 22.13 or later (for `node:sqlite` without a flag).
 ## Run it
 
 ```bash
-node server/mirror/server.mjs
+FS_MIRROR_TOKEN='<long random value>' FS_MIRROR_ALLOW_ORIGIN='https://mes.internal' node server/mirror/server.mjs
 ```
+
+The mirror refuses to start without a token. Every endpoint needs it except health, which without the
+token answers only that the mirror is up. With no allowed origin the mirror sends no CORS header, so a
+browser page can reach it only when `FS_MIRROR_ALLOW_ORIGIN` names the address the app is served from.
 
 Then point the app at it. In `index.html`, in the `sk-mirror` block, set:
 
 ```js
-window.SK_MIRROR = { url: 'http://mes-mirror.internal:8787', token: '', batchSize: 50 };
+window.SK_MIRROR = { url: 'http://mes-mirror.internal:8787', token: '<the same token>', batchSize: 50 };
 ```
 
 Leave `url` empty to switch the mirror off. The header then shows nothing and the app makes no
@@ -42,8 +46,9 @@ Command line flags win over environment variables, which win over the defaults.
 | `--backup-dir` | `FS_MIRROR_BACKUP_DIR` | `server/mirror/backups` | Where backups go. Point it at storage on a different machine. |
 | `--backup-every-minutes` | `FS_MIRROR_BACKUP_EVERY_MINUTES` | `1440` | How often to take a backup; `0` switches the schedule off. |
 | `--backup-keep-days` | `FS_MIRROR_BACKUP_KEEP_DAYS` | `30` | Daily copies kept (the newest copy of each day). |
-| `--token` | `FS_MIRROR_TOKEN` | empty | When set, every endpoint except health needs `Authorization: Bearer <token>`. Set the same token in `SK_MIRROR.token`. |
-| `--allow-origin` | `FS_MIRROR_ALLOW_ORIGIN` | `*` | CORS origin. Set it to the address the app is served from. |
+| `--token` | `FS_MIRROR_TOKEN` | none: required | Every endpoint needs `Authorization: Bearer <token>`; health without it reports liveness only. Set the same token in `SK_MIRROR.token`. The mirror does not start without one. |
+| `--insecure-no-token` | `FS_MIRROR_INSECURE_NO_TOKEN=1` | off | Runs the mirror with no token. Only for a machine nobody else can reach. |
+| `--allow-origin` | `FS_MIRROR_ALLOW_ORIGIN` | none | CORS origin. Set it to the address the app is served from; with none, no CORS header is sent and no other website can call the mirror from a browser. |
 | `--max-body-bytes` | `FS_MIRROR_MAX_BODY_BYTES` | `33554432` | Largest request accepted. |
 
 ## What the app sends
@@ -66,7 +71,7 @@ Entity types: `order`, `master-wi`, `planned-order`, `stamp`, `serial`, `car`, `
 | Method and path | Purpose |
 | --- | --- |
 | `POST /api/v1/writes` | Body `{ clientId, records: [...] }`, up to 500 records. Each comes back `stored`, `duplicate` (the same `clientWriteId` and payload already stored: a safe retry) or `rejected` with a reason (bad hash, malformed manifest, a `clientWriteId` reused for a different payload). |
-| `GET /api/v1/health` | Row and manifest counts, the last write time, the backup settings and the last backup file. |
+| `GET /api/v1/health` | With the token: row and manifest counts, the last write time, the backup settings and the last backup file. Without it: `{ ok, api }` only. |
 | `GET /api/v1/verify` | Walks the whole chain: `chainIntact`, the row count, the chain tip, and `firstBreak: { id, reason }` when it is broken. |
 | `GET /api/v1/export?format=json` | Full retention export: every record with its manifests, plus a verify result. |
 | `GET /api/v1/export?format=csv` | The same records as CSV, one row per record. |

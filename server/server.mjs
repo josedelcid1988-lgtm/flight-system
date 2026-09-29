@@ -94,8 +94,10 @@ export async function unlockAccount(store, username, reason, by) {
   return { status: 200, body: { username, unlocked: true, by, reason } };
 }
 
+// Bind address when none is named: loopback only, so a server started with the defaults is reachable from this
+// machine and its reverse proxy, never from the network. --host, FLIGHT_HOST or options.host binds wider.
+export const DEFAULT_HOST = '127.0.0.1';
 // Session lifetime: minutes without activity and hours since sign-in. Options, then environment, then defaults.
-export const DEFAULT_HOST = '0.0.0.0';
 export const SESSION_DEFAULTS = Object.freeze({ idleMinutes: 30, maxHours: 12 });
 const positive = (...values) => { for (const v of values) { const n = Number(v); if (v !== undefined && v !== null && v !== '' && Number.isFinite(n) && n > 0) return n; } return null; };
 
@@ -117,6 +119,16 @@ export function parseExportCredentials(value) {
     });
   }
   return out;
+}
+
+// The model adapter names the server setting that holds its key. Only settings the operator lists in
+// FLIGHT_MODEL_ADAPTER_SETTINGS (comma-separated) can be named, so a caller cannot use the check to learn which
+// other environment variables exist on the server.
+export function parseModelAdapterSettings(value) {
+  if (value === undefined || value === null || value === '') return [];
+  const names = (Array.isArray(value) ? value : String(value).split(',')).map(name => String(name).trim()).filter(Boolean);
+  for (const name of names) if (!/^[A-Z_][A-Z0-9_]{1,63}$/.test(name)) throw new Error(`FLIGHT_MODEL_ADAPTER_SETTINGS: ${name} is not an upper-case setting name.`);
+  return names;
 }
 
 // The committed index.html carries the hash placeholder "unstamped"; a release zip carries the real stamp.
@@ -146,6 +158,9 @@ export function createServer(options = {}) {
   // Expanded roles, named grants and new trained accounts all cite a training: it must be an active catalog
   // entry and the person must hold a current record of it on the shared workspace.
   const trainingQualifies = (state, username, code) => !!state && !!code && host.MES.trainingCatalog(state).some(item => item.status === 'Active' && item.code === code) && host.MES.trainingCurrentFor(state, username, code).ok;
+  // demo.html relaxes separation of duties, PINs and the stamp gate. It is a training page, not part of the
+  // production server: served only when the operator asks (options.serveDemo, FLIGHT_SERVE_DEMO=1 or --serve-demo).
+  const serveDemo = options.serveDemo !== undefined ? options.serveDemo === true : process.env.FLIGHT_SERVE_DEMO === '1';
   const jira = options.jira || {};
   const jiraConfig = {
     baseUrl: String(jira.baseUrl || process.env.FLIGHT_JIRA_BASE_URL || '').replace(/\/$/, ''),
@@ -157,6 +172,7 @@ export function createServer(options = {}) {
   const jiraFetch = options.jiraFetch || globalThis.fetch;
   if (host.MES.MAX_EVIDENCE_BYTES && host.MES.MAX_EVIDENCE_BYTES > MAX_REQUEST_BYTES) throw new Error(`index.html allows ${host.MES.MAX_EVIDENCE_BYTES} byte recordings but the server's request limit is ${MAX_REQUEST_BYTES}. Raise MAX_REQUEST_BYTES and the proxy's client_max_body_size together.`);
   const log = options.quiet ? () => {} : (...a) => console.log(new Date().toISOString(), ...a);
+  const modelAdapterSettings = parseModelAdapterSettings(options.modelAdapterSettings !== undefined ? options.modelAdapterSettings : process.env.FLIGHT_MODEL_ADAPTER_SETTINGS);
   const exportCredentials = parseExportCredentials(options.exportCredentials !== undefined ? options.exportCredentials : process.env.FLIGHT_EXPORT_CREDENTIALS);
   const exportTargetAllowed = (tokenSetting, destination) => { let origin = null; try { origin = new URL(String(destination)).origin; } catch {} return !!origin && !!tokenSetting && Object.hasOwn(exportCredentials, tokenSetting) && exportCredentials[tokenSetting].includes(origin); };
   // The first account becomes Master Access, so creating it needs a code only the person running the server can
@@ -178,6 +194,13 @@ export function createServer(options = {}) {
 
   // ---- helpers ----
   const send = (res, status, body, headers = {}) => { const json = body === undefined ? '' : JSON.stringify(body); res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers }); res.end(json); };
+  // An unexpected failure is logged here with its detail and a reference. The caller gets the reference and a
+  // plain next step, never the error text: it can name files, SQL, or engine internals.
+  const internalError = (res, req, error, what = 'The server could not complete this request.') => {
+    const reference = randomBytes(6).toString('hex').toUpperCase();
+    log('error', reference, req.method, req.url, error && error.stack ? error.stack : String(error));
+    send(res, 500, { error: `${what} Try again; if it keeps failing, give your administrator reference ${reference}.`, reference });
+  };
   // Bodies are counted in bytes against MAX_REQUEST_BYTES; a declared Content-Length over it is refused before reading.
   const readBody = req => new Promise((resolve, reject) => {
     if (Number(req.headers['content-length']) > MAX_REQUEST_BYTES) { reject(tooLarge()); req.resume(); return; }
@@ -241,11 +264,29 @@ export function createServer(options = {}) {
     return null;
   };
 
+  // Evidence is read under the authority of the record that names it. Every signed-in account reads the live
+  // workspace and the archive, so a recording a live operation or an archived order names (directly, or as the
+  // stored copy behind another ID) is readable by any session. A recording no record names yet is readable only
+  // by the account that uploaded it and by a QA Manager or Master Access account.
+  const namesEvidence = (doc, id) => (Array.isArray(doc?.orders) ? doc.orders : []).some(o => (Array.isArray(o?.operations) ? o.operations : []).some(op => [...(Array.isArray(op?.evidence) ? op.evidence : []), ...(Array.isArray(op?.quarantinedEvidence) ? op.quarantinedEvidence : [])].some(e => e && (e.id === id || e.copyOf === id))));
+  const mayReadEvidence = async (session, row) => {
+    if (manages(session.account) || row.uploadedBy === session.username) return true;
+    const doc = await store.getDoc(TENANT);
+    if (doc) { let parsed = null; try { parsed = JSON.parse(doc.json); } catch { parsed = null; } if (namesEvidence(parsed, row.id)) return true; }
+    return !!await store.archiveNamesEvidence(row.id);
+  };
+  const refuseEvidenceRead = async (res, session, row) => {
+    await store.audit(session.username, 'evidence-read-refused', { id: row.id });
+    send(res, 403, { error: `${row.id} is not attached to a record yet. Only the account that uploaded it or a QA Manager can open it until it is saved on an operation.` });
+  };
+
   // Stores a validated state. Closed work orders nothing live points at move to the archive table in the
   // same transaction as the document write, each validated like a live order first. Archiving happens on
   // close: the write that closes an order (or the next write after it) moves it. Returns { etag, archived }
-  // or { problem } or { conflict }.
-  const commitState = async (state, expectedEtag, username) => {
+  // or { problem } or { conflict }. The audit rows for the change (archive rows, and the caller's own entries,
+  // whose detail may be a function of the new ETag) are written in the same transaction: a change is never kept
+  // without its audit row, and an audit row never names a change that was rolled back.
+  const commitState = async (state, expectedEtag, username, audits = []) => {
     const exportState = structuredClone(state);
     const beforeRow = await store.getDoc(TENANT);
     const beforeState = beforeRow ? JSON.parse(beforeRow.json) : null;
@@ -261,11 +302,12 @@ export function createServer(options = {}) {
       etag = await tx.putDoc(TENANT, JSON.stringify(state), expectedEtag, username);
       if (!etag) return false;
       queuedExports = await queueNewFinalRecords(beforeState, exportState, username, tx);
+      for (const row of rows) await tx.audit(username, 'archive', { orderId: row.id, sha256: row.sha256 });
+      for (const entry of audits) await tx.audit(username, entry.action, typeof entry.detail === 'function' ? entry.detail(etag) : entry.detail);
       return true;
     });
     if (clash) return { problem: `${clash} is already in the archive. Reload to continue.` };
     if (!etag) return { conflict: true };
-    for (const row of rows) await store.audit(username, 'archive', { orderId: row.id, sha256: row.sha256 });
     if (queuedExports.length) void drainExports();
     return { etag, archived: rows.map(x => x.id) };
   };
@@ -288,7 +330,10 @@ export function createServer(options = {}) {
   const page = async session => {
     const row = await store.getDoc(TENANT);
     // Never embed a workspace in a page response. The app fetches it only after sign-in.
-    const ctx = { api: '/api', etag: null, workspace: null, workspaceAvailable: !!row, jiraConfigured, auth: { users: (await store.accounts()).map(publicAccount) }, account: session ? publicAccount(session.account) : null, served: new Date().toISOString() };
+    // Nor the account directory: a visitor who has not signed in learns only whether the first account still has
+    // to be set up. A signed-in page reads the list from GET /api/auth/accounts with its session.
+    const accounts = await store.accounts();
+    const ctx = { api: '/api', etag: null, workspace: null, workspaceAvailable: !!row, jiraConfigured, auth: { users: session ? accounts.map(publicAccount) : [], setupRequired: accounts.length === 0 }, account: session ? publicAccount(session.account) : null, served: new Date().toISOString() };
     const script = `<script id="flight-server">window.FLIGHT_SERVER=${JSON.stringify(ctx).replace(/</g, '\\u003c')};</script>`;
     return host.html.replace('<head>', `<head>${script}`);
   };
@@ -406,11 +451,15 @@ export function createServer(options = {}) {
     try {
       await storeReady;
       if (p === '/' || p === '/index.html') { const pageSession = await sessionOf(req); res.writeHead(200, { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-store' }); res.end(await page(pageSession)); return; }
-      if (p.startsWith('/assets/') || p === '/demo.html' || p === '/favicon.ico') { serveStatic(req, res, p); return; }
+      if (p.startsWith('/assets/') || (p === '/demo.html' && serveDemo) || p === '/favicon.ico') { serveStatic(req, res, p); return; }
       if (!p.startsWith('/api/')) { send(res, 404, { error: 'Not found' }); return; }
       const route = p.slice(4);
 
-      if (route === '/health' && m === 'GET') { const row = await store.getDoc(TENANT), accounts = await store.accounts(); send(res, 200, { ok: true, product: 'Flight System', accounts: accounts.length, workspace: !!row, etag: row ? row.etag : null, schema: row ? JSON.parse(row.json).version : null }); return; }
+      // Liveness for anyone (a load balancer or monitor needs no account); the operating detail only with a session.
+      if (route === '/health' && m === 'GET') {
+        if (!await sessionOf(req, { touch: false })) { send(res, 200, { ok: true }); return; }
+        const row = await store.getDoc(TENANT), accounts = await store.accounts(); send(res, 200, { ok: true, product: 'Flight System', accounts: accounts.length, workspace: !!row, etag: row ? row.etag : null, schema: row ? JSON.parse(row.json).version : null }); return;
+      }
 
       // -- auth --
       if (route === '/auth/session') {
@@ -702,10 +751,9 @@ export function createServer(options = {}) {
         issue = { key: saved.issue_key, url: saved.issue_url };
         const linked = host.withAccount(session.account, linkAction, state);
         if (!linked?.ok) { await store.audit(session.username, 'jira-link-refused', { recordType, recordId, issueKey: issue.key, reason: linked?.message || 'engine refusal' }); send(res, 422, { error: `Jira issue ${issue.key} exists, but Flight refused the record link: ${linked?.message || 'reload and reconcile the record'}`, code: 'JIRA_RECONCILIATION_REQUIRED' }); return; }
-        const done = await commitState(state, loaded.etag, session.username);
+        const done = await commitState(state, loaded.etag, session.username, [{ action: 'jira-issue-linked', detail: { recordType, recordId, issueKey: issue.key } }]);
         if (done.problem) { send(res, 422, { error: `Jira issue ${issue.key} exists, but Flight could not save its record link: ${done.problem}`, code: 'JIRA_RECONCILIATION_REQUIRED' }); return; }
         if (done.conflict) { send(res, 409, { error: `Jira issue ${issue.key} exists, but the workspace changed before Flight could save the link. Retry this request to finish reconciliation.`, code: 'JIRA_RECONCILIATION_REQUIRED' }); return; }
-        await store.audit(session.username, 'jira-issue-linked', { recordType, recordId, issueKey: issue.key });
         send(res, 200, { ok: true, issue, message: linked.message, etag: done.etag }); return;
       }
 
@@ -739,10 +787,9 @@ export function createServer(options = {}) {
         const problem = validState(state); if (problem) { send(res, 422, { error: problem }); return; }
         { const bad = await evidenceProblem(cur ? JSON.parse(cur.json) : null, state); if (bad) { await store.audit(session.username, 'evidence-refused', { message: bad }); send(res, 422, { error: bad }); return; } }
         if (cur && ifMatch && cur.etag !== ifMatch) { res.writeHead(409, { 'Content-Type': MIME['.json'], ETag: cur.etag }); res.end(JSON.stringify({ error: 'The workspace changed on another device. Reload to continue.', etag: cur.etag, current: JSON.parse(cur.json) })); return; }
-        const done = await commitState(state, cur ? cur.etag : null, session.username);
+        const done = await commitState(state, cur ? cur.etag : null, session.username, [{ action: 'workspace-initialize', detail: etag => ({ etag }) }]);
         if (done.problem) { send(res, 422, { error: done.problem }); return; }
         if (done.conflict) { send(res, 409, { error: 'The workspace changed on another device. Reload to continue.' }); return; }
-        await store.audit(session.username, 'workspace-initialize', { etag: done.etag });
         res.writeHead(204, { ETag: done.etag, ...(done.archived.length ? { 'X-Flight-Archived': done.archived.join(',') } : {}) }); res.end(); return;
       }
       // -- actions: run an engine function server-side with the session's authority --
@@ -753,7 +800,9 @@ export function createServer(options = {}) {
         const body = await readJson(req), args = Array.isArray(body.args) ? body.args : [];
         if (action[1] === 'MES.configureModelAdapter' && args[0]?.enabled === true) {
           const settingName = String(args[0]?.settingName || '');
-          if (!/^[A-Z_][A-Z0-9_]{1,63}$/.test(settingName) || !String(process.env[settingName] || '').trim()) { send(res, 422, { error: 'The named server environment setting is not configured. The model adapter remains off.' }); return; }
+          // One answer for a setting that is not listed and one that is listed but empty: the check reveals nothing
+          // about other environment variables.
+          if (!modelAdapterSettings.includes(settingName) || !String(process.env[settingName] || '').trim()) { send(res, 422, { error: 'The named server environment setting is not configured for the model adapter. Ask the server operator to set it and list it in FLIGHT_MODEL_ADAPTER_SETTINGS. The model adapter remains off.' }); return; }
           args.push(true); // This flag is derived by the server, never accepted from the client.
         }
         const { state, etag, problem, raw } = await loadState();
@@ -762,14 +811,13 @@ export function createServer(options = {}) {
         if (!ifMatch) { send(res, 428, { error: 'Include the current workspace ETag in If-Match before running an action.' }); return; }
         if (ifMatch && ifMatch !== etag) { send(res, 409, { error: 'The workspace changed on another device. Reload to continue.', etag }); return; }
         let result;
-        try { result = host.withAccount(session.account, () => fn(state, ...args), state); } catch (e) { send(res, 500, { error: `The action failed: ${e.message}` }); return; }
+        try { result = host.withAccount(session.account, () => fn(state, ...args), state); } catch (e) { internalError(res, req, e, 'The action could not run. Nothing was saved.'); return; }
         if (!result || result.ok === false) { await store.audit(session.username, 'action-refused', { action: action[1], message: result && result.message }); send(res, 403, { error: result ? result.message : 'Refused.', result }); return; }
         const invalid = validState(state); if (invalid) { send(res, 422, { error: `The action would leave the workspace invalid: ${invalid}` }); return; }
         { const bad = await evidenceProblem(raw, state); if (bad) { await store.audit(session.username, 'evidence-refused', { action: action[1], message: bad }); send(res, 422, { error: bad }); return; } }
-        const done = await commitState(state, etag, session.username);
+        const done = await commitState(state, etag, session.username, [{ action: 'action', detail: { action: action[1], message: result.message } }]);
         if (done.problem) { send(res, 422, { error: `The action would leave the workspace invalid: ${done.problem}` }); return; }
         if (done.conflict) { send(res, 409, { error: 'The workspace changed while the action ran. Try again.' }); return; }
-        await store.audit(session.username, 'action', { action: action[1], message: result.message });
         res.writeHead(200, { 'Content-Type': MIME['.json'], ETag: done.etag, ...(done.archived.length ? { 'X-Flight-Archived': done.archived.join(',') } : {}) }); res.end(JSON.stringify({ result, etag: done.etag, archived: done.archived })); return;
       }
       // -- evidence: bytes in SQLite, addressed by the EV ID the record carries, checked by SHA-256 --
@@ -791,13 +839,15 @@ export function createServer(options = {}) {
         let fileName = String(req.headers['x-evidence-name'] || '').slice(0, 180);
         try { fileName = decodeURIComponent(fileName); } catch {}
         fileName = fileName.slice(0, 180) || null;
-        const row = await store.putEvidence({ id: ev[1], sha256, size: bytes.length, mime, fileName, uploadedBy: session.username, bytes });
-        await store.audit(session.username, 'evidence-upload', { id: ev[1], sha256, size: bytes.length, mime });
+        // The stored recording and its audit row are one transaction.
+        let row = null;
+        await store.transaction(async tx => { row = await tx.putEvidence({ id: ev[1], sha256, size: bytes.length, mime, fileName, uploadedBy: session.username, bytes }); await tx.audit(session.username, 'evidence-upload', { id: ev[1], sha256, size: bytes.length, mime }); return true; });
         send(res, 201, row); return;
       }
-      if (ev && ev[2] === '/meta' && m === 'GET') { const row = await store.evidenceMeta(ev[1]); if (!row) { send(res, 404, { error: `The server holds no recording ${ev[1]}. Upload it from the device that captured it.` }); return; } send(res, 200, row); return; }
+      if (ev && ev[2] === '/meta' && m === 'GET') { const row = await store.evidenceMeta(ev[1]); if (!row) { send(res, 404, { error: `The server holds no recording ${ev[1]}. Upload it from the device that captured it.` }); return; } if (!await mayReadEvidence(session, row)) { await refuseEvidenceRead(res, session, row); return; } send(res, 200, row); return; }
       if (ev && !ev[2] && m === 'GET') {
         const row = await store.evidenceMeta(ev[1]); if (!row) { send(res, 404, { error: `The server holds no recording ${ev[1]}. Upload it from the device that captured it.` }); return; }
+        if (!await mayReadEvidence(session, row)) { await refuseEvidenceRead(res, session, row); return; }
         const bytes = await store.evidenceBytes(ev[1]);
         res.writeHead(200, { 'Content-Type': row.mime, 'Content-Length': bytes.length, 'X-Evidence-Sha256': row.sha256, 'Cache-Control': 'private, no-store' }); res.end(bytes); return;
       }
@@ -852,7 +902,7 @@ export function createServer(options = {}) {
         if (!arc[2]) { send(res, 200, { ...a.entry, sha256: a.sha256, schema: a.schema, archivedAt: a.archivedAt, archivedBy: a.archivedBy, readOnly: true, extractHistory: await store.extractHistory('work-order', a.id) }); return; }
         if (arc[2] === '/print') {
           const mode = url.searchParams.get('mode') === 'external' ? 'external' : 'internal';
-          let html; try { html = host.MESPrint.document(a.entry.order, mode); } catch (e) { send(res, 500, { error: `The record could not be printed: ${e.message}` }); return; }
+          let html; try { html = host.MESPrint.document(a.entry.order, mode); } catch (e) { internalError(res, req, e, 'The record could not be printed.'); return; }
           const summary = { orderId: a.id, partNumber: a.entry.order.partNumber, status: a.entry.order.status, operationCount: (a.entry.order.operations || []).length, closedAt: a.entry.order.closure && a.entry.order.closure.at || null };
           const stamp = await recordExtract(a.id, 'print', session.username, { order: a.entry.order, activity: a.entry.activity, archiveSha256: a.sha256, mode }, summary);
           html = html.replace('</body>', `${printExtractStamp(stamp)}</body>`);
@@ -937,14 +987,13 @@ export function createServer(options = {}) {
     } catch (e) {
       if (e.status === 413) { send(res, 413, { error: e.message, limit: MAX_REQUEST_BYTES }, { Connection: 'close' }); return; }
       if (e.status === 400) { send(res, 400, { error: e.message }); return; }
-      log('error', m, p, e.message);
-      send(res, 500, { error: e.message });
+      internalError(res, req, e);
     }
   }
 
   server = http.createServer((req, res) => { handle(req, res); });
   server.store = store; server.host = host; server.validState = validState; server.ready = storeReady.then(async () => { await wrapped; void drainExports(); });
-  // Bind address: behind a reverse proxy, bind 127.0.0.1 so only that proxy can connect.
+  // Bind address: 127.0.0.1 unless options.host, FLIGHT_HOST or --host names another.
   server.listenAsync = async (port, host = options.host || process.env.FLIGHT_HOST || DEFAULT_HOST) => { await server.ready; return new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, () => { server.off('error', reject); resolve(server.address().port); }); }); };
   // The code to show in the server console, or null once the first account exists.
   server.firstRunSetupCode = async () => { await storeReady; return (await store.accounts()).length ? null : setupCode; };
@@ -980,10 +1029,10 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
     catch (e) { console.error(`Restore failed: ${e.message}`); process.exit(1); }
   } else {
   const host = arg('host', process.env.FLIGHT_HOST || DEFAULT_HOST);
-  const server = createServer({ dbPath, databaseUrl, host });
+  const server = createServer({ dbPath, databaseUrl, host, ...(process.argv.includes('--serve-demo') ? { serveDemo: true } : {}) });
   server.listenAsync(Number(arg('port', process.env.PORT || 8080)), host).then(port => {
     const a = server.address();
-    console.log(`Flight System server listening on ${a.address}:${port} (${a.address === '127.0.0.1' || a.address === '::1' ? 'loopback only: this machine and its reverse proxy' : 'all interfaces: bind 127.0.0.1 with --host behind a reverse proxy'}) (db ${server.store.db.location ? server.store.db.location() : 'sqlite'})`);
+    console.log(`Flight System server listening on ${a.address}:${port} (${a.address === '127.0.0.1' || a.address === '::1' ? 'loopback only: this machine and its reverse proxy' : 'bound as --host or FLIGHT_HOST asked: allow it only behind a firewall or on a trusted network'}) (db ${server.store.db.location ? server.store.db.location() : 'sqlite'})`);
     server.firstRunSetupCode().then(code => { if (code) console.log(`First-run setup code: ${code}\nEnter it on the Set up Master Access screen to create the first account. It is not needed again once that account exists.`); }).catch(() => {});
   }, e => { console.error(`Flight System server could not listen on ${host}: ${e.message}. Check --host names an address on this machine and the port is free.`); process.exit(1); });
   }

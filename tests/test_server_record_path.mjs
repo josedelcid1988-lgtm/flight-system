@@ -135,6 +135,63 @@ try {
   }, orderId);
   assert.deepEqual(unsaved, { opened: 0, historyUnchanged: true, queue: 0 }, 'an unsaved print record means no traveler is printed');
 
+  // With a server configured, the traveler opens only after the server confirms its print record, and not at all
+  // when the server refuses it. The action is held at the network until the test releases it.
+  const printCount = history => history.filter(entry => /Shop traveler printed/.test(entry.text || entry.message || JSON.stringify(entry))).length;
+  const serverPrints = async id => printCount((((await (await fetch(`http://127.0.0.1:${port}/api/workspace`, { headers: { Authorization: `Bearer ${token}` } })).json()).orders || []).find(o => o.id === id) || {}).history || []);
+  const holdPrint = async reply => {
+    let release; const held = new Promise(resolve => { release = resolve; });
+    await page.route('**/api/workspace/actions/MES.logTravelerPrint', async route => { await held; if (reply) await route.fulfill(reply); else await route.continue(); });
+    return async () => { release(); };
+  };
+  const startPrint = id => page.evaluate(id => {
+    // A window may be opened at the click to keep the pop-up allowed; only the traveler itself written into it counts.
+    window.__opened = []; window.__closed = 0; window.__open = window.open;
+    window.open = () => { const doc = { open() {}, write(html) { if (html.includes(id)) window.__opened.push(html); }, close() {}, querySelector() { return null; } }; return { document: doc, focus() {}, print() {}, close() { window.__closed++; } }; };
+    window.__printDone = Promise.resolve(printTraveler(id));
+    return window.__opened.length;
+  }, id);
+  const finishPrint = () => page.evaluate(async () => { try { await window.__printDone; } finally { window.open = window.__open; } return { opened: window.__opened.length, closed: window.__closed, toast: document.querySelector('#toast p')?.textContent || '' }; });
+  {
+    const before = await serverPrints(orderId);
+    const release = await holdPrint(null);
+    const openedWhilePending = await startPrint(orderId);
+    await page.waitForTimeout(300);
+    const openedBeforeReply = await page.evaluate(() => window.__opened.length);
+    await release();
+    const done = await finishPrint();
+    await page.unroute('**/api/workspace/actions/MES.logTravelerPrint');
+    assert.equal(openedWhilePending, 0, 'the traveler is not opened while its print record is on its way to the server');
+    assert.equal(openedBeforeReply, 0, 'the traveler is not opened before the server confirms the print record');
+    assert.equal(done.opened, 1, `the traveler opens once the server confirms the print record: ${done.toast}`);
+    assert.equal(await serverPrints(orderId), before + 1, 'the server holds the print record');
+  }
+  {
+    const before = await serverPrints(orderId);
+    const release = await holdPrint({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: 'Test refusal of the print record.' }) });
+    const openedWhilePending = await startPrint(orderId);
+    await release();
+    const done = await finishPrint();
+    await page.unroute('**/api/workspace/actions/MES.logTravelerPrint');
+    await page.waitForFunction(() => !serverActionPending && !serverActionQueue.length && !serverReconcilePending, null, { timeout: 15000 });
+    assert.equal(openedWhilePending, 0, 'the traveler is not opened while a refused print record is pending');
+    assert.equal(done.opened, 0, 'the traveler is not opened when the server refuses its print record');
+    assert.equal(done.closed, 1, 'the window held open for the traveler is closed');
+    assert.match(done.toast, /traveler was not printed/, `the refusal says the traveler was not printed: ${done.toast}`);
+    assert.equal(await serverPrints(orderId), before, 'the refused print record is not on the server');
+    assert.equal(await page.evaluate(id => MES.getOrder(state, id).history.filter(entry => /Shop traveler printed/.test(JSON.stringify(entry))).length, orderId), before, 'this page holds the server copy, without the refused print record');
+  }
+
+  // A role change reason is kept in the server audit trail when a server is configured, and the refusal says so.
+  const roleReason = await page.evaluate(() => {
+    const auth = window.FLIGHT_SERVER.auth, users = auth.users;
+    auth.users = [...users, { username: 'reason-target', displayName: 'Reason Target', role: 'technician' }];
+    try { return skAuth.setRoles('reason-target', ['general'], 'short'); } finally { auth.users = users; }
+  });
+  assert.equal(roleReason.ok, false, 'a short role change reason is refused');
+  assert.match(roleReason.message, /kept in the server audit trail/, `the reason is said to go to the server audit trail: ${roleReason.message}`);
+  assert.doesNotMatch(roleReason.message, /device/, 'the server-mode reason message does not name this device');
+
   const views = await serverViews();
   assert.ok(views.includes('Record path sent') && !views.some(name => name.startsWith('Refused')), `the server record is unchanged by the refused attempts: ${views.join(', ')}`);
   assert.deepEqual(errors, []);
@@ -143,7 +200,7 @@ try {
   // Standalone use, no server: the browser is the record store and changes save there.
   const standalone = await browser.newPage();
   await standalone.addInitScript(() => {
-    localStorage.setItem('skyryse-mes-auth-v1', JSON.stringify({ users: [{ username: 'admin', displayName: 'Flight Master', salt: 'test', hash: 'unused', role: 'admin', createdAt: new Date().toISOString() }] }));
+    localStorage.setItem('skyryse-mes-auth-v1', JSON.stringify({ users: [{ username: 'admin', displayName: 'Flight Master', salt: 'test', hash: 'unused', role: 'admin', createdAt: new Date().toISOString() }, { username: 'bench', displayName: 'Bench Tech', salt: 'test', hash: 'unused', role: 'technician', createdAt: new Date().toISOString() }] }));
     sessionStorage.setItem('skyryse-mes-session-v1', 'admin');
     sessionStorage.setItem('sk-boot-seen', '1');
   });
@@ -154,6 +211,10 @@ try {
     return { ok: r.ok, saved: (JSON.parse(localStorage.getItem(KEY)).savedViews || []).some(view => view.name === 'Standalone view') };
   });
   assert.deepEqual(local, { ok: true, saved: true }, 'standalone changes still save in the browser');
+  // Standalone, the role change reason is kept in this device's security log, and the refusal says so.
+  const localReason = await standalone.evaluate(() => skAuth.setRoles('bench', ['general'], 'short'));
+  assert.equal(localReason.ok, false, 'a short role change reason is refused standalone');
+  assert.match(localReason.message, /kept in this device's security log/, `the reason is said to stay on this device: ${localReason.message}`);
   console.log('server record path: with a server configured, record changes reach the server or are refused before they run; standalone still saves in the browser');
 } finally {
   await browser.close();

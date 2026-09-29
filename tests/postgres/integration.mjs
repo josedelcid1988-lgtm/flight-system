@@ -30,7 +30,7 @@ try {
 
   const health = await call('/health');
   assert.equal(health.status, 200);
-  assert.equal(health.json.product, 'Flight System');
+  assert.deepEqual(health.json, { ok: true }, 'health without a session reports liveness only');
   console.log('ok PostgreSQL schema initializes and health is available');
 
   const jiraRequestId = `flight-ecr-pg-${randomUUID().toLowerCase()}`;
@@ -49,6 +49,11 @@ try {
   const login = await call('/auth/session', { method: 'POST', body: { username: 'pg-admin', password: 'pg-test-password-123' } });
   assert.equal(login.status, 200, JSON.stringify(login.json));
   const token = login.json.token;
+  assert.equal((await call('/health', { token })).json.product, 'Flight System', 'a signed-in caller gets the health detail');
+  const sessionRows = (await server.store._query('SELECT * FROM sessions')).rows.flatMap(row => Object.values(row).map(String));
+  assert.ok(!sessionRows.includes(token), 'the PostgreSQL sessions table does not hold the token itself');
+  assert.ok(sessionRows.includes(createHash('sha256').update(token).digest('hex')), 'it holds the SHA-256 of the token');
+  for (const value of sessionRows.filter(v => v.length === 64)) assert.equal((await call('/auth/session', { token: value })).status, 401, 'a stored value does not work as a token');
   const lockUntil = Date.now() + 300000;
   const failures = await Promise.all(Array.from({ length: 5 }, () => server.store.noteFailedSignin('pg-race-user', 5, lockUntil)));
   assert.equal(failures.filter(item => item.locked).length, 1, 'five concurrent failed sign-ins lock the account exactly once');
@@ -130,6 +135,10 @@ try {
   assert.equal(upload.status, 201);
   const download = await fetch(base + `/evidence/${evidenceId}`, { headers: { Authorization: `Bearer ${token}` } });
   assert.deepEqual(Buffer.from(await download.arrayBuffer()), bytes);
+  const arcJson = JSON.stringify({ order: { id: 'WO-PG-EVIDENCE', status: 'Closed', operations: [{ id: 'op-010', evidence: [{ id: evidenceId }] }] }, activity: [] });
+  assert.equal(await server.store.archiveNamesEvidence(evidenceId), false, 'no archived order names the new recording yet');
+  await server.store.putArchived({ id: 'WO-PG-EVIDENCE', json: arcJson, sha256: createHash('sha256').update(arcJson).digest('hex'), schema: 1, keys: { partNumber: 'P', serials: [], lots: [], parts: ['P'], title: 'Evidence', closedAt: null }, by: 'postgres-test' });
+  assert.equal(await server.store.archiveNamesEvidence(evidenceId), true, 'an archived order that names the recording is found');
   console.log('ok PostgreSQL evidence bytes round-trip with SHA-256');
 
   const backupPath = path.join(exportDir, 'flight-postgres.dump');

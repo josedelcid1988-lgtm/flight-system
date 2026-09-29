@@ -8,7 +8,8 @@ export function openDb(path) {
     PRAGMA journal_mode = WAL;
     CREATE TABLE IF NOT EXISTS documents (tenant TEXT PRIMARY KEY, json TEXT NOT NULL, etag TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, updated_by TEXT);
     CREATE TABLE IF NOT EXISTS accounts (username TEXT PRIMARY KEY, display_name TEXT NOT NULL, salt TEXT NOT NULL, hash TEXT NOT NULL, role TEXT NOT NULL, created_at TEXT NOT NULL, created_by TEXT, sso INTEGER NOT NULL DEFAULT 0, roles TEXT NOT NULL DEFAULT '[]', profile TEXT NOT NULL DEFAULT '{}');
-    CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, username TEXT NOT NULL, issued_at TEXT NOT NULL, last_seen TEXT NOT NULL);
+    -- A session is kept as the SHA-256 of its token: a copy of this file or a backup holds no usable session.
+    CREATE TABLE IF NOT EXISTS sessions (token_sha256 TEXT PRIMARY KEY, username TEXT NOT NULL, issued_at TEXT NOT NULL, last_seen TEXT NOT NULL);
     -- Failed sign-ins and lockouts survive a restart; only an audited unlock or the lock's end clears them.
     CREATE TABLE IF NOT EXISTS lockouts (username TEXT PRIMARY KEY, fails INTEGER NOT NULL DEFAULT 0, locked_until INTEGER NOT NULL DEFAULT 0, last_failed_at TEXT);
     CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY, at TEXT NOT NULL, username TEXT, action TEXT NOT NULL, detail TEXT, prev_hash TEXT, hash TEXT NOT NULL);
@@ -44,6 +45,10 @@ export function openDb(path) {
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
   }
+  // A database from before hashed sessions keeps tokens in plaintext. Those sessions are ended, not converted:
+  // everyone signs in again once after the upgrade.
+  const sessionColumns = new Set(db.prepare('PRAGMA table_info(sessions)').all().map(row => row.name));
+  if (!sessionColumns.has('token_sha256')) db.exec('DROP TABLE sessions; CREATE TABLE sessions (token_sha256 TEXT PRIMARY KEY, username TEXT NOT NULL, issued_at TEXT NOT NULL, last_seen TEXT NOT NULL);');
   const extractColumns = new Set(db.prepare('PRAGMA table_info(record_extracts)').all().map(row => row.name));
   if (!extractColumns.has('sequence')) db.exec('ALTER TABLE record_extracts ADD COLUMN sequence INTEGER NOT NULL DEFAULT 0');
   const accountColumns = new Set(db.prepare('PRAGMA table_info(accounts)').all().map(row => row.name));
@@ -69,6 +74,7 @@ export function openDb(path) {
     priorAuditHash = row.hash;
   }
   const now = () => new Date().toISOString();
+  const tokenHash = token => createHash('sha256').update(String(token)).digest('hex');
   const etagFor = (json, revision) => `"${revision}-${createHash('sha256').update(json).digest('hex').slice(0, 16)}"`;
   return {
     db,
@@ -103,7 +109,7 @@ export function openDb(path) {
     openSession(username, when = Date.now()) {
       db.prepare('DELETE FROM sessions WHERE username = ?').run(username);
       const token = randomBytes(24).toString('base64url'), at = new Date(when).toISOString();
-      db.prepare('INSERT INTO sessions (token, username, issued_at, last_seen) VALUES (?, ?, ?, ?)').run(token, username, at, at);
+      db.prepare('INSERT INTO sessions (token_sha256, username, issued_at, last_seen) VALUES (?, ?, ?, ?)').run(tokenHash(token), username, at, at);
       return { token, issuedAt: at };
     },
     // A session ends after idleMs without activity or maxMs after it was issued, whichever comes first.
@@ -111,15 +117,15 @@ export function openDb(path) {
     // it without counting as activity (the page's heartbeat), so an open tab alone does not keep it alive.
     session(token, { idleMs = Infinity, maxMs = Infinity, touch = true, at = Date.now() } = {}) {
       if (!token) return null;
-      const row = db.prepare('SELECT token, username, issued_at, last_seen FROM sessions WHERE token = ?').get(token);
+      const key = tokenHash(token), row = db.prepare('SELECT username, issued_at, last_seen FROM sessions WHERE token_sha256 = ?').get(key);
       if (!row) return null;
       const expired = at - Date.parse(row.issued_at) >= maxMs ? 'absolute' : at - Date.parse(row.last_seen) >= idleMs ? 'idle' : null;
-      if (expired) { db.prepare('DELETE FROM sessions WHERE token = ?').run(token); return { expired, username: row.username }; }
-      if (touch) db.prepare('UPDATE sessions SET last_seen = ? WHERE token = ?').run(new Date(at).toISOString(), token);
-      return { token: row.token, username: row.username, issuedAt: row.issued_at, lastSeen: row.last_seen };
+      if (expired) { db.prepare('DELETE FROM sessions WHERE token_sha256 = ?').run(key); return { expired, username: row.username }; }
+      if (touch) db.prepare('UPDATE sessions SET last_seen = ? WHERE token_sha256 = ?').run(new Date(at).toISOString(), key);
+      return { token, username: row.username, issuedAt: row.issued_at, lastSeen: row.last_seen };
     },
-    closeSession(token) { db.prepare('DELETE FROM sessions WHERE token = ?').run(token); },
-    closeSessionsOf(username, exceptToken = null) { return db.prepare('DELETE FROM sessions WHERE username = ? AND token IS NOT ?').run(username, exceptToken).changes; },
+    closeSession(token) { db.prepare('DELETE FROM sessions WHERE token_sha256 = ?').run(tokenHash(token)); },
+    closeSessionsOf(username, exceptToken = null) { return db.prepare('DELETE FROM sessions WHERE username = ? AND token_sha256 IS NOT ?').run(username, exceptToken ? tokenHash(exceptToken) : null).changes; },
     // ---- failed sign-ins and lockouts ----
     lockout(username) { const r = db.prepare('SELECT username, fails, locked_until, last_failed_at FROM lockouts WHERE username = ?').get(username); return r ? { username: r.username, fails: r.fails, until: r.locked_until, lastFailedAt: r.last_failed_at } : { username, fails: 0, until: 0, lastFailedAt: null }; },
     noteFailedSignin(username, limit, lockUntil) { const r = db.prepare('INSERT INTO lockouts (username, fails, locked_until, last_failed_at) VALUES (?, CASE WHEN 1 >= ? THEN 0 ELSE 1 END, CASE WHEN 1 >= ? THEN ? ELSE 0 END, ?) ON CONFLICT(username) DO UPDATE SET fails = CASE WHEN lockouts.fails + 1 >= ? THEN 0 ELSE lockouts.fails + 1 END, locked_until = CASE WHEN lockouts.fails + 1 >= ? THEN ? ELSE lockouts.locked_until END, last_failed_at = excluded.last_failed_at RETURNING fails, locked_until').get(username, limit, limit, lockUntil, now(), limit, limit, lockUntil); return { fails: r.fails, until: r.locked_until, locked: r.locked_until === lockUntil }; },
@@ -130,6 +136,8 @@ export function openDb(path) {
     archived(id) { const r = db.prepare('SELECT order_id, json, sha256, schema, archived_at, archived_by FROM archive WHERE order_id = ?').get(id); return r ? { id: r.order_id, entry: JSON.parse(r.json), sha256: r.sha256, schema: r.schema, archivedAt: r.archived_at, archivedBy: r.archived_by } : null; },
     archivedSha(id) { const r = db.prepare('SELECT sha256 FROM archive WHERE order_id = ?').get(id); return r ? r.sha256 : null; },
     putArchived(e) { db.prepare('INSERT INTO archive (order_id, json, sha256, schema, part_number, serials, lots, parts, title, closed_at, archived_at, archived_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(e.id, e.json, e.sha256, e.schema, e.keys.partNumber || null, JSON.stringify(e.keys.serials), JSON.stringify(e.keys.lots), JSON.stringify(e.keys.parts), e.keys.title || null, e.keys.closedAt || null, now(), e.by || null); },
+    // Whether any archived order names this evidence ID. IDs are EV- and a UUID, so the quoted ID matches exactly.
+    archiveNamesEvidence(id) { return !!db.prepare('SELECT 1 AS found FROM archive WHERE instr(json, ?) > 0 LIMIT 1').get(JSON.stringify(String(id))); },
     archiveCount() { return db.prepare('SELECT COUNT(*) AS c FROM archive').get().c; },
     // Exact match on an order ID, serial, lot or part (case-insensitive), or a list when the query is empty.
     archiveSearch(query, limit = 200) {
