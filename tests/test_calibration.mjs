@@ -500,4 +500,81 @@ check('the signed ticket verifies on its original order before the split', tkRun
 check('the split moves the signed ticket onto the new order', tkRun.split.ok && tkRun.moved, JSON.stringify(tkRun.split));
 check('a moved ticket still verifies against the order it was signed on', tkRun.verify.ok && tkRun.carriedFrom?.orderId === tkOrderId, JSON.stringify(tkRun.verify.failures?.[0]));
 
+// #111: a traceability search matches buy-off tools by exact tag, like test assets and torque steps, so the search for
+// one tool does not report operations that used only a longer tag that starts with it.
+const prefixTrace = structuredClone(traceState);
+prefixTrace.orders = [...prefixTrace.orders, { id: 'WO-PREFIX-1', status: 'In Work', partNumber: 'PN-TRACE', revision: 'A', pedigree: 'Production', subcategory: 'Mfg.', materials: [], tickets: [], history: [], operations: [{ id: 'OP-9', title: 'Measure', buyoff: { at: '2026-09-30T18:00:00.000Z', name: 'Sam Tech', tools: [{ tag: 'B2-TOOLX', description: 'MICROMETER' }, 'B2-TOOL-2'] } }] }];
+const prefixHits = MES.traceSearch(prefixTrace, 'B2-TOOL');
+check('a tool search does not report an operation that used only a longer tag starting with it', prefixHits.kind === 'tool' && !prefixHits.orders.some(o => o.id === 'WO-PREFIX-1'));
+check('a tool search still reports the operation that used the exact tag', prefixHits.orders.some(o => o.id === 'WO-TRACE-1'));
+const exactString = structuredClone(prefixTrace);
+exactString.orders[1].operations[0].buyoff.tools = ['b2-tool'];
+check('a buy-off tool stored as a plain string still matches its exact tag, in any case', MES.traceSearch(exactString, 'B2-TOOL').orders.some(o => o.id === 'WO-PREFIX-1'));
+
+// #112: the manifest signer of a calibration entry must hold calibration authority, the role gate the mutators apply.
+// A hand-made entry signed as a technician fails validation, the manifest verifier and the server gate.
+const signerBase = structuredClone(state);
+const signerRow = signerBase.calibrationLog[signerBase.calibrationLog.length - 1];
+check('a calibration entry recorded by a QA Manager is signed with the Quality Manager role', signerRow.calibrationSignature.manifest.signer.role === 'Quality Manager' && MES.validate(signerBase));
+const forgedRole = structuredClone(signerBase);
+forgedRole.calibrationLog[forgedRole.calibrationLog.length - 1].calibrationSignature.manifest.signer.role = 'Assembly technician';
+check('a calibration entry signed by a technician fails entry validation', !MES.validate(forgedRole));
+check('a calibration entry signed by a technician fails manifest verification', !MES.verifyManifests(forgedRole).ok && MES.verifyManifests(forgedRole).failures.some(f => /calibration authority/.test(f.reason)));
+check('the server gate rejects a calibration entry signed by a technician', typeof srv.validState(forgedRole) === 'string');
+check('diagnose names the signature of the technician-signed entry', /signature/.test(JSON.stringify(MES.diagnose(forgedRole))));
+// The allowed signer roles are exactly the account roles that hold configure-qms, so the list cannot drift from ROLE_CAPS.
+const roleVerdicts = host.roles.ROLES.map(r => {
+  const probe = structuredClone(signerBase);
+  probe.calibrationLog[probe.calibrationLog.length - 1].calibrationSignature.manifest.signer.role = r.profileRole;
+  return { key: r.key, allowed: (host.roles.ROLE_CAPS[r.key] || host.roles.EVERYONE).includes('configure-qms'), valid: MES.validate(probe) };
+});
+check('every role with configure-qms signs a valid calibration entry and every other role does not', roleVerdicts.length > 5 && roleVerdicts.every(v => v.allowed === v.valid) && roleVerdicts.filter(v => v.valid).map(v => v.key).sort().join() === 'admin,qm');
+// Standalone use (no account): the profile signs, so a profile without calibration authority cannot record or correct.
+const standalone = structuredClone(state);
+standalone.profile = { name: 'Riley Quality', role: 'Quality Engineer', credentialId: 'SR-QE-001' };
+const standaloneLen = standalone.calibrationLog.length;
+const standaloneRecord = MES.recordCalibration(standalone, { ...entry, tag: 'SOLO-001' });
+const standaloneFix = MES.updateCalibration(standalone, MES.calibrationStatus(standalone, 'TEST-001').id, { note: 'Lab cert 44' });
+check('a standalone profile without calibration authority cannot record or correct a calibration', !standaloneRecord.ok && /Quality Manager or System Administrator/.test(standaloneRecord.message) && !standaloneFix.ok && standalone.calibrationLog.length === standaloneLen);
+standalone.profile = { name: 'Morgan Lee', role: 'Quality Manager', credentialId: 'SR-QM-001' };
+const standaloneQm = MES.recordCalibration(standalone, { ...entry, tag: 'SOLO-002' });
+check('a standalone Quality Manager profile records a calibration that validates', standaloneQm.ok && MES.validate(standalone) && MES.verifyManifests(standalone).ok);
+
+// #113: there is no archive path, so the log limits say what happened and what to do instead of promising one.
+check('the full-log refusal no longer tells the operator to archive', !/Archive older/.test(fullCorrect.message) && /was not recorded/.test(fullCorrect.message) && /cannot be removed or archived/.test(fullCorrect.message) && /administrator/.test(fullCorrect.message));
+check('the last-entry-number refusal no longer tells the operator to archive', !/Archive the log/.test(exhausted.message) && /was not recorded/.test(exhausted.message) && /cannot be removed or archived/.test(exhausted.message));
+check('the page carries no calibration archive instruction', !/Archive older entries|Archive the log before/.test(pageSource));
+
+// #120: a tool that was never calibrated can be retired with blank calibration and due dates. Every status that
+// claims a calibration still needs both dates.
+const undated = structuredClone(state);
+const undatedFields = { tag: 'SR0077', description: 'LOAD CELL', serial: '902115', calibratedAt: '', expires: '', location: 'Production Floor', note: 'Never calibrated; scrapped' };
+const undatedLen = undated.calibrationLog.length;
+for (const status of ['In Calibration', 'Out for Calibration', 'Quarantined']) {
+  const refused = host.withAccount(qa, () => MES.recordCalibration(undated, { ...undatedFields, status }), undated);
+  check(`blank calibration dates on a ${status} entry are refused`, !refused.ok && /calibration date/.test(refused.message) && undated.calibrationLog.length === undatedLen);
+}
+const halfDated = host.withAccount(qa, () => MES.recordCalibration(undated, { ...undatedFields, calibratedAt: '2026-09-01', status: 'Retired' }), undated);
+check('a Retired entry with only one of the two dates is refused', !halfDated.ok && /due date/.test(halfDated.message) && undated.calibrationLog.length === undatedLen);
+const halfDated2 = host.withAccount(qa, () => MES.recordCalibration(undated, { ...undatedFields, expires: '2027-09-01', status: 'Retired' }), undated);
+check('a Retired entry with only a due date is refused', !halfDated2.ok && /blank/.test(halfDated2.message) && undated.calibrationLog.length === undatedLen);
+const retiredUndated = host.withAccount(qa, () => MES.recordCalibration(undated, { ...undatedFields, status: 'Retired' }), undated);
+const undatedRetiredRow = undated.calibrationLog.find(e => e.id === retiredUndated.id);
+check('a never-calibrated tool is retired with blank calibration and due dates', retiredUndated.ok && undatedRetiredRow.calibratedAt === '' && undatedRetiredRow.expires === '' && undatedRetiredRow.status === 'Retired');
+check('the undated Retired entry validates and its manifest verifies', MES.validate(undated) && MES.verifyManifests(undated).ok && srv.validState(structuredClone(undated)) === null);
+check('the undated retired tool is unusable at point of use', !MES.toolCheck('SR0077', now, undated).ok && /Retired/.test(MES.toolCheck('SR0077', now, undated).message));
+const reinstateUndated = host.withAccount(qa, () => MES.updateCalibration(undated, retiredUndated.id, { status: 'In Calibration', note: 'Retired by mistake: the scrapped cell was SR0079' }), undated);
+check('returning an undated retired tool to service without calibration dates is refused', !reinstateUndated.ok && /calibration date/.test(reinstateUndated.message) && MES.calibrationStatus(undated, 'SR0077').id === retiredUndated.id);
+const datedRetire = host.withAccount(qa, () => MES.updateCalibration(undated, MES.calibrationStatus(undated, 'TEST-001').id, { status: 'Retired', calibratedAt: '', expires: '', note: 'Entered in error; never calibrated' }), undated);
+check('a correction to Retired may clear both dates', datedRetire.ok && MES.calibrationStatus(undated, 'TEST-001').expires === '' && MES.validate(undated) && MES.verifyManifests(undated).ok);
+const clearedInService = host.withAccount(qa, () => MES.updateCalibration(undated, MES.calibrationStatus(undated, 'CAL-022').id, { calibratedAt: '', expires: '' }), undated);
+check('a correction that clears the dates of an entry that is not Retired is refused', !clearedInService.ok && /calibration date/.test(clearedInService.message));
+// A hand-made undated entry with any status but Retired fails validation, even with a valid signature.
+const forgedUndated = structuredClone(undated);
+const undatedRow = forgedUndated.calibrationLog.find(e => e.id === retiredUndated.id);
+undatedRow.status = 'In Calibration';
+host.withAccount(qa, () => { undatedRow.calibrationSignature = { manifest: MES.signManifest(forgedUndated, 'Calibration recorded', calSubject(undatedRow), undatedRow.recordedAt) }; }, forgedUndated);
+check('a signed In Calibration entry with blank dates fails validation', !MES.validate(forgedUndated) && /calibratedAt/.test(JSON.stringify(MES.diagnose(forgedUndated))));
+check('the calibration record forms leave the dates optional and say when they may be blank', /leaves them blank/.test(pageSource) && !/name="calibratedAt" type="date" required/.test(pageSource));
+
 console.log(`calibration: ${checks} checks, all passed`);
