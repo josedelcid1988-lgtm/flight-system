@@ -14,7 +14,8 @@ const check = async (name, fn) => {
 };
 const sha = (salt, password) => createHash('sha256').update(`${salt}:${password}`).digest('hex');
 let now = Date.now();
-const server = createServer({ dbPath: ':memory:', quiet: true, clock: () => now });
+const SETUP_CODE = 'server-test-setup-code';
+const server = createServer({ dbPath: ':memory:', quiet: true, clock: () => now, setupCode: SETUP_CODE });
 const requestHandler = server.listeners('request')[0];
 const base = 'http://flight-system.test/api';
 const request = async (url, { method = 'GET', headers = {}, body } = {}) => {
@@ -68,14 +69,27 @@ try {
     assert.doesNotMatch(html, /"serial":"SN-10009"/);
     assert.doesNotMatch(html, /"hash":/);
   });
+  await check('the first account needs the setup code from the server console', async () => {
+    const first = { username: 'intruder', displayName: 'Network Intruder', role: 'admin', salt: 'salt', hash: sha('salt', 'intruder-pass-123') };
+    for (const setupCode of [undefined, '', 'wrong-code']) {
+      const refused = await api('PUT', '/auth/accounts', { body: { users: [first], ...(setupCode === undefined ? {} : { setupCode }) } });
+      assert.equal(refused.status, 403, JSON.stringify(refused.json));
+      assert.match(refused.json.error, /setup code shown in the server console/);
+    }
+    assert.equal((await server.store.accounts()).length, 0, 'a refused first-run request creates no account');
+    assert.equal((await api('POST', '/auth/session', { body: { username: 'intruder', password: 'intruder-pass-123' } })).status, 401);
+    assert.ok((await server.store.auditRows(100)).some(row => row.action === 'first-account-refused'), 'the refused bootstrap is audited');
+    assert.equal(await server.firstRunSetupCode(), SETUP_CODE, 'the console shows the code while no account exists');
+  });
   await check('first account is created as Master Access', async () => {
-    const result = await api('PUT', '/auth/accounts', { body: { users: [
+    const result = await api('PUT', '/auth/accounts', { body: { setupCode: SETUP_CODE, users: [
       { username: 'one', displayName: 'Flight Admin', role: 'general', salt: 'salt', hash: sha('salt', 'flight-pass-123') }
     ] } });
     assert.equal(result.status, 200);
     assert.equal(result.json.users[0].role, 'admin');
     assert.deepEqual(result.json.users[0].roles, ['admin']);
     assert.equal(result.json.users[0].hash, undefined);
+    assert.equal(await server.firstRunSetupCode(), null, 'the setup code is not shown once the first account exists');
   });
   await check('Operations Manager and Quality Supervisor capabilities match their authority boundaries', async () => {
     const caps = server.host.roles.ROLE_CAPS;
@@ -202,6 +216,11 @@ try {
     assert.equal(tampered.ok, false);
     assert.equal(tampered.failures.length, 1);
   });
+  await check('a first initialization never replaces an existing workspace', async () => {
+    assert.ok(server.store.putDoc('init-check', '{"n":1}', null, 'first'));
+    assert.equal(server.store.putDoc('init-check', '{"n":2}', null, 'second'), null);
+    assert.equal(JSON.parse(server.store.getDoc('init-check').json).n, 1);
+  });
   await check('stale ETag writes are refused', async () => {
     const loaded = await api('GET', '/workspace', { token });
     const result = await api('PUT', '/workspace', { token, body: loaded.json, headers: { 'If-Match': '"stale"' } });
@@ -256,6 +275,20 @@ try {
     assert.equal(action.status, 403);
     assert.match(action.json.error, /role|permission|cannot/i);
     assert.equal(admin.role, 'admin');
+  });
+  await check('a CAR raised from an MRB board is linked to the board by the server action', async () => {
+    const before = server.store.getDoc('default'), stored = JSON.parse(before.json);
+    const board = (stored.maneuver?.mrb || [])[0];
+    assert.ok(board, 'the workspace has an MRB board');
+    const due = new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10);
+    const input = { title: 'Board corrective action', description: 'Raised from the MRB board.', sourceType: 'NC', severity: 'Minor', dueDate: due, mrbId: board.id };
+    const missing = await api('POST', '/workspace/actions/FlightManeuver.raiseCAR', { token, body: { args: [{ ...input, mrbId: 'MRB-9999' }] }, headers: { 'If-Match': before.etag } });
+    assert.equal(missing.status, 403, JSON.stringify(missing.json));
+    assert.match(missing.json.error, /MRB board this corrective action was raised from was not found/);
+    const raised = await api('POST', '/workspace/actions/FlightManeuver.raiseCAR', { token, body: { args: [input] }, headers: { 'If-Match': before.etag } });
+    assert.equal(raised.status, 200, JSON.stringify(raised.json));
+    const after = JSON.parse(server.store.getDoc('default').json);
+    assert.equal(after.maneuver.mrb.find(item => item.id === board.id).carId, raised.json.result.id, 'the shared workspace records the board-to-CAR link with the CAR');
   });
   await check('workspace action API refuses exported read and migration helpers', async () => {
     const before = server.store.getDoc('default');
@@ -510,11 +543,104 @@ try {
     assert.equal(result.json.rows[0].hash.length, 64);
   });
   await check('the manager can unlock an account with a reason and audit record', async () => {
-    for (let i = 0; i < 5; i += 1) await api('POST', '/auth/session', { body: { username: 'basic', password: 'wrong' } });
+    // Wrong passwords sent at the same time still count one each: the counter is a single atomic write.
+    const guesses = await Promise.all(Array.from({ length: 5 }, () => api('POST', '/auth/session', { body: { username: 'basic', password: 'wrong' } })));
+    assert.ok(guesses.every(result => result.status === 401), JSON.stringify(guesses.map(result => result.status)));
+    assert.equal((await server.store.auditRows(1000)).filter(row => row.action === 'lockout' && row.username === 'basic').length, 1, 'five concurrent failures lock the account exactly once');
     assert.equal((await api('POST', '/auth/session', { body: { username: 'basic', password: 'basic-pass-123' } })).status, 423);
     const result = await api('POST', '/auth/unlock', { token, body: { username: 'basic', reason: 'Verified with the person.' } });
     assert.equal(result.status, 200);
     assert.equal((await api('POST', '/auth/session', { body: { username: 'basic', password: 'basic-pass-123' } })).status, 200);
+  });
+  await check('action commits converge derived state that never became a command', async () => {
+    const before = server.store.getDoc('default');
+    const doc = JSON.parse(before.json);
+    // Plant stale derived state the browser only fixes on render/refresh, never as a queued command.
+    doc.assignments = Array.isArray(doc.assignments) ? doc.assignments : [];
+    const closedId = (doc.orders.find(order => order.status === 'Closed') || {}).id || 'WO-NONE';
+    doc.assignments.push({ id: 'A-STALE', type: 'op', orderId: closedId, opId: 'op-010', status: 'Open', assignee: { username: 'tech', name: 'Tech' } });
+    delete doc.maneuver;
+    delete doc.plannedOrders;
+    delete doc.blockers;
+    delete doc.masterWIs;
+    const plantedEtag = server.store.putDoc('default', JSON.stringify(doc), before.etag, 'server-test-fixture');
+    assert.ok(plantedEtag, 'the stale derived state is planted');
+    const acted = await api('POST', '/workspace/actions/MES.pruneExpiredNotices', { token, body: { args: [] }, headers: { 'If-Match': plantedEtag } });
+    assert.equal(acted.status, 200, JSON.stringify(acted.json));
+    const after = JSON.parse(server.store.getDoc('default').json);
+    const stale = after.assignments.find(a => a.id === 'A-STALE');
+    assert.ok(stale, 'the planted assignment survived the commit');
+    assert.equal(stale.status, 'Done', 'assignment auto-close converges on the server commit');
+    assert.equal(stale.autoClosed, true);
+    assert.ok(after.maneuver && Array.isArray(after.maneuver.cars), 'maneuver defaults converge on the server commit');
+    assert.ok(Array.isArray(after.plannedOrders), 'plan defaults converge on the server commit');
+    assert.ok(Array.isArray(after.masterWIs) && after.masterWIs.length > 0, 'master WI defaults converge on the server commit');
+    assert.ok(Array.isArray(after.blockers), 'planning blockers recompute on the server commit');
+  });
+  await check('an invalid converged workspace refuses the write and keeps the previous record', async () => {
+    const before = server.store.getDoc('default');
+    const doc = JSON.parse(before.json);
+    const template = doc.orders.find(order => order.status !== 'Closed') || doc.orders[0];
+    assert.ok(template, 'the workspace has a work order to clone');
+    // The engine holds at most 100 work orders: past that, post-convergence validation must fail.
+    for (let i = 0; doc.orders.length < 105; i += 1) doc.orders.push({ ...structuredClone(template), id: `${template.id}-bulk-${i}` });
+    const plantedEtag = server.store.putDoc('default', JSON.stringify(doc), before.etag, 'server-test-fixture');
+    assert.ok(plantedEtag);
+    const refused = await api('POST', '/workspace/actions/MES.pruneExpiredNotices', { token, body: { args: [] }, headers: { 'If-Match': plantedEtag } });
+    assert.equal(refused.status, 422, JSON.stringify(refused.json));
+    assert.match(refused.json.error, /the workspace holds 100/);
+    const kept = server.store.getDoc('default');
+    assert.equal(kept.etag, plantedEtag, 'the refused write keeps the previous record');
+    assert.equal(kept.json, JSON.stringify(doc), 'the refused write persists nothing');
+  });
+  await check('workspace initialization converges derived state before the first commit', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flight-system-init-'));
+    const second = createServer({ dbPath: path.join(dir, 'flight.sqlite'), quiet: true, setupCode: 'init-test-setup-code' });
+    await second.ready;
+    try {
+      const handler = second.listeners('request')[0];
+      const call = async (method, url, { token: tok, body } = {}) => {
+        const incoming = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]);
+        incoming.method = method;
+        incoming.url = url;
+        incoming.headers = { ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...(tok ? { authorization: `Bearer ${tok}` } : {}) };
+        const chunks = [];
+        const outgoing = new Writable({ write(chunk, encoding, callback) { chunks.push(Buffer.from(chunk)); callback(); } });
+        outgoing.writeHead = status => { outgoing.statusCode = status; return outgoing; };
+        const finished = new Promise((resolve, reject) => { outgoing.once('finish', resolve); outgoing.once('error', reject); });
+        handler(incoming, outgoing);
+        await finished;
+        const text = Buffer.concat(chunks).toString('utf8');
+        return { status: outgoing.statusCode, json: text ? JSON.parse(text) : null };
+      };
+      const created = await call('PUT', '/api/auth/accounts', { body: { setupCode: 'init-test-setup-code', users: [{ username: 'init-admin', displayName: 'Init Admin', role: 'general', salt: 's', hash: sha('s', 'init-pass-123') }] } });
+      assert.equal(created.status, 200, JSON.stringify(created.json));
+      const signedIn = await call('POST', '/api/auth/session', { body: { username: 'init-admin', password: 'init-pass-123' } });
+      assert.equal(signedIn.status, 200, JSON.stringify(signedIn.json));
+      const tok = signedIn.json.token;
+      const state = second.host.MES.seed();
+      delete state.maneuver;
+      delete state.plannedOrders;
+      delete state.blockers;
+      delete state.masterWIs;
+      state.assignments = [{ id: 'A-INIT', type: 'op', orderId: 'WO-NONE', opId: 'op-010', status: 'Open', assignee: { username: 'tech', name: 'Tech' } }];
+      const put = await call('PUT', '/api/workspace', { token: tok, body: state });
+      assert.equal(put.status, 204, JSON.stringify(put.json));
+      const loaded = await call('GET', '/api/workspace', { token: tok });
+      assert.equal(loaded.status, 200, JSON.stringify(loaded.json));
+      assert.ok(loaded.json.maneuver && Array.isArray(loaded.json.maneuver.cars), 'init converges maneuver defaults');
+      assert.ok(Array.isArray(loaded.json.plannedOrders), 'init converges plan defaults');
+      assert.ok(Array.isArray(loaded.json.masterWIs) && loaded.json.masterWIs.length > 0, 'init converges master WIs');
+      assert.ok(Array.isArray(loaded.json.blockers), 'init recomputes planning blockers');
+      const initStale = loaded.json.assignments.find(a => a.id === 'A-INIT');
+      assert.ok(initStale, 'the planted assignment survived initialization');
+      assert.equal(initStale.status, 'Done', 'init auto-closes the stale assignment');
+      assert.equal(initStale.autoClosed, true);
+      assert.equal(second.host.MES.validate(loaded.json), true, 'the converged initial workspace validates');
+    } finally {
+      second.store.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
   await check('sign-out closes the session', async () => {
     assert.equal((await api('DELETE', '/auth/session', { token })).status, 204);

@@ -7,7 +7,7 @@ import { createServer, finalizedRecords } from '../server/server.mjs';
 
 const sha = (salt, password) => createHash('sha256').update(`${salt}:${password}`).digest('hex');
 const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flight-export-delivery-'));
-const server = createServer({ dbPath: ':memory:', quiet: true });
+const server = createServer({ dbPath: ':memory:', quiet: true, setupCode: 'export-test-setup-code', exportCredentials: { FLIGHT_EXPORT_TEST_SECRET_UNSET: ['https://example.invalid'] } });
 let token;
 try {
   const manifest = { hash: 'a'.repeat(64) };
@@ -43,7 +43,7 @@ try {
     const text = await response.text(); let json = null; try { json = text ? JSON.parse(text) : null; } catch { json = text; }
     return { status: response.status, json, headers: response.headers };
   };
-  const first = await api('PUT', '/auth/accounts', { users: [{ username: 'export-admin', displayName: 'Export Admin', role: 'admin', salt: 'test-salt', hash: sha('test-salt', 'export-password-123') }] }, null);
+  const first = await api('PUT', '/auth/accounts', { setupCode: 'export-test-setup-code', users: [{ username: 'export-admin', displayName: 'Export Admin', role: 'admin', salt: 'test-salt', hash: sha('test-salt', 'export-password-123') }] }, null);
   assert.equal(first.status, 200);
   token = (await api('POST', '/auth/session', { username: 'export-admin', password: 'export-password-123' }, null)).json.token;
 
@@ -54,6 +54,16 @@ try {
   assert.equal((await api('PUT', '/record-exports/settings', httpsSetting)).status, 200);
   assert.equal((await api('PUT', '/record-exports/settings', { ...baseSetting, recordType: 'car', rationale: '' })).status, 400);
   assert.equal((await api('PUT', '/record-exports/settings', { ...baseSetting, recordType: '8130-9', destination: 'https://example.invalid/?token=secret', destinationKind: 'https', tokenSetting: 'FLIGHT_EXPORT_TOKEN' })).status, 400);
+  // Only a credential the server operator bound to a destination (FLIGHT_EXPORT_CREDENTIALS) is ever sent. Request data
+  // naming another server setting, or a bound setting with another host, is refused.
+  process.env.FLIGHT_EXPORT_LEAK_CHECK = 'must-never-leave-this-server';
+  const unbound = await api('PUT', '/record-exports/settings', { ...httpsSetting, recordType: '8130-9', tokenSetting: 'FLIGHT_EXPORT_LEAK_CHECK' });
+  assert.equal(unbound.status, 400, JSON.stringify(unbound.json));
+  assert.match(unbound.json.error, /has not bound FLIGHT_EXPORT_LEAK_CHECK/);
+  const otherHost = await api('PUT', '/record-exports/settings', { ...httpsSetting, recordType: '8130-9', destination: 'https://attacker.example/collect' });
+  assert.equal(otherHost.status, 400, JSON.stringify(otherHost.json));
+  assert.match(otherHost.json.error, /has not bound FLIGHT_EXPORT_TEST_SECRET_UNSET to https:\/\/attacker\.example/);
+  assert.equal(server.store.exportSetting('8130-9'), null, 'refused export settings are not stored');
 
   const fixture = fs.readFileSync(new URL('./fixtures/demo_publish.html', import.meta.url), 'utf8');
   const match = fixture.match(/window\.__DEMO_SEED=(\{[\s\S]*?\});/);
@@ -93,8 +103,43 @@ try {
   assert.ok(managerJobs.json.jobs.find(job => job.id === failedFair.id).history.length >= 3);
   const status = await api('GET', '/record-exports/status');
   assert.equal(status.json.outstanding, fairCount);
+  // A queued job is re-checked at delivery: a destination and setting that are not bound are never contacted.
+  server.store.queueExportJob({ id: 'JOB-5EC0000000000000000000AA', recordType: 'fair', recordId: 'FAIR-LEAK', exportId: 'EXT-LEAK', sha256: 'b'.repeat(64), payload: '{}', destinationKind: 'https', destination: 'https://attacker.example/collect', tokenSetting: 'FLIGHT_EXPORT_LEAK_CHECK', namingPattern: '{recordType}-{recordId}-{exportId}.json', createdBy: 'export-admin' });
+  assert.equal((await api('POST', `/record-exports/jobs/${failedFair.id}/retry`)).status, 202);
+  assert.ok(server.store.exportLog(failedFair.id, 20).some(row => row.status === 'queued' && /Manual retry requested by export-admin/.test(row.detail || '')), 'a manual retry is recorded in that job\'s own delivery history');
+  let leak = null;
+  for (let n = 0; n < 100; n += 1) { leak = server.store.exportJob('JOB-5EC0000000000000000000AA'); if (leak.status === 'failed') break; await new Promise(resolve => setTimeout(resolve, 50)); }
+  assert.equal(leak.status, 'failed');
+  const leakLog = server.store.exportLog(leak.id, 10);
+  assert.ok(leakLog.length >= 1, 'the refused delivery is logged');
+  assert.ok(leakLog.every(row => /is not bound to this destination in FLIGHT_EXPORT_CREDENTIALS\. Nothing was sent\./.test(row.detail || '')), JSON.stringify(server.store.exportLog(leak.id, 10)));
+  delete process.env.FLIGHT_EXPORT_LEAK_CHECK;
+  // One trigger drains every pending job, not only the first batch of 100.
+  const bulk = Array.from({ length: 150 }, (_, n) => `JOB-BULK${String(n).padStart(18, '0')}`);
+  for (const [n, id] of bulk.entries()) server.store.queueExportJob({ id, recordType: 'work-order', recordId: `WO-BULK-${n}`, exportId: `EXT-BULK-${n}`, sha256: String(n).padStart(64, '0'), payload: '{}', destinationKind: 'folder', destination: outDir, tokenSetting: null, namingPattern: '{recordType}-{recordId}-{exportId}.json', createdBy: 'export-admin' });
+  assert.equal((await api('POST', `/record-exports/jobs/${leak.id}/retry`)).status, 202);
+  let delivered = 0;
+  for (let n = 0; n < 200; n += 1) { delivered = bulk.filter(id => server.store.exportJob(id).status === 'delivered').length; if (delivered === bulk.length) break; await new Promise(resolve => setTimeout(resolve, 50)); }
+  assert.equal(delivered, bulk.length, 'all 150 queued exports are delivered from one trigger');
+  // One job per finalized version: a record reopened and finalized again has new content and gets its own export.
+  const version = (sha, id) => ({ id, recordType: 'fair', recordId: 'FAIR-REOPENED', exportId: `EXT-${id}`, sha256: sha, payload: '{}', destinationKind: 'folder', destination: outDir, tokenSetting: null, namingPattern: '{recordType}-{recordId}-{exportId}.json', createdBy: 'export-admin' });
+  assert.ok(server.store.queueExportJob(version('c'.repeat(64), 'JOB-REOPEN0000000000000001')), 'the first final version is queued');
+  assert.equal(server.store.queueExportJob(version('c'.repeat(64), 'JOB-REOPEN0000000000000002')), null, 'the same final content is not exported twice');
+  assert.ok(server.store.queueExportJob(version('d'.repeat(64), 'JOB-REOPEN0000000000000003')), 'a re-finalized version with new content is exported again');
   assert.equal(server.store.verifyAudit().ok, true);
   console.log('record export delivery: folder writes, content hashes, queue history, and three-attempt HTTPS failure passed');
+  // A database made before per-version export jobs is rebuilt on open, keeping its jobs.
+  const { DatabaseSync } = await import('node:sqlite');
+  const { openDb } = await import('../server/db.mjs');
+  const legacyPath = path.join(outDir, 'legacy.sqlite');
+  const legacy = new DatabaseSync(legacyPath);
+  legacy.exec(`CREATE TABLE record_export_jobs (id TEXT PRIMARY KEY, record_type TEXT NOT NULL, record_id TEXT NOT NULL, export_id TEXT NOT NULL UNIQUE, sha256 TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, destination_kind TEXT NOT NULL, destination TEXT NOT NULL, token_setting TEXT, naming_pattern TEXT NOT NULL, created_at TEXT NOT NULL, created_by TEXT NOT NULL, updated_at TEXT NOT NULL, last_error TEXT, UNIQUE(record_type, record_id));
+    INSERT INTO record_export_jobs VALUES ('JOB-LEGACY', 'fair', 'FAIR-OLD', 'EXT-LEGACY', '${'e'.repeat(64)}', '{}', 'delivered', 1, 'folder', '/tmp', NULL, '{recordId}-{exportId}.json', '2026-09-01T00:00:00.000Z', 'legacy', '2026-09-01T00:00:00.000Z', NULL);`);
+  legacy.close();
+  const migrated = openDb(legacyPath);
+  assert.equal(migrated.exportJob('JOB-LEGACY').status, 'delivered', 'the legacy job survives the rebuild');
+  assert.ok(migrated.queueExportJob({ id: 'JOB-LEGACY-V2', recordType: 'fair', recordId: 'FAIR-OLD', exportId: 'EXT-LEGACY-V2', sha256: 'f'.repeat(64), payload: '{}', destinationKind: 'folder', destination: '/tmp', tokenSetting: null, namingPattern: '{recordId}-{exportId}.json', createdBy: 'legacy' }), 'a migrated database accepts a new final version of the same record');
+  migrated.close();
 } finally {
   await server.closeAsync().catch(() => server.store.close());
   fs.rmSync(outDir, { recursive: true, force: true });

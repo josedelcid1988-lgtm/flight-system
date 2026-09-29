@@ -7,12 +7,14 @@ import { createServer, makeHash } from '../server/server.mjs';
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flight-jira-'));
 let posts = [];
 let server = createServer({
-  dbPath: path.join(dir, 'flight.sqlite'), quiet: true,
+  dbPath: path.join(dir, 'flight.sqlite'), quiet: true, setupCode: 'jira-test-setup-code',
   jira: { baseUrl: 'https://skyryse.atlassian.net', email: 'flight-connector@example.invalid', apiToken: 'test-only-secret' },
   jiraFetch: async (url, options) => {
     const body = JSON.parse(options.body);
     posts.push({ url, options, body });
     if (body.fields.summary.includes('uncertain response')) throw new Error('simulated timeout after request');
+    if (body.fields.summary.includes('rejected once') && !posts.some(post => post !== posts.at(-1) && post.body?.fields?.summary.includes('rejected once'))) return new Response(JSON.stringify({ errors: { issuetype: 'The issue type selected is invalid.' } }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+    if (body.fields.summary.includes('server error')) return new Response('upstream failure', { status: 500 });
     return new Response(JSON.stringify({ key: `ECR-${100 + posts.length}` }), { status: 201, headers: { 'Content-Type': 'application/json' } });
   }
 });
@@ -28,7 +30,7 @@ try {
     return { status: response.status, json, etag: response.headers.get('etag') };
   };
   const adminHash = await makeHash('flight-password-test');
-  const created = await api('PUT', '/auth/accounts', { users: [{ username: 'jira-admin', displayName: 'Jira Admin', role: 'admin', salt: '', hash: adminHash }] });
+  const created = await api('PUT', '/auth/accounts', { setupCode: 'jira-test-setup-code', users: [{ username: 'jira-admin', displayName: 'Jira Admin', role: 'admin', salt: '', hash: adminHash }] });
   assert.equal(created.status, 200);
   const login = await api('POST', '/auth/session', { username: 'jira-admin', password: 'flight-password-test' });
   assert.equal(login.status, 200);
@@ -40,6 +42,8 @@ try {
   const requestECR = (title, description) => server.host.withAccount(owner, () => server.host.MES.submitECRRequest(seed, { type: 'design', title, description, reason: 'Verify the Jira server integration safely.', partNumber: seed.orders[0].partNumber }), seed);
   const first = requestECR('Server-created ECR', 'Canonical Flight description for the ECR.');
   const uncertain = requestECR('uncertain response ECR', 'This request simulates a lost Jira response.');
+  const rejected = requestECR('rejected once ECR', 'Jira refuses the first request because of a configuration error.');
+  const serverError = requestECR('server error ECR', 'Jira answers with a server error, so the result is uncertain.');
   const maneuverRecords = server.host.withAccount(owner, () => {
     const spr = server.host.FlightManeuver.raiseSPR(seed, { title: 'Test report', foundAt: 'SIL', occurred: '2026-09-01', partNumber: seed.orders[0].partNumber, description: 'Canonical Flight SPR description.' });
     const car = server.host.FlightManeuver.raiseCAR(seed, { title: 'Supplier issue', description: 'Canonical Flight supplier description.', sourceType: 'Customer feedback', severity: 'Major', dueDate: '2099-12-31', ref: 'Integration contract test' });
@@ -48,6 +52,8 @@ try {
   }, seed);
   assert.equal(first.ok, true);
   assert.equal(uncertain.ok, true);
+  assert.equal(rejected.ok, true);
+  assert.equal(serverError.ok, true);
   assert.equal(maneuverRecords.spr.ok, true);
   assert.equal(maneuverRecords.car.ok, true);
   assert.equal(maneuverRecords.scar.ok, true);
@@ -92,6 +98,18 @@ try {
   assert.equal((await api('GET', '/workspace', undefined, token)).json.maneuver.sprs.find(row => row.id === maneuverRecords.spr.id).jira.key, 'ECR-102');
   assert.equal((await api('GET', '/workspace', undefined, token)).json.maneuver.cars.find(row => row.id === maneuverRecords.car.id).scar.jira.key, 'ECR-103');
 
+  // A definite refusal creates no issue: the record can be sent again once the configuration is fixed.
+  const refused = await api('POST', '/jira/issue', { recordType: 'ECR', recordId: rejected.id }, token);
+  assert.equal(refused.status, 502, JSON.stringify(refused.json));
+  assert.equal(refused.json.code, 'JIRA_REJECTED');
+  assert.match(refused.json.error, /created no issue/);
+  const resent = await api('POST', '/jira/issue', { recordType: 'ECR', recordId: rejected.id }, token);
+  assert.equal(resent.status, 200, JSON.stringify(resent.json));
+  assert.match(resent.json.issue.key, /^ECR-\d+$/);
+  // A server error may have created the issue, so it stays uncertain and is not resent.
+  const upstream = await api('POST', '/jira/issue', { recordType: 'ECR', recordId: serverError.id }, token);
+  assert.equal(upstream.json.code, 'JIRA_RESULT_UNKNOWN');
+  assert.equal((await api('POST', '/jira/issue', { recordType: 'ECR', recordId: serverError.id }, token)).status, 409);
   const lost = await api('POST', '/jira/issue', { recordType: 'ECR', recordId: uncertain.id }, token);
   assert.equal(lost.status, 502);
   assert.equal(lost.json.code, 'JIRA_RESULT_UNKNOWN');

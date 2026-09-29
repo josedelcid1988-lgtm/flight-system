@@ -41,6 +41,37 @@ FLIGHT_DATABASE_URL='postgresql://flight:password@localhost:5432/flight_system' 
 
 The PostgreSQL test is intentionally separate from the SQLite-only local suite runner so it never reports a skip when no PostgreSQL service is available. CI always provides the service and runs the integration test.
 
+## First-run setup code
+
+The first account on a new server becomes Master Access, so creating it needs a setup code that only
+the person running the server can see. When no account exists yet, the server prints the code in its
+console at startup:
+
+```text
+First-run setup code: <code>
+```
+
+Enter it on the Set up Master Access screen. To choose the code yourself, set
+`FLIGHT_BOOTSTRAP_TOKEN` in the server's secret store before the first start. Once the first account
+exists the code is no longer accepted or shown. A request without the right code is refused with 403
+and recorded in the audit trail as `first-account-refused`.
+
+## HTTPS record export credentials
+
+An HTTPS record export sends a bearer token read from a server setting. Record export settings name
+that setting, but the server only sends a setting the operator has bound to the destination's origin
+in `FLIGHT_EXPORT_CREDENTIALS`:
+
+```bash
+FLIGHT_EXPORT_TOKEN='...'
+FLIGHT_EXPORT_CREDENTIALS='{"FLIGHT_EXPORT_TOKEN": ["https://records.example.com"]}'
+```
+
+Saving an export setting whose setting name or destination host is not bound is refused. Each queued
+delivery is checked again before it is sent, so no other server secret, such as
+`FLIGHT_JIRA_API_TOKEN`, can be sent to any host. A malformed `FLIGHT_EXPORT_CREDENTIALS` stops the
+server at startup.
+
 ## Jira Cloud connector
 
 The authenticated server can send saved ECR, SPR and SCAR records to Jira Cloud. Keep these

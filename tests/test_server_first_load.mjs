@@ -11,7 +11,7 @@ const THROTTLE = 6;
 const browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
 const servers = [];
 async function freshServer() {
-  const server = createServer({ dbPath: ':memory:', host: '127.0.0.1', quiet: true });
+  const server = createServer({ dbPath: ':memory:', host: '127.0.0.1', quiet: true, setupCode: 'first-load-setup-code' });
   servers.push(server);
   return { server, port: await server.listenAsync(0, '127.0.0.1') };
 }
@@ -21,6 +21,7 @@ async function signIn(page) {
   await page.locator('#sk-username').fill('first-load-admin');
   await page.locator('#sk-password').fill('first-load-password');
   await page.locator('#sk-confirm').fill('first-load-password');
+  await page.locator('#sk-setup').fill('first-load-setup-code');
   await page.locator('#sk-login-submit').click();
 }
 async function slowPage() {

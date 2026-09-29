@@ -42,7 +42,7 @@ async function verifyPassword(account, password) {
 }
 const publicAccount = a => ({ username: a.username, displayName: a.displayName, role: a.role, roles: Array.isArray(a.roles) && a.roles.length ? [...a.roles] : [a.role], extraRoles: Array.isArray(a.extraRoles) ? [...a.extraRoles] : [], roleTraining: a.roleTraining && typeof a.roleTraining === 'object' && !Array.isArray(a.roleTraining) ? a.roleTraining : {}, grants: a.grants && typeof a.grants === 'object' && !Array.isArray(a.grants) ? a.grants : {}, grantHistory: Array.isArray(a.grantHistory) ? a.grantHistory : [], supportAccess: a.supportAccess === true, createdAt: a.createdAt, createdBy: a.createdBy, sso: a.sso });
 const LOCK_AFTER = 5, LOCK_MS = 5 * 60 * 1000;
-const TRAINING_GATED_ROLE_CAPS = new Set(['inspect-steps', 'mrb-quality', 'mrb-me', 'mrb-eng', 'mrb-cert']);
+export const TRAINING_GATED_ROLE_CAPS = new Set(['inspect-steps', 'mrb-quality', 'mrb-me', 'mrb-eng', 'mrb-cert']);
 // The one request body limit, in bytes. It is sized to the largest evidence upload the engine allows
 // (MES.MAX_EVIDENCE_BYTES, sent as the raw body with no encoding overhead), and it also caps the workspace
 // document. The nginx sample and the IT specification use the same number; tests/test_limits.mjs checks it.
@@ -93,6 +93,26 @@ export const DEFAULT_HOST = '0.0.0.0';
 export const SESSION_DEFAULTS = Object.freeze({ idleMinutes: 30, maxHours: 12 });
 const positive = (...values) => { for (const v of values) { const n = Number(v); if (v !== undefined && v !== null && v !== '' && Number.isFinite(n) && n > 0) return n; } return null; };
 
+// HTTPS record exports may only send a credential the server operator bound to that destination.
+// FLIGHT_EXPORT_CREDENTIALS is JSON: {"FLIGHT_EXPORT_TOKEN": ["https://records.example.com"]}. Request data never
+// names an arbitrary environment variable, so no other server secret can be sent anywhere.
+export function parseExportCredentials(value) {
+  if (value === undefined || value === null || value === '') return {};
+  let raw = value;
+  if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch { throw new Error('FLIGHT_EXPORT_CREDENTIALS must be JSON such as {"FLIGHT_EXPORT_TOKEN": ["https://records.example.com"]}.'); } }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('FLIGHT_EXPORT_CREDENTIALS must map each server setting name to a list of HTTPS origins.');
+  const out = {};
+  for (const [name, origins] of Object.entries(raw)) {
+    if (!/^[A-Z][A-Z0-9_]{0,63}$/.test(name) || !Array.isArray(origins) || !origins.length) throw new Error(`FLIGHT_EXPORT_CREDENTIALS: ${name} needs an upper-case setting name and at least one HTTPS origin.`);
+    out[name] = origins.map(origin => {
+      let u; try { u = new URL(String(origin)); } catch { u = null; }
+      if (!u || u.protocol !== 'https:' || u.username || u.password) throw new Error(`FLIGHT_EXPORT_CREDENTIALS: ${name} lists ${origin}, which is not an https origin.`);
+      return u.origin;
+    });
+  }
+  return out;
+}
+
 export function createServer(options = {}) {
   const indexPath = options.indexPath || path.join(ROOT, 'index.html');
   const dbPath = options.dbPath || process.env.FLIGHT_DB || path.join(ROOT, 'data', 'flight.sqlite');
@@ -120,6 +140,12 @@ export function createServer(options = {}) {
   const jiraFetch = options.jiraFetch || globalThis.fetch;
   if (host.MES.MAX_EVIDENCE_BYTES && host.MES.MAX_EVIDENCE_BYTES > MAX_REQUEST_BYTES) throw new Error(`index.html allows ${host.MES.MAX_EVIDENCE_BYTES} byte recordings but the server's request limit is ${MAX_REQUEST_BYTES}. Raise MAX_REQUEST_BYTES and the proxy's client_max_body_size together.`);
   const log = options.quiet ? () => {} : (...a) => console.log(new Date().toISOString(), ...a);
+  const exportCredentials = parseExportCredentials(options.exportCredentials !== undefined ? options.exportCredentials : process.env.FLIGHT_EXPORT_CREDENTIALS);
+  const exportTargetAllowed = (tokenSetting, destination) => { let origin = null; try { origin = new URL(String(destination)).origin; } catch {} return !!origin && !!tokenSetting && Object.hasOwn(exportCredentials, tokenSetting) && exportCredentials[tokenSetting].includes(origin); };
+  // The first account becomes Master Access, so creating it needs a code only the person running the server can
+  // see: FLIGHT_BOOTSTRAP_TOKEN when set, otherwise a random code printed in the server console at startup.
+  const setupCode = String(options.setupCode !== undefined ? options.setupCode : process.env.FLIGHT_BOOTSTRAP_TOKEN || '').trim() || randomBytes(15).toString('base64url');
+  const setupCodeMatches = value => { const given = String(value || '').trim(); if (!given) return false; const a = createHash('sha256').update(given).digest(), b = createHash('sha256').update(setupCode).digest(); return timingSafeEqual(a, b); };
   const hashReport = async () => { const out = { current: 0, weak: 0, wrapped: 0, sha256: 0, unknown: 0, sso: 0 }; for (const a of await store.accounts()) { if (a.sso) out.sso += 1; else out[hashKind(a.hash)] += 1; } return out; };
   // No SHA-256-only password hash is left at rest: each is wrapped in scrypt at startup (and on receipt),
   // and replaced with a plain scrypt hash of the password at that person's next sign-in.
@@ -160,11 +186,23 @@ export function createServer(options = {}) {
   const supervises = account => !manages(account) && accountRoles(account).includes('qs');
   // Lockouts are kept in SQLite, so a restart does not clear a brute-force lockout.
   const lockedFor = async username => { const f = await store.lockout(username); return f.until > Date.now() ? Math.ceil((f.until - Date.now()) / 60000) : 0; };
-  const noteFailure = async username => { const f = await store.lockout(username); let n = f.fails + 1, until = f.until; if (n >= LOCK_AFTER) { until = Date.now() + LOCK_MS; n = 0; await store.audit(username, 'lockout', { minutes: LOCK_MS / 60000 }); } await store.setLockout(username, n, until); return { n, until }; };
+  const noteFailure = async username => { const r = await store.noteFailedSignin(username, LOCK_AFTER, Date.now() + LOCK_MS); if (r.locked) await store.audit(username, 'lockout', { minutes: LOCK_MS / 60000 }); return { n: r.fails, until: r.until }; };
 
   // The document as the engine sees it: upgraded, blockers synced, validated. Returns the state or a problem.
   const loadState = async () => { const row = await store.getDoc(TENANT); if (!row) return { state: null, etag: null }; const parsed = JSON.parse(row.json); const state = host.MES.upgrade(structuredClone(parsed)); return { state, etag: row.etag, raw: parsed, problem: state ? null : (host.MES.diagnose(parsed) || {}).detail || 'The document does not match the current record format.' }; };
-  const validState = state => { host.MES.syncBlockers?.(state); if (Array.isArray(state.orders) && state.orders.filter(order => order.status !== 'Closed').length > 1000) return 'The workspace exceeds the 1,000 open work order limit. Close or archive work before adding more orders.'; if (host.MES.validate(state)) return null; return (host.MES.diagnose(state) || {}).detail || 'The workspace is invalid.'; };
+  // Derived-state convergence: the browser engine recomputes these on boot, refresh and render
+  // without ever queuing them as commands (planning blockers, assignment auto-close, master WI /
+  // plan / maneuver defaults). The server runs them here, inside every commit path, before
+  // validation, so the shared record always leaves with the same derived state any device would
+  // compute, and a convergence defect fails the write instead of persisting.
+  const convergeDerivedState = state => {
+    host.MES.ensureMasterWIs?.(state);
+    host.FlightPlan.ensure?.(state);
+    host.FlightManeuver.ensure?.(state);
+    host.MES.syncAssignments?.(state);
+    host.MES.syncBlockers?.(state);
+  };
+  const validState = state => { convergeDerivedState(state); if (Array.isArray(state.orders) && state.orders.filter(order => order.status !== 'Closed').length > 1000) return 'The workspace exceeds the 1,000 open work order limit. Close or archive work before adding more orders.'; if (host.MES.validate(state)) return null; return (host.MES.diagnose(state) || {}).detail || 'The workspace is invalid.'; };
 
   // Evidence integrity on every write, beside the engine's validation. The engine refuses a buy-off
   // without a stored copy and hash and refuses edits to signed evidence (MES.evidenceChanges); the
@@ -261,7 +299,8 @@ export function createServer(options = {}) {
       }
       return `Wrote ${filename}`;
     }
-    const token = job.tokenSetting ? process.env[job.tokenSetting] : '';
+    if (!exportTargetAllowed(job.tokenSetting, job.destination)) throw new Error(`Server setting ${job.tokenSetting || '(missing token setting)'} is not bound to this destination in FLIGHT_EXPORT_CREDENTIALS. Nothing was sent.`);
+    const token = process.env[job.tokenSetting] || '';
     if (!token) throw new Error(`Server setting ${job.tokenSetting || '(missing token setting)'} is not configured.`);
     const response = await fetch(job.destination, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, 'Idempotency-Key': job.exportId, 'X-Record-SHA256': job.sha256 }, body: payload, signal: AbortSignal.timeout(15000) });
     if (!response.ok) throw new Error(`HTTPS destination refused the export with ${response.status}: ${(await response.text()).slice(0, 300)}`);
@@ -270,7 +309,10 @@ export function createServer(options = {}) {
   const drainExports = () => {
     if (exportDrain) return exportDrain;
     exportDrain = (async () => {
-      for (const queued of await store.pendingExportJobs(100)) {
+      // Keep taking batches until nothing new is pending: one commit can finalize more records than one batch holds.
+      const seen = new Set();
+      for (let batch = await store.pendingExportJobs(100); batch.some(job => !seen.has(job.id)); batch = await store.pendingExportJobs(100)) for (const queued of batch.filter(job => !seen.has(job.id))) {
+        seen.add(queued.id);
         let job = queued;
         while (job && job.attempts < 3 && job.status === 'pending') {
           try {
@@ -445,6 +487,7 @@ export function createServer(options = {}) {
           const firstRun = existing.length === 0;
           if (!firstRun && !(session && (manages(session.account) || supervises(session.account)))) { send(res, 403, { error: 'Only a Master Access, QA Manager, or Quality Supervisor account can manage accounts.' }); return; }
           if (firstRun && incoming.length !== 1) { send(res, 400, { error: 'The first account is created alone.' }); return; }
+          if (firstRun && !setupCodeMatches(body.setupCode)) { await store.audit(null, 'first-account-refused', { reason: 'setup code missing or wrong' }); send(res, 403, { error: 'Enter the setup code shown in the server console when it started. The first account becomes Master Access, so it needs that code.' }); return; }
           await wrapped;
           const { state: accountState } = await loadState();
           // Hash before the transaction: new hashes are scrypt from the page; a legacy SHA-256 from an older page is wrapped.
@@ -586,6 +629,14 @@ export function createServer(options = {}) {
             await store.audit(session.username, 'jira-issue-uncertain', { recordType, recordId, idempotencyKey });
             send(res, 502, { error: 'Jira did not confirm the result. Check Jira for the Flight record label before retrying; Flight will not send a second create request.', code: 'JIRA_RESULT_UNKNOWN' }); return;
           }
+          // 400, 401, 403, 404 and 422 mean Jira refused the request and created nothing, so the record can be sent again
+          // once the configuration is fixed. Timeouts, 5xx and 429 stay uncertain: Jira may have created the issue.
+          if ([400, 401, 403, 404, 422].includes(remote.status)) {
+            let detail = ''; try { detail = String((await remote.text()) || '').slice(0, 300); } catch {}
+            await store.releaseJiraIssueRequest(idempotencyKey);
+            await store.audit(session.username, 'jira-issue-rejected', { recordType, recordId, idempotencyKey, responseStatus: remote.status });
+            send(res, 502, { error: `Jira refused the request (${remote.status}) and created no issue. Check the Jira project, issue type and connector account, then send it again.${detail ? ` Jira said: ${detail}` : ''}`, code: 'JIRA_REJECTED' }); return;
+          }
           if (!remote.ok) {
             await store.audit(session.username, 'jira-issue-uncertain', { recordType, recordId, idempotencyKey, responseStatus: remote.status });
             send(res, 502, { error: 'Jira did not confirm issue creation. Check Jira for the Flight record label before retrying; Flight will not send a second create request.', code: 'JIRA_RESULT_UNKNOWN' }); return;
@@ -631,9 +682,7 @@ export function createServer(options = {}) {
         { const stale = await dropArchived(doc); if (stale) { send(res, 409, { error: stale, code: 'ARCHIVED' }); return; } }
         const state = host.MES.upgrade(structuredClone(doc));
         if (!state) { send(res, 422, { error: (host.MES.diagnose(doc) || {}).detail || 'The document does not match the current record format.' }); return; }
-        host.MES.ensureMasterWIs?.(state);
-        host.FlightPlan.ensure?.(state);
-        host.MES.syncBlockers?.(state);
+        convergeDerivedState(state);
         const accountProfile = host.withAccount(session.account, () => host.MES.profileOptions(state)?.[0], state);
         if (accountProfile) state.profile = { name: accountProfile.name, role: accountProfile.role, credentialId: accountProfile.credentialId };
         const cur = await store.getDoc(TENANT);
@@ -794,6 +843,7 @@ export function createServer(options = {}) {
           if (destinationKind === 'folder' && !path.isAbsolute(destination)) { send(res, 400, { error: 'Folder destinations must be absolute paths on the server.' }); return; }
           if (destinationKind === 'https') { try { const u = new URL(destination); if (u.protocol !== 'https:' || u.username || u.password || u.search || u.hash) throw new Error(); } catch { send(res, 400, { error: 'HTTPS destinations need an https URL without embedded credentials, query parameters or fragments.' }); return; } }
           if ((destinationKind === 'https' && (!tokenSetting || !/^[A-Z][A-Z0-9_]{0,63}$/.test(tokenSetting))) || (destinationKind === 'folder' && tokenSetting)) { send(res, 400, { error: 'HTTPS destinations require a server setting name such as FLIGHT_EXPORT_TOKEN. Folder destinations do not use a token.' }); return; }
+          if (destinationKind === 'https' && !exportTargetAllowed(tokenSetting, destination)) { send(res, 400, { error: `The server operator has not bound ${tokenSetting} to ${new URL(destination).origin}. Ask them to add it to FLIGHT_EXPORT_CREDENTIALS on the server; only a bound setting is ever sent.` }); return; }
           if (namingPattern.length > 160 || !namingPattern.includes('{exportId}') || !namingPattern.includes('{recordId}') || /[\\/]/.test(namingPattern.replaceAll('{recordType}', '').replaceAll('{recordId}', '').replaceAll('{exportId}', ''))) { send(res, 400, { error: 'The naming pattern must include {recordId} and {exportId}, may include {recordType}, and cannot contain path separators.' }); return; }
           if (rationale.length < 3 || rationale.length > 500) { send(res, 400, { error: 'Enter a change rationale from 3 to 500 characters.' }); return; }
           const oldValue = await store.exportSetting(recordType);
@@ -842,6 +892,8 @@ export function createServer(options = {}) {
   server.store = store; server.host = host; server.ready = storeReady.then(async () => { await wrapped; void drainExports(); });
   // Bind address: behind a reverse proxy, bind 127.0.0.1 so only that proxy can connect.
   server.listenAsync = async (port, host = options.host || process.env.FLIGHT_HOST || DEFAULT_HOST) => { await server.ready; return new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, () => { server.off('error', reject); resolve(server.address().port); }); }); };
+  // The code to show in the server console, or null once the first account exists.
+  server.firstRunSetupCode = async () => { await storeReady; return (await store.accounts()).length ? null : setupCode; };
   server.closeAsync = async () => { await wrapped.catch(() => {}); await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())); await exportDrain?.catch(() => {}); await store.close(); };
   return server;
 }
@@ -852,7 +904,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   const dbPath = dbOverride || process.env.FLIGHT_DB || path.join(ROOT, 'data', 'flight.sqlite');
   const databaseUrl = arg('database-url', dbOverride ? null : process.env.FLIGHT_DATABASE_URL || null);
   const openCliStore = async () => databaseUrl ? openPostgres(databaseUrl) : openDb(dbPath);
-  const backupTo = arg('backup', null), unlockUser = arg('unlock', null);
+  const backupTo = arg('backup', null), restoreFrom = arg('restore', null), unlockUser = arg('unlock', null);
   if (unlockUser) {
     // node server/server.mjs --db data/datum.sqlite --unlock <username> --reason "..." --by <your name>
     const store = await openCliStore();
@@ -865,12 +917,20 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
     const store = await openCliStore();
     try { const pages = await store.backup(backupTo), count = (await store.evidenceList()).length; await store.close(); console.log(`${databaseUrl ? 'PostgreSQL dump' : 'Backup'} written to ${backupTo}${databaseUrl ? '' : ` (${pages} pages, ${count} evidence items)`}.`); }
     catch (e) { console.error(`Backup failed: ${e.message}`); await store.close(); process.exit(1); }
+  } else if (restoreFrom) {
+    // Offline restore of a pg_dump custom-format archive into the PostgreSQL target.
+    // Stop the server first when restoring into its database.
+    if (!databaseUrl) { console.error('Restore targets PostgreSQL only: pass --database-url <connection string>.'); process.exit(1); }
+    const { restorePostgres } = await import('./db-postgres.mjs');
+    try { await restorePostgres(databaseUrl, restoreFrom); console.log(`Restored ${restoreFrom} into the PostgreSQL database. Start the server normally; it verifies the audit chain on startup and refuses a tampered restore.`); }
+    catch (e) { console.error(`Restore failed: ${e.message}`); process.exit(1); }
   } else {
   const host = arg('host', process.env.FLIGHT_HOST || DEFAULT_HOST);
   const server = createServer({ dbPath, databaseUrl, host });
   server.listenAsync(Number(arg('port', process.env.PORT || 8080)), host).then(port => {
     const a = server.address();
     console.log(`Flight System server listening on ${a.address}:${port} (${a.address === '127.0.0.1' || a.address === '::1' ? 'loopback only: this machine and its reverse proxy' : 'all interfaces: bind 127.0.0.1 with --host behind a reverse proxy'}) (db ${server.store.db.location ? server.store.db.location() : 'sqlite'})`);
+    server.firstRunSetupCode().then(code => { if (code) console.log(`First-run setup code: ${code}\nEnter it on the Set up Master Access screen to create the first account. It is not needed again once that account exists.`); }).catch(() => {});
   }, e => { console.error(`Flight System server could not listen on ${host}: ${e.message}. Check --host names an address on this machine and the port is free.`); process.exit(1); });
   }
 }

@@ -22,7 +22,7 @@ export function openDb(path) {
     CREATE TRIGGER IF NOT EXISTS record_extracts_no_update BEFORE UPDATE ON record_extracts BEGIN SELECT RAISE(ABORT, 'record extracts are append-only'); END;
     CREATE TRIGGER IF NOT EXISTS record_extracts_no_delete BEFORE DELETE ON record_extracts BEGIN SELECT RAISE(ABORT, 'record extracts are append-only'); END;
     CREATE TABLE IF NOT EXISTS record_export_settings (record_type TEXT PRIMARY KEY, enabled INTEGER NOT NULL, destination_kind TEXT NOT NULL, destination TEXT NOT NULL, token_setting TEXT, naming_pattern TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT NOT NULL, rationale TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS record_export_jobs (id TEXT PRIMARY KEY, record_type TEXT NOT NULL, record_id TEXT NOT NULL, export_id TEXT NOT NULL UNIQUE, sha256 TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, destination_kind TEXT NOT NULL, destination TEXT NOT NULL, token_setting TEXT, naming_pattern TEXT NOT NULL, created_at TEXT NOT NULL, created_by TEXT NOT NULL, updated_at TEXT NOT NULL, last_error TEXT, UNIQUE(record_type, record_id));
+    CREATE TABLE IF NOT EXISTS record_export_jobs (id TEXT PRIMARY KEY, record_type TEXT NOT NULL, record_id TEXT NOT NULL, export_id TEXT NOT NULL UNIQUE, sha256 TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, destination_kind TEXT NOT NULL, destination TEXT NOT NULL, token_setting TEXT, naming_pattern TEXT NOT NULL, created_at TEXT NOT NULL, created_by TEXT NOT NULL, updated_at TEXT NOT NULL, last_error TEXT, UNIQUE(record_type, record_id, sha256));
     CREATE INDEX IF NOT EXISTS record_export_jobs_status ON record_export_jobs (status, created_at);
     CREATE TABLE IF NOT EXISTS record_export_log (id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL, at TEXT NOT NULL, attempt INTEGER NOT NULL, status TEXT NOT NULL, detail TEXT);
     CREATE TABLE IF NOT EXISTS jira_issue_requests (idempotency_key TEXT PRIMARY KEY, request_sha256 TEXT NOT NULL, record_type TEXT NOT NULL, record_id TEXT NOT NULL, project_key TEXT NOT NULL, status TEXT NOT NULL, issue_key TEXT, issue_url TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, created_by TEXT NOT NULL);
@@ -30,6 +30,20 @@ export function openDb(path) {
     CREATE TRIGGER IF NOT EXISTS record_export_log_no_delete BEFORE DELETE ON record_export_log BEGIN SELECT RAISE(ABORT, 'record export log is append-only'); END;
     CREATE TABLE IF NOT EXISTS skill_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, username TEXT, skill TEXT NOT NULL, input TEXT, output TEXT, status TEXT NOT NULL);
   `);
+  // One export per finalized version: a reopened and re-finalized record has new content and is exported again. A
+  // database made before this keyed jobs on the record alone; rebuild that table once, keeping every job.
+  const jobsSql = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'record_export_jobs'").get()?.sql || '';
+  if (/UNIQUE\(record_type, record_id\)/.test(jobsSql)) {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.exec(`CREATE TABLE record_export_jobs_v2 (id TEXT PRIMARY KEY, record_type TEXT NOT NULL, record_id TEXT NOT NULL, export_id TEXT NOT NULL UNIQUE, sha256 TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, destination_kind TEXT NOT NULL, destination TEXT NOT NULL, token_setting TEXT, naming_pattern TEXT NOT NULL, created_at TEXT NOT NULL, created_by TEXT NOT NULL, updated_at TEXT NOT NULL, last_error TEXT, UNIQUE(record_type, record_id, sha256));
+        INSERT INTO record_export_jobs_v2 SELECT id, record_type, record_id, export_id, sha256, payload, status, attempts, destination_kind, destination, token_setting, naming_pattern, created_at, created_by, updated_at, last_error FROM record_export_jobs;
+        DROP TABLE record_export_jobs;
+        ALTER TABLE record_export_jobs_v2 RENAME TO record_export_jobs;
+        CREATE INDEX IF NOT EXISTS record_export_jobs_status ON record_export_jobs (status, created_at);`);
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
+  }
   const extractColumns = new Set(db.prepare('PRAGMA table_info(record_extracts)').all().map(row => row.name));
   if (!extractColumns.has('sequence')) db.exec('ALTER TABLE record_extracts ADD COLUMN sequence INTEGER NOT NULL DEFAULT 0');
   const accountColumns = new Set(db.prepare('PRAGMA table_info(accounts)').all().map(row => row.name));
@@ -69,6 +83,7 @@ export function openDb(path) {
     async lockAuthority() {},
     putDoc(tenant, json, expectedEtag, by) {
       const cur = this.getDoc(tenant);
+      if (cur && expectedEtag === null) return null; // null: the document must not exist yet (first initialization)
       if (cur && expectedEtag !== undefined && expectedEtag !== null && cur.etag !== expectedEtag) return null;
       const revision = (cur ? cur.revision : 0) + 1, etag = etagFor(json, revision);
       db.prepare('INSERT INTO documents (tenant, json, etag, revision, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(tenant) DO UPDATE SET json = excluded.json, etag = excluded.etag, revision = excluded.revision, updated_at = excluded.updated_at, updated_by = excluded.updated_by').run(tenant, json, etag, revision, now(), by || null);
@@ -107,6 +122,7 @@ export function openDb(path) {
     closeSessionsOf(username, exceptToken = null) { return db.prepare('DELETE FROM sessions WHERE username = ? AND token IS NOT ?').run(username, exceptToken).changes; },
     // ---- failed sign-ins and lockouts ----
     lockout(username) { const r = db.prepare('SELECT username, fails, locked_until, last_failed_at FROM lockouts WHERE username = ?').get(username); return r ? { username: r.username, fails: r.fails, until: r.locked_until, lastFailedAt: r.last_failed_at } : { username, fails: 0, until: 0, lastFailedAt: null }; },
+    noteFailedSignin(username, limit, lockUntil) { const r = db.prepare('INSERT INTO lockouts (username, fails, locked_until, last_failed_at) VALUES (?, CASE WHEN 1 >= ? THEN 0 ELSE 1 END, CASE WHEN 1 >= ? THEN ? ELSE 0 END, ?) ON CONFLICT(username) DO UPDATE SET fails = CASE WHEN lockouts.fails + 1 >= ? THEN 0 ELSE lockouts.fails + 1 END, locked_until = CASE WHEN lockouts.fails + 1 >= ? THEN ? ELSE lockouts.locked_until END, last_failed_at = excluded.last_failed_at RETURNING fails, locked_until').get(username, limit, limit, lockUntil, now(), limit, limit, lockUntil); return { fails: r.fails, until: r.locked_until, locked: r.locked_until === lockUntil }; },
     setLockout(username, fails, until) { db.prepare('INSERT INTO lockouts (username, fails, locked_until, last_failed_at) VALUES (?, ?, ?, ?) ON CONFLICT(username) DO UPDATE SET fails = excluded.fails, locked_until = excluded.locked_until, last_failed_at = excluded.last_failed_at').run(username, fails, until, now()); },
     clearLockout(username) { return db.prepare('DELETE FROM lockouts WHERE username = ?').run(username).changes > 0; },
     lockouts(at = Date.now()) { return db.prepare('SELECT username, fails, locked_until, last_failed_at FROM lockouts WHERE locked_until > ? ORDER BY locked_until DESC').all(at).map(r => ({ username: r.username, until: new Date(r.locked_until).toISOString(), lastFailedAt: r.last_failed_at })); },
@@ -136,6 +152,8 @@ export function openDb(path) {
     exportSetting(recordType) { return this.exportSettings().find(row => row.recordType === recordType) || null; },
     jiraIssueRequest(key) { return db.prepare('SELECT * FROM jira_issue_requests WHERE idempotency_key=?').get(key) || null; },
     beginJiraIssueRequest(row) { const result=db.prepare('INSERT OR IGNORE INTO jira_issue_requests (idempotency_key,request_sha256,record_type,record_id,project_key,status,created_at,updated_at,created_by) VALUES (?,?,?,?,?,?,?,?,?)').run(row.idempotencyKey,row.requestSha256,row.recordType,row.recordId,row.projectKey,'pending',now(),now(),row.createdBy); return { request:this.jiraIssueRequest(row.idempotencyKey), inserted:result.changes===1 }; },
+    // Jira refused the request outright, so no issue exists: clear the pending row so a corrected request can be sent.
+    releaseJiraIssueRequest(key) { return db.prepare("DELETE FROM jira_issue_requests WHERE idempotency_key=? AND status='pending'").run(key).changes === 1; },
     completeJiraIssueRequest(key, issue) { const r=db.prepare("UPDATE jira_issue_requests SET status='created',issue_key=?,issue_url=?,updated_at=? WHERE idempotency_key=? AND status='pending'").run(issue.key,issue.url,now(),key); return r.changes===1 ? this.jiraIssueRequest(key) : null; },
     putExportSetting(value) { db.prepare('INSERT INTO record_export_settings (record_type, enabled, destination_kind, destination, token_setting, naming_pattern, updated_at, updated_by, rationale) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(record_type) DO UPDATE SET enabled=excluded.enabled,destination_kind=excluded.destination_kind,destination=excluded.destination,token_setting=excluded.token_setting,naming_pattern=excluded.naming_pattern,updated_at=excluded.updated_at,updated_by=excluded.updated_by,rationale=excluded.rationale').run(value.recordType, value.enabled ? 1 : 0, value.destinationKind, value.destination, value.tokenSetting || null, value.namingPattern, now(), value.updatedBy, value.rationale); return this.exportSetting(value.recordType); },
     queueExportJob(value) { const at = now(); const result = db.prepare('INSERT OR IGNORE INTO record_export_jobs (id,record_type,record_id,export_id,sha256,payload,status,attempts,destination_kind,destination,token_setting,naming_pattern,created_at,created_by,updated_at,last_error) VALUES (?,?,?,?,?,?,\'pending\',0,?,?,?,?,?,?,?,NULL)').run(value.id,value.recordType,value.recordId,value.exportId,value.sha256,value.payload,value.destinationKind,value.destination,value.tokenSetting||null,value.namingPattern,at,value.createdBy,at); return result.changes ? this.exportJob(value.id) : null; },
@@ -143,7 +161,7 @@ export function openDb(path) {
     pendingExportJobs(limit = 100) { return db.prepare("SELECT id FROM record_export_jobs WHERE status='pending' ORDER BY created_at LIMIT ?").all(limit).map(r => this.exportJob(r.id)); },
     exportJobs(limit = 200) { return db.prepare('SELECT id FROM record_export_jobs ORDER BY created_at DESC LIMIT ?').all(limit).map(r => this.exportJob(r.id)); },
     updateExportJob(id, { status, detail = null }) { db.exec('BEGIN IMMEDIATE'); try { const job = this.exportJob(id); if (!job) { db.exec('ROLLBACK'); return null; } const attempts = job.attempts + 1; db.prepare('UPDATE record_export_jobs SET status=?,attempts=?,updated_at=?,last_error=? WHERE id=?').run(status, attempts, now(), detail, id); db.prepare('INSERT INTO record_export_log (job_id,at,attempt,status,detail) VALUES (?,?,?,?,?)').run(id, now(), attempts, status, detail); db.exec('COMMIT'); return this.exportJob(id); } catch (error) { db.exec('ROLLBACK'); throw error; } },
-    retryExportJob(id, by) { db.exec('BEGIN IMMEDIATE'); try { const job = this.exportJob(id); if (!job) { db.exec('ROLLBACK'); return null; } db.prepare("UPDATE record_export_jobs SET status='pending',attempts=0,updated_at=?,last_error=NULL WHERE id=?").run(now(), id); db.prepare("INSERT INTO record_export_log (job_id,at,attempt,status,detail) VALUES (?,?,0,'queued',?)").run(now(), id, `Manual retry requested by ${by}.`); db.exec('COMMIT'); return this.exportJob(id); } catch (error) { db.exec('ROLLBACK'); throw error; } },
+    retryExportJob(id, by) { db.exec('BEGIN IMMEDIATE'); try { const job = this.exportJob(id); if (!job) { db.exec('ROLLBACK'); return null; } db.prepare("UPDATE record_export_jobs SET status='pending',attempts=0,updated_at=?,last_error=NULL WHERE id=?").run(now(), id); db.prepare("INSERT INTO record_export_log (job_id,at,attempt,status,detail) VALUES (?,?,0,'queued',?)").run(id, now(), `Manual retry requested by ${by}.`); db.exec('COMMIT'); return this.exportJob(id); } catch (error) { db.exec('ROLLBACK'); throw error; } },
     exportLog(jobId, limit = 100) { return db.prepare('SELECT job_id,at,attempt,status,detail FROM record_export_log WHERE job_id=? ORDER BY id DESC LIMIT ?').all(jobId,limit); },
     pendingExportCount() { return db.prepare("SELECT COUNT(*) AS c FROM record_export_jobs WHERE status IN ('pending','retrying','failed')").get().c; },
     // ---- evidence ----

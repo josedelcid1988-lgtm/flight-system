@@ -88,7 +88,7 @@ function Hangar({ state, MES, onOpen }) {
         {holds.length ? holds.map(({ item, reason }) => <button className="fr-hold-row" key={item.id} onClick={() => open(item)}><span className="fr-hold-icon"><Boxes size={18}/></span><span><strong>{item.id} · {titleOf(item)}</strong><small>{reason}</small></span><ChevronRight size={16}/></button>) : <p className="fr-no-holds"><Check size={16}/> No blocking holds in open work orders.</p>}
       </div>
     </section>
-    {milestoneRisks.length > 0 && <section className="fr-milestone-watch" aria-label="Project milestones at risk"><div className="fr-section-heading"><h2>Project milestones at risk</h2><span className="fr-count">{String(milestoneRisks.length).padStart(2, '0')}</span></div>{milestoneRisks.map(item => <div className="fr-milestone-watch-row" key={item.id}><div><strong>{item.id} · {item.title}</strong><span>{item.risk} · due {new Date(`${item.dueDate}T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}{item.workOrderId ? ` · ${item.workOrderId}` : ''}</span></div>{item.workOrderId && <button className="fr-record-link" onClick={() => { const workOrder = state.orders.find(order => order.id === item.workOrderId); if (workOrder) onOpen(workOrder); }}>Open work order</button>}</div>)}</section>}
+    {milestoneRisks.length > 0 && <section className="fr-milestone-watch" aria-label="Project milestones at risk"><div className="fr-section-heading"><h2>Project milestones at risk</h2><span className="fr-count">{String(milestoneRisks.length).padStart(2, '0')}</span></div>{milestoneRisks.map(item => <div className="fr-milestone-watch-row" key={item.id}><div><strong>{item.id} · {item.title}</strong><span>{item.risk} · due {new Date(`${item.dueDate}T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}{item.workOrderId ? ` · ${item.workOrderId}` : ''}</span></div>{item.workOrderId && <button className="fr-record-link" onClick={() => { const workOrder = state.orders.find(order => order.id === item.workOrderId); if (workOrder) onOpen(workOrder.id); }}>Open work order</button>}</div>)}</section>}
     <section className="fr-queue" aria-labelledby="fr-queue-heading">
       <div className="fr-queue-heading"><div className="fr-section-heading"><h2 id="fr-queue-heading">Work orders</h2><span className="fr-count">{String(rows.length).padStart(2, '0')}</span></div>
         <div className="fr-controls"><label className="fr-search"><Search size={16}/><input ref={searchRef} aria-label="Search work orders" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search work orders"/><kbd>⌘ K</kbd></label>
@@ -556,6 +556,16 @@ function TraceSearch({ state, MES, initialQuery, onSearch, onReport, onRoute }) 
   const [query, setQuery] = useState(initialQuery || '');
   const [compact, setCompact] = useState(() => { try { return localStorage.getItem(`${densityKey}-trace`) === 'compact'; } catch { return false; } });
   const result = query.trim() ? MES.traceSearch(state, query.trim()) : null;
+  // On the shared server, closed orders move to the read-only archive, so the live workspace no longer holds them.
+  // The server's trace search covers both; its archive matches are listed here beside the live results.
+  const [archived, setArchived] = useState([]);
+  useEffect(() => {
+    const q = query.trim(), server = typeof window !== 'undefined' && window.skServer?.active ? window.skServer : null;
+    if (!q || !server) { setArchived([]); return undefined; }
+    let current = true;
+    const timer = setTimeout(() => server.api(`/trace?q=${encodeURIComponent(q)}`).then(response => { if (current) setArchived(response.ok && Array.isArray(response.json?.results) ? response.json.results.filter(row => row.source === 'archive') : []); }).catch(() => { if (current) setArchived([]); }), 250);
+    return () => { current = false; clearTimeout(timer); };
+  }, [query]);
   const density = () => setCompact(value => {
     const next = !value;
     try { localStorage.setItem(`${densityKey}-trace`, next ? 'compact' : 'comfortable'); } catch {}
@@ -579,7 +589,8 @@ function TraceSearch({ state, MES, initialQuery, onSearch, onReport, onRoute }) 
     if (result.changes.length) sections.push(table('Change requests', ['Request', 'Type', 'Title', 'Origin', 'ECO', 'Status'], result.changes.map(change => <tr key={change.id}><td>{routeLink('ecr-open', { id: change.id }, change.id)}</td><td>{change.type}</td><td>{change.title}</td><td>{change.origin}</td><td>{change.eco || ''}</td><td>{change.status}</td></tr>), 'No change requests.'));
     if (result.wis?.length) sections.push(table('Master WI revisions', ['WI', 'Revision', 'Status', 'Orders cloned'], result.wis.map(wi => <tr key={`${wi.id}/${wi.revision}`}><td>{routeLink('wi-open', { wi: wi.id, rev: wi.revision }, wi.id)}</td><td>{wi.revision}</td><td>{wi.status}</td><td>{wi.orders}</td></tr>), ''));
   }
-  const hasRows = result && ['orders', 'tickets', 'mrb', 'sprs', 'cars', 'changes', 'wis'].some(key => Array.isArray(result[key]) && result[key].length > 0);
+  if (result && archived.length) sections.push(table('Archived work orders', ['Work order', 'Title', 'Part', 'Serials', 'Lots', 'Closed'], archived.map(row => <tr key={row.orderId}><td className="fr-mono">{row.orderId}</td><td>{row.title}</td><td className="fr-mono">{row.partNumber}</td><td className="fr-mono">{(row.serials || []).join(', ') || 'None'}</td><td className="fr-mono">{(row.lots || []).join(', ') || 'None'}</td><td>{row.closedAt ? String(row.closedAt).slice(0, 10) : ''}</td></tr>), 'No archived work orders match.'));
+  const hasRows = (result && ['orders', 'tickets', 'mrb', 'sprs', 'cars', 'changes', 'wis'].some(key => Array.isArray(result[key]) && result[key].length > 0)) || archived.length > 0;
   return <div className="flight-react fr-trace">
     <div className="fr-page-heading"><div><span className="fr-eyebrow">FLIGHT CONTROL</span><h1>Traceability<span>.</span></h1><p>Search a serial, lot, calibrated tool, master WI or change number.</p></div><div className="fr-workspace">Current Flight System records</div></div>
     <section className="fr-queue" aria-label="Traceability search">

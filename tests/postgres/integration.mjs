@@ -10,7 +10,7 @@ import { openPostgres } from '../../server/db-postgres.mjs';
 const connectionString = process.env.FLIGHT_DATABASE_URL;
 if (!connectionString) throw new Error('FLIGHT_DATABASE_URL is required for the PostgreSQL integration check.');
 const sha = (salt, password) => createHash('sha256').update(`${salt}:${password}`).digest('hex');
-const server = createServer({ databaseUrl: connectionString, quiet: true });
+const server = createServer({ databaseUrl: connectionString, quiet: true, setupCode: 'postgres-test-setup-code', exportCredentials: { FLIGHT_PG_TEST_SECRET_UNSET: ['https://example.invalid'] } });
 const exportDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flight-postgres-export-'));
 let address;
 try {
@@ -44,12 +44,16 @@ try {
   assert.equal(jiraReplay.request.issue_key, 'ECR-9001');
   console.log('ok PostgreSQL Jira idempotency state persists and replays the created issue');
 
-  const seed = await call('/auth/accounts', { method: 'PUT', body: { users: [{ username: 'pg-admin', displayName: 'PostgreSQL Admin', role: 'admin', salt: 'test-salt', hash: sha('test-salt', 'pg-test-password-123') }] } });
+  const seed = await call('/auth/accounts', { method: 'PUT', body: { setupCode: 'postgres-test-setup-code', users: [{ username: 'pg-admin', displayName: 'PostgreSQL Admin', role: 'admin', salt: 'test-salt', hash: sha('test-salt', 'pg-test-password-123') }] } });
   assert.equal(seed.status, 200, JSON.stringify(seed.json));
   const login = await call('/auth/session', { method: 'POST', body: { username: 'pg-admin', password: 'pg-test-password-123' } });
   assert.equal(login.status, 200, JSON.stringify(login.json));
   const token = login.json.token;
-  console.log('ok PostgreSQL account, scrypt upgrade, and session persistence');
+  const lockUntil = Date.now() + 300000;
+  const failures = await Promise.all(Array.from({ length: 5 }, () => server.store.noteFailedSignin('pg-race-user', 5, lockUntil)));
+  assert.equal(failures.filter(item => item.locked).length, 1, 'five concurrent failed sign-ins lock the account exactly once');
+  assert.equal((await server.store.lockout('pg-race-user')).until, lockUntil, 'the PostgreSQL failed sign-in counter is not lost under concurrency');
+  console.log('ok PostgreSQL account, scrypt upgrade, session persistence, and atomic failed sign-in counting');
 
   const pgProfile = { ...await server.store.account('pg-admin'), extraRoles: ['quality'], roleTraining: { quality: { code: 'QA-101' } }, grants: { 'push-software': { trainingCode: 'SW-101' } }, grantHistory: [{ authority: 'push-software', action: 'granted', reason: 'Current training is on file.', hash: 'b'.repeat(64) }], supportAccess: true };
   await server.store.upsertAccount(pgProfile);
@@ -81,6 +85,9 @@ try {
   assert.ok(archives.json.total > 0);
   const orderId = archives.json.orders[0].orderId;
   assert.equal((await call(`/archive/${orderId}`, { token })).json.readOnly, true);
+  const inits = await Promise.all([server.store.putDoc('race-tenant', '{"n":1}', null, 'a'), server.store.putDoc('race-tenant', '{"n":2}', null, 'b')]);
+  assert.equal(inits.filter(Boolean).length, 1, 'only one of two concurrent first initializations succeeds');
+  assert.equal(await server.store.putDoc('race-tenant', '{"n":3}', null, 'c'), null, 'a later initialization cannot replace an existing workspace');
   console.log('ok PostgreSQL workspace transaction, archive, and exact search');
 
   const printed = await call(`/archive/${orderId}/print`, { token });
@@ -104,6 +111,16 @@ try {
   assert.equal((await server.store.exportLog(fairJob.id,10)).length,3);
   await assert.rejects(server.store._query('UPDATE record_export_log SET detail=$1 WHERE job_id=$2', ['tampered', fairJob.id]), /append-only/);
   await assert.rejects(server.store._query('DELETE FROM record_export_log WHERE job_id=$1', [fairJob.id]), /append-only/);
+  // Print and download extract history is append-only in PostgreSQL too.
+  const extractId = (await server.store._query('SELECT export_id FROM record_extracts LIMIT 1')).rows[0]?.export_id;
+  assert.ok(extractId, 'the export queue recorded an extract');
+  await assert.rejects(server.store._query('UPDATE record_extracts SET exported_by=$1 WHERE export_id=$2', ['tampered', extractId]), /record extracts are append-only/);
+  await assert.rejects(server.store._query('DELETE FROM record_extracts WHERE export_id=$1', [extractId]), /record extracts are append-only/);
+  // One job per finalized version: a record reopened and finalized again with new content is exported again.
+  const pgVersion = (sha, id) => ({ id, recordType: 'fair', recordId: 'FAIR-PG-REOPENED', exportId: `EXT-${id}`, sha256: sha, payload: '{}', destinationKind: 'folder', destination: exportDir, tokenSetting: null, namingPattern: '{recordType}-{recordId}-{exportId}.json', createdBy: 'postgres-test' });
+  assert.ok(await server.store.queueExportJob(pgVersion('c'.repeat(64), 'JOB-PGREOPEN000000000001')));
+  assert.equal(await server.store.queueExportJob(pgVersion('c'.repeat(64), 'JOB-PGREOPEN000000000002')), null, 'the same final content is not exported twice');
+  assert.ok(await server.store.queueExportJob(pgVersion('d'.repeat(64), 'JOB-PGREOPEN000000000003')), 'a re-finalized version with new content is exported again');
   console.log('ok PostgreSQL final-record queue, post-commit folder delivery, and retry history');
 
   const evidenceId = `EV-${randomUUID()}`;
@@ -139,7 +156,12 @@ try {
     assert.deepEqual(restoredProfile.grants, pgProfile.grants);
     assert.deepEqual(restoredProfile.grantHistory, pgProfile.grantHistory);
     assert.equal(restoredProfile.supportAccess, true);
-    console.log('ok PostgreSQL custom-format backup restores account authority profile');
+    // A tampered audit row stops the store from opening, as it does for SQLite. The restored copy is the one altered.
+    await restoredStore._query('ALTER TABLE audit DISABLE TRIGGER USER');
+    await restoredStore._query("UPDATE audit SET detail='{\"tampered\":true}' WHERE id=(SELECT MIN(id) FROM audit)");
+    await restoredStore.close(); restoredStore = null;
+    await assert.rejects(openPostgres(restoreUrl.href), /audit chain is invalid at entry/);
+    console.log('ok PostgreSQL custom-format backup restores account authority profile, and a tampered audit chain refuses startup');
   } finally {
     await restoredStore?.close();
     await adminPool.query(`DROP DATABASE IF EXISTS "${restoreDatabase}"`).catch(() => {});
