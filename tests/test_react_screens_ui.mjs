@@ -29,6 +29,42 @@ try {
     assert.deepEqual(errors, [], `${name} renders without page errors`);
   }
 
+  // #35 review: System QMS records renders through React, so the calibration log and its record form must be in the
+  // React view, not only in the legacy markup it replaces. A QA Manager records a calibration from that screen.
+  await show('qms-records');
+  const island = page.locator('#main #flight-react-island');
+  const calForm = island.locator('form[data-qms-record="calibration"]');
+  assert.equal(await calForm.count(), 1, 'the React QMS records view has the calibration record form');
+  assert.deepEqual(await calForm.locator('[name]').evaluateAll(els => els.map(e => e.name)), ['tag', 'description', 'torque', 'serial', 'calibratedAt', 'expires', 'status', 'location', 'note'], 'the React calibration form carries every field the engine records');
+  assert.match(await island.innerText(), /record it as Retired/, 'the React calibration panel says Retired is how a tool leaves service');
+  const calToday = await page.evaluate(() => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }));
+  const [calY, calM, calD] = calToday.split('-').map(Number), calDue = `${calY + 1}-${String(calM).padStart(2, '0')}-${String(calD).padStart(2, '0')}`;
+  await calForm.locator('[name="tag"]').fill('UI-CAL-01');
+  await calForm.locator('[name="description"]').fill('DIGITAL CALIPER');
+  await calForm.locator('[name="torque"]').selectOption('no');
+  await calForm.locator('[name="calibratedAt"]').fill(calToday);
+  await calForm.locator('[name="expires"]').fill(calDue);
+  await calForm.locator('[name="note"]').fill('Lab cert 12');
+  await calForm.locator('button[type="submit"]').click();
+  await page.waitForFunction(() => (state.calibrationLog || []).some(e => e.tag === 'UI-CAL-01'));
+  assert.match(await page.locator('#main #flight-react-island').innerText(), /UI-CAL-01 · DIGITAL CALIPER · due/, 'the recorded calibration is listed in the React calibration log');
+  assert.deepEqual(errors, [], 'recording a calibration from the React view raises no page errors');
+  // #35 review (Codex 4133296954): the current entry for each tag has a correction form that appends a signed
+  // correction through MES.updateCalibration; superseded entries do not offer one.
+  const calId = await page.evaluate(() => state.calibrationLog.find(e => e.tag === 'UI-CAL-01').id);
+  const fixForm = page.locator(`#main #flight-react-island form[data-qms-calibration-correct="${calId}"]`);
+  assert.equal(await fixForm.count(), 1, 'the current calibration entry has a correction form in the React view');
+  await fixForm.locator('xpath=ancestor::details').locator('summary').click();
+  assert.equal(await fixForm.locator('[name="description"]').inputValue(), 'DIGITAL CALIPER', 'the correction form starts from the current entry');
+  await fixForm.locator('[name="status"]').selectOption('Quarantined');
+  await fixForm.locator('[name="note"]').fill('Failed daily check');
+  await fixForm.locator('button[type="submit"]').click();
+  await page.waitForFunction(id => (state.calibrationLog || []).some(e => e.supersedes === id), calId);
+  const fixed = await page.evaluate(id => { const e = state.calibrationLog.find(x => x.supersedes === id); return { status: e.status, note: e.note, current: MES.calibrationStatus(state, 'UI-CAL-01').id === e.id }; }, calId);
+  assert.deepEqual(fixed, { status: 'Quarantined', note: 'Failed daily check', current: true }, 'the correction is appended as the current entry');
+  assert.equal(await page.locator(`#main #flight-react-island form[data-qms-calibration-correct="${calId}"]`).count(), 0, 'the superseded entry no longer offers a correction form');
+  assert.deepEqual(errors, [], 'correcting a calibration from the React view raises no page errors');
+
   const report = await show('trace-report', "traceQuery = 'FC-200-00001';");
   assert.equal(report.react, true);
   assert.doesNotMatch(report.text, /Search a serial or lot first/, 'the trace report receives the searched serial');

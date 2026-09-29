@@ -130,6 +130,7 @@ export function createHost(indexPath, html = fs.readFileSync(indexPath, 'utf8'))
   // tests/test_server_security.mjs fails while any command-like function is neither listed nor excluded).
   const actionAllow = new Set([
     'MES.addSavedView', 'MES.removeSavedView',
+    'MES.recordCalibration', 'MES.updateCalibration',
     'MES.addAttachment', 'MES.addTicketAttachment', 'MES.removeTicketAttachment', 'MES.removeAttachment',
     'MES.logAogBroadcast', 'MES.resolveAog', 'MES.setSchedule', 'MES.editOrderOperation', 'MES.setWIStepImage',
     'MES.selectProfile', 'MES.assignSerial', 'MES.voidSerial', 'MES.moveToInventory', 'MES.markNetSuitePosted',
