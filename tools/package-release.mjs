@@ -60,12 +60,17 @@ export function assetsLayoutProblem(root = ROOT) {
   return odd.length ? `${odd.join('; ')}. The release packages only files directly in assets/; move or remove ${odd.length > 1 ? 'them' : 'it'}, then stamp from a commit without ${odd.length > 1 ? 'them' : 'it'}.` : null;
 }
 
-// Every packaged asset must be byte for byte the blob the named commit holds, so that commit reproduces the zips.
-// The bytes on disk are hashed as git would store them (git hash-object --no-filters) and compared with the
-// commit's tree, so no index state (untracked, ignored, renamed, assume-unchanged, skip-worktree) can hide a
-// difference. Returns a plain problem, or null.
+// Every packaged asset must be reproducible byte for byte from the named commit, so that commit reproduces the
+// zips. The bytes on disk, exactly as they would ship, are hashed without any filter (git hash-object
+// --no-filters) and compared with the commit's tree, so no index state (untracked, ignored, renamed,
+// assume-unchanged, skip-worktree) can hide a difference. A file matches when its bytes are the committed blob,
+// or are exactly what a checkout of that blob writes on this machine (git cat-file --filters applies the smudge
+// and end-of-line conversion from .gitattributes and core.autocrlf), so a checkout with clean filters is not
+// refused for its own conversion, while bytes a clean filter would merely normalize are still refused.
+// Returns a plain problem, or null.
 export function assetsProblem({ root = ROOT, commit = 'HEAD' } = {}) {
-  const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  const run = (args, options = {}) => execFileSync('git', args, { cwd: root, maxBuffer: 64 * 1024 * 1024, ...options });
+  const git = (...args) => run(args, { encoding: 'utf8' });
   let tree;
   try { tree = git('ls-tree', '-z', commit, '--', 'assets/'); }
   catch { return `assets/ could not be read from commit ${commit}. Release from a git checkout of the release commit.`; }
@@ -77,7 +82,14 @@ export function assetsProblem({ root = ROOT, commit = 'HEAD' } = {}) {
   if (layout) return layout;
   const packaged = manifest('production', root).slice(1).map(([, inTree]) => inTree);
   const hashes = packaged.length ? git('hash-object', '--no-filters', '--', ...packaged).trim().split('\n') : [];
-  return assetsDiff(committed, new Map(packaged.map((name, i) => [name, hashes[i]])), commit);
+  const onDisk = new Map(packaged.map((name, i) => [name, hashes[i]]));
+  for (const [name, hash] of onDisk) {
+    const blob = committed.get(name);
+    if (!blob || blob === hash || !/^[0-9a-f]{40,64}$/.test(blob)) continue;
+    const checkout = run(['cat-file', '--filters', `${commit}:${name}`]);
+    if (run(['hash-object', '--no-filters', '--stdin'], { input: checkout, encoding: 'utf8' }).trim() === hash) onDisk.set(name, blob);
+  }
+  return assetsDiff(committed, onDisk, commit);
 }
 
 // The comparison behind assetsProblem: committed and packaged map assets/<name> to its git blob hash.

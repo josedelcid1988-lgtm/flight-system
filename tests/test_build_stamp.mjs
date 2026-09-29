@@ -135,6 +135,18 @@ try{
    ok('packageRelease() refuses a subdirectory in assets/ even when packaging the working tree',/assets\/sub is a directory/.test(w)&&!fs.existsSync(s.at('release')),w);
    fs.rmSync(s.at('assets/sub'),{recursive:true});s.g('rm','-q','-r','--cached','assets/sub');s.g('commit','-q','-m','flat');
    ok('the asset check accepts a flat assets/ again',assetsProblem({root:s.dir})===null,assetsProblem({root:s.dir}));}
+  // #88: with a clean filter (here eol=crlf) the stored blob is not the bytes a checkout writes. The bytes that
+  // ship must be the committed blob or exactly what a checkout of it writes; anything else is refused.
+  {const s=sandbox();fs.writeFileSync(s.at('.gitattributes'),'*.txt text eol=crlf\n');fs.writeFileSync(s.at('assets/n.txt'),'a\nb\n');
+   s.g('add','.');s.g('commit','-q','-m','text asset');fs.rmSync(s.at('assets/n.txt'));s.g('checkout','-q','--','assets/n.txt');
+   const crlf=fs.readFileSync(s.at('assets/n.txt'),'utf8')==='a\r\nb\r\n';
+   ok('the asset check accepts a text asset exactly as a checkout with a clean filter writes it',crlf&&assetsProblem({root:s.dir})===null,crlf?assetsProblem({root:s.dir}):'the checkout did not convert line endings');
+   fs.writeFileSync(s.at('assets/n.txt'),'a\nb\n');
+   ok('the asset check accepts a text asset carrying the committed blob bytes',assetsProblem({root:s.dir})===null,assetsProblem({root:s.dir}));
+   fs.writeFileSync(s.at('assets/n.txt'),'a\r\nc\r\n');
+   ok('the asset check refuses a changed text asset under a clean filter',/assets\/n\.txt differs from HEAD/.test(assetsProblem({root:s.dir})||''));
+   fs.writeFileSync(s.at('assets/n.txt'),'a\r\nb\n');
+   ok('the asset check refuses bytes a clean filter would normalize but a checkout would not write',/assets\/n\.txt differs from HEAD/.test(assetsProblem({root:s.dir})||''));}
   // #86 (fixed in PR #82): no git status call remains; a git failure is a plain refusal, not a stack trace.
   {const dir=fs.mkdtempSync(path.join(os.tmpdir(),'flight-nogit-'));sandboxes.push(dir);fs.mkdirSync(path.join(dir,'assets'));fs.writeFileSync(path.join(dir,'assets/a.js'),'one');
    let r;try{r=assetsProblem({root:dir});}catch(e){r='threw '+e.message;}
