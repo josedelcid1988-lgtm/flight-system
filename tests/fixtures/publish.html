@@ -10955,6 +10955,7 @@ function flushServerActions(){
       const response=await window.skServer.api('/workspace/actions/'+command.action,{method:'POST',body:{args:command.args},headers:serverEtag?{'If-Match':serverEtag}:{}});
       if(response.status!==200){const error=Error(response.json&&response.json.error||'The server refused the record change.');error.status=response.status;throw error;}
       serverEtag=response.etag;window.skServer.etag=response.etag;
+      command.accepted=true;
       committedActions++;
       if(response.archived)dropArchivedLocally(response.archived.split(','));
     }
@@ -12420,10 +12421,26 @@ function printTraveler(orderId, silent) {
   let printLog = null;
   try { printLog = MES.logTravelerPrint ? MES.logTravelerPrint(state, o.id) : null; } catch (e) {}
   if (printLog && printLog.ok === false && printLog.serverRequired) { notify(printLog.message); return; }
+  // With a server configured, the print record is queued as a server action by the call above; saving sends it.
+  const command = printLog && printLog.ok && window.skServer && window.skServer.active ? serverActionQueue.findLast(item => item.action === 'MES.logTravelerPrint') : null;
   if (printLog && printLog.ok && !save()) return;
+  if (!command) { deliverTraveler(o.id, html, null, silent); return; }
+  // The traveler opens only after the server confirms its print record. The window is opened now, while the click
+  // still allows a pop-up, and is written only on confirmation; when the server refuses the record it is closed.
   const w = window.open('', '_blank');
+  if (w) { try { w.opener = null; w.document.open(); w.document.write('<!doctype html><title>Traveler</title><p style="font:16px sans-serif;margin:24px">Waiting for the server to confirm the print record.</p>'); w.document.close(); } catch (e) {} }
+  return serverActionChain.catch(() => {}).then(() => {
+    if (command.accepted === true) { deliverTraveler(o.id, html, w || false, silent); return; }
+    try { w && w.close && w.close(); } catch (e) {}
+    const why = window.skServer.sync && window.skServer.sync.message ? ` ${window.skServer.sync.message}` : '';
+    notify(`The server did not confirm the print record, so the traveler was not printed.${why} Print it again once the shared workspace is saved.`);
+  });
+}
+// w: a window already opened for the traveler, false when the pop-up was blocked, null to open one now.
+function deliverTraveler(orderId, html, w, silent) {
+  if (w === null) w = window.open('', '_blank');
   if (w) { w.opener = null; w.document.open(); w.document.write(html); w.document.close(); w.document.querySelector('.print-action')?.addEventListener('click', () => { w.focus(); w.print(); }); }
-  else { const blob = new Blob([html], { type: 'text/html' }); const u = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = u; a.download = `traveler-${o.id}.html`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 2000); }
+  else { const blob = new Blob([html], { type: 'text/html' }); const u = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = u; a.download = `traveler-${orderId}.html`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 2000); }
   if (!silent) notify(w ? 'Traveler opened. Use Print in the preview.' : 'Pop-ups are blocked, so the traveler was downloaded as a file to print.');
 }
 // Prompt the traveler when an order is issued to kitting (Draft to Kitting), however it got there.
