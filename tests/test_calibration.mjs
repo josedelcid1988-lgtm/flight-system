@@ -137,4 +137,22 @@ while (full.calibrationLog.length < 5000) full.calibrationLog.push({ id: `FILLER
 const fullCorrect = host.withAccount(qa, () => MES.updateCalibration(full, fullTarget, { note: 'correction on a full log' }), full);
 check('a correction to a full calibration log is refused', !fullCorrect.ok && /5,000/.test(fullCorrect.message) && full.calibrationLog.length === 5000);
 check('a new record on a full calibration log is refused', !host.withAccount(qa, () => MES.recordCalibration(full, { ...entry, tag: 'FULL-001' }), full).ok && full.calibrationLog.length === 5000);
+// #40: a calibration dated after today is refused at record time, and at point of use a tool is not
+// usable before its calibration date.
+const futureRec = run(qa, () => MES.recordCalibration(state, { ...entry, tag: 'DATE-FUT', calibratedAt: '2099-01-01', expires: '2099-12-31' }));
+check('a calibration dated in the future is refused', !futureRec.ok && /later than today/.test(futureRec.message) && !MES.calibrationStatus(state, 'DATE-FUT'));
+const dateRec = run(qa, () => MES.recordCalibration(state, { ...entry, tag: 'DATE-001', calibratedAt: '2026-09-28', expires: '2027-09-28' }));
+check('a calibration dated today or earlier is recorded', dateRec.ok);
+const beforeCal = MES.toolCheck('DATE-001', '2026-09-27T19:00:00.000Z', state);
+check('a tool is not usable on a day before its calibration date', !beforeCal.ok && /2026-09-28/.test(beforeCal.message));
+check('the same tool is usable from its calibration date on', MES.toolCheck('DATE-001', '2026-09-28T19:00:00.000Z', state).ok && MES.toolCheck('DATE-001', now, state).ok);
+
+// #47: a correction may fix a mis-entered calibration date, under the same rules as a new record.
+const dateFix = run(qa, () => MES.updateCalibration(state, dateRec.id, { calibratedAt: '2026-09-26' }));
+check('a correction changes the calibration date', dateFix.ok && MES.calibrationStatus(state, 'DATE-001').calibratedAt === '2026-09-26' && MES.calibrationStatus(state, 'DATE-001').supersedes === dateRec.id);
+check('the corrected calibration date is signed and verifies', MES.validate(state) && MES.verifyManifests(state).ok);
+const dateFixFuture = run(qa, () => MES.updateCalibration(state, dateFix.id, { calibratedAt: '2099-01-01', expires: '2099-12-31' }));
+check('a correction to a future calibration date is refused', !dateFixFuture.ok && /later than today/.test(dateFixFuture.message) && MES.calibrationStatus(state, 'DATE-001').id === dateFix.id);
+const dateFixAfterDue = run(qa, () => MES.updateCalibration(state, dateFix.id, { calibratedAt: '2026-09-28', expires: '2026-09-28' }));
+check('a correction that puts the due date on or before the calibration date is refused', !dateFixAfterDue.ok && MES.calibrationStatus(state, 'DATE-001').id === dateFix.id);
 console.log(`calibration: ${checks} checks, all passed`);

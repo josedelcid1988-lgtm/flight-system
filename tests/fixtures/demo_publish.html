@@ -2495,7 +2495,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (!key) return fail('Enter the asset tag of the tool you used.');
     const logged = calibrationStatus(workspace, key);
     const seed = CAL_TOOLS.find(item => item.tag.toUpperCase() === key);
-    const tool = logged ? { tag: logged.tag, description: logged.description, serial: logged.serial, expires: logged.expires, status: logged.status, location: logged.location } : seed;
+    const tool = logged ? { tag: logged.tag, description: logged.description, serial: logged.serial, calibratedAt: logged.calibratedAt, expires: logged.expires, status: logged.status, location: logged.location } : seed;
     if (!tool) return fail(`${key} is not in the Calibrated Tool Log. Only calibration-controlled tools can be logged.`);
     // Torque classification is authoritative from the seed record (tool identity). A calibration
     // log entry's free-text description must never declassify a torque tool by omitting the keyword.
@@ -2505,6 +2505,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (openService) return { ok: false, tool, message: `${tool.tag} is unavailable under open ${openService.type.toLowerCase()} record ${openService.id}.` };
     if (tool.status !== 'In Calibration') return { ok: false, tool, message: `${tool.tag} is “${tool.status}” in the Calibrated Tool Log and cannot be used.` };
     const today = pacificDay(at);
+    if (tool.calibratedAt && tool.calibratedAt > today) return { ok: false, tool, message: `${tool.tag} calibration is dated ${tool.calibratedAt}, after the day of use. It cannot be used before that date.` };
     if (!tool.expires || tool.expires < today) return { ok: false, tool, message: `${tool.tag} calibration expired ${tool.expires || '(no date)'} and cannot be used.` };
     if (['Quarantined', 'Out for Calibration'].includes(tool.location)) return { ok: false, tool, message: `${tool.tag} is listed as ${tool.location} and cannot be used until it returns to service.` };
     const daysLeft = dayGap(today, tool.expires);
@@ -2531,13 +2532,15 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   };
   const calibrationEntryValid = entry => plain(entry) && /^CALLOG-\d{5}$/.test(entry.id) && CALIBRATION_TAG_RE.test(entry.tag) && str(entry.description, 80) && str(entry.serial, 40, 0) && dateOnly(entry.calibratedAt) && dateOnly(entry.expires) && entry.expires > entry.calibratedAt && CALIBRATION_STATUSES.includes(entry.status) && str(entry.location, 80, 0) && str(entry.note, 300, 0) && str(entry.recordedBy, 140) && timestamp(entry.recordedAt) && (entry.supersedes === undefined || /^CALLOG-\d{5}$/.test(entry.supersedes)) && calibrationManifestValid(entry);
   const calibrationSubject = e => ({ id: e.id, tag: e.tag, description: e.description, serial: e.serial, calibratedAt: e.calibratedAt, expires: e.expires, status: e.status, location: e.location, note: e.note, recordedAt: e.recordedAt, recordedBy: e.recordedBy, supersedes: e.supersedes || null });
-  const calibrationFieldError = f => {
+  // today is the Pacific day of the write: a calibration cannot be dated after the day it is recorded.
+  const calibrationFieldError = (f, today) => {
     if (!CALIBRATION_TAG_RE.test(f.tag)) return 'Enter the tool asset tag, 2 to 40 capital letters, digits, or dashes.';
     if (!str(f.description, 80)) return 'Enter the tool description, up to 80 characters.';
     if (!str(f.serial, 40, 0)) return 'Keep the serial number under 40 characters.';
     if (!dateOnly(f.calibratedAt)) return 'Enter the calibration date as YYYY-MM-DD.';
     if (!dateOnly(f.expires)) return 'Enter the calibration due date as YYYY-MM-DD.';
     if (f.expires <= f.calibratedAt) return 'The due date must be after the calibration date.';
+    if (today && f.calibratedAt > today) return `The calibration date ${f.calibratedAt} is later than today (${today}). Record the calibration on or after the day it was done.`;
     if (!CALIBRATION_STATUSES.includes(f.status)) return 'Status is In Calibration, Out for Calibration, Quarantined, or Retired.';
     if (!str(f.location, 80, 0)) return 'Keep the location under 80 characters.';
     if (!str(f.note, 300, 0)) return 'Keep the note under 300 characters.';
@@ -2547,13 +2550,14 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   function recordCalibration(state, input) {
     if (!can('configure-qms')) return fail('Only a QA Manager or Master Access account can record calibrations.');
     const fields = { tag: String(input?.tag ?? '').trim().toUpperCase(), description: String(input?.description ?? '').trim(), serial: String(input?.serial ?? '').trim(), calibratedAt: String(input?.calibratedAt ?? '').trim(), expires: String(input?.expires ?? '').trim(), status: String(input?.status ?? '').trim(), location: String(input?.location ?? '').trim(), note: String(input?.note ?? '').trim() };
-    const bad = calibrationFieldError(fields);
+    const recordedAt = new Date().toISOString();
+    const bad = calibrationFieldError(fields, pacificDay(recordedAt));
     if (bad) return fail(bad);
     const who = actor(state);
     if (!snapshotValid(who)) return fail('Sign in with a named credential before recording a calibration.');
     if (!Array.isArray(state.calibrationLog)) state.calibrationLog = [];
     if (state.calibrationLog.length >= 5000) return fail('The calibration log is full (5,000 entries). Archive older entries first.');
-    const entry = { id: nextCalibrationId(state.calibrationLog), ...fields, recordedAt: new Date().toISOString(), recordedBy: `${who.name} \u00b7 ${who.credentialId}` };
+    const entry = { id: nextCalibrationId(state.calibrationLog), ...fields, recordedAt, recordedBy: `${who.name} \u00b7 ${who.credentialId}` };
     entry.calibrationSignature = { manifest: signManifest(state, 'Calibration recorded', calibrationSubject(entry), entry.recordedAt) };
     state.calibrationLog.push(entry);
     return { ok: true, id: entry.id, message: `Calibration recorded for ${entry.tag}; due ${entry.expires}.` };
@@ -2565,12 +2569,13 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (!prior) return fail('That calibration entry was not found.');
     if (log.some(e => e && e.supersedes === prior.id)) return fail('That entry was already corrected. Correct the latest entry for this tool instead.');
     if (log.length >= 5000) return fail('The calibration log is full (5,000 entries). Archive older entries first.');
-    const fields = { tag: prior.tag, description: patch?.description === undefined ? prior.description : String(patch.description).trim(), serial: patch?.serial === undefined ? prior.serial : String(patch.serial).trim(), calibratedAt: prior.calibratedAt, expires: patch?.expires === undefined ? prior.expires : String(patch.expires).trim(), status: patch?.status === undefined ? prior.status : String(patch.status).trim(), location: patch?.location === undefined ? prior.location : String(patch.location).trim(), note: patch?.note === undefined ? prior.note : String(patch.note).trim() };
-    const bad = calibrationFieldError(fields);
+    const fields = { tag: prior.tag, description: patch?.description === undefined ? prior.description : String(patch.description).trim(), serial: patch?.serial === undefined ? prior.serial : String(patch.serial).trim(), calibratedAt: patch?.calibratedAt === undefined ? prior.calibratedAt : String(patch.calibratedAt).trim(), expires: patch?.expires === undefined ? prior.expires : String(patch.expires).trim(), status: patch?.status === undefined ? prior.status : String(patch.status).trim(), location: patch?.location === undefined ? prior.location : String(patch.location).trim(), note: patch?.note === undefined ? prior.note : String(patch.note).trim() };
+    const recordedAt = new Date().toISOString();
+    const bad = calibrationFieldError(fields, pacificDay(recordedAt));
     if (bad) return fail(bad);
     const who = actor(state);
     if (!snapshotValid(who)) return fail('Sign in with a named credential before correcting a calibration entry.');
-    const entry = { id: nextCalibrationId(log), ...fields, recordedAt: new Date().toISOString(), recordedBy: `${who.name} \u00b7 ${who.credentialId}`, supersedes: prior.id };
+    const entry = { id: nextCalibrationId(log), ...fields, recordedAt, recordedBy: `${who.name} \u00b7 ${who.credentialId}`, supersedes: prior.id };
     entry.calibrationSignature = { manifest: signManifest(state, 'Calibration entry corrected', calibrationSubject(entry), entry.recordedAt) };
     log.push(entry);
     return { ok: true, id: entry.id, message: `Calibration entry ${prior.id} corrected as ${entry.id}. The original entry stays in the log.` };
