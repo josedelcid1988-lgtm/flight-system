@@ -128,4 +128,13 @@ check('a 40-character asset tag is accepted', tag40.length === 40 && rec40.ok &&
 const rec41 = run(qa, () => MES.recordCalibration(state, { ...entry, tag: tag40 + '2' }));
 check('a 41-character asset tag is refused with the 2 to 40 message', !rec41.ok && /2 to 40/.test(rec41.message));
 check('a 1-character asset tag is refused', !run(qa, () => MES.recordCalibration(state, { ...entry, tag: 'X' })).ok);
+
+// #39: a correction honors the same 5,000-entry cap as a new record, so it cannot push a full log
+// past the limit that validation enforces.
+const full = structuredClone(state);
+const fullTarget = MES.calibrationStatus(full, 'CAL-022').id;
+while (full.calibrationLog.length < 5000) full.calibrationLog.push({ id: `FILLER-${full.calibrationLog.length}` });
+const fullCorrect = host.withAccount(qa, () => MES.updateCalibration(full, fullTarget, { note: 'correction on a full log' }), full);
+check('a correction to a full calibration log is refused', !fullCorrect.ok && /5,000/.test(fullCorrect.message) && full.calibrationLog.length === 5000);
+check('a new record on a full calibration log is refused', !host.withAccount(qa, () => MES.recordCalibration(full, { ...entry, tag: 'FULL-001' }), full).ok && full.calibrationLog.length === 5000);
 console.log(`calibration: ${checks} checks, all passed`);
