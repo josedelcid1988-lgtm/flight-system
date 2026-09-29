@@ -1,4 +1,32 @@
-# JINX-REVIEW.md (PR #35, head 56734f12, updated 2026-09-29T15:52Z; scope call on Codex's two new P1s, head unchanged since Jinx review 5354904522)
+# JINX-REVIEW.md (PR #35, head 606ca713, updated 2026-09-29T19:16Z; Final approval WITHDRAWN, new P1 blocker: split regression)
+
+## 2026-09-29 19:16Z: Final approval WITHDRAWN, new P1 blocker (Jinx review 5357324836)
+
+Codex review 5357214051 landed 75 seconds after the Final approval, with two new P1s. Jinx evaluated both against the exact head 606ca713. One blocks; one is a P2 issue.
+
+### BLOCKER: server-mode splits of work orders with completed operations are rolled back (Codex 4137333755) - CONFIRMED P1
+
+This PR introduces the regression. `validState` (server/server.mjs:245) now runs `verifyManifests` on every server write; the PR diff shows the old line had no such call, so main does not gate writes this way.
+
+`splitRequestOrder` (index.html:6843) deep-clones the parent order into a child with a new id (`${base}-Split-${seq}`, index.html:6857-6860), carrying completed operations with their buy-offs intact, including `op.buyoff.manifest`, which still hashes the parent's subject. The carried buy-off's evidenceIds are re-keyed to fresh ids (index.html:6869-6873) while the manifest was computed over the original ids. `verifyManifests` (index.html:2857) recomputes every buy-off as `buyoffSubject(child order, op, note)` (index.html:2849; the subject includes `orderId` and `evidenceIds`) and fails on hash mismatch (index.html:2884). No `carriedFrom` provenance exists (zero hits in the tree).
+
+So in server mode the ordinary "split some units out after early operations are bought off" flow reports engine success, then the server rejects the write with "A signed record failed verification". This is a user-visible defect in a real workflow, introduced by this PR. It blocks the merge.
+
+**Jinx ruling (option A): fix on this branch before merge.** (1) When splitting, record provenance on each carried buy-off (`carriedFrom` with the parent order id and the original evidence ids) so the historical signature stays intact. (2) `verifyManifests` rechecks a carried buy-off against its original subject (parent order id, original evidence ids). (3) Add an end-to-end test: split an order with a completed operation; the result must pass `verifyManifests` and the server `validState` gate. Then push, get green CI on the new head, and Jinx re-reviews.
+
+Final approval 5357199538 is WITHDRAWN and no longer stands; the premature thumbs-up was removed. The eyes reaction stays up.
+
+### Codex 4137333748 (expired or superseded calibration cited on the buy-off day): CONFIRMED, P2, filed as #119
+
+`calibrationReferenceProblem` (index.html:2680) checks the cited row exists for the tag and was recorded/calibrated at or before the buy-off, but does not check expiry, status, location, or whether a later quarantine/retirement/out-for-calibration entry was already effective at `b.at`. An entry calibrated Sep 27, due Sep 28, cited by a Sep 29 buy-off passes `MES.validate` and `verifyManifests`. Non-blocking: the natural write path cannot produce this (`resolveToolCheck`, index.html:2506, refuses expired/quarantined/out-for-calibration tools at point of use), so this is the import/migration-only class, and the last scope addition on #35 already stands. Filed as P2 issue #119.
+
+### Do-not-merge checklist (head 606ca713, updated)
+
+- [x] Option B chronology check verified on the exact head
+- [ ] Split-regression fix (carriedFrom provenance + verifyManifests original-subject recheck + end-to-end split test) on this branch
+- [ ] CI (suites) green on the head that carries the fix
+- [ ] Jinx re-review and new Final approval after the fix push
+- [ ] Claudia merges through the PR button after both are done
 
 ## Owner direction 2026-09-28 (evening): record-coverage fixes before Oct 7 handoff (read first)
 
@@ -86,9 +114,9 @@ Codex 4135389160 (truncated calibration history) is CONFIRMED correct and filed 
 - Cross-review: Claude's inline reply 4137272905 (Option B description) CONFIRMED accurate against the patch; 4137273254 CONFIRMED, #117 is open with the p3 label (hash-chained-log design fix; distinct from Jinx's P2 #116 for the same finding).
 - Jinx review 5357197412 posted, Final approval 5357199538 posted on the exact head 606ca713, thumbs-up added. CI (suites) was in_progress at review time.
 
-## Do-not-merge checklist (head 606ca713)
+## Do-not-merge checklist (head 606ca713) - SUPERSEDED by the 19:16Z section above
 
 - [x] Option B chronology check verified on the exact head
 - [ ] CI (suites) green on the exact head 606ca713 (in_progress as of 19:10Z)
-- [x] Jinx Final approval posted (5357199538)
-- [ ] Claudia merges through the PR button after CI green
+- [ ] Jinx Final approval: 5357199538 posted 19:12Z, WITHDRAWN 19:16Z (review 5357324836) over the split-regression P1; new approval follows the fix push
+- [ ] Claudia merges through the PR button only after the new approval
