@@ -410,6 +410,8 @@ const refOrder = refState.orders.find(o => o.operations.some(op => op.buyoff && 
 const refOp = refOrder.operations.find(op => op.buyoff && Array.isArray(op.buyoff.tools) && op.buyoff.tools.length), refTag = refOp.buyoff.tools[0].tag;
 const refEntry = host.withAccount(qa, () => MES.recordCalibration(refState, { tag: refTag, description: refOp.buyoff.tools[0].description, serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }), refState);
 refOp.buyoff.tools[0] = { ...refOp.buyoff.tools[0], source: 'Calibration log', calibrationEntry: refEntry.id };
+// The buy-off happened after the entry it cites was recorded, as in a real flow (the fixture buy-off predates it).
+refOp.buyoff.at = new Date(Date.parse(refState.calibrationLog.find(e => e.id === refEntry.id).recordedAt) + 60000).toISOString();
 check('a buy-off that cites an existing calibration entry for its tool validates', refEntry.ok && MES.validate(refState));
 const dangling = structuredClone(refState);
 dangling.calibrationLog = dangling.calibrationLog.filter(e => e.id !== refEntry.id);
@@ -431,5 +433,22 @@ check('a calibration dated after the day it was recorded fails validation and di
 const sameDay = structuredClone(state);
 sameDay.calibrationLog.push(host.withAccount(qa, () => { const e = { ...pdSource, id: 'CALLOG-09997', tag: 'SD-TOOL', torque: false, calibratedAt: '2026-09-29', expires: '2027-09-29', note: '', recordedAt: '2026-09-29T19:00:00.000Z' }; delete e.supersedes; delete e.calibrationSignature; e.calibrationSignature = { manifest: MES.signManifest(sameDay, 'Calibration recorded', calSubject(e), e.recordedAt) }; return e; }, sameDay));
 check('a calibration dated the Pacific day it was recorded validates', MES.validate(sameDay));
+
+// #35 review (Codex 4135389174, Jinx option B): a buy-off may cite only calibration evidence that existed when it
+// was signed. The cited entry must be recorded at or before the buy-off time and calibrated on or before its Pacific day.
+const citedRow = refState.calibrationLog.find(e => e.id === refEntry.id);
+check('a buy-off signed after the calibration entry it cites validates', MES.validate(refState) && Date.parse(refOp.buyoff.at) > Date.parse(citedRow.recordedAt));
+const retro = structuredClone(refState), retroOp = retro.orders.find(o => o.id === refOrder.id).operations.find(op => op.id === refOp.id);
+retroOp.buyoff.at = new Date(Date.parse(citedRow.recordedAt) - 60000).toISOString();
+check('a buy-off citing a calibration entry recorded after the buy-off fails validation', !MES.validate(retro));
+check('diagnose names the work order whose buy-off cites evidence recorded after it', MES.diagnose(retro)?.where === refOrder.id && /after/.test(MES.diagnose(retro)?.detail || ''));
+const retroDay = structuredClone(refState), retroDayOp = retroDay.orders.find(o => o.id === refOrder.id).operations.find(op => op.id === refOp.id);
+retroDayOp.buyoff.at = '2026-09-27T19:00:00.000Z';
+check('a buy-off dated the day before the cited calibration fails validation', citedRow.calibratedAt === '2026-09-28' && !MES.validate(retroDay) && MES.diagnose(retroDay)?.where === refOrder.id);
+const retroAtp = structuredClone(refState), retroAtpOp = retroAtp.orders.find(o => o.id === refOrder.id).operations.find(op => op.id === refOp.id);
+retroAtpOp.buyoff.tools[0] = { ...retroAtpOp.buyoff.tools[0] }; delete retroAtpOp.buyoff.tools[0].calibrationEntry;
+retroAtpOp.buyoff.testAssets = [{ asset: refTag, calibrationEntry: refEntry.id }];
+retroAtpOp.buyoff.at = new Date(Date.parse(citedRow.recordedAt) - 60000).toISOString();
+check('an ATP test asset citing calibration evidence recorded after the buy-off fails validation', !MES.validate(retroAtp));
 
 console.log(`calibration: ${checks} checks, all passed`);

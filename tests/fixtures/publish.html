@@ -2675,9 +2675,10 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   }
   // Every calibration entry a work-order buy-off cites (operation tools and ATP test assets) must be a row in the
   // calibration log for the same tool, so evidence cannot drop out of the log while signed acceptance records that
-  // cite it stay valid. Returns { id, detail } naming the work order, or null.
+  // cite it stay valid. The entry must also have existed when the buy-off was signed: recorded at or before the
+  // buy-off time and calibrated on or before its Pacific day. Returns { id, detail } naming the work order, or null.
   function calibrationReferenceProblem(state) {
-    const logged = new Map((plain(state) && Array.isArray(state.calibrationLog) ? state.calibrationLog : []).filter(plain).map(e => [e.id, e.tag]));
+    const logged = new Map((plain(state) && Array.isArray(state.calibrationLog) ? state.calibrationLog : []).filter(plain).map(e => [e.id, e]));
     for (const o of plain(state) && Array.isArray(state.orders) ? state.orders : []) {
       for (const op of plain(o) && Array.isArray(o.operations) ? o.operations : []) {
         const b = plain(op) && plain(op.buyoff) ? op.buyoff : null;
@@ -2685,7 +2686,9 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
         const cited = [...(Array.isArray(b.tools) ? b.tools : []).map(t => [t && t.calibrationEntry, t && t.tag]), ...(Array.isArray(b.testAssets) ? b.testAssets : []).map(a => [a && a.calibrationEntry, a && a.asset])];
         for (const [entry, tag] of cited) {
           if (entry === undefined) continue;
-          if (!logged.has(entry) || logged.get(entry) !== String(tag ?? '').trim().toUpperCase()) return { id: o.id, detail: `Work order ${o.id} operation ${op.id} cites calibration entry ${entry} for ${tag}, which the calibration log does not hold for that tool.` };
+          const row = logged.get(entry);
+          if (!row || row.tag !== String(tag ?? '').trim().toUpperCase()) return { id: o.id, detail: `Work order ${o.id} operation ${op.id} cites calibration entry ${entry} for ${tag}, which the calibration log does not hold for that tool.` };
+          if (timestamp(b.at) && (Date.parse(row.recordedAt) > Date.parse(b.at) || row.calibratedAt > pacificDay(b.at))) return { id: o.id, detail: `Work order ${o.id} operation ${op.id} cites calibration entry ${entry} for ${tag}, which was recorded or calibrated after the buy-off at ${b.at}.` };
         }
       }
     }
