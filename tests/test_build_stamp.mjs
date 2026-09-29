@@ -143,6 +143,14 @@ try{
    ok('the release record accepts a FLIGHT_SOURCE_COMMIT naming HEAD and records it in full',a.code===0&&a.out.includes('| Stamp generated from commit | `'+head+'` |'),a.out);
    const ci=fs.readFileSync(path.join(ROOT,'.github/workflows/ci.yml'),'utf8');
    ok('CI checks out the pull request head that its dry-run record names',/uses: actions\/checkout@v4\n\s+with:\n\s+ref: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}/.test(ci)&&/FLIGHT_SOURCE_COMMIT: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}/.test(ci));}
+  // #63: the source package is named from VERSION.md, so both pages must identify as that build.
+  {const s=sandbox();const {packageSource}=await s.tool('package-source.mjs');const out=fs.mkdtempSync(path.join(os.tmpdir(),'flight-source-'));sandboxes.push(out);
+   const tryPack=()=>{try{return 'ok '+path.basename(packageSource(out).file);}catch(e){return e.message;}};
+   const a=tryPack();ok('the source package accepts pages carrying the VERSION.md build',a==='ok flight-system-vT-source.zip',a);
+   fs.writeFileSync(s.at('VERSION.md'),'# Test build\n\nbuild: vT2\n');fs.rmSync(out,{recursive:true,force:true});
+   const v=tryPack();ok('the source package refuses a VERSION.md build the pages do not carry, and writes no archive',/index\.html carries fs-build vT but VERSION\.md sets vT2/.test(v)&&!fs.existsSync(path.join(out,'flight-system-vT2-source.zip')),v);
+   fs.writeFileSync(s.at('VERSION.md'),'# Test build\n\nbuild: vT\n');fs.writeFileSync(s.at('demo.html'),s.page('vOld'));
+   const d=tryPack();ok('the source package refuses a demo.html still carrying the old build',/demo\.html carries fs-build vOld but VERSION\.md sets vT/.test(d),d);}
   // #85 (fixed in PR #82): the release steps name the assets/ refusal.
   ok('HANDOVER release step 4 lists the assets/ refusal',/a packaged file in\s+`assets\/` whose bytes differ from HEAD/.test(fs.readFileSync(path.join(ROOT,'docs/HANDOVER.md'),'utf8')));
   // #89 (does not reproduce): git ls-tree lists assets/ one level deep, so a committed file under a dot-named

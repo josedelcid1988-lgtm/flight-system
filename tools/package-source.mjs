@@ -29,9 +29,22 @@ export function sourceManifest() {
     .sort((a, b) => a.localeCompare(b));
 }
 
+// The archive is named from VERSION.md, so index.html and demo.html must both identify as that build: a
+// VERSION.md bumped before the pages were rebuilt would otherwise name pages that still carry the old build.
+export function sourceBuildProblem(build, pages) {
+  for (const [name, html] of Object.entries(pages)) {
+    const tag = (html.match(/<meta name="fs-build" content="([^"]*)">/) || [])[1];
+    if (tag !== build) return `${name} carries fs-build ${tag || 'none'} but VERSION.md sets ${build}. Run node tools/stamp-build.mjs --clear and node tools/build-demo.mjs, then package the source.`;
+  }
+  return null;
+}
+
 export function packageSource(outDir = path.join(ROOT, 'release')) {
   // The source package holds the committed tree, so its build id comes from VERSION.md, not from a stamp.
   const build = buildId(fs.readFileSync(path.join(ROOT, 'VERSION.md'), 'utf8'));
+  const read = f => fs.readFileSync(path.join(ROOT, f), 'utf8');
+  const problem = sourceBuildProblem(build, { 'index.html': read('index.html'), 'demo.html': read('demo.html') });
+  if (problem) throw new Error(problem);
   const file = path.join(outDir, `flight-system-v${build.replace(/^v/, '')}-source.zip`);
   fs.mkdirSync(outDir, { recursive: true });
   const names = sourceManifest();
