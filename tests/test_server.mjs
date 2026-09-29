@@ -318,6 +318,7 @@ try {
     const setOf = (source, name) => { const found = new RegExp(`${name}\\s*=\\s*new Set\\((\\[[^\\]]*\\])\\)`).exec(source); assert.ok(found, `${name} is declared`); return JSON.stringify(Function(`return ${found[1]}`)().sort()); };
     assert.equal(setOf(page, 'serverMutatorExact'), setOf(host, 'actionExact'), 'page and server exact action lists match');
     assert.equal(setOf(page, 'serverMutatorExclude'), setOf(host, 'actionExclude'), 'page and server excluded action lists match');
+    assert.equal(setOf(page, 'serverMutatorAllow'), setOf(host, 'actionAllow'), 'page and server reviewed command lists match');
     assert.equal(/const serverMutatorName=(\/\^\(\?:[^/]*\)\/i)/.exec(page)?.[1], /const actionName = (\/\^\(\?:[^/]*\)\/i)/.exec(host)?.[1], 'page and server command-name patterns match');
     assert.equal(server.host.resolveAction('MES.icalExport'), null, 'calendar export stays a read and is not exposed as a mutation command');
     assert.equal(server.host.resolveAction('MES.verifyAIActionLog'), null, 'AI action-log verification stays a read and is not exposed as a mutation command');

@@ -112,13 +112,77 @@ export function createHost(indexPath, html = fs.readFileSync(indexPath, 'utf8'))
   // primitives must never become remotely callable just because they are exported on MES.
   const actionName = /^(?:run|add|update|remove|delete|create|complete|close|issue|approve|reject|sign|mark|assign|advance|resolve|disposition|request|release|record|submit|start|stop|review|accept|return|void|reopen|split|move|link|verify|raise|cancel|withdraw|incorporate|peer|roll|set|save|store|open|finish|grant|revoke|capture|attach|detach|quarantine|repair|replace|send|change|configure|stamp|buyoff|log|tick|decide|vote|reset|publish|apply|import|reinspect|firm|convert|carry|propose|escalate|select|clock|aqi|post|acknowledge|edit|revise|ping|push|ical|check|notify|qa|note)/i;
   const actionExact = new Set(['containNC', 'effectivenessCheck', 'pfmeaSafetyBuyoff', 'pruneExpiredNotices']);
-  const actionExclude = new Set(['repair','signManifest','verifyManifests','verifyAIActionLog','stampCheck','stampRegister','stampRegisterCsv','stampCredential','stampHolderFor','ticketAttachments','openProcessECRs','syncAssignments','buyoffCredential','ensure','seedDemoRecords','icalExport',
+  const actionExclude = new Set(['repair','signManifest','verifyManifests','verifyAIActionLog','stampCheck','stampRegister','stampRegisterCsv','stampCredential','stampHolderFor','ticketAttachments','openProcessECRs','syncAssignments','buyoffCredential','ensure','seedDemoRecords','icalExport','openMaintenanceFor',
     // Internal record writers: each runs only inside the gated command that owns it (runSkill, a buy-off
     // override, the browser-only demo notice), so calling one directly would fabricate that record.
     'recordAIAction','logSupport','noteDemoBypassRemoved']);
+  // The reviewed commands, by namespace. The prefix rule above only proposes; a function is callable remotely
+  // only when it is named here too, so a new engine export is refused until someone reviews it and adds it (the
+  // page's serverMutatorAllow must carry the same list; tests/test_server.mjs compares them, and
+  // tests/test_server_security.mjs fails while any command-like function is neither listed nor excluded).
+  const actionAllow = new Set([
+    'MES.quarantineOrder', 'MES.rollWorkOrderRevision', 'MES.addSavedView', 'MES.removeSavedView',
+    'MES.addAttachment', 'MES.addTicketAttachment', 'MES.removeTicketAttachment', 'MES.removeAttachment',
+    'MES.logAogBroadcast', 'MES.resolveAog', 'MES.setSchedule', 'MES.editOrderOperation', 'MES.setWIStepImage',
+    'MES.selectProfile', 'MES.assignSerial', 'MES.voidSerial', 'MES.moveToInventory', 'MES.markNetSuitePosted',
+    'MES.addKitFile', 'MES.linkOpToTicket', 'MES.saveReworkTemplate', 'MES.removeReworkTemplate',
+    'MES.saveOpAsReworkTemplate', 'MES.approveReworkTemplate', 'MES.addStandardRework', 'MES.setWIDrawing',
+    'MES.releaseUnreleasedWI', 'MES.rejectInspection', 'MES.logTravelerPrint', 'MES.saveFairHeader',
+    'MES.setFairIndex', 'MES.addFairForm2', 'MES.setFairTest', 'MES.addFairChar', 'MES.updateFairChar',
+    'MES.verifyFair', 'MES.approveFair', 'MES.reopenFair', 'MES.startConformity', 'MES.saveConformity',
+    'MES.checkConformity', 'MES.complete8130_9', 'MES.void8130_9', 'MES.aqiSign8130_9', 'MES.notifyCertification',
+    'MES.addDarFinding', 'MES.acceptDarFinding', 'MES.recordDarApproval', 'MES.record8130_3', 'MES.closeConformity',
+    'MES.issueFromOrder', 'MES.returnIssuedOrder', 'MES.qaReviewMasterWI', 'MES.releaseWIFromPfmea',
+    'MES.setImpactDecision', 'MES.linkECO', 'MES.setWICriticalSafety', 'MES.addPfmeaRow', 'MES.updatePfmeaRow',
+    'MES.setStampPin', 'MES.setMsdsBook', 'MES.tickFodItem', 'MES.removeKitFile', 'MES.addMasterWI',
+    'MES.updateMasterWI', 'MES.saveWIOperations', 'MES.releaseMasterWI', 'MES.reviseMasterWI', 'MES.setStepCheck',
+    'MES.pushATPSoftware', 'MES.reviewATPPush', 'MES.linkATPSoftware', 'MES.addPurchaseOrder',
+    'MES.requestOrderClosure', 'MES.postNotice', 'MES.acknowledgeNotice', 'MES.updateNotice',
+    'MES.pruneExpiredNotices', 'MES.requestWorkOrder', 'MES.decideWORequest', 'MES.submitECRRequest',
+    'MES.reviewFeedbackECR', 'MES.linkECRJira', 'MES.incorporateECRs', 'MES.decideOrderClosure', 'MES.assignWork',
+    'MES.completeAssignment', 'MES.pingAssignment', 'MES.addOrderOperation', 'MES.removeOrderOperation',
+    'MES.approveSequenceChange', 'MES.setMaterialLot', 'MES.releaseApproval', 'MES.approveRelease', 'MES.approveECR',
+    'MES.approveEngineeringChange', 'MES.advance', 'MES.setMaterial', 'MES.setPriority', 'MES.completeOperation',
+    'MES.closeOrder', 'MES.addOrder', 'MES.addAdhocOrder', 'MES.splitOrder', 'MES.splitRequestOrder',
+    'MES.requestPedigreeChange', 'MES.approvePedigreeChange', 'MES.peerReviewMasterWI', 'MES.dispositionTicket',
+    'MES.addNote', 'MES.createTicket', 'MES.resolveTicket', 'MES.returnDisposition', 'MES.closeSplitRequest',
+    'MES.rejectEngineeringChange', 'MES.rejectSequenceChange', 'MES.rejectPedigreeChange', 'MES.returnRelease',
+    'MES.returnMasterWI', 'MES.withdrawClosure', 'MES.closeECRRequest', 'MES.updateProfile', 'MES.attachEvidence',
+    'MES.reviewEvidence', 'MES.rejectEvidence', 'MES.removeEvidence', 'MES.issueStamp', 'MES.updateStamp',
+    'MES.addMessage', 'MES.setSlackThread', 'MES.createBigThreePlan', 'MES.decideBigThree', 'MES.carryBigThree',
+    'MES.proposeBigThreeTimeBlock', 'MES.decideBigThreeTimeBlock', 'MES.escalateBigThree',
+    'MES.setPlanningCalendarSync', 'MES.icalImport', 'MES.openAudit', 'MES.closeAuditFinding', 'MES.closeAudit',
+    'MES.issueCertification', 'MES.approveSupplier', 'MES.storeQualityValue', 'MES.recordQualityVerdict',
+    'MES.createControlledDocument', 'MES.startControlledDocumentRevision', 'MES.reviewControlledDocument',
+    'MES.releaseControlledDocument', 'MES.configureModelAdapter', 'MES.setForm3Plan', 'MES.setSkillTrigger',
+    'MES.runSkill', 'MES.reviewSkillDraft', 'MES.updateSkillDraft', 'MES.acceptSkillDraft', 'MES.addEquipmentArea',
+    'MES.addEquipmentUnit', 'MES.createProject', 'MES.addProjectObjective', 'MES.addProjectMilestone',
+    'MES.setProjectSensitivity', 'MES.linkWorkOrderProject', 'MES.createSprint', 'MES.recordMaintenance',
+    'MES.closeMaintenance', 'MES.recordExternalReceipt', 'MES.clockOnOperation', 'MES.clockOffOperation',
+    'MES.postInventoryTransaction', 'MES.submitEngineeringChange', 'MES.reviewFair', 'MES.recordTraining',
+    'MES.saveTraining', 'MES.importStamps', 'MES.recordSupportAccess', 'MES.saveSourceInspectionCodes',
+    'MES.saveOperationSubcodes', 'MES.saveMrbTrainingTiers', 'MES.recordSourceInspection',
+    'FlightPlan.addPlannedOrder', 'FlightPlan.firm', 'FlightPlan.cancel', 'FlightPlan.convert',
+    'FlightManeuver.raiseCAR', 'FlightManeuver.recordContainment', 'FlightManeuver.recordRootCause',
+    'FlightManeuver.addAction', 'FlightManeuver.completeAction', 'FlightManeuver.verifyCAR',
+    'FlightManeuver.effectivenessCheck', 'FlightManeuver.closeCAR', 'FlightManeuver.cancelCAR',
+    'FlightManeuver.openMRB', 'FlightManeuver.voteMRB', 'FlightManeuver.decideMRB', 'FlightManeuver.linkCAR',
+    'FlightManeuver.addRecordFile', 'FlightManeuver.removeRecordFile', 'FlightManeuver.raiseNC',
+    'FlightManeuver.dispositionNC', 'FlightManeuver.containNC', 'FlightManeuver.approveNC',
+    'FlightManeuver.linkReworkOrder', 'FlightManeuver.raiseSPR', 'FlightManeuver.linkSPRJira',
+    'FlightManeuver.closeSPR', 'FlightManeuver.requestSCAR', 'FlightManeuver.linkSCARJira',
+    'FlightManeuver.closeSCAR', 'FlightManeuver.openPFMEA', 'FlightManeuver.setPfmeaScope',
+    'FlightManeuver.addPfmeaMode', 'FlightManeuver.removePfmeaMode', 'FlightManeuver.markOpNoRisk',
+    'FlightManeuver.completePfmeaAnalysis', 'FlightManeuver.setPfmeaAction', 'FlightManeuver.closePfmeaAction',
+    'FlightManeuver.completePfmeaActions', 'FlightManeuver.pfmeaSafetyBuyoff'
+  ]);
   function resolveAction(name) {
-    const functionName = String(name).split('.').at(-1);
-    return (actionName.test(functionName) || actionExact.has(functionName)) && !actionExclude.has(functionName) ? resolve(name) : null;
+    const text = String(name), qualified = text.includes('.') ? text : `MES.${text}`;
+    const [namespace, functionName, extra] = qualified.split('.');
+    if (extra !== undefined || !actionAllow.has(qualified)) return null;
+    if (!(actionName.test(functionName) || actionExact.has(functionName)) || actionExclude.has(functionName)) return null;
+    const owner = { MES, FlightPlan, FlightManeuver }[namespace];
+    return owner && Object.hasOwn(owner, functionName) ? resolve(qualified) : null;
   }
-  return { MES, FlightPlan, FlightManeuver, MESPrint, roles, withAccount, resolve, resolveAction, html, capsOf, roleOf, rolesOf };
+  return { MES, FlightPlan, FlightManeuver, MESPrint, roles, withAccount, resolve, resolveAction, actionAllow, actionPattern: actionName, actionExact, actionExclude, html, capsOf, roleOf, rolesOf };
 }

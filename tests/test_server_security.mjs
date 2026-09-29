@@ -93,6 +93,32 @@ try {
     }
   });
 
+  // #30: a remote command must be named on the reviewed list; matching a command-like prefix is not enough.
+  await check('only reviewed engine commands are remotely callable', async () => {
+    const host = server.host, allow = host.actionAllow;
+    assert.ok(allow instanceof Set && allow.size > 100, 'the server carries an explicit list of commands');
+    for (const name of allow) assert.equal(typeof host.resolveAction(name), 'function', `${name} on the list resolves`);
+    // Review gate: every exported engine function the prefix rule would take is either listed or excluded, so a
+    // new one fails here until someone decides which it is.
+    const unreviewed = [];
+    for (const ns of ['MES', 'FlightPlan', 'FlightManeuver']) for (const key of Object.keys(host[ns])) {
+      if (typeof host[ns][key] !== 'function' || key.startsWith('_')) continue;
+      if ((host.actionPattern.test(key) || host.actionExact.has(key)) && !host.actionExclude.has(key) && !allow.has(`${ns}.${key}`)) unreviewed.push(`${ns}.${key}`);
+    }
+    assert.deepEqual(unreviewed, [], 'every command-like engine function has been reviewed');
+    assert.equal(host.resolveAction('MES.openMaintenanceFor'), null, 'a read that only looks like a command is not callable');
+    assert.equal(typeof host.resolveAction('setPriority'), 'function', 'an unqualified name means MES');
+    for (const name of ['MES.constructor', 'MES.hasOwnProperty', 'FlightPlan.setPriority', 'Object.assign']) assert.equal(host.resolveAction(name), null, `${name} is not a command`);
+    host.MES.setUnreviewedThing = state => { state.touched = true; return { ok: true }; };
+    try {
+      assert.equal(host.resolveAction('MES.setUnreviewedThing'), null, 'a new exported function is not callable until it is added to the list');
+      const before = await server.store.getDoc('default');
+      const r = await api('POST', '/workspace/actions/MES.setUnreviewedThing', { token: adminToken, body: { args: [] }, headers: { 'If-Match': before ? before.etag : '"none"' } });
+      assert.equal(r.status, 404, JSON.stringify(r.json));
+      assert.deepEqual(await server.store.getDoc('default'), before, 'nothing changed');
+    } finally { delete host.MES.setUnreviewedThing; }
+  });
+
   // #32: the demo build, with its gates relaxed, is not a public page of the production server.
   await check('the production server does not serve demo.html unless asked to', async () => {
     const r = await request('/demo.html');
