@@ -97,6 +97,8 @@ try {
     assert.ok(caps.ops.includes('adjust-wo'));
     assert.ok(caps.ops.includes('edit-wi'));
     assert.ok(caps.ops.includes('configure-training'));
+    assert.ok(caps.ops.includes('plan-order') && !caps.ops.includes('set-sensitivity'), 'Operations plans sprints but does not set project sensitivity');
+    assert.ok(caps.qm.includes('plan-order') && caps.qm.includes('set-sensitivity'), 'QA Manager plans sprints and sets project sensitivity');
     assert.ok(caps.qs.includes('manage-access'));
     assert.ok(caps.qs.includes('mrb-quality'));
     assert.ok(caps.qs.includes('configure-training'));
@@ -321,7 +323,7 @@ try {
     assert.equal(/const serverMutatorName=(\/\^\(\?:[^/]*\)\/i)/.exec(page)?.[1], /const actionName = (\/\^\(\?:[^/]*\)\/i)/.exec(host)?.[1], 'page and server command-name patterns match');
     assert.equal(server.host.resolveAction('MES.icalExport'), null, 'calendar export stays a read and is not exposed as a mutation command');
     assert.equal(server.host.resolveAction('MES.verifyAIActionLog'), null, 'AI action-log verification stays a read and is not exposed as a mutation command');
-    for (const name of ['MES.upgrade', 'MES.validate', 'MES.verifyManifests', 'MES.verifyAIActionLog', 'MES.signManifest', 'FlightPlan.status', 'FlightManeuver.pfmeaFor', 'MES.recordAIAction', 'MES.logSupport', 'MES.noteDemoBypassRemoved']) {
+    for (const name of ['MES.upgrade', 'MES.validate', 'MES.verifyManifests', 'MES.verifyAIActionLog', 'MES.signManifest', 'FlightPlan.status', 'FlightManeuver.pfmeaFor', 'MES.recordAIAction', 'MES.logSupport', 'MES.noteDemoBypassRemoved', 'MES.releaseWIFromPfmea']) {
       const result = await api('POST', `/workspace/actions/${name}`, { token, body: { args: [] }, headers: { 'If-Match': before.etag } });
       assert.equal(result.status, 404, `${name} must not be remotely callable`);
     }

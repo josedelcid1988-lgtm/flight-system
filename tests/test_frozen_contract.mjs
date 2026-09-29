@@ -50,7 +50,7 @@ const SOD=[
   ['inspection is role-gated on every inspection operation',"const stepsDenied = (operation, what) => isInspectionOp(operation) ? (can('inspect-steps') ? null : fail(`A current Quality inspection stamp assigned to your account is required to ${what}. Ask a QA Manager to assign or renew your stamp.`))",1],
   ['inspection capability requires a valid assigned Quality stamp',"function hasValidInspectionStamp(state, username, at = new Date().toISOString())",1],
   ['nobody grants their own authority',"if(u.username===me.username)return {ok:false,message:'Nobody grants or revokes their own authority.",1],
-  ['nobody changes their own roles',"if(username===me.username)return {ok:false,message:'Nobody changes their own roles. Another QA Manager or Master Access account must do it.'};",1],
+  ['nobody changes their own roles',"if(username===me.username)return {ok:false,message:'Nobody changes their own roles. Another QA Manager, Quality Supervisor, or Master Access account must do it.'};",1],
   ['nobody changes their own primary role from the access table',"if(u.username===me.username){sel.value=primaryRole(u);say('Nobody changes their own roles.",1],
   ['nobody records their own training',"if (account === signedInAccount()) return fail('Nobody records their own training.",1],
   ['nobody issues a stamp to their own account',"if (account && account === signedInAccount()) return fail('Nobody issues a stamp to their own account.",1],
@@ -70,7 +70,7 @@ const SOD=[
 for(const [label,text,count] of SOD) has(label,text,count);
 
 // ---- the same self-target refusal on the server access route ----
-{const serverSrc=fs.readFileSync(path.join(ROOT,'server','server.mjs'),'utf8');const text="if (target.username === actor.username) return fail(403, 'Nobody changes their own roles. Another QA Manager or Master Access account must do it.');";const n=serverSrc.split(text).length-1;ok('the server refuses any account changing its own roles',n===1,`found ${n} of: ${text.slice(0,120)}`);}
+{const serverSrc=fs.readFileSync(path.join(ROOT,'server','server.mjs'),'utf8');const text="if (target.username === actor.username) return fail(403, 'Nobody changes their own roles. Another QA Manager, Quality Supervisor, or Master Access account must do it.');";const n=serverSrc.split(text).length-1;ok('the server refuses any account changing its own roles',n===1,`found ${n} of: ${text.slice(0,120)}`);}
 
 // ---- what an approval records ----
 has('a signature manifest names the signer, meaning, time, signed subject, SHA-256 and build',"return { meaning, at, signer, algorithm: 'SHA-256', hash: sha256(canonical(subject)), subject: JSON.parse(JSON.stringify(subject)), authenticated: false, build: buildStamp(),",1);

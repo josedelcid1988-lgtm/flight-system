@@ -27,15 +27,16 @@ One product, three modules, all in the same file:
 - `assets/`: local production assets, including the bundled React interface.
 - `server/`: authenticated MES API, SQLite/PostgreSQL stores and optional legacy mirror.
 - `tests/`: Playwright and Node harnesses with their fixtures. See `TESTING.md`.
-- `VERSION.md`: where the product build id is set; `tools/stamp-build.mjs` writes it and the
-  SHA-256 of `index.html` into the head of `index.html`.
+- `VERSION.md`: where the product build id is set. The committed `index.html` carries that id and
+  the hash placeholder `unstamped`; `tools/stamp-build.mjs` generates the real SHA-256 stamp in CI and
+  at release. Never commit a stamped `index.html`.
 
 `demo.html` and the demo test fixtures are generated from `index.html` by
 `node tools/build-demo.mjs`, which applies the numbered deviations in
 `tools/demo/deviations.mjs` (listed in `docs/DEMO_DEVIATIONS.md`). Never edit
-`demo.html` or a fixture by hand: change `index.html`, run `node tools/stamp-build.mjs`,
-then `node tools/build-demo.mjs`, and commit all of them. `--check` on either tool fails
-if its output is out of date.
+`demo.html` or a fixture by hand: change `index.html`, run `node tools/build-demo.mjs`,
+and commit both. `--check` on `build-demo` fails if its output is out of date, and
+`node tools/stamp-build.mjs --check` fails if `index.html` carries a generated stamp.
 
 ## Rules that are not negotiable
 

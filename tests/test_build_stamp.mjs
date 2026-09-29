@@ -4,12 +4,14 @@
 // still load and verify; a malformed stamp is refused by the manifest check.
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import {execFileSync} from 'node:child_process';
 import {chromium} from 'playwright';
 const TESTS=decodeURI(new URL('.',import.meta.url).pathname);
 const ROOT=path.resolve(TESTS,'..');
 const FIXTURES=process.env.FS_FIXTURES_DIR?process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):TESTS+'fixtures/';
 const PROD='file://'+FIXTURES+'publish.html';
-const {buildId,canonicalSha256,stamp,verify}=await import(path.join(ROOT,'tools/stamp-build.mjs'));
+const {buildId,canonicalSha256,stamp,verify,clear}=await import(path.join(ROOT,'tools/stamp-build.mjs'));
 const fails=[];const ok=(w,c,m='')=>{console.log((c?'  ok   ':'  FAIL ')+w+(c?'':' -> '+m));if(!c)fails.push(w);};
 
 // ---- the stamp tool ----
@@ -21,7 +23,48 @@ ok('index.html carries its own SHA-256 and it recomputes',v.ok&&/^[0-9a-f]{64}$/
 ok('stamping is idempotent',stamp(index,build)===index);
 ok('one changed byte anywhere changes the SHA-256',canonicalSha256(index.replace('Flight System','Flight Systen'))!==v.stamped);
 ok('a copy edited after stamping fails verification',!verify(index.replace('</body>',' </body>')).ok);
+// The stamp is generated, not committed: the committed form carries the build id and the placeholder.
+const committed=clear(index,build);
+ok('the committed form carries the build id and the "unstamped" placeholder',committed.includes(`<meta name="fs-build" content="${build}">`)&&committed.includes('<meta name="fs-build-sha256" content="unstamped">'));
+ok('an unstamped file fails verification, so a stamp step that does nothing is caught',!verify(committed).ok);
+ok('stamping the committed form reproduces this stamp, and clearing it gives the committed form back',stamp(committed,build)===stamp(index,build)&&clear(stamp(committed,build),build)===committed);
 ok('the demo build carries the same build id and index.html SHA-256',(()=>{const d=fs.readFileSync(path.join(ROOT,'demo.html'),'utf8');return d.includes(`<meta name="fs-build" content="${build}">`)&&d.includes(`<meta name="fs-build-sha256" content="${v.stamped}">`);})());
+// Release tooling refuses what cannot be traced: an unstamped or mismatched file, or a stamp not generated
+// from the committed source and build id in the commit the release record names.
+const {releaseProblem}=await import(path.join(ROOT,'tools/release-report.mjs'));
+const {buildId:packageBuildId,demoProblem,assetsProblem,assetsDiff}=await import(path.join(ROOT,'tools/package-release.mjs'));
+const headVersion=fs.readFileSync(path.join(ROOT,'VERSION.md'),'utf8'),stamped=stamp(committed,build);
+const refuses=(fn,re)=>{try{fn();return false;}catch(e){return re.test(e.message);}};
+ok('the release record accepts a stamp generated from the committed file and build id',releaseProblem(stamped,headVersion,committed)===null,releaseProblem(stamped,headVersion,committed));
+ok('the release record refuses the unstamped committed form',/not stamped/.test(releaseProblem(committed,headVersion,committed)||''));
+ok('the release record refuses a stamp that does not match the file',/computes/.test(releaseProblem(stamped.replace('</body>',' </body>'),headVersion,committed)||''));
+ok('the release record refuses a build id that is not committed',/Commit the build id first/.test(releaseProblem(stamp(committed,build+'-next'),headVersion,committed)||''));
+ok('the release record refuses a stamp generated from uncommitted source',/not generated from the committed/.test(releaseProblem(stamp(committed.replace('</body>',' </body>'),build),headVersion,committed)||''));
+// Packaged assets must be byte for byte the blobs the named commit holds. Checked against a real repository, so
+// git index state that hides a change from git status (ignored, skip-worktree) cannot pass it.
+ok('the asset comparison refuses a changed, an extra and a missing asset, and accepts a match',(()=>{const c=new Map([['assets/a.js','1'],['assets/b.css','2']]);return /assets\/a\.js differs/.test(assetsDiff(c,new Map([['assets/a.js','9'],['assets/b.css','2']]))||'')&&/assets\/x\.png is not in HEAD/.test(assetsDiff(c,new Map([...c,['assets/x.png','3']]))||'')&&/assets\/b\.css is in HEAD but missing on disk/.test(assetsDiff(c,new Map([['assets/a.js','1']]))||'')&&assetsDiff(c,new Map(c))===null;})());
+{
+  const repo=fs.mkdtempSync(path.join(os.tmpdir(),'flight-assets-')),g=(...a)=>execFileSync('git',['-c','user.name=Test','-c','user.email=test@example.com','-c','commit.gpgsign=false',...a],{cwd:repo,encoding:'utf8'});
+  try{
+    fs.mkdirSync(path.join(repo,'assets'));fs.writeFileSync(path.join(repo,'assets/a.js'),'one');fs.writeFileSync(path.join(repo,'assets/b.css'),'two');fs.writeFileSync(path.join(repo,'.gitignore'),'*.tmp\n.cache/\n');
+    g('init','-q');g('add','.');g('commit','-q','-m','assets');
+    ok('the release record accepts assets that match the named commit',assetsProblem({root:repo})===null,assetsProblem({root:repo}));
+    fs.writeFileSync(path.join(repo,'assets/a.js'),'changed');g('update-index','--skip-worktree','assets/a.js');
+    ok('the release record refuses a changed asset that git status hides (skip-worktree)',g('status','--porcelain').trim()===''&&/assets\/a\.js differs from HEAD/.test(assetsProblem({root:repo})||''));
+    g('update-index','--no-skip-worktree','assets/a.js');g('checkout','-q','--','assets/a.js');
+    fs.writeFileSync(path.join(repo,'assets/extra.tmp'),'x');
+    ok('the release record refuses a packaged asset that git ignores',/assets\/extra\.tmp is not in HEAD/.test(assetsProblem({root:repo})||''));
+    fs.rmSync(path.join(repo,'assets/extra.tmp'));fs.mkdirSync(path.join(repo,'assets/.cache'));fs.writeFileSync(path.join(repo,'assets/.cache/x'),'x');fs.writeFileSync(path.join(repo,'assets/.DS_Store'),'x');
+    ok('the release record accepts dot-named entries the packager leaves out',assetsProblem({root:repo})===null,assetsProblem({root:repo}));
+    g('mv','assets/b.css','assets/.b.css');
+    ok('the release record refuses a packaged asset renamed to a name the packager leaves out',/assets\/b\.css is in HEAD but missing on disk/.test(assetsProblem({root:repo})||''));
+  }finally{fs.rmSync(repo,{recursive:true,force:true});}
+}
+ok('the release packager refuses the unstamped committed form',refuses(()=>packageBuildId(committed),/not stamped/));
+ok('the release packager refuses a stamp that does not match the file',refuses(()=>packageBuildId(stamped.replace('</body>',' </body>')),/computes/));
+ok('the release packager accepts a verified stamp',packageBuildId(stamped)===build);
+ok('the release packager refuses a demo build not regenerated after stamping',/Run node tools\/build-demo/.test(demoProblem(stamped,committed)||''));
+ok('the release packager accepts a demo build carrying the production stamp',demoProblem(stamped,stamped)===null);
 ok('the production fixture is the stamped index.html',fs.readFileSync(TESTS+'fixtures/publish.html','utf8').includes(`<meta name="fs-build-sha256" content="${v.stamped}">`));
 
 // ---- the app ----

@@ -20,10 +20,13 @@ try {
   assert.equal(await opList.evaluate(e=>e.scrollHeight>e.clientHeight),true);
   await opList.evaluate(e=>e.scrollTop=0);
   await opList.focus();
-  const headerY=await page.locator('.sequence-panel .panel-head').evaluate(e=>e.getBoundingClientRect().top);
+  // End scrolls the operation list, not the page, and the panel header stays put inside its panel. Both are measured
+  // against the panel and the page scroll position, so an unrelated sub-pixel reflow elsewhere on the page does not count.
+  const headerPlace=()=>page.evaluate(()=>{const panel=document.querySelector('.sequence-panel'),head=panel.querySelector('.panel-head');return {inPanel:head.getBoundingClientRect().top-panel.getBoundingClientRect().top,pageY:window.scrollY};});
+  const headerBefore=await headerPlace();
   await page.keyboard.press('End');
   await page.waitForFunction(()=>{const e=document.querySelector('.sequence-list');return e.scrollTop>=e.scrollHeight-e.clientHeight-2;});
-  assert.equal(await page.locator('.sequence-panel .panel-head').evaluate(e=>e.getBoundingClientRect().top),headerY);
+  assert.deepEqual(await headerPlace(),headerBefore,'End scrolls the operation list, not the page, and the panel header stays in place');
   if(process.env.FLIGHT_QA_SCREENSHOTS)await page.screenshot({path:process.env.FLIGHT_QA_SCREENSHOTS+'/sequence-scroll-1440.png'});
   await page.setViewportSize({width:1440,height:1000});
   assert.equal(await page.locator('.fs-work-cue').evaluate(e=>getComputedStyle(e).backgroundColor),'rgb(21, 28, 36)');

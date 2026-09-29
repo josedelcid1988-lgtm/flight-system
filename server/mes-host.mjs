@@ -32,10 +32,13 @@ export function extractBlocks(html) {
   return found;
 }
 
-export function createHost(indexPath) {
-  const html = fs.readFileSync(indexPath, 'utf8');
+export function createHost(indexPath, html = fs.readFileSync(indexPath, 'utf8')) {
   const blocks = extractBlocks(html);
   const sandbox = { console, TextEncoder, TextDecoder, structuredClone, crypto: webcrypto, setTimeout, clearTimeout, URL };
+  // MES.buildStamp() reads the build meta tags from the page. The server has no page, so it answers those two
+  // lookups from the HTML it serves, and records written by server actions carry the same stamp as the page.
+  const meta = name => (html.match(new RegExp(`<meta name="${name}" content="([^"]*)">`)) || [])[1] || '';
+  sandbox.document = { querySelector: selector => { const name = (String(selector).match(/^meta\[name="(fs-build|fs-build-sha256)"\]$/) || [])[1]; return name ? { getAttribute: () => meta(name) } : null; } };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   const context = vm.createContext(sandbox);
@@ -112,7 +115,9 @@ export function createHost(indexPath) {
   const actionExclude = new Set(['repair','signManifest','verifyManifests','verifyAIActionLog','stampCheck','stampRegister','stampRegisterCsv','stampCredential','stampHolderFor','ticketAttachments','openProcessECRs','syncAssignments','buyoffCredential','ensure','seedDemoRecords','icalExport',
     // Internal record writers: each runs only inside the gated command that owns it (runSkill, a buy-off
     // override, the browser-only demo notice), so calling one directly would fabricate that record.
-    'recordAIAction','logSupport','noteDemoBypassRemoved']);
+    'recordAIAction','logSupport','noteDemoBypassRemoved',
+    // The release step of the PFMEA Safety Team buy-off: reached only through FlightManeuver.pfmeaSafetyBuyoff.
+    'releaseWIFromPfmea']);
   function resolveAction(name) {
     const functionName = String(name).split('.').at(-1);
     return (actionName.test(functionName) || actionExact.has(functionName)) && !actionExclude.has(functionName) ? resolve(name) : null;
