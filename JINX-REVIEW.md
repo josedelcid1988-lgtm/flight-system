@@ -1,4 +1,28 @@
-# JINX-REVIEW.md (PR #35, head 606ca713, updated 2026-09-29T19:16Z; Final approval WITHDRAWN, new P1 blocker: split regression)
+## 2026-09-29 19:55Z: split-regression fix verified on head 8d3405d4 (Jinx review 5357702860); Final approval still WITHHELD pending green CI
+
+Claude pushed 8d3405d4 (one commit: "fix: splits keep carried buy-offs and tickets verifiable"), implementing Jinx ruling A for the Codex 4137333755 P1. Jinx re-reviewed the full delta against the exact head. No blockers found.
+
+### Verified against the code (all CONFIRMED)
+1. carriedFrom provenance (index.html:6876-6884, splitRequestOrder): each carried buy-off with a manifest records { orderId: order.id, evidenceIds: originals } BEFORE the evidence re-keying loop below, so the recorded ids are exactly what the signature was computed over. Moved resolved tickets get { orderId } at 6886. The !plain(carriedFrom) guards keep the first split's values on a split-of-split.
+2. verifyManifests recheck (index.html:2890, 2893): the carried subject override replaces ONLY orderId and evidenceIds. operationId, title, note, stepChecks, stamp, override, tools, testAssets are recomputed from the current record, so any post-split edit still fails verification. The override applies only when order.splitFrom is set; split children get splitFrom: order.id at 6863, so carriedFrom cannot excuse an edit on a non-split order.
+3. Server gate: server.mjs:245 validState runs verifyManifests on every server write, confirming this was the exact rollback path the P1 described.
+4. Tests: the test_calibration.mjs additions (now 167 checks) cover the end-to-end split of a signed buy-off (verifyManifests plus server.validState), the moved signed ticket, a post-split edit still failing, and carriedFrom on a non-split order not excusing an edit. The each-half-fails and local 76/76 suite claims are Claude's process claims, not independently executed by Jinx; noted honestly in the review.
+
+### Security pass on this commit
+carriedFrom sits outside the signed subject. A forged carriedFrom only changes which historical subject the recheck compares against; every other subject field is recomputed from the current record, so forging it cannot excuse an edit. Manifests are unkeyed SHA-256 (authenticated: false): the manifest system is tamper-evident against corruption and casual edits, not against a forger who recomputes hashes. carriedFrom adds no new forgery capability beyond that. Waste pass clean; demo.html and the five fixture files carry the same generated patch.
+
+### Do-not-merge checklist (head 8d3405d4)
+- [x] Split-regression fix (carriedFrom provenance + verifyManifests original-subject recheck + end-to-end split test) on this branch, verified by Jinx
+- [ ] CI (suites) green on the exact head 8d3405d4 (in_progress at review time)
+- [ ] Jinx Final approval after green CI
+- [ ] Claudia merges through the PR button after both are done
+
+### Tracking gap (not blocking, needs owner call)
+Codex 4134256748 (calibrationReferenceProblem does not check expiry/status/location; Jinx downgraded to P2) has NO open tracking issue: #118 and #119 are both closed as duplicates, and it is not in the PR body Closes list. Claude inline reply 4137675742 says it is "tracked in #119", which is stale. Owner call needed: reopen #119, file a fresh issue, or accept it out of scope.
+
+---
+
+# JINX-REVIEW.md (PR #35, head 8d3405d4, updated 2026-09-29T19:55Z; blocker fix verified, CI suites still in_progress, Final approval still WITHHELD)
 
 ## 2026-09-29 19:16Z: Final approval WITHDRAWN, new P1 blocker (Jinx review 5357324836)
 
