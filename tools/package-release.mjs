@@ -10,6 +10,7 @@
 // compresses anyway, the assets are already JPEG and PNG), with fixed timestamps and sorted entries, so
 // the same tree always produces byte-identical zips. Node built-ins only.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { execFileSync } from 'node:child_process';
@@ -64,9 +65,9 @@ export function assetsLayoutProblem(root = ROOT) {
 // zips. The bytes on disk, exactly as they would ship, are hashed without any filter (git hash-object
 // --no-filters) and compared with the commit's tree, so no index state (untracked, ignored, renamed,
 // assume-unchanged, skip-worktree) can hide a difference. A file matches when its bytes are the committed blob,
-// or are exactly what a checkout of that blob writes on this machine (git cat-file --filters applies the smudge
-// and end-of-line conversion from .gitattributes and core.autocrlf), so a checkout with clean filters is not
-// refused for its own conversion, while bytes a clean filter would merely normalize are still refused.
+// or are exactly what any checkout of that commit writes for it (committedCheckout below), so a checkout with
+// clean filters is not refused for its own conversion, while bytes a clean filter would merely normalize, or
+// that only this machine's configuration would write, are still refused.
 // Returns a plain problem, or null.
 export function assetsProblem({ root = ROOT, commit = 'HEAD' } = {}) {
   const run = (args, options = {}) => execFileSync('git', args, { cwd: root, maxBuffer: 64 * 1024 * 1024, ...options });
@@ -86,10 +87,39 @@ export function assetsProblem({ root = ROOT, commit = 'HEAD' } = {}) {
   for (const [name, hash] of onDisk) {
     const blob = committed.get(name);
     if (!blob || blob === hash || !/^[0-9a-f]{40,64}$/.test(blob)) continue;
-    const checkout = run(['cat-file', '--filters', `${commit}:${name}`]);
-    if (run(['hash-object', '--no-filters', '--stdin'], { input: checkout, encoding: 'utf8' }).trim() === hash) onDisk.set(name, blob);
+    const checkout = committedCheckout(run, commit, name);
+    if (checkout && run(['hash-object', '--no-filters', '--stdin'], { input: checkout, encoding: 'utf8' }).trim() === hash) onDisk.set(name, blob);
   }
   return assetsDiff(committed, onDisk, commit);
+}
+
+// The bytes every checkout of the commit writes for name, decided by that commit's own .gitattributes alone: the
+// committed blob, or the blob with its lone LFs written as CRLF when the commit marks the file text with
+// eol=crlf. A conversion that depends on this machine (core.autocrlf or core.eol, info/attributes, a global or
+// system attributes file, a filter driver from config, ident, working-tree-encoding) would not be reproduced by
+// another checkout of the commit, so no conversion is accepted then and the function returns null.
+function committedCheckout(run, commit, name) {
+  const local = path.resolve(run(['rev-parse', '--path-format=absolute', '--git-path', 'info/attributes'], { encoding: 'utf8' }).trim());
+  if (fs.existsSync(local) && /^[ \t]*[^#\s]/m.test(fs.readFileSync(local, 'utf8'))) return null;
+  const out = run(['-c', `core.attributesFile=${os.devNull}`, 'check-attr', '-z', `--source=${commit}`, 'text', 'eol', 'filter', 'ident', 'working-tree-encoding', '--', name],
+    { encoding: 'utf8', env: { ...process.env, GIT_ATTR_NOSYSTEM: '1' } }).split('\0');
+  const attr = {};
+  for (let i = 0; i + 2 < out.length; i += 3) attr[out[i + 1]] = out[i + 2];
+  if (['filter', 'ident', 'working-tree-encoding'].some(a => attr[a] !== 'unspecified' && attr[a] !== 'unset')) return null;
+  if (attr.eol !== 'crlf' || attr.text === 'unset') return null;
+  const blob = run(['cat-file', 'blob', `${commit}:${name}`]);
+  if (attr.text === 'auto' && !autoText(blob)) return null;
+  return Buffer.from(blob.toString('latin1').replace(/(?<!\r)\n/g, '\r\n'), 'latin1');
+}
+
+// git's text=auto test for a blob it would convert on checkout: no CR already, no NUL, and mostly printable.
+function autoText(buf) {
+  let printable = 0, nonprintable = 0;
+  for (const c of buf) {
+    if (c === 0x0d || c === 0) return false;
+    if (c === 127 || (c < 32 && ![8, 9, 10, 12, 27].includes(c))) nonprintable++; else printable++;
+  }
+  return (printable >> 7) >= nonprintable;
 }
 
 // The comparison behind assetsProblem: committed and packaged map assets/<name> to its git blob hash.

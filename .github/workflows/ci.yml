@@ -5,7 +5,8 @@ name: CI
 # (tools/run-suites.mjs; the explained skips are in tests/allowed_skips.json).
 # The build stamp is not committed: CI generates it in its working copy, verifies it, and tests the stamped
 # build. The release record in VERSION.md is written at release time (tools/release-report.mjs); CI builds
-# it from this run's results with --dry-run so broken release tooling fails here, before a release.
+# it with --dry-run so broken release tooling fails here, before a release. The suites job tests the merge
+# ref; the release-record job runs the suites again on the pull request head, the commit the record names.
 on:
   pull_request:
   push:
@@ -38,11 +39,8 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      # The pull request head itself, not GitHub's merge ref: the release record built below names this
-      # commit, and tools/release-report.mjs refuses a commit that is not the one checked out.
+      # GitHub's merge ref on a pull request: the suites test the result of merging it into main.
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       # node:sqlite without a flag needs Node 22.13 or later (server/package.json).
       - uses: actions/setup-node@v4
@@ -90,7 +88,49 @@ jobs:
         if: success() || failure()
         run: node tools/run-suites.mjs --mirror --parallel 2
 
-      - name: Release record builds from this run's results (dry run, not committed)
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: suite-results
+          path: |
+            tests/suite_results.json
+            tests/suite_results_mirror.json
+            tests/suite_*.log
+          if-no-files-found: ignore
+
+  # The release record names one commit and accepts only suite results produced at that commit, so it is
+  # built in its own job on the pull request head itself, not on the merge ref the suites job tests.
+  release-record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+
+      - name: Install locked dependencies and Chromium
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Generate and verify the build stamp for this commit
+        run: |
+          node tools/stamp-build.mjs
+          node tools/build-demo.mjs
+          node tools/stamp-build.mjs --verify index.html
+
+      - name: All suites at this commit, mirror off
+        run: node tools/run-suites.mjs --parallel 2
+
+      - name: All suites at this commit, mirror on
+        run: node tools/run-suites.mjs --mirror --parallel 2
+
+      - name: Release record builds from this commit's results (dry run, not committed)
         env:
           FLIGHT_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: node tools/release-report.mjs --dry-run
@@ -99,7 +139,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: suite-results
+          name: release-record-suite-results
           path: |
             tests/suite_results.json
             tests/suite_results_mirror.json

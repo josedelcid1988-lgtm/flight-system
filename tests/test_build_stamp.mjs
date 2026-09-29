@@ -147,6 +147,24 @@ try{
    ok('the asset check refuses a changed text asset under a clean filter',/assets\/n\.txt differs from HEAD/.test(assetsProblem({root:s.dir})||''));
    fs.writeFileSync(s.at('assets/n.txt'),'a\r\nb\n');
    ok('the asset check refuses bytes a clean filter would normalize but a checkout would not write',/assets\/n\.txt differs from HEAD/.test(assetsProblem({root:s.dir})||''));}
+  // #96 review: only a conversion the named commit's own .gitattributes asks for is accepted. A conversion that
+  // comes from this machine (core.autocrlf, info/attributes, a filter driver in local config) would not be
+  // reproduced by another checkout of the commit, so those bytes are refused.
+  {const s=sandbox();fs.writeFileSync(s.at('assets/n.txt'),'a\nb\n');s.g('add','.');s.g('commit','-q','-m','text asset');
+   s.g('config','core.autocrlf','true');fs.writeFileSync(s.at('assets/n.txt'),'a\r\nb\r\n');
+   ok('the asset check refuses a line-ending conversion that comes only from local core.autocrlf',/assets\/n\.txt differs from HEAD/.test(assetsProblem({root:s.dir})||''),assetsProblem({root:s.dir}));
+   s.g('config','--unset','core.autocrlf');fs.mkdirSync(path.join(s.dir,'.git/info'),{recursive:true});fs.writeFileSync(path.join(s.dir,'.git/info/attributes'),'*.txt text eol=crlf\n');
+   ok('the asset check refuses a line-ending conversion that comes only from info/attributes',/assets\/n\.txt differs from HEAD/.test(assetsProblem({root:s.dir})||''),assetsProblem({root:s.dir}));
+   fs.rmSync(path.join(s.dir,'.git/info/attributes'));fs.writeFileSync(s.at('.gitattributes'),'*.txt filter=up\n');s.g('add','.gitattributes');s.g('commit','-q','-m','filter attr');
+   s.g('config','filter.up.smudge','tr a-z A-Z');s.g('config','filter.up.clean','cat');fs.writeFileSync(s.at('assets/n.txt'),'A\nB\n');
+   ok('the asset check refuses bytes written by a filter driver defined in local config',/assets\/n\.txt differs from HEAD/.test(assetsProblem({root:s.dir})||''),assetsProblem({root:s.dir}));
+   s.g('rm','-q','.gitattributes');s.g('commit','-q','-m','no filter attr');fs.writeFileSync(s.at('.gitattributes'),'*.txt filter=up\n');
+   ok('the asset check refuses bytes from a filter assigned only in an uncommitted .gitattributes',/assets\/n\.txt differs from HEAD/.test(assetsProblem({root:s.dir})||''),assetsProblem({root:s.dir}));
+   s.g('add','.gitattributes');s.g('commit','-q','-m','filter attr again');
+   fs.writeFileSync(s.at('assets/n.txt'),'a\nb\n');
+   ok('the asset check still accepts the committed blob bytes under a filter attribute',assetsProblem({root:s.dir})===null,assetsProblem({root:s.dir}));
+   fs.writeFileSync(s.at('.gitattributes'),'*.txt text=auto eol=crlf\n');s.g('add','.gitattributes');s.g('commit','-q','-m','auto');fs.writeFileSync(s.at('assets/n.txt'),'a\r\nb\r\n');
+   ok('the asset check accepts the CRLF checkout of a text=auto eol=crlf asset the commit declares',assetsProblem({root:s.dir})===null,assetsProblem({root:s.dir}));}
   // #86 (fixed in PR #82): no git status call remains; a git failure is a plain refusal, not a stack trace.
   {const dir=fs.mkdtempSync(path.join(os.tmpdir(),'flight-nogit-'));sandboxes.push(dir);fs.mkdirSync(path.join(dir,'assets'));fs.writeFileSync(path.join(dir,'assets/a.js'),'one');
    let r;try{r=assetsProblem({root:dir});}catch(e){r='threw '+e.message;}
@@ -174,7 +192,10 @@ try{
    s.results();const a=s.node(['tools/release-report.mjs','--dry-run'],{FLIGHT_SOURCE_COMMIT:head.slice(0,12)});
    ok('the release record accepts a FLIGHT_SOURCE_COMMIT naming HEAD and records it in full',a.code===0&&a.out.includes('| Stamp generated from commit | `'+head+'` |'),a.out);
    const ci=fs.readFileSync(path.join(ROOT,'.github/workflows/ci.yml'),'utf8');
-   ok('CI checks out the pull request head that its dry-run record names',/uses: actions\/checkout@v4\n\s+with:\n\s+ref: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}/.test(ci)&&/FLIGHT_SOURCE_COMMIT: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}/.test(ci));}
+   const job=n=>(ci.split(/\n  (?=[\w-]+:\n)/).find(b=>b.startsWith(n+':'))||'');
+   const headCheckout=/uses: actions\/checkout@v4\n\s+with:\n\s+ref: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}/;
+   ok('CI runs the suites on the merge ref, not a pinned head',/uses: actions\/checkout@v4\n/.test(job('suites'))&&!/\bref:/.test(job('suites'))&&!/release-report/.test(job('suites')),job('suites').slice(0,80));
+   ok('CI builds the dry-run record in a separate job on the pull request head that the record names',headCheckout.test(job('release-record'))&&/FLIGHT_SOURCE_COMMIT: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}\n\s+run: node tools\/release-report\.mjs --dry-run/.test(job('release-record'))&&/run-suites\.mjs --mirror/.test(job('release-record')));}
   // #63: the source package is named from VERSION.md, so both pages must identify as that build.
   {const s=sandbox();const {packageSource}=await s.tool('package-source.mjs');const out=fs.mkdtempSync(path.join(os.tmpdir(),'flight-source-'));sandboxes.push(out);
    const tryPack=()=>{try{return 'ok '+path.basename(packageSource(out).file);}catch(e){return e.message;}};
