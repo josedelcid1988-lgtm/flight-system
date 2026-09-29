@@ -566,6 +566,25 @@ function TraceSearch({ state, MES, initialQuery, onSearch, onReport, onRoute }) 
     const timer = setTimeout(() => server.api(`/trace?q=${encodeURIComponent(q)}`).then(response => { if (current) setArchived(response.ok && Array.isArray(response.json?.results) ? response.json.results.filter(row => row.source === 'archive') : []); }).catch(() => { if (current) setArchived([]); }), 250);
     return () => { current = false; clearTimeout(timer); };
   }, [query]);
+  // An archived order is read-only on the server: open its printed record or download its signed export there.
+  const [archiveNote, setArchiveNote] = useState('');
+  const openArchived = async (orderId, kind) => {
+    const server = typeof window !== 'undefined' && window.skServer?.active ? window.skServer : null;
+    if (!server) return;
+    setArchiveNote('');
+    // Open the print tab now, inside the click: a tab opened after the fetch can be blocked as a pop-up.
+    const tab = kind === 'print' ? window.open('', '_blank') : null;
+    if (kind === 'print' && !tab) { setArchiveNote(`${orderId} could not open a print tab. Allow pop-ups for Flight System, then retry.`); return; }
+    if (tab) tab.opener = null;
+    try {
+      const response = await fetch(`${server.context.api}/archive/${encodeURIComponent(orderId)}/${kind}`, { headers: { Authorization: `Bearer ${server.token()}` } });
+      if (!response.ok) { tab?.close(); let error = ''; try { error = (await response.json()).error || ''; } catch {} setArchiveNote(`${orderId} could not be opened from the archive${error ? `: ${error}` : ` (${response.status})`}. Sign in again, then retry.`); return; }
+      const url = URL.createObjectURL(await response.blob());
+      if (tab) tab.location.href = url;
+      else { const link = document.createElement('a'); link.href = url; link.download = `${orderId}-archive.json`; document.body.appendChild(link); link.click(); link.remove(); }
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch { tab?.close(); setArchiveNote(`${orderId} could not be opened because the server did not answer. Check the connection, then retry.`); }
+  };
   const density = () => setCompact(value => {
     const next = !value;
     try { localStorage.setItem(`${densityKey}-trace`, next ? 'compact' : 'comfortable'); } catch {}
@@ -589,7 +608,7 @@ function TraceSearch({ state, MES, initialQuery, onSearch, onReport, onRoute }) 
     if (result.changes.length) sections.push(table('Change requests', ['Request', 'Type', 'Title', 'Origin', 'ECO', 'Status'], result.changes.map(change => <tr key={change.id}><td>{routeLink('ecr-open', { id: change.id }, change.id)}</td><td>{change.type}</td><td>{change.title}</td><td>{change.origin}</td><td>{change.eco || ''}</td><td>{change.status}</td></tr>), 'No change requests.'));
     if (result.wis?.length) sections.push(table('Master WI revisions', ['WI', 'Revision', 'Status', 'Orders cloned'], result.wis.map(wi => <tr key={`${wi.id}/${wi.revision}`}><td>{routeLink('wi-open', { wi: wi.id, rev: wi.revision }, wi.id)}</td><td>{wi.revision}</td><td>{wi.status}</td><td>{wi.orders}</td></tr>), ''));
   }
-  if (result && archived.length) sections.push(table('Archived work orders', ['Work order', 'Title', 'Part', 'Serials', 'Lots', 'Closed'], archived.map(row => <tr key={row.orderId}><td className="fr-mono">{row.orderId}</td><td>{row.title}</td><td className="fr-mono">{row.partNumber}</td><td className="fr-mono">{(row.serials || []).join(', ') || 'None'}</td><td className="fr-mono">{(row.lots || []).join(', ') || 'None'}</td><td>{row.closedAt ? String(row.closedAt).slice(0, 10) : ''}</td></tr>), 'No archived work orders match.'));
+  if (result && archived.length) sections.push(<React.Fragment key="archived">{archiveNote && <p className="fr-trace-alert is-warning" role="alert">{archiveNote}</p>}{table('Archived work orders', ['Work order', 'Title', 'Part', 'Serials', 'Lots', 'Closed', 'Archived record'], archived.map(row => <tr key={row.orderId}><td className="fr-mono">{row.orderId}</td><td>{row.title}</td><td className="fr-mono">{row.partNumber}</td><td className="fr-mono">{(row.serials || []).join(', ') || 'None'}</td><td className="fr-mono">{(row.lots || []).join(', ') || 'None'}</td><td>{row.closedAt ? String(row.closedAt).slice(0, 10) : ''}</td><td><button type="button" className="fr-text-action" aria-label={`Print archived ${row.orderId}`} onClick={() => openArchived(row.orderId, 'print')}>Print<ArrowUpRight size={13}/></button> <button type="button" className="fr-text-action" aria-label={`Export archived ${row.orderId}`} onClick={() => openArchived(row.orderId, 'export')}>Export<FileText size={13}/></button></td></tr>), 'No archived work orders match.')}</React.Fragment>);
   const hasRows = (result && ['orders', 'tickets', 'mrb', 'sprs', 'cars', 'changes', 'wis'].some(key => Array.isArray(result[key]) && result[key].length > 0)) || archived.length > 0;
   return <div className="flight-react fr-trace">
     <div className="fr-page-heading"><div><span className="fr-eyebrow">FLIGHT CONTROL</span><h1>Traceability<span>.</span></h1><p>Search a serial, lot, calibrated tool, master WI or change number.</p></div><div className="fr-workspace">Current Flight System records</div></div>

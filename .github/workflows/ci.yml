@@ -3,6 +3,9 @@ name: CI
 # Every pull request and every push to main: the generated files are current, then every suite runs with
 # the persistence mirror off and on. Any failed check, page error or unexplained skip fails the run
 # (tools/run-suites.mjs; the explained skips are in tests/allowed_skips.json).
+# The build stamp is not committed: CI generates it in its working copy, verifies it, and tests the stamped
+# build. The release record in VERSION.md is written at release time (tools/release-report.mjs); CI builds
+# it from this run's results with --dry-run so broken release tooling fails here, before a release.
 on:
   pull_request:
   push:
@@ -54,7 +57,7 @@ jobs:
       - name: React bundle, local assets, and production integration are current
         run: npm run build:react -- --check
 
-      - name: Build stamp is current (index.html carries VERSION.md build and its own SHA-256)
+      - name: Committed index.html carries the VERSION.md build and no generated stamp
         run: node tools/stamp-build.mjs --check
 
       - name: PostgreSQL storage integration
@@ -68,8 +71,13 @@ jobs:
       - name: Role matrix is current
         run: node tools/role-matrix.mjs --check
 
-      - name: VERSION.md release record matches index.html and demo.html
-        run: node tools/release-report.mjs --check
+      # Not committed: stamp this run's working copy, rebuild the demo and fixtures from it, and verify the
+      # stamp recomputes. An unstamped or wrongly stamped file fails --verify.
+      - name: Generate and verify the build stamp for this run
+        run: |
+          node tools/stamp-build.mjs
+          node tools/build-demo.mjs
+          node tools/stamp-build.mjs --verify index.html
 
       - name: All suites, mirror off
         run: node tools/run-suites.mjs --parallel 2
@@ -77,6 +85,11 @@ jobs:
       - name: All suites, mirror on
         if: success() || failure()
         run: node tools/run-suites.mjs --mirror --parallel 2
+
+      - name: Release record builds from this run's results (dry run, not committed)
+        env:
+          FLIGHT_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node tools/release-report.mjs --dry-run
 
       - name: Keep the results
         if: always()
