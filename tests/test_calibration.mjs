@@ -215,4 +215,18 @@ const pageSource = pageSources[0][1];
 check('completeOperation records its tools through toolUseRecords', /const toolUse = toolUseRecords\(toolChecks, execution\.torque\)/.test(pageSource) && /tools: toolUse\.tools, toolLog: toolUse\.toolLog/.test(pageSource));
 const atpLive = MES.atpAssets([{ asset: 'B2-TOOL' }, { asset: 'NONE-175' }], now, state);
 check('an ATP asset from the calibration log carries its CALLOG entry id', atpLive.ok && atpLive.list[0].calibrationEntry === liveEntryId && atpLive.list[1].calibrationEntry === undefined);
+// #57: the maintenance register and work-unit links accept a tool recorded only in the calibration log.
+const admin = { username: 'admin-ada', displayName: 'Ada Admin', role: 'admin' };
+const mntState = structuredClone(state);
+const mntRun = (account, fn) => host.withAccount(account, fn, mntState);
+const mntOpen = mntRun(admin, () => MES.recordMaintenance(mntState, { assetTag: 'sug-001', type: MES.MAINTENANCE_TYPES[0], description: 'Anvil chipped, send for repair' }));
+check('maintenance can be opened on a tool recorded only in the calibration log', mntOpen.ok && MES.validate(mntState));
+const mntBlocked = MES.toolCheck('SUG-001', now, mntState);
+check('a log-only tool under open maintenance is unusable at point of use', !mntBlocked.ok && /open/.test(mntBlocked.message));
+check('maintenance on an unknown tag is still refused', !mntRun(admin, () => MES.recordMaintenance(mntState, { assetTag: 'NO-SUCH-TOOL', type: MES.MAINTENANCE_TYPES[0], description: 'Not a registered asset' })).ok);
+const unitLink = mntRun(admin, () => MES.addEquipmentUnit(mntState, { name: 'Micrometer bench', workCenterId: MES.WORK_CENTERS[0].id, toolTag: 'b2-tool' }));
+check('a work unit can link a tool recorded only in the calibration log', unitLink.ok && unitLink.unit.toolTag === 'B2-TOOL' && MES.validate(mntState));
+check('a work unit link to an unknown tag is still refused', !mntRun(admin, () => MES.addEquipmentUnit(mntState, { name: 'Unknown bench', workCenterId: MES.WORK_CENTERS[0].id, toolTag: 'NO-SUCH-TOOL' })).ok);
+const reactSource = pageSources[1][1];
+check('the React equipment forms list calibration-log tools, not the seed alone', !/MES\.CAL_TOOLS\.map\(/.test(reactSource) && (reactSource.match(/MES\.calibratedToolChecks\(state\)\.map\(c => c\.tool\)/g) || []).length === 2);
 console.log(`calibration: ${checks} checks, all passed`);

@@ -7564,7 +7564,9 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   }
   const equipmentUnitsFor = state => [...EQUIPMENT_UNITS, ...(state?.resources?.units || [])];
   const equipmentAreaValid = area => plain(area) && /^AREA-\d{4,8}$/.test(area.id) && str(area.name, 80) && (area.site === null || SITES.includes(area.site));
-  const equipmentUnitValid = (state, unit) => plain(unit) && /^UNIT-\d{4,8}$/.test(unit.id) && str(unit.tag, 60) && str(unit.name, 80) && workCenterValid(unit.workCenterId) && SITES.includes(unit.site) && (unit.areaId === null || state.resources.areas.some(area => area.id === unit.areaId && (area.site === null || area.site === unit.site))) && (unit.toolTag === null || CAL_TOOLS.some(tool => tool.tag === unit.toolTag)) && typeof unit.active === 'boolean';
+  // Every calibration-controlled tool tag: the shipped seed plus every tag in the calibration log.
+  const calibratedTagSet = state => { const tags = new Set(CAL_TOOLS.map(tool => tool.tag)); calibrationIndex(state).forEach((entry, tag) => tags.add(tag)); return tags; };
+  const equipmentUnitValid = (state, unit, toolTags = calibratedTagSet(state)) => plain(unit) && /^UNIT-\d{4,8}$/.test(unit.id) && str(unit.tag, 60) && str(unit.name, 80) && workCenterValid(unit.workCenterId) && SITES.includes(unit.site) && (unit.areaId === null || state.resources.areas.some(area => area.id === unit.areaId && (area.site === null || area.site === unit.site))) && (unit.toolTag === null || toolTags.has(unit.toolTag)) && typeof unit.active === 'boolean';
   function addEquipmentArea(state, input) {
     const d = denied('configure-org', 'add an equipment area'); if (d) return d;
     const resources = ensureResources(state), name = String(input?.name || '').trim(), site = input?.site || null;
@@ -7578,7 +7580,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const resources = ensureResources(state), name = String(input?.name || '').trim(), workCenterId = String(input?.workCenterId || ''), center = WORK_CENTERS.find(item => item.id === workCenterId), areaId = input?.areaId || null, toolTag = String(input?.toolTag || '').trim().toUpperCase() || null;
     if (!str(name, 80) || !center) return fail('Enter a unit name and registered work center.');
     if (areaId && !resources.areas.some(area => area.id === areaId && (area.site === null || area.site === center.site))) return fail('Choose an equipment area at the work center site.');
-    if (toolTag && !CAL_TOOLS.some(tool => tool.tag === toolTag)) return fail('Link a calibrated tool tag from the Calibrated Tool Log.');
+    if (toolTag && !calibratedTagSet(state).has(toolTag)) return fail('Link a calibrated tool tag from the Calibrated Tool Log or the calibration log.');
     if (toolTag && equipmentUnitsFor(state).some(unit => unit.toolTag === toolTag)) return fail(`${toolTag} is already linked to a work unit.`);
     const n = Math.max(0, ...resources.units.map(unit => Number(String(unit.id).match(/(\d+)$/)?.[1]) || 0)) + 1;
     const unit = { id: `UNIT-${String(n).padStart(4, '0')}`, tag: String(input.tag || `UNIT-${String(n).padStart(4, '0')}`).trim().toUpperCase(), name, workCenterId, site: center.site, areaId, toolTag, active: true };
@@ -7588,14 +7590,15 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   const maintenanceValid = item => plain(item) && /^MNT-\d{5,8}$/.test(String(item.id)) && str(item.assetTag, 60) && MAINTENANCE_TYPES.includes(item.type) && str(item.description, 300) && ['Open', 'Closed'].includes(item.status) && snapshotValid(item.openedBy) && timestamp(item.openedAt) && (item.status === 'Open' ? item.closedBy === null && item.closedAt === null : snapshotValid(item.closedBy) && timestamp(item.closedAt) && item.closedBy.credentialId !== item.openedBy.credentialId);
   function equipmentValid(state) {
     if (!Object.hasOwn(state, 'resources')) return true;
-    const resources = state.resources;
-    if (!plain(resources) || !Array.isArray(resources.maintenance) || resources.maintenance.length > 10000 || !Array.isArray(resources.areas) || resources.areas.length > 1000 || !unique(resources.areas.map(area => area && area.id)) || !resources.areas.every(equipmentAreaValid) || !Array.isArray(resources.units) || resources.units.length > 1000 || !unique(resources.units.map(unit => unit && unit.id)) || !unique(equipmentUnitsFor(state).map(unit => unit && unit.tag)) || !resources.units.every(unit => equipmentUnitValid(state, unit))) return false;
-    return unique(resources.maintenance.map(item => item && item.id)) && resources.maintenance.every(item => maintenanceValid(item) && (equipmentUnitsFor(state).some(unit => unit.tag === item.assetTag) || CAL_TOOLS.some(tool => tool.tag === item.assetTag)));
+    const resources = state.resources, toolTags = calibratedTagSet(state);
+    if (!plain(resources) || !Array.isArray(resources.maintenance) || resources.maintenance.length > 10000 || !Array.isArray(resources.areas) || resources.areas.length > 1000 || !unique(resources.areas.map(area => area && area.id)) || !resources.areas.every(equipmentAreaValid) || !Array.isArray(resources.units) || resources.units.length > 1000 || !unique(resources.units.map(unit => unit && unit.id)) || !unique(equipmentUnitsFor(state).map(unit => unit && unit.tag)) || !resources.units.every(unit => equipmentUnitValid(state, unit, toolTags))) return false;
+    const unitTags = new Set(equipmentUnitsFor(state).map(unit => unit.tag));
+    return unique(resources.maintenance.map(item => item && item.id)) && resources.maintenance.every(item => maintenanceValid(item) && (unitTags.has(item.assetTag) || toolTags.has(item.assetTag)));
   }
   function recordMaintenance(state, input) {
     const deniedAction = denied('operate', 'record equipment maintenance'); if (deniedAction) return deniedAction;
     const resources = ensureResources(state), assetTag = String(input?.assetTag || '').trim().toUpperCase(), type = String(input?.type || ''), description = String(input?.description || '').trim();
-    if (!equipmentUnitsFor(state).some(unit => unit.tag === assetTag) && !CAL_TOOLS.some(tool => tool.tag === assetTag)) return fail('Choose a registered work-center unit or calibrated tool.');
+    if (!equipmentUnitsFor(state).some(unit => unit.tag === assetTag) && !calibratedTagSet(state).has(assetTag)) return fail('Choose a registered work-center unit or calibrated tool.');
     if (!MAINTENANCE_TYPES.includes(type) || description.length < 3 || description.length > 300) return fail('Choose a maintenance type and enter a description of 3 to 300 characters.');
     if (resources.maintenance.some(item => item.assetTag === assetTag && item.status === 'Open')) return fail(`${assetTag} already has an open maintenance record.`);
     if (resources.maintenance.length >= 10000) return fail('The maintenance register has reached its record limit.');
