@@ -122,8 +122,13 @@ export function readZip(buf) {
   return out;
 }
 
-export function packageRelease(outDir) {
+// Checks assets/ against HEAD before writing, so every caller that writes release zips is gated, not only the
+// command line: an asset changed after the record was written would otherwise ship under a record naming a
+// commit that does not hold it. allowUncommittedAssets packages the working tree as it is; only
+// tests/qa_full.mjs uses it, to check the packager on a development tree, and its zips are never released.
+export function packageRelease(outDir, { allowUncommittedAssets = false } = {}) {
   const build = releaseBuild(), names = zipNames(build);
+  if (!allowUncommittedAssets) { const assets = assetsProblem(); if (assets) throw new Error(assets); }
   fs.mkdirSync(outDir, { recursive: true });
   for (const kind of ['production', 'demo']) {
     const entries = manifest(kind).map(([inZip, inTree]) => [inZip, fs.readFileSync(path.join(ROOT, inTree))]);
@@ -161,10 +166,7 @@ function main() {
     console.log(`release zips for ${buildId()} in ${dir} match the tree`);
     return;
   }
-  // Checked again here, not only in the release record: an asset changed after the record was written would
-  // otherwise ship under a record naming a commit that does not hold it.
-  const assets = assetsProblem();
-  if (assets) throw new Error(assets);
+  // packageRelease() checks assets/ against HEAD again, not only the release record does.
   const r = packageRelease(path.resolve(at('--out') || path.join(ROOT, 'release')));
   console.log(`packaged ${r.build}:\n  ${r.files.join('\n  ')}`);
 }

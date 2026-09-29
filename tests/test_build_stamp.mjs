@@ -115,6 +115,16 @@ try{
    ok('the packager run on its own refuses an asset that differs from HEAD and writes no zip',r.code===1&&/assets\/a\.js differs from HEAD/.test(r.out)&&!fs.existsSync(s.at('release')),r.out);
    s.g('checkout','-q','--','assets/a.js');const a=s.node(['tools/package-release.mjs','--out','release']);
    ok('the packager run on its own writes both zips when assets/ matches HEAD',a.code===0&&fs.readdirSync(s.at('release')).length===2,a.out);}
+  // #87: packageRelease() itself checks assets/, so every caller that writes zips is gated; only an explicit
+  // option (used by tests/qa_full.mjs, which packages the working tree) skips it.
+  {const s=sandbox();s.stamp();const {packageRelease}=await s.tool('package-release.mjs');const out=s.at('release');
+   const tryPack=o=>{try{packageRelease(out,o);return 'ok';}catch(e){return e.message;}};
+   fs.writeFileSync(s.at('assets/a.js'),'changed');
+   const r=tryPack();ok('packageRelease() called directly refuses an asset that differs from HEAD and writes no zip',/assets\/a\.js differs from HEAD/.test(r)&&!fs.existsSync(out),r);
+   const w=tryPack({allowUncommittedAssets:true});ok('packageRelease() packages the working tree only when asked explicitly',w==='ok'&&fs.readdirSync(out).length===2,w);
+   fs.rmSync(out,{recursive:true,force:true});s.g('checkout','-q','--','assets/a.js');
+   const a=tryPack();ok('packageRelease() called directly writes both zips when assets/ matches HEAD',a==='ok'&&fs.readdirSync(out).length===2,a);
+   ok('qa_full asks for the working-tree packaging explicitly',/packageRelease\(OUT,\{allowUncommittedAssets:true\}\)/.test(fs.readFileSync(path.join(ROOT,'tests/qa_full.mjs'),'utf8')));}
   // #86 (fixed in PR #82): no git status call remains; a git failure is a plain refusal, not a stack trace.
   {const dir=fs.mkdtempSync(path.join(os.tmpdir(),'flight-nogit-'));sandboxes.push(dir);fs.mkdirSync(path.join(dir,'assets'));fs.writeFileSync(path.join(dir,'assets/a.js'),'one');
    let r;try{r=assetsProblem({root:dir});}catch(e){r='threw '+e.message;}
