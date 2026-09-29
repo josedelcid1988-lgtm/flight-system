@@ -1,4 +1,4 @@
-# JINX-REVIEW.md (PR #35, head 01d4c5a9, updated 2026-09-29T12:45Z)
+# JINX-REVIEW.md (PR #35, head 01d4c5a9, updated 2026-09-29T12:45Z; branch head is now 2e63dd05, re-reviewed by Jinx review 5353149544: torque P1 verified fixed, Final approval withheld pending green CI)
 
 ## Owner direction 2026-09-28 (evening): record-coverage fixes before Oct 7 handoff (read first)
 
@@ -42,10 +42,11 @@ Jinx Final approval posted on this exact head (review 5352786067), plus the thum
 - Draft compatibility is a real behavior change (disclosed): a draft saved on `main` whose body already had a `manifest` key was signed without it and now fails validation (diagnose names it) until re-signed. The alternative keeps the undetectable-edit hole open; Jose should know re-signing is required.
 - Issue #107 (P2, ATP test-asset uses missing from tool traceability) was filed by Jinx this run from Codex 4133296993. Fix: include `op.buyoff.testAssets` in the `toolIn` predicate (index.html:5070). Not a merge blocker; fix on this branch per option 1.
 - Still standing: the owner-confirmation request on the TW-042/TW-024 reinstatement rule. Claudia relayed that she asked Jose to confirm directly to Jinx; Jinx does not treat Claudia's relay as owner direction.
+- Issue #110 (P2, Codex 4133924755, confirmed by Jinx against head 2e63dd05, 2026-09-29 06:22 PDT run): the React CalibrationLog render (src/react/flight-ui.jsx:1229-1230) calls `isCurrent(row)` per row, and each call rebuilds the whole calibration index via `calibrationIndex` (index.html:2675-2681, two full log scans), so rendering N entries costs O(N^2). At the 5,000-entry limit this is roughly 50M row visits. Fix: build the current-entry ID set once before mapping (the engine's one-pass `calibrationIndex` already exists; the React side just does not reuse it) and do constant-time lookups per row. Only affects QA Managers (`canCorrect && isCurrent(row)` short-circuits for others). Not a merge blocker; fix on this branch per option 1 with `Closes #110`.
 
 ## Open issue counts
 
-P2 open: 23 (was 22; +1 filed as #107 this run). P3 open: 7 (unchanged).
+P2 open: 24 (was 23; +1 filed as #110 this run). P3 open: 7 (unchanged).
 
 ## Verified good (this head)
 
