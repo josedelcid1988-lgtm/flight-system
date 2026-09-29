@@ -97,6 +97,21 @@ await as('ssafe');r=await safety();ok('the Safety Team role gives the buy-off',r
 await as('pqm');r=await run(()=>{const real=skAuth.can;skAuth.can=c=>c==='safety-buyoff'?false:real.call(skAuth,c);try{return FlightManeuver.pfmeaSafetyBuyoff(structuredClone(state),'PFM-201',{decision:'Approve',note:'x'});}finally{skAuth.can=real;}});
 ok('the check is the capability: a QA Manager without safety-buyoff is refused',r.ok===false,JSON.stringify(r));
 
+// ---- a critical safety WI is released only by the Safety Team buy-off on its PFMEA ----
+// MES.releaseWIFromPfmea is the release step inside the buy-off. Called any other way it refuses: without the capability,
+// naming a PFMEA that does not exist or belongs to another WI, or before this person has signed the buy-off.
+const direct=(pfmId,opts={})=>run(([pfmId,opts])=>{const s=structuredClone(state),t=s.maneuver.pfmeas.find(x=>x.id==='PFM-201'),wi=s.masterWIs.find(w=>w.id===t.wiId&&w.revision===t.wiRevision);
+  if(opts.signedBy){t.status='Approved';t.safety={decision:'Approved',note:'x',by:opts.signedBy,at:new Date().toISOString()};}
+  const r=MES.releaseWIFromPfmea(s,opts.otherWi?'WI-NOPE':wi.id,wi.revision,pfmId,opts.check);return {ok:r.ok,message:r.message,status:s.masterWIs.find(w=>w.id===wi.id&&w.revision===wi.revision).status};},[pfmId,opts]);
+await as('kqe');r=await direct('PFM-201');ok('a direct release without safety-buyoff is refused and the WI stays unreleased',r.ok===false&&/cannot give the Safety Team buy-off/.test(r.message)&&r.status!=='Released',JSON.stringify(r));
+await as('pqm');r=await direct('PFM-999');ok('a direct release naming a PFMEA that does not exist is refused',r.ok===false&&/Safety Team buy-off on its PFMEA/.test(r.message)&&r.status!=='Released',JSON.stringify(r));
+r=await direct('PFM-201',{otherWi:true});ok('a direct release naming another WI\'s PFMEA is refused',r.ok===false,JSON.stringify(r));
+r=await direct('PFM-201');ok('a direct release before the Safety Team buy-off is signed is refused',r.ok===false&&/Safety Team buy-off on its PFMEA/.test(r.message)&&r.status!=='Released',JSON.stringify(r));
+r=await direct('PFM-201',{signedBy:{name:'Sam Safety',role:'Safety',credentialId:'ACCT-ssafe',account:'ssafe'}});ok('a direct release replaying another person\'s signed buy-off is refused',r.ok===false&&r.status!=='Released',JSON.stringify(r));
+r=await direct('PFM-201',{check:true});ok('the buy-off readiness check passes while the PFMEA waits for the Safety Team',r.ok===true,JSON.stringify(r));
+r=await run(()=>{const s=structuredClone(state),t=s.maneuver.pfmeas.find(x=>x.id==='PFM-201');const res=FlightManeuver.pfmeaSafetyBuyoff(s,'PFM-201',{decision:'Approve',note:'Controls adequate for every failure mode.'});return {ok:res.ok,message:res.message,status:s.masterWIs.find(w=>w.id===t.wiId&&w.revision===t.wiRevision).status};});
+ok('the Safety Team buy-off itself still releases the WI',r.ok===true&&r.status==='Released',JSON.stringify(r));
+
 ok('state valid at end',await run(()=>MES.validate(state)));
 ok('no page errors',errs.length===0,errs.join(' | '));
 console.log('errors',errs,'FAILS',JSON.stringify(fails));await b.close();
