@@ -1766,7 +1766,7 @@ function skBoot(){
   if(!u)return {ok:false,message:'That account is not on this device.'};
   var before=rolesOf(u,true),isQS=roleOf(me)==='qs',protectedTarget=before.some(function(k){return k==='qm'||k==='admin';});
   if(isQS&&protectedTarget)return {ok:false,message:'A Quality Supervisor cannot change a QA Manager or Master Access account.'};
-  if(username===me.username)return {ok:false,message:'Nobody changes their own roles. Another QA Manager or Master Access account must do it.'};
+  if(username===me.username)return {ok:false,message:'Nobody changes their own roles. Another QA Manager, Quality Supervisor, or Master Access account must do it.'};
   var list=(Array.isArray(roles)?roles:[]).filter(function(k,i,arr){return ROLES.some(function(r){return r.key===k;})&&arr.indexOf(k)===i;});
   if(!list.length)return {ok:false,message:'Choose at least one role.'};
   if(isQS&&list.some(function(k){return k==='qm'||k==='admin';}))return {ok:false,message:'A Quality Supervisor cannot assign QA Manager or Master Access.'};
@@ -1819,8 +1819,8 @@ function skBoot(){
   var a=loadAuth(),me=currentUser(),u=a.users.find(function(x){return x.username===sel.dataset.roleUser;});if(!u)return;
   var say=function(msg){var t=document.getElementById('toast');if(t){t.querySelector('p').textContent=msg;t.hidden=false;setTimeout(function(){t.hidden=true;},5000);}};
   if(!(me&&canManageAccess(me))){sel.value=primaryRole(u);say('Only a Master Access, QA Manager, or Quality Supervisor account can change roles. Yours is '+roleLabel(roleOf(me))+'.');return;}
-  if(u.username===me.username){sel.value=primaryRole(u);say('Nobody changes their own roles. Another QA Manager or Master Access account must do it.');return;}
-  if(roleOf(me)==='qs'&&(rolesOf(u,true).some(function(k){return k==='qm'||k==='admin';})||u.username===me.username||sel.value==='qm'||sel.value==='admin')){sel.value=primaryRole(u);say('A Quality Supervisor cannot change their own role, a QA Manager or Master Access account, or assign either elevated role.');return;}
+  if(u.username===me.username){sel.value=primaryRole(u);say('Nobody changes their own roles. Another QA Manager, Quality Supervisor, or Master Access account must do it.');return;}
+  if(roleOf(me)==='qs'&&(rolesOf(u,true).some(function(k){return k==='qm'||k==='admin';})||sel.value==='qm'||sel.value==='admin')){sel.value=primaryRole(u);say('A Quality Supervisor cannot change their own role, a QA Manager or Master Access account, or assign either elevated role.');return;}
   if(!ROLES.some(function(r){return r.key===sel.value;})){sel.value=primaryRole(u);say('Choose a listed role.');return;}
   // What must survive is someone able to administer access, not a particular title: moving the
   // last QA Manager to Master Access keeps an administrator, so it is allowed.

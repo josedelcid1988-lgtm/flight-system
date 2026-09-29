@@ -485,7 +485,7 @@ export function createServer(options = {}) {
             if (!state) return fail(409, 'The shared workspace is missing or invalid. Current training cannot be verified.');
             const before = accountRoles(target), isQS = isSupervisor(actor);
             if (isQS && before.some(role => ['qm', 'admin'].includes(role))) return fail(403, 'A Quality Supervisor cannot change a QA Manager or Master Access account.');
-            if (target.username === actor.username) return fail(403, 'Nobody changes their own roles. Another QA Manager or Master Access account must do it.');
+            if (target.username === actor.username) return fail(403, 'Nobody changes their own roles. Another QA Manager, Quality Supervisor, or Master Access account must do it.');
             const list = Array.isArray(body.roles) ? [...new Set(body.roles.map(String))] : [];
             if (!list.length || list.some(role => !host.roles.ROLES.some(item => item.key === role))) return fail(400, 'Choose one or more listed roles.');
             if (isQS && list.some(role => ['qm', 'admin'].includes(role))) return fail(403, 'A Quality Supervisor cannot assign QA Manager or Master Access.');
