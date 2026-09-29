@@ -89,4 +89,19 @@ check('the server gate rejects a workspace with an emptied manifest', typeof srv
 const shapeHole = structuredClone(state);
 shapeHole._probe = { manifest: {} };
 check('the server gate rejects a manifest that entry validation ignores', MES.validate(shapeHole) && typeof srv.validState(shapeHole) === 'string');
+
+// P1: a calibration-log entry whose description omits TORQUE must not declassify a seeded
+// torque wrench. Torque classification is authoritative from the seed record (tool identity),
+// never from a log entry's free-text description.
+const tqSeed = MES.CAL_TOOLS.find(t => t.tag === 'NONE-174');
+check('the seed classifies NONE-174 as a torque wrench', !!tqSeed && MES.isTorqueTool(tqSeed) === true);
+const tqRec = run(qa, () => MES.recordCalibration(state, { tag: 'NONE-174', description: 'CLICK WRENCH', serial: 'A75179030', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: 'Production Floor', note: '' }));
+const tqCheck = MES.toolCheck('NONE-174', now, state);
+check('a log entry without TORQUE in its description does not declassify a seeded torque wrench', tqRec.ok && tqCheck.ok && MES.isTorqueTool(tqCheck.tool) === true);
+check('the torque-evidence requirement survives declassification (completeOperation missingTorque gate)', tqCheck.ok && MES.isTorqueTool(tqCheck.tool) === true);
+const seedOnly = MES.toolCheck('NONE-175', now, state);
+check('a seeded torque wrench with no log entry still classifies as a torque tool', seedOnly.ok && MES.isTorqueTool(seedOnly.tool) === true);
+const ntRec = run(qa, () => MES.recordCalibration(state, { tag: 'NT-TOOL', description: 'CLICK WRENCH', serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }));
+const ntCheck = MES.toolCheck('NT-TOOL', now, state);
+check('a log-only tool without TORQUE in its description is not a torque tool', ntRec.ok && ntCheck.ok && MES.isTorqueTool(ntCheck.tool) === false);
 console.log(`calibration: ${checks} checks, all passed`);

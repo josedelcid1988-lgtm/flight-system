@@ -2487,8 +2487,12 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const key = typeof tag === 'string' ? tag.trim().toUpperCase() : '';
     if (!key) return fail('Enter the asset tag of the tool you used.');
     const logged = calibrationStatus(workspace, key);
-    const tool = logged ? { tag: logged.tag, description: logged.description, serial: logged.serial, expires: logged.expires, status: logged.status, location: logged.location } : CAL_TOOLS.find(item => item.tag.toUpperCase() === key);
+    const seed = CAL_TOOLS.find(item => item.tag.toUpperCase() === key);
+    const tool = logged ? { tag: logged.tag, description: logged.description, serial: logged.serial, expires: logged.expires, status: logged.status, location: logged.location } : seed;
     if (!tool) return fail(`${key} is not in the Calibrated Tool Log. Only calibration-controlled tools can be logged.`);
+    // Torque classification is authoritative from the seed record (tool identity). A calibration
+    // log entry's free-text description must never declassify a torque tool by omitting the keyword.
+    if (logged) tool.torqueTool = /TORQUE/i.test(seed?.description || '');
     const toolUnit = (workspace?.resources?.units || []).find(unit => unit.toolTag === tool.tag);
     const openService = (workspace?.resources?.maintenance || []).find(item => item.status === 'Open' && (item.assetTag === tool.tag || toolUnit && item.assetTag === toolUnit.tag));
     if (openService) return { ok: false, tool, message: `${tool.tag} is unavailable under open ${openService.type.toLowerCase()} record ${openService.id}.` };
@@ -2576,7 +2580,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     return current.length ? current[current.length - 1] : entries[entries.length - 1];
   }
   const TORQUE_UNITS = Object.freeze(['in-lb', 'ft-lb', 'N·m']);
-  const isTorqueTool = tool => /TORQUE/i.test(tool?.description || '');
+  const isTorqueTool = tool => tool?.torqueTool === true || /TORQUE/i.test(tool?.description || '');
   const torqueValid = torque => plain(torque) && /^\d+(\.\d+)?$/.test(String(torque.value ?? '').trim()) && Number(torque.value) > 0 && Number(torque.value) <= 100000 && TORQUE_UNITS.includes(torque.unit);
   const stampCredential = holder => `${holder.type}-STAMP-${holder.number}`.toUpperCase().replace(/[^A-Z0-9-]+/g, '-');
   const stampHolderFor = profile => {
