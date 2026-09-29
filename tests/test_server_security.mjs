@@ -279,6 +279,70 @@ await check('the model adapter setting check is not an environment-name oracle',
   } finally { if (saved === undefined) delete process.env.FLIGHT_SECURITY_MODEL_KEY; else process.env.FLIGHT_SECURITY_MODEL_KEY = saved; probe.store.close(); }
 });
 
+// #77: a committed change and its audit row are one transaction. If the audit row cannot be written, the change
+// is not kept either.
+await check('a change whose audit row fails is not committed', async () => {
+  const atomic = createServer({ dbPath: ':memory:', quiet: true, setupCode: 'atomic-test' });
+  await atomic.ready;
+  const realAudit = atomic.store.audit;
+  const failOn = action => { atomic.store.audit = function (username, name, detail) { if (name === action) throw new Error(`audit store unavailable for ${name}`); return realAudit.call(this, username, name, detail); }; };
+  const restore = () => { atomic.store.audit = realAudit; };
+  const call = async (method, url, token, body, headers = {}) => {
+    const incoming = Readable.from(body === undefined ? [] : [Buffer.isBuffer(body) ? body : Buffer.from(JSON.stringify(body))]); incoming.method = method; incoming.url = url;
+    incoming.headers = { ...(body === undefined || Buffer.isBuffer(body) ? {} : { 'content-type': 'application/json' }), ...(token ? { authorization: `Bearer ${token}` } : {}), ...Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v])) };
+    const chunks = [], outgoing = new Writable({ write(c, e, cb) { chunks.push(Buffer.from(c)); cb(); } });
+    outgoing.writeHead = status => { outgoing.statusCode = status; return outgoing; };
+    const done = new Promise((resolve, reject) => { outgoing.once('finish', resolve); outgoing.once('error', reject); });
+    atomic.listeners('request')[0](incoming, outgoing); await done;
+    const text = Buffer.concat(chunks).toString('utf8'); let json = null; try { json = text ? JSON.parse(text) : null; } catch { json = null; } return { status: outgoing.statusCode, json };
+  };
+  try {
+    await atomic.store.upsertAccount({ username: 'atomic-admin', displayName: 'Atomic Admin', salt: '', hash: await makeHash('atomic-admin-pass-1'), role: 'admin', roles: ['admin'] });
+    const token = (await call('POST', '/api/auth/session', null, { username: 'atomic-admin', password: 'atomic-admin-pass-1' })).json.token;
+    // Workspace initialization.
+    const seeded = atomic.host.MES.ensureMasterWIs(atomic.host.MES.seed());
+    atomic.host.FlightPlan.ensure(seeded);
+    failOn('workspace-initialize');
+    const init = await call('PUT', '/api/workspace', token, seeded);
+    restore();
+    assert.equal(init.status, 500, JSON.stringify(init.json));
+    assert.equal(await atomic.store.getDoc('default'), null, 'the workspace was not initialized without its audit row');
+    assert.equal((await call('PUT', '/api/workspace', token, seeded)).status, 204, 'with the audit working the same initialization commits');
+    // An engine action, on the curated workspace, whose closed orders also move to the archive on this commit.
+    const fixture = fs.readFileSync(new URL('./fixtures/demo_publish.html', import.meta.url), 'utf8');
+    const state = JSON.parse(fixture.match(/window\.__DEMO_SEED=(\{[\s\S]*?\});/)[1]);
+    assert.ok(atomic.host.MES.archivable(state).length > 0, 'the fixture has closed orders to archive');
+    const planted = await atomic.store.putDoc('default', JSON.stringify(state), (await atomic.store.getDoc('default')).etag, 'atomic-test');
+    const open = state.orders.find(item => item.status !== 'Closed');
+    failOn('action');
+    const acted = await call('POST', '/api/workspace/actions/MES.setPriority', token, { args: [open.id, 'AOG'] }, { 'If-Match': planted });
+    restore();
+    assert.equal(acted.status, 500, JSON.stringify(acted.json));
+    assert.equal((await atomic.store.getDoc('default')).etag, planted, 'the action was not committed without its audit row');
+    assert.equal(await atomic.store.archiveCount(), 0, 'nor the archiving that came with it');
+    // An evidence upload.
+    const id = 'EV-00000000-0000-4000-8000-0000000d0001', bytes = Buffer.from('atomic evidence');
+    failOn('evidence-upload');
+    const uploaded = await call('POST', `/api/evidence/${id}`, token, bytes, { 'Content-Type': 'video/webm', 'X-Evidence-Sha256': createHash('sha256').update(bytes).digest('hex') });
+    restore();
+    assert.equal(uploaded.status, 500, JSON.stringify(uploaded.json));
+    assert.equal(await atomic.store.evidenceMeta(id), null, 'the recording was not stored without its audit row');
+    // Archiving on close: the archive rows and their audit rows go together with the document write.
+    failOn('archive');
+    const archiving = await call('POST', '/api/workspace/actions/MES.setPriority', token, { args: [open.id, 'AOG'] }, { 'If-Match': planted });
+    restore();
+    assert.equal(archiving.status, 500, JSON.stringify(archiving.json));
+    assert.equal(await atomic.store.archiveCount(), 0, 'no order was archived without its audit row');
+    assert.equal((await atomic.store.getDoc('default')).etag, planted, 'and the document write went with it');
+    const retried = await call('POST', '/api/workspace/actions/MES.setPriority', token, { args: [open.id, 'AOG'] }, { 'If-Match': planted });
+    assert.equal(retried.status, 200, JSON.stringify(retried.json));
+    const rows = await atomic.store.auditRows(1000);
+    assert.equal(rows.filter(row => row.action === 'archive').length, await atomic.store.archiveCount(), 'each archived order has its audit row');
+    assert.ok(rows.some(row => row.action === 'action' && JSON.parse(row.detail).action === 'MES.setPriority'));
+    assert.equal(atomic.store.verifyAudit().ok, true);
+  } finally { restore(); atomic.store.close(); }
+});
+
 // #27: with no host named, the server listens on loopback only; a wider bind must be asked for.
 await check('the server binds 127.0.0.1 unless a host is named', async () => {
   assert.equal(DEFAULT_HOST, '127.0.0.1');

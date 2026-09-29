@@ -283,8 +283,10 @@ export function createServer(options = {}) {
   // Stores a validated state. Closed work orders nothing live points at move to the archive table in the
   // same transaction as the document write, each validated like a live order first. Archiving happens on
   // close: the write that closes an order (or the next write after it) moves it. Returns { etag, archived }
-  // or { problem } or { conflict }.
-  const commitState = async (state, expectedEtag, username) => {
+  // or { problem } or { conflict }. The audit rows for the change (archive rows, and the caller's own entries,
+  // whose detail may be a function of the new ETag) are written in the same transaction: a change is never kept
+  // without its audit row, and an audit row never names a change that was rolled back.
+  const commitState = async (state, expectedEtag, username, audits = []) => {
     const exportState = structuredClone(state);
     const beforeRow = await store.getDoc(TENANT);
     const beforeState = beforeRow ? JSON.parse(beforeRow.json) : null;
@@ -300,11 +302,12 @@ export function createServer(options = {}) {
       etag = await tx.putDoc(TENANT, JSON.stringify(state), expectedEtag, username);
       if (!etag) return false;
       queuedExports = await queueNewFinalRecords(beforeState, exportState, username, tx);
+      for (const row of rows) await tx.audit(username, 'archive', { orderId: row.id, sha256: row.sha256 });
+      for (const entry of audits) await tx.audit(username, entry.action, typeof entry.detail === 'function' ? entry.detail(etag) : entry.detail);
       return true;
     });
     if (clash) return { problem: `${clash} is already in the archive. Reload to continue.` };
     if (!etag) return { conflict: true };
-    for (const row of rows) await store.audit(username, 'archive', { orderId: row.id, sha256: row.sha256 });
     if (queuedExports.length) void drainExports();
     return { etag, archived: rows.map(x => x.id) };
   };
@@ -748,10 +751,9 @@ export function createServer(options = {}) {
         issue = { key: saved.issue_key, url: saved.issue_url };
         const linked = host.withAccount(session.account, linkAction, state);
         if (!linked?.ok) { await store.audit(session.username, 'jira-link-refused', { recordType, recordId, issueKey: issue.key, reason: linked?.message || 'engine refusal' }); send(res, 422, { error: `Jira issue ${issue.key} exists, but Flight refused the record link: ${linked?.message || 'reload and reconcile the record'}`, code: 'JIRA_RECONCILIATION_REQUIRED' }); return; }
-        const done = await commitState(state, loaded.etag, session.username);
+        const done = await commitState(state, loaded.etag, session.username, [{ action: 'jira-issue-linked', detail: { recordType, recordId, issueKey: issue.key } }]);
         if (done.problem) { send(res, 422, { error: `Jira issue ${issue.key} exists, but Flight could not save its record link: ${done.problem}`, code: 'JIRA_RECONCILIATION_REQUIRED' }); return; }
         if (done.conflict) { send(res, 409, { error: `Jira issue ${issue.key} exists, but the workspace changed before Flight could save the link. Retry this request to finish reconciliation.`, code: 'JIRA_RECONCILIATION_REQUIRED' }); return; }
-        await store.audit(session.username, 'jira-issue-linked', { recordType, recordId, issueKey: issue.key });
         send(res, 200, { ok: true, issue, message: linked.message, etag: done.etag }); return;
       }
 
@@ -785,10 +787,9 @@ export function createServer(options = {}) {
         const problem = validState(state); if (problem) { send(res, 422, { error: problem }); return; }
         { const bad = await evidenceProblem(cur ? JSON.parse(cur.json) : null, state); if (bad) { await store.audit(session.username, 'evidence-refused', { message: bad }); send(res, 422, { error: bad }); return; } }
         if (cur && ifMatch && cur.etag !== ifMatch) { res.writeHead(409, { 'Content-Type': MIME['.json'], ETag: cur.etag }); res.end(JSON.stringify({ error: 'The workspace changed on another device. Reload to continue.', etag: cur.etag, current: JSON.parse(cur.json) })); return; }
-        const done = await commitState(state, cur ? cur.etag : null, session.username);
+        const done = await commitState(state, cur ? cur.etag : null, session.username, [{ action: 'workspace-initialize', detail: etag => ({ etag }) }]);
         if (done.problem) { send(res, 422, { error: done.problem }); return; }
         if (done.conflict) { send(res, 409, { error: 'The workspace changed on another device. Reload to continue.' }); return; }
-        await store.audit(session.username, 'workspace-initialize', { etag: done.etag });
         res.writeHead(204, { ETag: done.etag, ...(done.archived.length ? { 'X-Flight-Archived': done.archived.join(',') } : {}) }); res.end(); return;
       }
       // -- actions: run an engine function server-side with the session's authority --
@@ -814,10 +815,9 @@ export function createServer(options = {}) {
         if (!result || result.ok === false) { await store.audit(session.username, 'action-refused', { action: action[1], message: result && result.message }); send(res, 403, { error: result ? result.message : 'Refused.', result }); return; }
         const invalid = validState(state); if (invalid) { send(res, 422, { error: `The action would leave the workspace invalid: ${invalid}` }); return; }
         { const bad = await evidenceProblem(raw, state); if (bad) { await store.audit(session.username, 'evidence-refused', { action: action[1], message: bad }); send(res, 422, { error: bad }); return; } }
-        const done = await commitState(state, etag, session.username);
+        const done = await commitState(state, etag, session.username, [{ action: 'action', detail: { action: action[1], message: result.message } }]);
         if (done.problem) { send(res, 422, { error: `The action would leave the workspace invalid: ${done.problem}` }); return; }
         if (done.conflict) { send(res, 409, { error: 'The workspace changed while the action ran. Try again.' }); return; }
-        await store.audit(session.username, 'action', { action: action[1], message: result.message });
         res.writeHead(200, { 'Content-Type': MIME['.json'], ETag: done.etag, ...(done.archived.length ? { 'X-Flight-Archived': done.archived.join(',') } : {}) }); res.end(JSON.stringify({ result, etag: done.etag, archived: done.archived })); return;
       }
       // -- evidence: bytes in SQLite, addressed by the EV ID the record carries, checked by SHA-256 --
@@ -839,8 +839,9 @@ export function createServer(options = {}) {
         let fileName = String(req.headers['x-evidence-name'] || '').slice(0, 180);
         try { fileName = decodeURIComponent(fileName); } catch {}
         fileName = fileName.slice(0, 180) || null;
-        const row = await store.putEvidence({ id: ev[1], sha256, size: bytes.length, mime, fileName, uploadedBy: session.username, bytes });
-        await store.audit(session.username, 'evidence-upload', { id: ev[1], sha256, size: bytes.length, mime });
+        // The stored recording and its audit row are one transaction.
+        let row = null;
+        await store.transaction(async tx => { row = await tx.putEvidence({ id: ev[1], sha256, size: bytes.length, mime, fileName, uploadedBy: session.username, bytes }); await tx.audit(session.username, 'evidence-upload', { id: ev[1], sha256, size: bytes.length, mime }); return true; });
         send(res, 201, row); return;
       }
       if (ev && ev[2] === '/meta' && m === 'GET') { const row = await store.evidenceMeta(ev[1]); if (!row) { send(res, 404, { error: `The server holds no recording ${ev[1]}. Upload it from the device that captured it.` }); return; } if (!await mayReadEvidence(session, row)) { await refuseEvidenceRead(res, session, row); return; } send(res, 200, row); return; }
