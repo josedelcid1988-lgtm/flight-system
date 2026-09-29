@@ -335,6 +335,7 @@ try {
   assert.equal(JSON.stringify([exportedArchive.kind, exportedArchive.order.id]), JSON.stringify(['archived-work-order', archivedId]), 'Export downloads the archived record');
   assert.match(exportedArchive.exportId, /^EXT-[A-F0-9]{32}$/);
   const [printed] = await Promise.all([page.context().waitForEvent('page'), archiveSection.getByRole('button', { name: `Print archived ${archivedId}` }).click()]);
+  await printed.waitForURL(/^blob:/);
   await printed.waitForLoadState();
   assert.match(await printed.content(), /flight-extract-stamp/, 'Print opens the stamped archived record');
   await printed.close();

@@ -153,16 +153,21 @@ export async function applyMigration(migration, env = process.env) {
   if (saved.status !== 204) throw new Error(`Recordings were uploaded, but the workspace migration failed and no accounts were imported: ${saved.json?.error || saved.status}.`);
   // Accounts go in after the workspace: an account whose role carries inspection or MRB authority is created only
   // against the training record it cites, and those records arrive with the workspace.
-  const accountResult = await request(base, '/auth/accounts', { method: 'PUT', token, body: { users: migration.users } });
+  // Accounts that already exist on the target (the migrating account, for one) are left exactly as the server has them:
+  // re-sending one would replace its password hash and name with the browser's copy, or fail on a role difference.
+  const newUsers = migration.users.filter(user => !existingUsernames.has(String(user.username).toLowerCase()));
+  const skippedExisting = migration.users.filter(user => existingUsernames.has(String(user.username).toLowerCase())).map(user => user.username);
+  const accountResult = newUsers.length ? await request(base, '/auth/accounts', { method: 'PUT', token, body: { users: newUsers } }) : { status: 200 };
   if (accountResult.status !== 200) throw new Error(`The workspace was migrated, but the account import failed: ${accountResult.json?.error || accountResult.status}. Fix the accounts named in the error and import them again; the workspace does not need to be migrated again.`);
   // Additional roles go through the same audited route a manager uses, each citing the person's current training.
   const rolesNotApplied = [];
-  for (const followUp of migration.roleFollowUps || []) {
+  for (const followUp of (migration.roleFollowUps || []).filter(item => !existingUsernames.has(item.username.toLowerCase()))) {
     if (followUp.username.toLowerCase() === username.toLowerCase()) { rolesNotApplied.push(`${followUp.username}: nobody changes their own roles; another QA Manager or Master Access account adds ${followUp.roles.slice(1).join(', ')}`); continue; }
     const changed = await request(base, '/auth/access', { method: 'POST', token, body: { action: 'roles', username: followUp.username, roles: followUp.roles, trainingCode: followUp.trainingCode, reason: 'Roles as assigned in the migrated browser workspace.' } });
     if (changed.status !== 200) rolesNotApplied.push(`${followUp.username}: ${changed.json?.error || changed.status}`);
   }
-  return { status: 'applied', etag: saved.etag, accountsImported: migration.users.length, evidenceUploaded: Object.keys(migration.media).length, rolesAdded: (migration.roleFollowUps || []).length - rolesNotApplied.length, rolesNotApplied, manualAfterMigration: migration.report.accounts.manualAfterMigration || [] };
+  const followUps = (migration.roleFollowUps || []).filter(item => !existingUsernames.has(item.username.toLowerCase()));
+  return { status: 'applied', etag: saved.etag, accountsImported: newUsers.length, accountsAlreadyOnServer: skippedExisting, evidenceUploaded: Object.keys(migration.media).length, rolesAdded: followUps.length - rolesNotApplied.length, rolesNotApplied, manualAfterMigration: migration.report.accounts.manualAfterMigration || [] };
 }
 
 function arg(name) { const index = process.argv.indexOf(name); return index >= 0 ? process.argv[index + 1] : null; }

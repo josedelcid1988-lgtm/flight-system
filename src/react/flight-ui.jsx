@@ -572,14 +572,18 @@ function TraceSearch({ state, MES, initialQuery, onSearch, onReport, onRoute }) 
     const server = typeof window !== 'undefined' && window.skServer?.active ? window.skServer : null;
     if (!server) return;
     setArchiveNote('');
+    // Open the print tab now, inside the click: a tab opened after the fetch can be blocked as a pop-up.
+    const tab = kind === 'print' ? window.open('', '_blank') : null;
+    if (kind === 'print' && !tab) { setArchiveNote(`${orderId} could not open a print tab. Allow pop-ups for Flight System, then retry.`); return; }
+    if (tab) tab.opener = null;
     try {
       const response = await fetch(`${server.context.api}/archive/${encodeURIComponent(orderId)}/${kind}`, { headers: { Authorization: `Bearer ${server.token()}` } });
-      if (!response.ok) { let error = ''; try { error = (await response.json()).error || ''; } catch {} setArchiveNote(`${orderId} could not be opened from the archive${error ? `: ${error}` : ` (${response.status})`}. Sign in again, then retry.`); return; }
+      if (!response.ok) { tab?.close(); let error = ''; try { error = (await response.json()).error || ''; } catch {} setArchiveNote(`${orderId} could not be opened from the archive${error ? `: ${error}` : ` (${response.status})`}. Sign in again, then retry.`); return; }
       const url = URL.createObjectURL(await response.blob());
-      if (kind === 'print') window.open(url, '_blank', 'noopener');
+      if (tab) tab.location.href = url;
       else { const link = document.createElement('a'); link.href = url; link.download = `${orderId}-archive.json`; document.body.appendChild(link); link.click(); link.remove(); }
       setTimeout(() => URL.revokeObjectURL(url), 60000);
-    } catch { setArchiveNote(`${orderId} could not be opened because the server did not answer. Check the connection, then retry.`); }
+    } catch { tab?.close(); setArchiveNote(`${orderId} could not be opened because the server did not answer. Check the connection, then retry.`); }
   };
   const density = () => setCompact(value => {
     const next = !value;

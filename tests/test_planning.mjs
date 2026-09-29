@@ -256,6 +256,15 @@ if (productionExternal) {
   assert.equal(planned.ok, true, planned.message);
   const po = host.FlightPlan.get(state, planned.id);
   assert.equal(JSON.stringify([po.createdBy.credentialId, po.history.length > 0 && po.history.every(entry => entry.actor.endsWith('ACCT-second-planner'))]), JSON.stringify(['ACCT-second-planner', true]), 'a planned order and its history name the signed-in account');
+  // Controlled evidence names the signed-in reviewer on the record itself, not only in its history.
+  const evidenceOrder = state.orders.find(order => order.status === 'Building' && order.operations.some(op => !op.done));
+  const evidenceOp = evidenceOrder.operations.find(op => !op.done);
+  const reviewed = `EV-${'1'.repeat(8)}-1111-4111-8111-${'1'.repeat(12)}`, rejected = `EV-${'2'.repeat(8)}-2222-4222-8222-${'2'.repeat(12)}`;
+  for (const id of [reviewed, rejected]) assert.equal(host.MES.attachEvidence(state, evidenceOrder.id, evidenceOp.id, { id, fileName: `${id}.webm`, mimeType: 'video/webm', size: 10, source: 'upload', description: 'Attribution evidence.' }).ok, true);
+  assert.equal(as(() => host.MES.reviewEvidence(state, evidenceOrder.id, evidenceOp.id, reviewed)).ok, true);
+  assert.equal(as(() => host.MES.rejectEvidence(state, evidenceOrder.id, evidenceOp.id, rejected, 'Wrong operation in frame.')).ok, true);
+  const byId = id => evidenceOp.evidence.find(item => item.id === id);
+  assert.equal(JSON.stringify([byId(reviewed).reviewedBy.credentialId, byId(rejected).rejectedBy.credentialId]), JSON.stringify(['ACCT-second-planner', 'ACCT-second-planner']), 'evidence reviewedBy and rejectedBy name the signed-in account');
   state.profile = savedProfile;
 }
 {

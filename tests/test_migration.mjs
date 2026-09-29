@@ -90,7 +90,11 @@ assert.equal(incomplete.users.length, migration.users.length, 'media preflight r
     }
     assert.equal((await fetch(`${base}/workspace`, { headers: { Authorization: `Bearer ${(await (await fetch(`${base}/auth/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'migration-admin', password: 'migration-admin-1' }) })).json()).token}` } })).status, 404, 'a refused migration leaves the server without a workspace');
     assert.equal(await server.store.evidenceMeta(evidenceId), null, 'and uploads no recordings');
+    const adminBefore = await server.store.account('migration-admin');
     const result = await applyMigration(planned, env);
+    const adminAfter = await server.store.account('migration-admin');
+    assert.equal(JSON.stringify(result.accountsAlreadyOnServer), JSON.stringify(['migration-admin']), 'the account that already exists on the target is not re-imported');
+    assert.equal(JSON.stringify([adminAfter.hash, adminAfter.displayName, adminAfter.role]), JSON.stringify([adminBefore.hash, adminBefore.displayName, adminBefore.role]), 'the migrating account keeps its server password, name and role');
     assert.equal(result.status, 'applied');
     assert.ok(await server.store.evidenceMeta(evidenceId), 'the quarantined recording bytes are on the server');
     assert.equal(server.host.rolesOf(await server.store.account('migrated-inspector'))[0], 'qe', 'the trained inspector account is created with its role');

@@ -283,7 +283,14 @@ export function createServer(options = {}) {
   // Writes the archive export JSON with each recording's bytes base64-encoded in bounded chunks, one recording at a
   // time and respecting backpressure, so an evidence-heavy archive never has to fit in memory as one object.
   const streamArchiveExport = async (res, head, evidence) => {
-    const write = text => new Promise((resolve, reject) => { if (res.destroyed) { reject(new Error('The client closed the export.')); return; } if (res.write(text)) resolve(); else res.once('drain', resolve); });
+    // Under backpressure wait for drain, but settle on close or error too: a cancelled download may never drain.
+    const write = text => new Promise((resolve, reject) => {
+      if (res.destroyed) { reject(new Error('The client closed the export.')); return; }
+      if (res.write(text)) { resolve(); return; }
+      const settle = error => { res.off('drain', onDrain); res.off('close', onClose); res.off('error', settle); if (error) reject(error); else resolve(); };
+      const onDrain = () => settle(), onClose = () => settle(new Error('The client closed the export.'));
+      res.once('drain', onDrain); res.once('close', onClose); res.once('error', settle);
+    });
     try {
       await write(`${JSON.stringify(head).slice(0, -1)},"evidence":{`);
       let first = true;

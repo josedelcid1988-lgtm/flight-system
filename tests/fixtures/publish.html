@@ -1,4 +1,4 @@
-<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v82"><meta name="fs-build-sha256" content="24ddee498aa50eab335163cb774d1a2cec38117b834f6886d129f1445e7653c6"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><!-- FLIGHT REACT ASSETS BEGIN -->
+<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v82"><meta name="fs-build-sha256" content="c0bcea0e0af0623afb306a30b0a1052992598cca7e1e77cac737ecb814164bee"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><!-- FLIGHT REACT ASSETS BEGIN -->
 <link rel="stylesheet" href="../../assets/flight-ui-fonts.css">
 <link rel="stylesheet" href="../../assets/flight-ui.css">
 <link rel="stylesheet" href="../../assets/flight-plan-react.css">
@@ -6754,7 +6754,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (evidence.reviewedAt !== null) return fail('This application video has already been marked reviewed.');
     if (evidence.rejectedAt) return fail(`${evidence.id} was rejected (${evidence.rejectReason}). Remove it and attach a new recording.`);
     evidence.reviewedAt = new Date(Math.max(Date.now(), Date.parse(evidence.addedAt))).toISOString();
-    evidence.reviewedBy = profileSnapshot(state.profile);
+    evidence.reviewedBy = actor(state);
     record(state, order, `Video ${evidence.id} on ${opId} marked reviewed by ${actor(state).name}.`, 'Quality reviewer');
     return { ok: true, message: 'Video marked reviewed for this record.' };
   }
@@ -6772,7 +6772,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const text = String(reason ?? '').trim();
     if (!str(text, 300) || text.length < 3) return fail('Enter why the recording is rejected (3 to 300 characters).');
     evidence.rejectedAt = new Date(Math.max(Date.now(), Date.parse(evidence.addedAt))).toISOString();
-    evidence.rejectedBy = profileSnapshot(state.profile);
+    evidence.rejectedBy = actor(state);
     evidence.rejectReason = text;
     record(state, order, `Video ${evidence.id} on ${opId} rejected by ${actor(state).name}: ${text}`, 'Quality reviewer');
     return { ok: true, message: `${evidence.id} rejected. Remove it and attach a replacement recording before buy-off.` };
