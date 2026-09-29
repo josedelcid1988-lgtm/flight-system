@@ -51,8 +51,14 @@ function assertReleasable() {
   let headVersion, headIndex;
   try { headVersion = git('show', 'HEAD:VERSION.md'); headIndex = git('show', 'HEAD:index.html'); }
   catch { throw new Error('the release record needs a git checkout of the release commit.'); }
-  const problem = releaseProblem(html, headVersion, headIndex);
+  const problem = releaseProblem(html, headVersion, headIndex) || assetsProblem(git('status', '--porcelain', '--untracked-files=all', '--', 'assets'));
   if (problem) throw new Error(problem);
+}
+
+// The release zips carry assets/ as it is on disk, so it must be exactly what the named commit holds.
+export function assetsProblem(status) {
+  const changed = String(status || '').split('\n').map(line => line.trim()).filter(Boolean);
+  return changed.length ? `assets/ differs from HEAD (${changed.slice(0, 5).join('; ')}${changed.length > 5 ? '; ...' : ''}), so the release commit would not reproduce the packaged files. Commit or discard those changes, then stamp from that commit.` : null;
 }
 
 const stampOf = (html, name) => (html.match(new RegExp(`<meta name="${name}" content="([^"]*)">`)) || [])[1] || 'unstamped';
