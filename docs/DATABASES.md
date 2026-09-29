@@ -47,6 +47,12 @@ A closed work order leaves the live workspace once it is stocked, or when it can
 
 The export's `extractSha256` covers the order, its activity, the archive hash and the metadata of each recording, including that recording's SHA-256. The recording bytes are streamed one at a time, so a large archive never has to fit in server memory. To verify a download, check each recording's base64 bytes against its `sha256`, then hash the rest of the extract as described in `extractHashCovers`.
 
+## Demo build
+
+`demo.html` relaxes separation of duties, PIN entry and the stamp gate, so the production server does
+not serve it. To offer it from a training server, start that server with `--serve-demo` or
+`FLIGHT_SERVE_DEMO=1`. Every page of the demo still says DEMO, NOT FOR ACCEPTANCE.
+
 ## Health check
 
 `GET /api/health` answers `{ "ok": true }` to anyone, for a load balancer or monitor. The product name,

@@ -93,6 +93,28 @@ try {
     }
   });
 
+  // #32: the demo build, with its gates relaxed, is not a public page of the production server.
+  await check('the production server does not serve demo.html unless asked to', async () => {
+    const r = await request('/demo.html');
+    assert.equal(r.status, 404, 'demo.html is not served by default');
+    assert.ok(!r.text.includes('NOT FOR ACCEPTANCE'));
+    const saved = process.env.FLIGHT_SERVE_DEMO;
+    delete process.env.FLIGHT_SERVE_DEMO;
+    const demo = createServer({ dbPath: ':memory:', quiet: true, setupCode: 'demo-test', serveDemo: true });
+    try {
+      await demo.ready;
+      const out = await new Promise((resolve, reject) => {
+        const incoming = Readable.from([]); incoming.method = 'GET'; incoming.url = '/demo.html'; incoming.headers = {};
+        const chunks = [], outgoing = new Writable({ write(c, e, cb) { chunks.push(Buffer.from(c)); cb(); } });
+        outgoing.writeHead = status => { outgoing.statusCode = status; return outgoing; };
+        outgoing.once('finish', () => resolve({ status: outgoing.statusCode, text: Buffer.concat(chunks).toString('utf8') })); outgoing.once('error', reject);
+        demo.listeners('request')[0](incoming, outgoing);
+      });
+      assert.equal(out.status, 200, 'an operator who asks for the demo gets it');
+      assert.match(out.text, /NOT FOR ACCEPTANCE/);
+    } finally { demo.store.close(); if (saved !== undefined) process.env.FLIGHT_SERVE_DEMO = saved; }
+  });
+
   // #31, #79: health tells an unauthenticated caller only that the server is up.
   await check('unauthenticated health reports liveness only', async () => {
     const r = await api('GET', '/health');
