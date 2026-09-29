@@ -13143,7 +13143,8 @@ function holdActionButtons(o,h){const me=skActorId();const out=[];
       return r;
     };
   }
-  window.FlightManeuverUI = { render: renderView, LABELS, VIEWS: Object.keys(VIEWS), sel };
+  // helpers: the formatting the React Flight Maneuver detail views share with these legacy views.
+  window.FlightManeuverUI = { render: renderView, LABELS, VIEWS: Object.keys(VIEWS), sel, helpers: { dt, historyList, mrbProposalNote } };
   // Flight Control ticket dialog: the MRB sub-ticket block, nested under the ticket it belongs to.
   const prevTicketDialog = window.ticketDialog;
   if (typeof prevTicketDialog === 'function') {
