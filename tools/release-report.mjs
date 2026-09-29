@@ -73,13 +73,16 @@ function readResults(name) {
   return JSON.parse(fs.readFileSync(f, 'utf8'));
 }
 
-function assertUsable(r, label, now) {
+function assertUsable(r, label, now, commit) {
   const failed = r.suites.filter(s => s.status !== 'pass');
   if (failed.length) throw new Error(`${label}: ${failed.length} suite(s) failed (${failed.map(s => s.name).join(', ')}). A release record is written only from a clean run.`);
   const unexplained = r.skips.filter(s => !s.reason);
   if (unexplained.length) throw new Error(`${label}: unexplained skip ${unexplained.map(s => s.check).join('; ')}.`);
   const t = r.tested || {};
   for (const k of Object.keys(now)) if (t[k] !== now[k]) throw new Error(`${label}: the results were produced against a different ${k} (${t[k] || 'not recorded'}) than the tree (${now[k]}). Run the suites again.`);
+  // The record names a commit, so the suites must have run on that commit: a server, tool, test or asset
+  // change committed after the run would otherwise be released under results that never tested it.
+  if (t.commit !== commit) throw new Error(`${label}: the results were produced at a different commit (${t.commit || 'not recorded'}) than the one the record names (${commit}). Run the suites again at that commit.`);
 }
 
 export function record(now, off, on, commit = sourceCommit()) {
@@ -144,9 +147,9 @@ function main() {
     return;
   }
   assertReleasable();
-  const off = readResults('suite_results.json'), on = readResults('suite_results_mirror.json');
-  assertUsable(off, 'mirror off', now); assertUsable(on, 'mirror on', now);
-  const block = record(now, off, on);
+  const off = readResults('suite_results.json'), on = readResults('suite_results_mirror.json'), commit = sourceCommit();
+  assertUsable(off, 'mirror off', now, commit); assertUsable(on, 'mirror on', now, commit);
+  const block = record(now, off, on, commit);
   if (process.argv.includes('--dry-run')) {
     console.log(block);
     console.log(`Release record built (dry run, VERSION.md not written): build ${now.build}, ${off.suites.length} suites, ${off.skips.length + on.skips.length} explained skips`);

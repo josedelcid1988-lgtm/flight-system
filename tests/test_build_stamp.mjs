@@ -121,6 +121,17 @@ try{
    ok('the asset check outside a git checkout refuses with a plain message',/^assets\/ could not be read from commit HEAD\. Release from a git checkout/.test(r||''),r);
    const s=sandbox();s.stamp();fs.rmSync(s.at('.git'),{recursive:true,force:true});const x=s.node(['tools/release-report.mjs','--dry-run']);
    ok('the release record outside a git checkout refuses with a plain message',x.code===1&&/^FAIL the release record needs a git checkout/m.test(x.out)&&!/\n\s+at /.test(x.out),x.out);}
+  // #52: the results name the commit the suites ran on, and the record is written only for that commit.
+  {const {tested}=await import(path.join(ROOT,'tools/run-suites.mjs'));const head=execFileSync('git',['rev-parse','HEAD'],{cwd:ROOT,encoding:'utf8'}).trim();
+   ok('the suite runner records the commit it tested',typeof tested==='function'&&tested(ROOT).commit===head,typeof tested==='function'?JSON.stringify(tested(ROOT)):'no tested export');
+   const s=sandbox();s.stamp();const{commit,...noCommit}=s.tested();s.results(noCommit);
+   const n=s.node(['tools/release-report.mjs','--dry-run']);
+   ok('the release record refuses results that name no commit',n.code===1&&/different commit \(not recorded\)/.test(n.out),n.out);
+   s.results();s.g('commit','-q','--allow-empty','-m','tooling change after the suite run');
+   const o=s.node(['tools/release-report.mjs','--dry-run']);
+   ok('the release record refuses results from a commit before HEAD',o.code===1&&new RegExp(`different commit \\(${commit}\\)`).test(o.out),o.out);
+   s.results();const a=s.node(['tools/release-report.mjs','--dry-run']);
+   ok('the release record accepts results from the commit it names',a.code===0&&a.out.includes('| Stamp generated from commit | `'+s.g('rev-parse','HEAD')+'` |'),a.out);}
   // #85 (fixed in PR #82): the release steps name the assets/ refusal.
   ok('HANDOVER release step 4 lists the assets/ refusal',/a packaged file in\s+`assets\/` whose bytes differ from HEAD/.test(fs.readFileSync(path.join(ROOT,'docs/HANDOVER.md'),'utf8')));
   // #89 (does not reproduce): git ls-tree lists assets/ one level deep, so a committed file under a dot-named

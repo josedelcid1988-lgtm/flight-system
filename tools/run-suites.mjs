@@ -74,6 +74,17 @@ async function mirrorFixtures() {
   return { url, dir, tmp, mirror, verifyChain };
 }
 
+// What a results file was produced against, so it can be matched to the exact build and commit it tested
+// (tools/release-report.mjs): the build id and stamp in index.html, the SHA-256 of index.html and demo.html,
+// and the commit checked out (null outside a git checkout, which a release record refuses).
+export function tested(root = ROOT) {
+  const fileSha = f => crypto.createHash('sha256').update(fs.readFileSync(path.join(root, f))).digest('hex');
+  const stampOf = (html, name) => (html.match(new RegExp(`<meta name="${name}" content="([^"]*)">`)) || [])[1] || 'unstamped';
+  const indexHtml = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' });
+  return { build: stampOf(indexHtml, 'fs-build'), indexStamp: stampOf(indexHtml, 'fs-build-sha256'), indexFileSha256: fileSha('index.html'), demoFileSha256: fileSha('demo.html'), commit: head.status === 0 ? head.stdout.trim() : null };
+}
+
 async function main() {
   const pathCheck = spawnSync(process.execPath, [path.join(ROOT, 'tests/check_no_machine_paths.mjs')], { cwd: ROOT, encoding: 'utf8' });
   if (pathCheck.stdout) process.stdout.write(pathCheck.stdout);
@@ -82,11 +93,7 @@ async function main() {
   const files = fs.readdirSync(TESTS).filter(f => f.endsWith('.mjs') && (!only || only.includes(f.replace(/\.mjs$/, '')))).sort();
   let env = { ...process.env }, m = null;
   if (withMirror) { m = await mirrorFixtures(); env = { ...env, FS_FIXTURES_DIR: m.dir }; console.log(`mirror on: ${m.url}; fixtures ${m.dir}`); }
-  // The files under test, so a results file can be matched to the exact build it tested (tools/release-report.mjs).
-  const fileSha = f => crypto.createHash('sha256').update(fs.readFileSync(path.join(ROOT, f))).digest('hex');
-  const stampOf = (html, name) => (html.match(new RegExp(`<meta name="${name}" content="([^"]*)">`)) || [])[1] || 'unstamped';
-  const indexHtml = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
-  const tested = { build: stampOf(indexHtml, 'fs-build'), indexStamp: stampOf(indexHtml, 'fs-build-sha256'), indexFileSha256: fileSha('index.html'), demoFileSha256: fileSha('demo.html') };
+  const testedAgainst = tested();
   const queue = [...files], results = [];
   const started = new Date().toISOString();
   await Promise.all(Array.from({ length: Math.min(parallel, queue.length) }, async () => {
@@ -118,7 +125,7 @@ async function main() {
   results.sort((a, b) => a.name.localeCompare(b.name));
   const failed = results.filter(r => r.status !== 'pass');
   const skips = results.flatMap(r => r.skips.map(s => ({ suite: r.name, ...s })));
-  fs.writeFileSync(path.join(TESTS, withMirror ? 'suite_results_mirror.json' : 'suite_results.json'), JSON.stringify({ startedAt: started, finishedAt: new Date().toISOString(), tested, mirror: mirrorSummary, suites: results, skips }, null, 1));
+  fs.writeFileSync(path.join(TESTS, withMirror ? 'suite_results_mirror.json' : 'suite_results.json'), JSON.stringify({ startedAt: started, finishedAt: new Date().toISOString(), tested: testedAgainst, mirror: mirrorSummary, suites: results, skips }, null, 1));
   console.log(`\n${results.length - failed.length} of ${results.length} suites passed${skips.length ? `; ${skips.length} explained skip${skips.length > 1 ? 's' : ''}` : ''}${withMirror ? ' (mirror on)' : ''}.`);
   process.exit(failed.length ? 1 : 0);
 }
