@@ -42,7 +42,20 @@ try {
   const orderView = await show('order', 'selectedId = state.orders[0].id; tab = "operations"; selectedOp = null;');
   assert.equal(orderView.react, false, 'work order detail stays on the legacy view in this build');
   assert.deepEqual(errors, []);
-  console.log('React screens UI: plan home, QMS records and trace report render correctly; WI, Maneuver details, QMS configuration, support log and work order detail stay legacy');
+
+  // At phone width the header Help button is hidden, so React screens keep the page footer and its Help button.
+  await page.setViewportSize({ width: 390, height: 844 });
+  for (const name of ['home', 'plan-home']) {
+    await show(name);
+    const helpButton = page.locator('#main .app-footer [data-action="help"]');
+    await helpButton.scrollIntoViewIfNeeded();
+    assert.equal(await helpButton.isVisible(), true, `${name} shows Help on a phone`);
+    await helpButton.click();
+    await page.waitForFunction(() => document.querySelector('#dialog')?.open && /Using Flight System/.test(document.querySelector('#dialog-title')?.textContent || ''));
+    await page.evaluate(() => document.querySelector('#dialog').close());
+  }
+  assert.deepEqual(errors, []);
+  console.log('React screens UI: plan home, QMS records and trace report render correctly; WI, Maneuver details, QMS configuration, support log and work order detail stay legacy; Help is reachable on a phone');
 } finally {
   await browser.close();
 }
