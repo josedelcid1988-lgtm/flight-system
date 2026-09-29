@@ -117,13 +117,19 @@ export function createHost(indexPath, html = fs.readFileSync(indexPath, 'utf8'))
     // override, the browser-only demo notice), so calling one directly would fabricate that record.
     'recordAIAction','logSupport','noteDemoBypassRemoved',
     // The release step of the PFMEA Safety Team buy-off: reached only through FlightManeuver.pfmeaSafetyBuyoff.
-    'releaseWIFromPfmea']);
+    'releaseWIFromPfmea',
+    // Sets an unreadable work order aside. Only MES.repair calls it, while a workspace opens; as a remote action it
+    // would let any signed-in account remove a live work order from the register.
+    'quarantineOrder',
+    // Rolls a work order revision for the approval that owns the change (sequence change, engineering change).
+    'rollWorkOrderRevision']);
+
   // The reviewed commands, by namespace. The prefix rule above only proposes; a function is callable remotely
   // only when it is named here too, so a new engine export is refused until someone reviews it and adds it (the
   // page's serverMutatorAllow must carry the same list; tests/test_server.mjs compares them, and
   // tests/test_server_security.mjs fails while any command-like function is neither listed nor excluded).
   const actionAllow = new Set([
-    'MES.quarantineOrder', 'MES.rollWorkOrderRevision', 'MES.addSavedView', 'MES.removeSavedView',
+    'MES.addSavedView', 'MES.removeSavedView',
     'MES.addAttachment', 'MES.addTicketAttachment', 'MES.removeTicketAttachment', 'MES.removeAttachment',
     'MES.logAogBroadcast', 'MES.resolveAog', 'MES.setSchedule', 'MES.editOrderOperation', 'MES.setWIStepImage',
     'MES.selectProfile', 'MES.assignSerial', 'MES.voidSerial', 'MES.moveToInventory', 'MES.markNetSuitePosted',
