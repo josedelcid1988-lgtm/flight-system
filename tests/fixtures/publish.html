@@ -2768,6 +2768,10 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
         // to use the "manifest" key (for example a free-text field inside an AI draft body) is payload
         // data, not a signature, so the walk leaves it untouched instead of failing it as malformed.
         if (k === 'manifest' && plain(node[k])) { checked++; if (!shapeOk(node[k])) failures.push({ where: `${path}.manifest`, reason: 'manifest shape is invalid' }); else { if (node[k].build !== undefined && !buildStampValid(node[k].build)) failures.push({ where: `${path}.manifest.build`, reason: 'build stamp is malformed' }); if (plain(node[k].subject)) manifestSubjects.push([`${path}.manifest`, node[k], node[k].subject]); else legacy++; } }
+        // An AI analysis draft body is free JSON payload that the draft's own signed manifest already
+        // covers (draftSubject hashes it), so a plain object under a "manifest" key there is data, not
+        // a signature. The draft's own manifest, a sibling of body, is still checked.
+        else if (k === 'body' && /^state\.aiSkillDrafts\[\d+\]$/.test(path)) return;
         else if (k !== 'manifest') walk(node[k], `${path}.${k}`);
       });
     };

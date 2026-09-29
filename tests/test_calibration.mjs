@@ -249,4 +249,19 @@ check('diagnose names an unsigned calibration entry', !!diagUnsignedResult && di
 const diagNotArray = structuredClone(state);
 diagNotArray.calibrationLog = {};
 check('diagnose reports a calibration log that is not a list', /calibration log/i.test((MES.diagnose(diagNotArray) || {}).detail || ''));
+// #66: an AI draft body is payload, even when it holds a plain object under a "manifest" key; the
+// draft's own signature manifest is still checked, and a stray manifest elsewhere is still refused.
+const objDraft = run(qa, () => MES.updateSkillDraft(state, spc.draftId, { summary: 'review', manifest: { document: 'supplier package', revision: 'A' } }, 'The evidence lists the supplier package manifest contents.'));
+check('updateSkillDraft accepts a body with a plain-object manifest key', objDraft.ok);
+check('a plain-object manifest key in a draft body passes manifest verification', MES.verifyManifests(state).ok);
+check('a plain-object manifest key in a draft body passes the server gate', MES.validate(state) && srv.validState(structuredClone(state)) === null);
+const nestedDraft = structuredClone(state);
+nestedDraft.aiSkillDrafts.find(d => d.id === spc.draftId).body = { sections: [{ manifest: { items: 3 } }] };
+check('a nested plain-object manifest key inside a draft body is not treated as a signature', !MES.verifyManifests(nestedDraft).failures.some(f => /body/.test(f.where)));
+const draftSigTampered = structuredClone(state);
+delete draftSigTampered.aiSkillDrafts.find(d => d.id === spc.draftId).manifest.meaning;
+check('the draft\'s own signature manifest is still verified', !MES.verifyManifests(draftSigTampered).ok);
+const strayManifest = structuredClone(state);
+strayManifest._probe = { manifest: { document: 'not a signature' } };
+check('a plain-object manifest outside a draft body is still refused by the server gate', typeof srv.validState(strayManifest) === 'string');
 console.log(`calibration: ${checks} checks, all passed`);
