@@ -219,6 +219,40 @@ await check('an unexpected failure returns a generic message and a reference, an
   } finally { console.log = realLog; noisy.store.close(); }
 });
 
+// #34: the model adapter confirms only a setting the operator listed, so a caller cannot probe which server
+// environment variables exist.
+await check('the model adapter setting check is not an environment-name oracle', async () => {
+  const probe = createServer({ dbPath: ':memory:', quiet: true, setupCode: 'probe-test', modelAdapterSettings: ['FLIGHT_SECURITY_MODEL_KEY'] });
+  await probe.ready;
+  const saved = process.env.FLIGHT_SECURITY_MODEL_KEY;
+  try {
+    const seeded = probe.host.MES.ensureMasterWIs(probe.host.MES.seed());
+    await probe.store.putDoc('default', JSON.stringify(seeded), null, 'probe-test');
+    await probe.store.upsertAccount({ username: 'probe-admin', displayName: 'Probe Admin', salt: '', hash: await makeHash('probe-admin-pass-1'), role: 'admin', roles: ['admin'] });
+    const call = async (url, token, body) => {
+      const incoming = Readable.from([Buffer.from(JSON.stringify(body))]); incoming.method = 'POST'; incoming.url = url;
+      incoming.headers = { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}`, 'if-match': (await probe.store.getDoc('default')).etag } : {}) };
+      const chunks = [], outgoing = new Writable({ write(c, e, cb) { chunks.push(Buffer.from(c)); cb(); } });
+      outgoing.writeHead = status => { outgoing.statusCode = status; return outgoing; };
+      const done = new Promise((resolve, reject) => { outgoing.once('finish', resolve); outgoing.once('error', reject); });
+      probe.listeners('request')[0](incoming, outgoing); await done;
+      const text = Buffer.concat(chunks).toString('utf8'); return { status: outgoing.statusCode, json: text ? JSON.parse(text) : null };
+    };
+    const token = (await call('/api/auth/session', null, { username: 'probe-admin', password: 'probe-admin-pass-1' })).json.token;
+    const configure = settingName => call('/api/workspace/actions/MES.configureModelAdapter', token, { args: [{ enabled: true, provider: 'approved-model', settingName, rationale: 'Probe of the server environment check.' }] });
+    assert.ok(process.env.PATH, 'PATH is set on this machine');
+    delete process.env.FLIGHT_SECURITY_MODEL_KEY;
+    const unlistedButSet = await configure('PATH'), listedUnset = await configure('FLIGHT_SECURITY_MODEL_KEY'), unlistedUnset = await configure('FLIGHT_NO_SUCH_SETTING_4711');
+    for (const r of [unlistedButSet, listedUnset, unlistedUnset]) assert.equal(r.status, 422, JSON.stringify(r.json));
+    assert.equal(unlistedButSet.json.error, unlistedUnset.json.error, 'a set variable the operator did not list answers exactly as an unset one');
+    assert.equal(listedUnset.json.error, unlistedUnset.json.error);
+    process.env.FLIGHT_SECURITY_MODEL_KEY = 'probe-secret-value';
+    const listedSet = await configure('FLIGHT_SECURITY_MODEL_KEY');
+    assert.equal(listedSet.status, 200, JSON.stringify(listedSet.json));
+    assert.ok(!(await probe.store.getDoc('default')).json.includes('probe-secret-value'), 'the value is never written to the workspace');
+  } finally { if (saved === undefined) delete process.env.FLIGHT_SECURITY_MODEL_KEY; else process.env.FLIGHT_SECURITY_MODEL_KEY = saved; probe.store.close(); }
+});
+
 // #27: with no host named, the server listens on loopback only; a wider bind must be asked for.
 await check('the server binds 127.0.0.1 unless a host is named', async () => {
   assert.equal(DEFAULT_HOST, '127.0.0.1');

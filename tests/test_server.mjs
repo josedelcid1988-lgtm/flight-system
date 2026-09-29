@@ -15,7 +15,7 @@ const check = async (name, fn) => {
 const sha = (salt, password) => createHash('sha256').update(`${salt}:${password}`).digest('hex');
 let now = Date.now();
 const SETUP_CODE = 'server-test-setup-code';
-const server = createServer({ dbPath: ':memory:', quiet: true, clock: () => now, setupCode: SETUP_CODE });
+const server = createServer({ dbPath: ':memory:', quiet: true, clock: () => now, setupCode: SETUP_CODE, modelAdapterSettings: ['FLIGHT_TEST_MODEL_KEY'] });
 const requestHandler = server.listeners('request')[0];
 const base = 'http://flight-system.test/api';
 const request = async (url, { method = 'GET', headers = {}, body } = {}) => {

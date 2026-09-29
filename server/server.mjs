@@ -121,6 +121,16 @@ export function parseExportCredentials(value) {
   return out;
 }
 
+// The model adapter names the server setting that holds its key. Only settings the operator lists in
+// FLIGHT_MODEL_ADAPTER_SETTINGS (comma-separated) can be named, so a caller cannot use the check to learn which
+// other environment variables exist on the server.
+export function parseModelAdapterSettings(value) {
+  if (value === undefined || value === null || value === '') return [];
+  const names = (Array.isArray(value) ? value : String(value).split(',')).map(name => String(name).trim()).filter(Boolean);
+  for (const name of names) if (!/^[A-Z_][A-Z0-9_]{1,63}$/.test(name)) throw new Error(`FLIGHT_MODEL_ADAPTER_SETTINGS: ${name} is not an upper-case setting name.`);
+  return names;
+}
+
 // The committed index.html carries the hash placeholder "unstamped"; a release zip carries the real stamp.
 // A checkout is stamped in memory at start, with the same tool and result as a release, so the page served
 // and every record it writes carry the build's SHA-256. A stamped file is served as it is only when its stamp
@@ -162,6 +172,7 @@ export function createServer(options = {}) {
   const jiraFetch = options.jiraFetch || globalThis.fetch;
   if (host.MES.MAX_EVIDENCE_BYTES && host.MES.MAX_EVIDENCE_BYTES > MAX_REQUEST_BYTES) throw new Error(`index.html allows ${host.MES.MAX_EVIDENCE_BYTES} byte recordings but the server's request limit is ${MAX_REQUEST_BYTES}. Raise MAX_REQUEST_BYTES and the proxy's client_max_body_size together.`);
   const log = options.quiet ? () => {} : (...a) => console.log(new Date().toISOString(), ...a);
+  const modelAdapterSettings = parseModelAdapterSettings(options.modelAdapterSettings !== undefined ? options.modelAdapterSettings : process.env.FLIGHT_MODEL_ADAPTER_SETTINGS);
   const exportCredentials = parseExportCredentials(options.exportCredentials !== undefined ? options.exportCredentials : process.env.FLIGHT_EXPORT_CREDENTIALS);
   const exportTargetAllowed = (tokenSetting, destination) => { let origin = null; try { origin = new URL(String(destination)).origin; } catch {} return !!origin && !!tokenSetting && Object.hasOwn(exportCredentials, tokenSetting) && exportCredentials[tokenSetting].includes(origin); };
   // The first account becomes Master Access, so creating it needs a code only the person running the server can
@@ -788,7 +799,9 @@ export function createServer(options = {}) {
         const body = await readJson(req), args = Array.isArray(body.args) ? body.args : [];
         if (action[1] === 'MES.configureModelAdapter' && args[0]?.enabled === true) {
           const settingName = String(args[0]?.settingName || '');
-          if (!/^[A-Z_][A-Z0-9_]{1,63}$/.test(settingName) || !String(process.env[settingName] || '').trim()) { send(res, 422, { error: 'The named server environment setting is not configured. The model adapter remains off.' }); return; }
+          // One answer for a setting that is not listed and one that is listed but empty: the check reveals nothing
+          // about other environment variables.
+          if (!modelAdapterSettings.includes(settingName) || !String(process.env[settingName] || '').trim()) { send(res, 422, { error: 'The named server environment setting is not configured for the model adapter. Ask the server operator to set it and list it in FLIGHT_MODEL_ADAPTER_SETTINGS. The model adapter remains off.' }); return; }
           args.push(true); // This flag is derived by the server, never accepted from the client.
         }
         const { state, etag, problem, raw } = await loadState();

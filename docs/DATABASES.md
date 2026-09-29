@@ -104,6 +104,20 @@ delivery is checked again before it is sent, so no other server secret, such as
 `FLIGHT_JIRA_API_TOKEN`, can be sent to any host. A malformed `FLIGHT_EXPORT_CREDENTIALS` stops the
 server at startup.
 
+## Model adapter key setting
+
+The model adapter's configuration names the server setting that holds its key; the key itself stays
+in the server environment. Only a setting the operator lists can be named:
+
+```bash
+FLIGHT_MODEL_ADAPTER_SETTINGS='FLIGHT_MODEL_KEY'
+FLIGHT_MODEL_KEY='...'
+```
+
+Naming any other setting is refused with the same message as a listed setting that is empty, so the
+check cannot be used to learn which environment variables exist on the server. A malformed list stops
+the server at startup.
+
 ## Jira Cloud connector
 
 The authenticated server can send saved ECR, SPR and SCAR records to Jira Cloud. Keep these
