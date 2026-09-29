@@ -204,9 +204,9 @@ with `release-report --dry-run`. The results are kept as a run artifact.
 3. Run `node tools/run-suites.mjs` and `node tools/run-suites.mjs --mirror`. Both must pass.
 4. Run `node tools/release-report.mjs`. It writes the release record (build, the commit the stamp was
    generated from, hashes, results, skips) into `VERSION.md`. It refuses an unstamped `index.html`, a
-   stamp that was not generated from the `index.html` and build id committed in HEAD, a packaged file in
-   `assets/` whose bytes differ from HEAD (changed, added, ignored or missing), a failed run, or results
-   from different files. `tools/package-release.mjs` also refuses an unstamped or mismatched
+   stamp that was not generated from the `index.html` and build id committed in HEAD, a `demo.html` not
+   regenerated from the stamped `index.html`, a packaged file in `assets/` whose bytes differ from HEAD
+   (changed, added, ignored or missing), a failed run, or results from different files. `tools/package-release.mjs` also refuses an unstamped or mismatched
    `index.html`, and checks `assets/` against HEAD again before it writes the zips.
 5. `node tools/package-release.mjs` writes `release/flight-system-<build>.zip` and the demo zip from the
    stamped files. Deploy from the production zip, not from `main`, and check the deployed copy with

@@ -13,15 +13,16 @@
 //                                            the stamped SHA-256 this source produces
 //
 // It refuses to write a record from an unstamped index.html, a stamp generated from uncommitted source
-// (see assertReleasable), or results that failed, carry an unexplained skip, or were produced against
-// different files than the ones in the tree. Node built-ins only.
+// (see assertReleasable), a demo.html not regenerated from the stamped index.html, or results that
+// failed, carry an unexplained skip, or were produced against different files than the ones in the
+// tree. Node built-ins only.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { buildId, clear, stamp, verify } from './stamp-build.mjs';
-import { assetsProblem } from './package-release.mjs';
+import { assetsProblem, demoProblem } from './package-release.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const VERSION = path.join(ROOT, 'VERSION.md');
@@ -53,7 +54,8 @@ function assertReleasable() {
   let headVersion, headIndex;
   try { headVersion = git('show', 'HEAD:VERSION.md'); headIndex = git('show', 'HEAD:index.html'); }
   catch { throw new Error('the release record needs a git checkout of the release commit.'); }
-  const problem = releaseProblem(html, headVersion, headIndex) || assetsProblem();
+  // The record names the demo.html hash too, so the demo must be the one generated from this stamp.
+  const problem = releaseProblem(html, headVersion, headIndex) || demoProblem(html, fs.readFileSync(path.join(ROOT, 'demo.html'), 'utf8')) || assetsProblem();
   if (problem) throw new Error(problem);
 }
 

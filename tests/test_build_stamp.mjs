@@ -104,7 +104,12 @@ try{
    ok('release-report --check refuses a record the committed index.html does not produce',d.code===1&&/does not match this source/.test(d.out),d.out);}
   // #45, packager half (fixed in PR #25): the packager refuses a demo.html not regenerated after stamping.
   {const s=sandbox();s.node(['tools/stamp-build.mjs']);const r=s.node(['tools/package-release.mjs','--out','release']);
-   ok('the release packager refuses a demo.html left unstamped and writes no zip',r.code===1&&/demo\.html carries fs-build-sha256 unstamped/.test(r.out)&&!fs.existsSync(s.at('release')),r.out);}
+   ok('the release packager refuses a demo.html left unstamped and writes no zip',r.code===1&&/demo\.html carries fs-build-sha256 unstamped/.test(r.out)&&!fs.existsSync(s.at('release')),r.out);
+   // #45, release-report half: the record refuses the same demo.html, even with results from these files.
+   s.results();const d=s.node(['tools/release-report.mjs','--dry-run']);
+   ok('the release record refuses a demo.html not regenerated after stamping',d.code===1&&/demo\.html carries fs-build-sha256 unstamped/.test(d.out),d.out);
+   s.stamp();s.results();const a=s.node(['tools/release-report.mjs','--dry-run']);
+   ok('the release record accepts a demo.html carrying the production stamp',a.code===0,a.out);}
   // #84 (fixed in PR #82): a standalone run of the packager checks assets/ against HEAD before it writes.
   {const s=sandbox();s.stamp();fs.writeFileSync(s.at('assets/a.js'),'changed');const r=s.node(['tools/package-release.mjs','--out','release']);
    ok('the packager run on its own refuses an asset that differs from HEAD and writes no zip',r.code===1&&/assets\/a\.js differs from HEAD/.test(r.out)&&!fs.existsSync(s.at('release')),r.out);
