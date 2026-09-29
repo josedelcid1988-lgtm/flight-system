@@ -1777,7 +1777,7 @@ function skBoot(){
   var list=(Array.isArray(roles)?roles:[]).filter(function(k,i,arr){return ROLES.some(function(r){return r.key===k;})&&arr.indexOf(k)===i;});
   if(!list.length)return {ok:false,message:'Choose at least one role.'};
   if(isQS&&list.some(function(k){return k==='qm'||k==='admin';}))return {ok:false,message:'A Quality Supervisor cannot assign QA Manager or Master Access.'};
-  if(reason.length<10||reason.length>300)return {ok:false,message:'Give the reason in 10 to 300 characters. It is kept in the security log.'};
+  if(reason.length<10||reason.length>300)return {ok:false,message:'Give the reason in 10 to 300 characters. '+(SERVER?'It is kept in the server audit trail.':'It is kept in this device\'s security log.')};
   var managers=a.users.filter(function(x){return rolesOf(x,true).some(function(k){return k==='qm'||k==='admin';});});
   var added=list.slice(1).filter(function(k){return before.indexOf(k)<0||(before[0]===k);});
   if(added.length){if(!trainingCode)return {ok:false,message:'Adding '+added.map(roleLabel).join(', ')+' expands '+u.displayName+'\'s authority beyond their role. Choose the training that qualifies them.'};if(!trainingOk(u,trainingCode))return {ok:false,message:u.displayName+' has no current '+trainingCode+' training record. Record the training first.'};}

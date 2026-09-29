@@ -135,6 +135,16 @@ try {
   }, orderId);
   assert.deepEqual(unsaved, { opened: 0, historyUnchanged: true, queue: 0 }, 'an unsaved print record means no traveler is printed');
 
+  // A role change reason is kept in the server audit trail when a server is configured, and the refusal says so.
+  const roleReason = await page.evaluate(() => {
+    const auth = window.FLIGHT_SERVER.auth, users = auth.users;
+    auth.users = [...users, { username: 'reason-target', displayName: 'Reason Target', role: 'technician' }];
+    try { return skAuth.setRoles('reason-target', ['general'], 'short'); } finally { auth.users = users; }
+  });
+  assert.equal(roleReason.ok, false, 'a short role change reason is refused');
+  assert.match(roleReason.message, /kept in the server audit trail/, `the reason is said to go to the server audit trail: ${roleReason.message}`);
+  assert.doesNotMatch(roleReason.message, /device/, 'the server-mode reason message does not name this device');
+
   const views = await serverViews();
   assert.ok(views.includes('Record path sent') && !views.some(name => name.startsWith('Refused')), `the server record is unchanged by the refused attempts: ${views.join(', ')}`);
   assert.deepEqual(errors, []);
@@ -143,7 +153,7 @@ try {
   // Standalone use, no server: the browser is the record store and changes save there.
   const standalone = await browser.newPage();
   await standalone.addInitScript(() => {
-    localStorage.setItem('skyryse-mes-auth-v1', JSON.stringify({ users: [{ username: 'admin', displayName: 'Flight Master', salt: 'test', hash: 'unused', role: 'admin', createdAt: new Date().toISOString() }] }));
+    localStorage.setItem('skyryse-mes-auth-v1', JSON.stringify({ users: [{ username: 'admin', displayName: 'Flight Master', salt: 'test', hash: 'unused', role: 'admin', createdAt: new Date().toISOString() }, { username: 'bench', displayName: 'Bench Tech', salt: 'test', hash: 'unused', role: 'technician', createdAt: new Date().toISOString() }] }));
     sessionStorage.setItem('skyryse-mes-session-v1', 'admin');
     sessionStorage.setItem('sk-boot-seen', '1');
   });
@@ -154,6 +164,10 @@ try {
     return { ok: r.ok, saved: (JSON.parse(localStorage.getItem(KEY)).savedViews || []).some(view => view.name === 'Standalone view') };
   });
   assert.deepEqual(local, { ok: true, saved: true }, 'standalone changes still save in the browser');
+  // Standalone, the role change reason is kept in this device's security log, and the refusal says so.
+  const localReason = await standalone.evaluate(() => skAuth.setRoles('bench', ['general'], 'short'));
+  assert.equal(localReason.ok, false, 'a short role change reason is refused standalone');
+  assert.match(localReason.message, /kept in this device's security log/, `the reason is said to stay on this device: ${localReason.message}`);
   console.log('server record path: with a server configured, record changes reach the server or are refused before they run; standalone still saves in the browser');
 } finally {
   await browser.close();
