@@ -47,6 +47,11 @@ A closed work order leaves the live workspace once it is stocked, or when it can
 
 The export's `extractSha256` covers the order, its activity, the archive hash and the metadata of each recording, including that recording's SHA-256. The recording bytes are streamed one at a time, so a large archive never has to fit in server memory. To verify a download, check each recording's base64 bytes against its `sha256`, then hash the rest of the extract as described in `extractHashCovers`.
 
+## Health check
+
+`GET /api/health` answers `{ "ok": true }` to anyone, for a load balancer or monitor. The product name,
+account count, workspace presence, ETag and schema version are returned only to a signed-in session.
+
 ## Sessions at rest
 
 Each session is stored as the SHA-256 of its token, in SQLite and PostgreSQL alike, so a copy of the

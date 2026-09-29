@@ -93,6 +93,18 @@ try {
     }
   });
 
+  // #31, #79: health tells an unauthenticated caller only that the server is up.
+  await check('unauthenticated health reports liveness only', async () => {
+    const r = await api('GET', '/health');
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.json, { ok: true }, 'no product, account count, workspace, ETag or schema');
+    assert.deepEqual((await api('GET', '/health', { token: 'not-a-session' })).json, { ok: true }, 'an invalid token is treated as unauthenticated');
+    const signedIn = await api('GET', '/health', { token: adminToken });
+    assert.equal(signedIn.status, 200);
+    assert.equal(signedIn.json.product, 'Flight System');
+    assert.equal(signedIn.json.accounts, 2, 'a signed-in caller still gets the operating detail');
+  });
+
   // #29: evidence bytes are read under the authority of the record that names them.
   await check('evidence no record names is readable only by its uploader and a manager', async () => {
     await addUser('sec-tech2', 'technician', 'sec-tech2-pass-1');

@@ -30,7 +30,7 @@ try {
 
   const health = await call('/health');
   assert.equal(health.status, 200);
-  assert.equal(health.json.product, 'Flight System');
+  assert.deepEqual(health.json, { ok: true }, 'health without a session reports liveness only');
   console.log('ok PostgreSQL schema initializes and health is available');
 
   const jiraRequestId = `flight-ecr-pg-${randomUUID().toLowerCase()}`;
@@ -49,6 +49,7 @@ try {
   const login = await call('/auth/session', { method: 'POST', body: { username: 'pg-admin', password: 'pg-test-password-123' } });
   assert.equal(login.status, 200, JSON.stringify(login.json));
   const token = login.json.token;
+  assert.equal((await call('/health', { token })).json.product, 'Flight System', 'a signed-in caller gets the health detail');
   const sessionRows = (await server.store._query('SELECT * FROM sessions')).rows.flatMap(row => Object.values(row).map(String));
   assert.ok(!sessionRows.includes(token), 'the PostgreSQL sessions table does not hold the token itself');
   assert.ok(sessionRows.includes(createHash('sha256').update(token).digest('hex')), 'it holds the SHA-256 of the token');

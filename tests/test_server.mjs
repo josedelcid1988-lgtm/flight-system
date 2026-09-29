@@ -55,12 +55,10 @@ const api = async (method, path, { token, body, raw = false, headers } = {}) => 
 };
 
 try {
-  await check('fresh database health identifies Flight System', async () => {
+  await check('fresh database health answers liveness only without a session', async () => {
     const result = await api('GET', '/health');
     assert.equal(result.status, 200);
-    assert.equal(result.json.product, 'Flight System');
-    assert.equal(result.json.accounts, 0);
-    assert.equal(result.json.workspace, false);
+    assert.deepEqual(result.json, { ok: true });
   });
   await check('served page receives server context with no credential hashes', async () => {
     const html = await (await request('http://flight-system.test/')).text();

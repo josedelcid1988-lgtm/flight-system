@@ -431,7 +431,11 @@ export function createServer(options = {}) {
       if (!p.startsWith('/api/')) { send(res, 404, { error: 'Not found' }); return; }
       const route = p.slice(4);
 
-      if (route === '/health' && m === 'GET') { const row = await store.getDoc(TENANT), accounts = await store.accounts(); send(res, 200, { ok: true, product: 'Flight System', accounts: accounts.length, workspace: !!row, etag: row ? row.etag : null, schema: row ? JSON.parse(row.json).version : null }); return; }
+      // Liveness for anyone (a load balancer or monitor needs no account); the operating detail only with a session.
+      if (route === '/health' && m === 'GET') {
+        if (!await sessionOf(req, { touch: false })) { send(res, 200, { ok: true }); return; }
+        const row = await store.getDoc(TENANT), accounts = await store.accounts(); send(res, 200, { ok: true, product: 'Flight System', accounts: accounts.length, workspace: !!row, etag: row ? row.etag : null, schema: row ? JSON.parse(row.json).version : null }); return;
+      }
 
       // -- auth --
       if (route === '/auth/session') {
