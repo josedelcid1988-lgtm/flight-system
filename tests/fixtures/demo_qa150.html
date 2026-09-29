@@ -2542,6 +2542,24 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     return canonical(m.subject) === canonical(subject) && m.hash === sha256(canonical(subject));
   };
   const calibrationEntryValid = entry => plain(entry) && /^CALLOG-\d{5}$/.test(entry.id) && CALIBRATION_TAG_RE.test(entry.tag) && str(entry.description, 80) && str(entry.serial, 40, 0) && dateOnly(entry.calibratedAt) && dateOnly(entry.expires) && entry.expires > entry.calibratedAt && CALIBRATION_STATUSES.includes(entry.status) && str(entry.location, 80, 0) && str(entry.note, 300, 0) && str(entry.recordedBy, 140) && timestamp(entry.recordedAt) && (entry.supersedes === undefined || /^CALLOG-\d{5}$/.test(entry.supersedes)) && calibrationManifestValid(entry);
+  // The first field of a calibration entry that fails calibrationEntryValid, for diagnose. Same order.
+  const calibrationInvalidField = entry => {
+    if (!plain(entry)) return 'entry';
+    if (!/^CALLOG-\d{5}$/.test(entry.id)) return 'id';
+    if (!CALIBRATION_TAG_RE.test(entry.tag)) return 'tag';
+    if (!str(entry.description, 80)) return 'description';
+    if (!str(entry.serial, 40, 0)) return 'serial';
+    if (!dateOnly(entry.calibratedAt)) return 'calibratedAt';
+    if (!dateOnly(entry.expires) || entry.expires <= entry.calibratedAt) return 'expires';
+    if (!CALIBRATION_STATUSES.includes(entry.status)) return 'status';
+    if (!str(entry.location, 80, 0)) return 'location';
+    if (!str(entry.note, 300, 0)) return 'note';
+    if (!str(entry.recordedBy, 140)) return 'recordedBy';
+    if (!timestamp(entry.recordedAt)) return 'recordedAt';
+    if (entry.supersedes !== undefined && !/^CALLOG-\d{5}$/.test(entry.supersedes)) return 'supersedes';
+    if (!calibrationManifestValid(entry)) return 'signature';
+    return null;
+  };
   const calibrationSubject = e => ({ id: e.id, tag: e.tag, description: e.description, serial: e.serial, calibratedAt: e.calibratedAt, expires: e.expires, status: e.status, location: e.location, note: e.note, recordedAt: e.recordedAt, recordedBy: e.recordedBy, supersedes: e.supersedes || null });
   // today is the Pacific day of the write: a calibration cannot be dated after the day it is recorded.
   const calibrationFieldError = (f, today) => {
@@ -7252,6 +7270,20 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     } else return { where: 'activity', detail: 'Activity log is missing.', fix: s => { s.activity = []; } };
     if (!trainingRecordsValid(state.trainingRecords)) return { where: 'trainingRecords', detail: 'A training record is malformed or has a duplicate id.' };
     if (!trainingCatalogValid(state.trainingCatalog)) return { where: 'trainingCatalog', detail: 'The training requirements list is malformed or has a duplicate code.' };
+    if (Object.hasOwn(state, 'calibrationLog')) {
+      // A signed record is never repaired automatically: the entry is named for a QA Manager to review.
+      const log = state.calibrationLog, review = 'The saved calibration log was not changed; a QA Manager must review this entry.';
+      if (!Array.isArray(log)) return { where: 'calibrationLog', detail: 'The calibration log is not a list of entries.', fix: null };
+      if (log.length > 5000) return { where: 'calibrationLog', detail: `The calibration log has ${log.length} entries; 5,000 is the limit.`, fix: null };
+      const seenCalibration = new Set();
+      for (let i = 0; i < log.length; i += 1) {
+        const e = log[i], label = plain(e) && typeof e.id === 'string' && e.id ? e.id : `calibrationLog[${i}]`, field = calibrationInvalidField(e);
+        if (field === 'signature') return { where: label, detail: `Calibration entry ${label} has a signature that is missing or does not match the entry. ${review}`, fix: null };
+        if (field) return { where: label, detail: `Calibration entry ${label} is malformed at field ${field}. ${review}`, fix: null };
+        if (seenCalibration.has(e.id)) return { where: label, detail: `Duplicate calibration entry id ${label} in the calibration log. ${review}`, fix: null };
+        seenCalibration.add(e.id);
+      }
+    }
     if (!supportLogValid(state.supportLog)) return { where: 'supportLog', detail: 'The Support Overrides log has a malformed or duplicate entry.', fix: s => { const seen = new Set(); const keep = [], bad = []; (Array.isArray(s.supportLog) ? s.supportLog : []).forEach(e => (supportEntryValid(e) && !seen.has(e.id) && seen.add(e.id) ? keep : bad).push(e)); s.supportLog = keep.slice(0, SUPPORT_LOG_MAX); s.supportLogQuarantine = [...bad, ...(Array.isArray(s.supportLogQuarantine) ? s.supportLogQuarantine : [])].slice(0, 1000); } };
     if (Object.hasOwn(state, 'masterWIs') && !masterWIsValid(state.masterWIs)) {
       const wi = Array.isArray(state.masterWIs) ? state.masterWIs.find(item => !masterWIValid(item)) : null;

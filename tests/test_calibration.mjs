@@ -229,4 +229,24 @@ check('a work unit can link a tool recorded only in the calibration log', unitLi
 check('a work unit link to an unknown tag is still refused', !mntRun(admin, () => MES.addEquipmentUnit(mntState, { name: 'Unknown bench', workCenterId: MES.WORK_CENTERS[0].id, toolTag: 'NO-SUCH-TOOL' })).ok);
 const reactSource = pageSources[1][1];
 check('the React equipment forms list calibration-log tools, not the seed alone', !/MES\.CAL_TOOLS\.map\(/.test(reactSource) && (reactSource.match(/MES\.calibratedToolChecks\(state\)\.map\(c => c\.tool\)/g) || []).length === 2);
+// #49: diagnose names the calibration entry and field that fail validation, for browser recovery and
+// the server error path, and never offers an automatic repair of a signed record.
+check('diagnose reports nothing for a valid workspace with a calibration log', MES.validate(state) && MES.diagnose(state) === null);
+const diagBroken = structuredClone(state);
+diagBroken.calibrationLog[2].expires = 'not-a-date';
+const diagField = MES.diagnose(diagBroken);
+check('diagnose names the malformed calibration entry and field', !!diagField && diagField.where === 'CALLOG-00003' && /CALLOG-00003/.test(diagField.detail) && /expires/.test(diagField.detail) && !diagField.fix);
+const srvDiag = srv.validState(structuredClone(diagBroken));
+check('the server error names the malformed calibration entry', typeof srvDiag === 'string' && /CALLOG-00003/.test(srvDiag));
+const diagDup = structuredClone(state);
+diagDup.calibrationLog.push(structuredClone(diagDup.calibrationLog[0]));
+const diagDupResult = MES.diagnose(diagDup);
+check('diagnose names a duplicate calibration entry id', !!diagDupResult && /duplicate/i.test(diagDupResult.detail) && /CALLOG-00001/.test(diagDupResult.detail));
+const diagUnsigned = structuredClone(state);
+delete diagUnsigned.calibrationLog[0].calibrationSignature;
+const diagUnsignedResult = MES.diagnose(diagUnsigned);
+check('diagnose names an unsigned calibration entry', !!diagUnsignedResult && diagUnsignedResult.where === 'CALLOG-00001' && /signature/.test(diagUnsignedResult.detail));
+const diagNotArray = structuredClone(state);
+diagNotArray.calibrationLog = {};
+check('diagnose reports a calibration log that is not a list', /calibration log/i.test((MES.diagnose(diagNotArray) || {}).detail || ''));
 console.log(`calibration: ${checks} checks, all passed`);
