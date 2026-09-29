@@ -125,6 +125,16 @@ try{
    fs.rmSync(out,{recursive:true,force:true});s.g('checkout','-q','--','assets/a.js');
    const a=tryPack();ok('packageRelease() called directly writes both zips when assets/ matches HEAD',a==='ok'&&fs.readdirSync(out).length===2,a);
    ok('qa_full asks for the working-tree packaging explicitly',/packageRelease\(OUT,\{allowUncommittedAssets:true\}\)/.test(fs.readFileSync(path.join(ROOT,'tests/qa_full.mjs'),'utf8')));}
+  // #90: the packager ships only files directly in assets/, so a subdirectory is a plain refusal, not a crash.
+  {const s=sandbox();s.stamp();fs.mkdirSync(s.at('assets/sub'));fs.writeFileSync(s.at('assets/sub/y.js'),'y');
+   let r;try{r=assetsProblem({root:s.dir});}catch(e){r='threw '+e.message;}
+   ok('the asset check refuses a subdirectory in assets/ with a plain message',/assets\/sub is a directory/.test(r||''),r);
+   s.g('add','assets/sub');s.g('commit','-q','-m','sub');try{r=assetsProblem({root:s.dir});}catch(e){r='threw '+e.message;}
+   ok('the asset check refuses a committed subdirectory in assets/ too',/assets\/sub is a directory/.test(r||''),r);
+   const {packageRelease}=await s.tool('package-release.mjs');let w;try{packageRelease(s.at('release'),{allowUncommittedAssets:true});w='ok';}catch(e){w=e.message;}
+   ok('packageRelease() refuses a subdirectory in assets/ even when packaging the working tree',/assets\/sub is a directory/.test(w)&&!fs.existsSync(s.at('release')),w);
+   fs.rmSync(s.at('assets/sub'),{recursive:true});s.g('rm','-q','-r','--cached','assets/sub');s.g('commit','-q','-m','flat');
+   ok('the asset check accepts a flat assets/ again',assetsProblem({root:s.dir})===null,assetsProblem({root:s.dir}));}
   // #86 (fixed in PR #82): no git status call remains; a git failure is a plain refusal, not a stack trace.
   {const dir=fs.mkdtempSync(path.join(os.tmpdir(),'flight-nogit-'));sandboxes.push(dir);fs.mkdirSync(path.join(dir,'assets'));fs.writeFileSync(path.join(dir,'assets/a.js'),'one');
    let r;try{r=assetsProblem({root:dir});}catch(e){r='threw '+e.message;}

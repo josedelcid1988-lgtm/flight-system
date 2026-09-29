@@ -52,6 +52,14 @@ export function manifest(kind, root = ROOT) {
   return [[page, page], ...assets];
 }
 
+// The packager ships the files directly in assets/, so anything else there (a subdirectory, a link) would be
+// left out of the zips or fail to read. Returns a plain problem, or null.
+export function assetsLayoutProblem(root = ROOT) {
+  const odd = fs.readdirSync(path.join(root, 'assets'), { withFileTypes: true }).filter(e => !e.name.startsWith('.') && !e.isFile())
+    .map(e => `assets/${e.name} is ${e.isDirectory() ? 'a directory' : 'not a regular file'}`).sort();
+  return odd.length ? `${odd.join('; ')}. The release packages only files directly in assets/; move or remove ${odd.length > 1 ? 'them' : 'it'}, then stamp from a commit without ${odd.length > 1 ? 'them' : 'it'}.` : null;
+}
+
 // Every packaged asset must be byte for byte the blob the named commit holds, so that commit reproduces the zips.
 // The bytes on disk are hashed as git would store them (git hash-object --no-filters) and compared with the
 // commit's tree, so no index state (untracked, ignored, renamed, assume-unchanged, skip-worktree) can hide a
@@ -65,6 +73,8 @@ export function assetsProblem({ root = ROOT, commit = 'HEAD' } = {}) {
     const [meta, name] = entry.split('\t'), [, type, hash] = meta.split(' ');
     return [name, type === 'blob' ? hash : type];
   }).filter(([name]) => !path.basename(name).startsWith('.')));
+  const layout = assetsLayoutProblem(root);
+  if (layout) return layout;
   const packaged = manifest('production', root).slice(1).map(([, inTree]) => inTree);
   const hashes = packaged.length ? git('hash-object', '--no-filters', '--', ...packaged).trim().split('\n') : [];
   return assetsDiff(committed, new Map(packaged.map((name, i) => [name, hashes[i]])), commit);
@@ -128,7 +138,8 @@ export function readZip(buf) {
 // tests/qa_full.mjs uses it, to check the packager on a development tree, and its zips are never released.
 export function packageRelease(outDir, { allowUncommittedAssets = false } = {}) {
   const build = releaseBuild(), names = zipNames(build);
-  if (!allowUncommittedAssets) { const assets = assetsProblem(); if (assets) throw new Error(assets); }
+  const assets = allowUncommittedAssets ? assetsLayoutProblem() : assetsProblem();
+  if (assets) throw new Error(assets);
   fs.mkdirSync(outDir, { recursive: true });
   for (const kind of ['production', 'demo']) {
     const entries = manifest(kind).map(([inZip, inTree]) => [inZip, fs.readFileSync(path.join(ROOT, inTree))]);
