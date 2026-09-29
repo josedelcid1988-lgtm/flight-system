@@ -1,4 +1,4 @@
-<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v82"><meta name="fs-build-sha256" content="7ce2bb723e8e1a642f8ded8306062bbae83e3aa2e72adc09f40e904e0e668e18"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><!-- FLIGHT REACT ASSETS BEGIN -->
+<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v82"><meta name="fs-build-sha256" content="8586c645376e7de860e9f56eea78a7eac215eaaf512b13412c471d8aa64cfde4"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><!-- FLIGHT REACT ASSETS BEGIN -->
 <link rel="stylesheet" href="assets/flight-ui-fonts.css">
 <link rel="stylesheet" href="assets/flight-ui.css">
 <link rel="stylesheet" href="assets/flight-plan-react.css">
@@ -3882,7 +3882,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const wiRef = wi => ({ id: wi.id, revision: wi.revision, title: wi.title });
   const findWI = (state, id, revision) => (Array.isArray(state?.masterWIs) ? state.masterWIs: []).find(wi => wi.id === id && wi.revision === revision) || null;
   const nextWIRevision = (state, id) => { const last = state.masterWIs.filter(wi => wi.id === id).map(wi => wi.revision).sort().pop() || '@'; return /^[A-Y]$/.test(last) ? String.fromCharCode(last.charCodeAt(0) + 1) : last === '@' ? 'A' : `${last}1`; };
-  const wiLog = (state, wi, action) => { wi.history = [...(wi.history || []), { at: new Date().toISOString(), action, actor: `${state.profile.name} · ${state.profile.credentialId}` }].slice(-200); };
+  const wiLog = (state, wi, action) => { wi.history = [...(wi.history || []), { at: new Date().toISOString(), action, actor: `${actor(state).name} · ${actor(state).credentialId}` }].slice(-200); };
   // Separation of duties: the author of a WI cannot release it. Every edit to a draft revision records the
   // editor's credential in wi.authors; for a revision edited before that was recorded, the history entries of
   // its edits name them. The check covers QA release, release against the drawing ECO and the Safety Team
@@ -4637,10 +4637,10 @@ const OP_BOM_MAX = 12;
       t.status = 'Resolved'; t.resolution = t.reworkPlan.approval; t.resolvedBy = t.reworkPlan.approvedBy; t.resolvedAt = at;
       record(state, order, `${t.id} closed: QA released the ${t.reworkPlan.decision} operation Op ${opNumber(order, t.reworkPlan.opId)}. Hold lifted.`, 'Quality reviewer');
     });
-    const approver = profileSnapshot(state.profile);
+    const approver = actor(state);
     const entry = rollWorkOrderRevision(state, order, `Operation sequence changed (${pending.entries.length} change${pending.entries.length === 1 ? '' : 's'}).`,
       pending.entries.map(item => `${item.type === 'add' ? 'Added' : item.type === 'remove' ? 'Removed' : 'Edited'} Op ${item.position || ''} ${item.title || ''}`.replace(/\s+/g, ' ').trim()), approver);
-    record(state, order, `QA released the updated operation sequence (${pending.entries.length} change${pending.entries.length === 1 ? '' : 's'}) · ${state.profile.name}.${entry ? ` Work order revision rolled to ${woRevLabel(entry.rev)}.` : ''}`);
+    record(state, order, `QA released the updated operation sequence (${pending.entries.length} change${pending.entries.length === 1 ? '' : 's'}) · ${actor(state).name}.${entry ? ` Work order revision rolled to ${woRevLabel(entry.rev)}.` : ''}`);
     return { ok: true, message: `Sequence released by QA. Work can continue.${entry ? ` Revision is now ${woRevLabel(entry.rev)}.` : ''}` };
   }
 
@@ -4797,9 +4797,9 @@ const OP_BOM_MAX = 12;
       schedule: { start: order.start || null, due: order.due },
       aircraft: order.aircraft || null, sourceBuild: order.sourceBuild || null,
       qaClosure: closure ? { at: closure.at, by: closure.actor } : null,
-      stockedAt: at, stockedBy: `${state.profile.name} · ${state.profile.credentialId}`, location: input.location, bin: bin || null
+      stockedAt: at, stockedBy: `${actor(state).name} · ${actor(state).credentialId}`, location: input.location, bin: bin || null
     };
-    order.inventory = { lotNumber, stockedAt: at, stockedBy: profileSnapshot(state.profile), location: input.location, bin, quantity: order.quantity, serials, trace, netsuite: { status: 'Ready to post', payload: netsuitePayload(order, lotNumber, serials, input.location, bin, at), postedRef: null } };
+    order.inventory = { lotNumber, stockedAt: at, stockedBy: actor(state), location: input.location, bin, quantity: order.quantity, serials, trace, netsuite: { status: 'Ready to post', payload: netsuitePayload(order, lotNumber, serials, input.location, bin, at), postedRef: null } };
     record(state, order, `Moved to inventory as ${lotNumber}: ${order.quantity} unit${order.quantity === 1 ? '' : 's'} at ${input.location}${bin ? ` bin ${bin}` : ''}. NetSuite posting prepared.`);
     return { ok: true, message: `Stocked as ${lotNumber}. The NetSuite payload is ready to post.` };
   }
@@ -6102,7 +6102,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const number = (order.engineeringChanges?.length || 0) + 1;
     const change = { id: `${order.id}-EC-${number}`, before, after, reason: input.reason.trim(), requestedBy: actor(state), requestedAt: new Date(Math.max(Date.now(), Date.parse(order.engineeringChanges?.at(-1)?.qaApproval?.at || 0))).toISOString(), virtual: true, needsECR, pedigree: order.pedigree, subcategory: order.subcategory, ecrId: needsECR ? `ECR-${order.id.slice(3)}-${number}` : null, status: needsECR ? 'Awaiting ECR' : 'Awaiting QA', ecrApproval: null, qaApproval: null, priorReleaseApproval: releaseApproval(order) ? JSON.parse(JSON.stringify(releaseApproval(order))) : null };
     order.engineeringChanges = [...(order.engineeringChanges || []), change];
-    record(state, order, `Engineering edit requested by ${state.profile.name}. ${needsECR ? `${change.ecrId} submitted; ECR approval and QA re-release required.` : 'QA re-release required; no ECR required.'} Work paused; proposed edits have not been applied.`);
+    record(state, order, `Engineering edit requested by ${actor(state).name}. ${needsECR ? `${change.ecrId} submitted; ECR approval and QA re-release required.` : 'QA re-release required; no ECR required.'} Work paused; proposed edits have not been applied.`);
     return { ok: true, message: needsECR ? ' ECR submitted. ECR approval and QA re-release are required before edits apply.' : 'Engineering edit submitted for QA re-release. Work is paused until approval.', id: change.id };
   }
 
@@ -6144,7 +6144,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (!revChanges.length) revChanges.push('Engineering edit applied with no field-level differences recorded.');
     const revEntry = rollWorkOrderRevision(state, order, `Engineering change ${change.id}${change.ecrId ? ` (${change.ecrId})` : ''} applied.`, revChanges, { ...change.qaApproval });
     if (requiresReleaseQA(order) && releaseApproval(order)) order.releaseApproval = { ...change.qaApproval, configuration: releaseConfiguration(order) };
-    record(state, order, `QA re-release by ${state.profile.name}. Engineering edit ${change.id} applied; revision ${change.before.revision} → ${change.after.revision}, planned quantity ${change.before.quantity} → ${change.after.quantity}, ${change.after.instructions.length} unfinished instruction(s) changed. Prior evidence retained; no production authorization.`, 'Quality reviewer');
+    record(state, order, `QA re-release by ${actor(state).name}. Engineering edit ${change.id} applied; revision ${change.before.revision} → ${change.after.revision}, planned quantity ${change.before.quantity} → ${change.after.quantity}, ${change.after.instructions.length} unfinished instruction(s) changed. Prior evidence retained; no production authorization.`, 'Quality reviewer');
     return { ok: true, message: `Engineering edits applied after QA re-release.${revEntry ? ` Work order revision rolled to ${woRevLabel(revEntry.rev)}.` : ''} The original work-order stage is retained.` };
   }
 
@@ -6754,8 +6754,8 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (evidence.reviewedAt !== null) return fail('This application video has already been marked reviewed.');
     if (evidence.rejectedAt) return fail(`${evidence.id} was rejected (${evidence.rejectReason}). Remove it and attach a new recording.`);
     evidence.reviewedAt = new Date(Math.max(Date.now(), Date.parse(evidence.addedAt))).toISOString();
-    evidence.reviewedBy = profileSnapshot(state.profile);
-    record(state, order, `Video ${evidence.id} on ${opId} marked reviewed by ${state.profile.name}.`, 'Quality reviewer');
+    evidence.reviewedBy = actor(state);
+    record(state, order, `Video ${evidence.id} on ${opId} marked reviewed by ${actor(state).name}.`, 'Quality reviewer');
     return { ok: true, message: 'Video marked reviewed for this record.' };
   }
 
@@ -6772,9 +6772,9 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const text = String(reason ?? '').trim();
     if (!str(text, 300) || text.length < 3) return fail('Enter why the recording is rejected (3 to 300 characters).');
     evidence.rejectedAt = new Date(Math.max(Date.now(), Date.parse(evidence.addedAt))).toISOString();
-    evidence.rejectedBy = profileSnapshot(state.profile);
+    evidence.rejectedBy = actor(state);
     evidence.rejectReason = text;
-    record(state, order, `Video ${evidence.id} on ${opId} rejected by ${state.profile.name}: ${text}`, 'Quality reviewer');
+    record(state, order, `Video ${evidence.id} on ${opId} rejected by ${actor(state).name}: ${text}`, 'Quality reviewer');
     return { ok: true, message: `${evidence.id} rejected. Remove it and attach a replacement recording before buy-off.` };
   }
 
@@ -7520,14 +7520,14 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const p = ensureProjects(state), name = String(input?.name || '').trim(), startDate = String(input?.startDate || ''), dueDate = String(input?.dueDate || ''), lifecycle = String(input?.lifecycle || 'Development'), sensitivity = String(input?.sensitivity || 'None'), parentId = input?.parentId || null;
     if (!str(name, 100) || !dateOnly(startDate) || !dateOnly(dueDate) || dueDate < startDate || !PROJECT_LIFECYCLES.includes(lifecycle) || !PROJECT_SENSITIVITY.includes(sensitivity)) return fail('Enter a project name, valid dates, lifecycle and sensitivity.');
     if (parentId && !p.projects.some(row => row.id === parentId)) return fail('Choose a registered parent project.');
-    const row = { id: nextPlanId(p.projects, 'PRJ'), name, parentId, lifecycle, sensitivity, sensitivityHistory: [], startDate, dueDate, partNumbers: [...new Set((input.partNumbers || []).map(value => String(value).trim()).filter(Boolean))].slice(0, 100), by: { name: state.profile.name, role: state.profile.role, credentialId: state.profile.credentialId }, at: new Date().toISOString() };
+    const row = { id: nextPlanId(p.projects, 'PRJ'), name, parentId, lifecycle, sensitivity, sensitivityHistory: [], startDate, dueDate, partNumbers: [...new Set((input.partNumbers || []).map(value => String(value).trim()).filter(Boolean))].slice(0, 100), by: actor(state), at: new Date().toISOString() };
     p.projects.push(row); return { ok: true, id: row.id, message: `${row.id} added to the project WBS.`, project: row };
   }
   function addProjectObjective(state, input) {
     const d = denied('configure-org', 'add a project objective'); if (d) return d;
     const p = ensureProjects(state), title = String(input?.title || '').trim(), dueDate = String(input?.dueDate || '');
     if (!str(title, 120) || !dateOnly(dueDate)) return fail('Enter an objective and a valid due date.');
-    const row = { id: nextPlanId(p.objectives, 'OBJ'), title, status: 'Proposed', dueDate, by: { name: state.profile.name, role: state.profile.role, credentialId: state.profile.credentialId }, at: new Date().toISOString() };
+    const row = { id: nextPlanId(p.objectives, 'OBJ'), title, status: 'Proposed', dueDate, by: actor(state), at: new Date().toISOString() };
     p.objectives.push(row); return { ok: true, id: row.id, message: `${row.id} objective recorded.`, objective: row };
   }
   function addProjectMilestone(state, input) {
@@ -7536,7 +7536,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (!str(title, 120) || !dateOnly(dueDate) || !projectId && !objectiveId) return fail('Enter a milestone title, due date and project or objective.');
     if (projectId && !p.projects.some(row => row.id === projectId) || objectiveId && !p.objectives.some(row => row.id === objectiveId)) return fail('Choose a registered project and objective.');
     if (workOrderId && !MES.getOrder(state, workOrderId)) return fail('Milestone work order not found.');
-    const row = { id: nextPlanId(p.milestones, 'MIL'), title, projectId, objectiveId, dueDate, status: 'Open', mustStart: input?.mustStart === true, workOrderId, by: { name: state.profile.name, role: state.profile.role, credentialId: state.profile.credentialId }, at: new Date().toISOString() };
+    const row = { id: nextPlanId(p.milestones, 'MIL'), title, projectId, objectiveId, dueDate, status: 'Open', mustStart: input?.mustStart === true, workOrderId, by: actor(state), at: new Date().toISOString() };
     p.milestones.push(row); return { ok: true, id: row.id, message: `${row.id} milestone recorded.`, milestone: row };
   }
   function milestoneRisks(state, date = new Date().toISOString().slice(0, 10)) {
@@ -7552,7 +7552,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const rank = Object.fromEntries(PROJECT_SENSITIVITY.map((value, index) => [value, index]));
     if (rank[level] <= rank[project.sensitivity]) return fail('Project sensitivity overrides only raise the current level.');
     const note = String(reason || '').trim(); if (note.length < 3 || note.length > 300) return fail('Give a reason of 3 to 300 characters for raising project sensitivity.');
-    project.sensitivityHistory ||= []; project.sensitivityHistory.push({ from: project.sensitivity, to: level, reason: note, by: { name: state.profile.name, role: state.profile.role, credentialId: state.profile.credentialId }, at: new Date().toISOString() });
+    project.sensitivityHistory ||= []; project.sensitivityHistory.push({ from: project.sensitivity, to: level, reason: note, by: actor(state), at: new Date().toISOString() });
     project.sensitivity = level;
     return { ok: true, message: `${project.id} sensitivity set to ${level}.`, project };
   }
@@ -7583,7 +7583,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     for (const ref of backlog) { const order = MES.getOrder(state, ref.workOrderId), op = order?.operations.find(item => item.id === ref.operationId); if (!op || op.done || op.workCenterId !== workCenterId) return fail('Every sprint backlog operation must be open and assigned to this work center.'); }
     const estimate = backlog.reduce((sum, ref) => { const order = MES.getOrder(state, ref.workOrderId), op = order.operations.find(item => item.id === ref.operationId); return sum + (Number.isFinite(op.standardHours) ? Math.max(0, op.standardHours * order.quantity - (MES.laborMinutes(op) || 0) / 60) : 0); }, 0);
     if (estimate > capacity.capacityHours) return fail(`Sprint backlog needs ${estimate} hours but only ${capacity.capacityHours} hours are available.`);
-    const row = { id: nextPlanId(p.sprints, 'SPT'), name, workCenterId, startDate, endDate, capacityHours: capacity.capacityHours, backlog, by: { name: state.profile.name, role: state.profile.role, credentialId: state.profile.credentialId }, at: new Date().toISOString() };
+    const row = { id: nextPlanId(p.sprints, 'SPT'), name, workCenterId, startDate, endDate, capacityHours: capacity.capacityHours, backlog, by: actor(state), at: new Date().toISOString() };
     p.sprints.push(row); return { ok: true, id: row.id, message: `${row.id} scheduled within ${capacity.capacityHours} available hours.`, sprint: row, estimateHours: estimate };
   }
   function sprintReport(state, sprintId) {
@@ -7728,7 +7728,9 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   const dateOnly = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && Number.isFinite(Date.parse(v));
   const today = () => new Date().toISOString().slice(0, 10);
   const snapshot = p => ({ name: p.name, role: p.role, credentialId: p.credentialId });
-  const log = (state, po, action, actor) => { po.history = [...po.history, { at: new Date().toISOString(), action, actor: actor || `${state.profile.name} · ${state.profile.credentialId}` }].slice(-100); };
+  // The signed-in account on a shared server, the device profile only when standalone.
+  const who = state => { const a = root && root.skAuth && root.skAuth.actor && root.skAuth.actor(); return a ? { name: a.name, role: a.role, credentialId: a.credentialId } : snapshot(state.profile); };
+  const log = (state, po, action, actor) => { po.history = [...po.history, { at: new Date().toISOString(), action, actor: actor || `${who(state).name} · ${who(state).credentialId}` }].slice(-100); };
   const wiKey = po => `${po.masterWI.id}|${po.masterWI.revision}`;
   const netsuiteRead = partNumber => ({ snapshotAt: NETSUITE_SNAPSHOT, onHand: MES.NETSUITE_STOCK[partNumber] ? MES.NETSUITE_STOCK[partNumber].reduce((n, lot) => n + lot.onHand, 0) : (DEMO_FINISHED_STOCK[partNumber] || 0) });
   const list = state => Array.isArray(state?.plannedOrders) ? state.plannedOrders : [];
@@ -7764,7 +7766,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
       id: `PO-${number}`, masterWI: { id: wi.id, revision: wi.revision, title: wi.title },
       configuration: { partNumber: wi.partNumber, partRevision: wi.partRevision, pedigree: input.pedigree, subcategory: input.subcategory, site: input.site ?? null, aircraft: input.aircraft },
       quantity: input.quantity, needDate: input.needDate, status: 'Planned', workOrder: null, netsuite: netsuiteRead(wi.partNumber),
-      createdAt: new Date().toISOString(), createdBy: actor ? { name: actor, role: 'Flight Plan', credentialId: 'DEMO' } : snapshot(state.profile), history: []
+      createdAt: new Date().toISOString(), createdBy: actor ? { name: actor, role: 'Flight Plan', credentialId: 'DEMO' } : who(state), history: []
     };
     log(state, po, `Planned from ${MES.wiKey(wi)} · ${wi.partNumber} Rev ${wi.partRevision}. NetSuite on hand ${po.netsuite.onHand} at snapshot ${NETSUITE_SNAPSHOT}.`, actor && `${actor} · DEMO`);
     if (!Array.isArray(state.plannedOrders)) state.plannedOrders = [];
@@ -7811,7 +7813,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     order.plannedOrder = { id: po.id, needDate: po.needDate, convertedAt: at };
     MES.addNote(state, order.id, `Converted from Flight Plan ${po.id}: ${wiKey(po)} · ${c.partNumber} Rev ${c.partRevision} · need date ${po.needDate}.`);
     po.status = 'Converted';
-    po.workOrder = { id: order.id, convertedAt: at, convertedBy: snapshot(state.profile) };
+    po.workOrder = { id: order.id, convertedAt: at, convertedBy: who(state) };
     log(state, po, `Converted to ${order.id} from ${wiKey(po)}.`);
     return { ok: true, message: `${po.id} converted to ${order.id}.`, id: order.id };
   }
@@ -10850,7 +10852,7 @@ let serverPush=Promise.resolve();
 let serverWorkspaceReady=false,serverActionQueue=[],serverActionPending=0,serverActionStopped=false,serverSnapshotRetryPending=false,serverReconcilePending=false,serverActionChain=Promise.resolve();
 const serverMutatorName=/^(?:run|add|update|remove|delete|create|complete|close|issue|approve|reject|sign|mark|assign|advance|resolve|disposition|request|release|record|submit|start|stop|review|accept|return|void|reopen|split|move|link|verify|raise|cancel|withdraw|incorporate|peer|roll|set|save|store|open|finish|grant|revoke|capture|attach|detach|quarantine|repair|replace|send|change|configure|stamp|buyoff|log|tick|decide|vote|reset|publish|apply|import|reinspect|firm|convert|carry|propose|escalate|select|clock|aqi|post|acknowledge|edit|revise|ping|push|ical|check|notify|qa|note)/i;
 const serverMutatorExact=new Set(['containNC','effectivenessCheck','pfmeaSafetyBuyoff','pruneExpiredNotices']);
-const serverMutatorExclude=new Set(['repair','signManifest','verifyManifests','verifyAIActionLog','stampCheck','stampRegister','stampRegisterCsv','stampCredential','stampHolderFor','ticketAttachments','openProcessECRs','syncAssignments','buyoffCredential','ensure','seedDemoRecords','icalExport']);
+const serverMutatorExclude=new Set(['repair','signManifest','verifyManifests','verifyAIActionLog','stampCheck','stampRegister','stampRegisterCsv','stampCredential','stampHolderFor','ticketAttachments','openProcessECRs','syncAssignments','buyoffCredential','ensure','seedDemoRecords','icalExport','recordAIAction','logSupport','noteDemoBypassRemoved']);
 const serverCommandStates=new WeakSet([state]);
 // Commands are queued as engine calls succeed, before their change is committed. A refused change must not leave
 // its commands behind for the next flush: commits mark what is queued, refusals drop everything unmarked.
@@ -11438,7 +11440,7 @@ document.addEventListener('change',event=>{if(event.target.closest('#support-fil
 // Grants come from the account layer; the workspace records them through the engine.
 window.addEventListener('sk-support-access',event=>{try{const d=event.detail||{};const r=MES.recordSupportAccess(state,d);if(r.ok){save();render();}notify(r.message);}catch(e){}});
 // One-time note: an account named demo on this device no longer carries a bypass in this build.
-function noteDemoAccount(){try{const users=window.skAuth?.users?.()||[];const d=users.find(u=>u.username==='demo');if(!d)return;const label=(window.skAuth.ROLES.find(r=>r.key===d.role)||{label:d.role}).label;const r=MES.noteDemoBypassRemoved(state,d.username,label);if(r.ok&&r.noted)save();}catch(e){}}
+function noteDemoAccount(){try{if(window.skServer&&window.skServer.active)return;const users=window.skAuth?.users?.()||[];const d=users.find(u=>u.username==='demo');if(!d)return;const label=(window.skAuth.ROLES.find(r=>r.key===d.role)||{label:d.role}).label;const r=MES.noteDemoBypassRemoved(state,d.username,label);if(r.ok&&r.noted)save();}catch(e){}}
 window.addEventListener('sk-auth',()=>setTimeout(noteDemoAccount,80));
 function renderActivity(){return `<section><div class="page-heading"><div><h1>Activity record</h1></div></div><div class="panel">${state.activity.length?historyList(state.activity):'<div class="empty"><h2>No activity yet</h2><p>Complete an operation to create a local event.</p></div>'}</div></section>`;}
 function openDialog(title,content){cleanupMediaSession();$('#dialog').classList.remove('media-dialog');if($('#dialog').open)$('#dialog').close();$('#dialog-title').textContent=title;$('#dialog-body').innerHTML=content;paintIcons($('#dialog'));$('#dialog').showModal();}

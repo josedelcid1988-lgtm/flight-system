@@ -215,7 +215,7 @@ function makeStore(pool, query, inTransaction, connectionString) {
     async evidenceBytes(id) { const r = (await query('SELECT bytes FROM evidence WHERE id=$1', [id])).rows[0]; return r ? Buffer.from(r.bytes) : null; },
     async evidenceList() { const rows = (await query('SELECT id FROM evidence ORDER BY uploaded_at')).rows; return Promise.all(rows.map(r => store.evidenceMeta(r.id))); },
     async putEvidence(e) { await query('INSERT INTO evidence (id,sha256,size,mime,file_name,uploaded_by,uploaded_at,bytes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [e.id,e.sha256,e.size,e.mime,e.fileName||null,e.uploadedBy,now(),e.bytes]); return store.evidenceMeta(e.id); },
-    async supersedeEvidence(id, by, reason) { await query('UPDATE evidence SET superseded_by=$1,superseded_at=$2,superseded_reason=$3 WHERE id=$4 AND superseded_by IS NULL', [by,now(),reason,id]); return store.evidenceMeta(id); },
+    async supersedeEvidence(id, by, reason) { const r = await query('UPDATE evidence SET superseded_by=$1,superseded_at=$2,superseded_reason=$3 WHERE id=$4 AND superseded_by IS NULL', [by,now(),reason,id]); return r.rowCount ? store.evidenceMeta(id) : null; },
     async backup(destination) {
       return new Promise((resolve, reject) => {
         const child = spawn('pg_dump', ['--format=custom', '--file', destination, '--dbname', connectionString], { stdio: 'ignore' });

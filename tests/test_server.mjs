@@ -252,8 +252,26 @@ try {
     assert.equal(exported.status, 200);
     assert.match(exported.json.exportId, /^EXT-[A-F0-9]{32}$/);
     assert.equal(exported.json.hashAlgorithm, 'SHA-256');
-    const extractContent = { order: exported.json.order, activity: exported.json.activity, evidence: exported.json.evidence, archiveSha256: exported.json.archiveSha256, archivedAt: exported.json.archivedAt, archivedBy: exported.json.archivedBy, schema: exported.json.schema };
+    const evidenceMeta = Object.fromEntries(Object.entries(exported.json.evidence).map(([key, { base64, ...meta }]) => {
+      assert.equal(createHash('sha256').update(Buffer.from(base64, 'base64')).digest('hex'), meta.sha256, `${key}: streamed bytes match the SHA-256 the extract hash covers`);
+      return [key, meta];
+    }));
+    const extractContent = { order: exported.json.order, activity: exported.json.activity, evidence: evidenceMeta, archiveSha256: exported.json.archiveSha256, archivedAt: exported.json.archivedAt, archivedBy: exported.json.archivedBy, schema: exported.json.schema };
     assert.equal(exported.json.extractSha256, createHash('sha256').update(JSON.stringify(extractContent)).digest('hex'));
+    // An archived order whose recordings span several stream chunks: every byte arrives and matches its SHA-256.
+    {
+      const big = [Buffer.alloc(7 * 1024 * 1024 + 5, 7), Buffer.from('small quarantined take')];
+      const ids = ['EV-00000000-0000-4000-8000-00000000a001', 'EV-00000000-0000-4000-8000-00000000a002'];
+      big.forEach((bytes, index) => server.store.putEvidence({ id: ids[index], sha256: createHash('sha256').update(bytes).digest('hex'), size: bytes.length, mime: 'video/webm', fileName: `take-${index}.webm`, uploadedBy: 'test', bytes }));
+      const order = { id: 'WO-STREAM-1', partNumber: 'P-STREAM', status: 'Closed', operations: [{ id: 'op-010', evidence: [{ id: ids[0] }], quarantinedEvidence: [{ id: ids[1] }] }] };
+      const json = JSON.stringify({ order, activity: [] });
+      server.store.putArchived({ id: order.id, json, sha256: createHash('sha256').update(json).digest('hex'), schema: 1, keys: { partNumber: 'P-STREAM', serials: [], lots: [], parts: ['P-STREAM'], title: 'Stream test', closedAt: null }, by: 'test' });
+      const streamed = await api('GET', `/archive/${order.id}/export`, { token });
+      assert.equal(streamed.status, 200);
+      assert.equal(JSON.stringify(ids.map(id => Buffer.from(streamed.json.evidence[id].base64, 'base64').equals(big[ids.indexOf(id)]))), '[true,true]', 'both recordings arrive byte for byte, including one larger than two chunks');
+      const covered = Object.fromEntries(Object.entries(streamed.json.evidence).map(([key, { base64, ...meta }]) => [key, meta]));
+      assert.equal(streamed.json.extractSha256, createHash('sha256').update(JSON.stringify({ order: streamed.json.order, activity: streamed.json.activity, evidence: covered, archiveSha256: streamed.json.archiveSha256, archivedAt: streamed.json.archivedAt, archivedBy: streamed.json.archivedBy, schema: streamed.json.schema })).digest('hex'), 'the stamped hash covers the recording metadata and SHA-256 values');
+    }
     const printed = await request(base + `/archive/${expected[0]}/print`, { headers: { Authorization: `Bearer ${token}` } });
     assert.equal(printed.status, 200);
     assert.match(await printed.text(), /flight-extract-stamp/);
@@ -292,12 +310,18 @@ try {
   });
   await check('workspace action API refuses exported read and migration helpers', async () => {
     const before = server.store.getDoc('default');
-    for (const name of ['MES.editOrderOperation','MES.reviseMasterWI','MES.pushATPSoftware','MES.acknowledgeNotice','MES.pingAssignment','MES.icalImport','MES.aqiSign8130_9','MES.checkConformity','MES.notifyCertification','MES.qaReviewMasterWI','MES.noteDemoBypassRemoved','MES.pruneExpiredNotices','FlightManeuver.containNC','FlightManeuver.effectivenessCheck','FlightManeuver.pfmeaSafetyBuyoff']) {
+    for (const name of ['MES.editOrderOperation','MES.reviseMasterWI','MES.pushATPSoftware','MES.acknowledgeNotice','MES.pingAssignment','MES.icalImport','MES.aqiSign8130_9','MES.checkConformity','MES.notifyCertification','MES.qaReviewMasterWI','MES.pruneExpiredNotices','FlightManeuver.containNC','FlightManeuver.effectivenessCheck','FlightManeuver.pfmeaSafetyBuyoff']) {
       assert.equal(typeof server.host.resolveAction(name), 'function', `${name} is an authorized engine command`);
     }
+    // The page queues exactly the calls the server accepts: its three allowlist constants mirror the server's.
+    const page = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8'), host = fs.readFileSync(new URL('../server/mes-host.mjs', import.meta.url), 'utf8');
+    const setOf = (source, name) => { const found = new RegExp(`${name}\\s*=\\s*new Set\\((\\[[^\\]]*\\])\\)`).exec(source); assert.ok(found, `${name} is declared`); return JSON.stringify(Function(`return ${found[1]}`)().sort()); };
+    assert.equal(setOf(page, 'serverMutatorExact'), setOf(host, 'actionExact'), 'page and server exact action lists match');
+    assert.equal(setOf(page, 'serverMutatorExclude'), setOf(host, 'actionExclude'), 'page and server excluded action lists match');
+    assert.equal(/const serverMutatorName=(\/\^\(\?:[^/]*\)\/i)/.exec(page)?.[1], /const actionName = (\/\^\(\?:[^/]*\)\/i)/.exec(host)?.[1], 'page and server command-name patterns match');
     assert.equal(server.host.resolveAction('MES.icalExport'), null, 'calendar export stays a read and is not exposed as a mutation command');
     assert.equal(server.host.resolveAction('MES.verifyAIActionLog'), null, 'AI action-log verification stays a read and is not exposed as a mutation command');
-    for (const name of ['MES.upgrade', 'MES.validate', 'MES.verifyManifests', 'MES.verifyAIActionLog', 'MES.signManifest', 'FlightPlan.status', 'FlightManeuver.pfmeaFor']) {
+    for (const name of ['MES.upgrade', 'MES.validate', 'MES.verifyManifests', 'MES.verifyAIActionLog', 'MES.signManifest', 'FlightPlan.status', 'FlightManeuver.pfmeaFor', 'MES.recordAIAction', 'MES.logSupport', 'MES.noteDemoBypassRemoved']) {
       const result = await api('POST', `/workspace/actions/${name}`, { token, body: { args: [] }, headers: { 'If-Match': before.etag } });
       assert.equal(result.status, 404, `${name} must not be remotely callable`);
     }
@@ -551,6 +575,54 @@ try {
     const result = await api('POST', '/auth/unlock', { token, body: { username: 'basic', reason: 'Verified with the person.' } });
     assert.equal(result.status, 200);
     assert.equal((await api('POST', '/auth/session', { body: { username: 'basic', password: 'basic-pass-123' } })).status, 200);
+  });
+  await check('evidence supersession that loses a concurrent update returns 409 and writes no audit', async () => {
+    const ids = ['EV-00000000-0000-4000-8000-00000000b001', 'EV-00000000-0000-4000-8000-00000000b002', 'EV-00000000-0000-4000-8000-00000000b003'];
+    ids.forEach((id, index) => { const bytes = Buffer.from(`supersede take ${index}`); server.store.putEvidence({ id, sha256: createHash('sha256').update(bytes).digest('hex'), size: bytes.length, mime: 'video/webm', fileName: 'take.webm', uploadedBy: 'test', bytes }); });
+    assert.equal(server.store.supersedeEvidence(ids[0], ids[1], 'first replacement').supersededBy, ids[1]);
+    assert.equal(server.store.supersedeEvidence(ids[0], ids[2], 'second replacement'), null, 'the conditional update reports that it changed nothing');
+    assert.equal(server.store.evidenceMeta(ids[0]).supersededBy, ids[1], 'the first replacement stands');
+    // The route read the row before the other request committed: simulate that interleaving.
+    const realMeta = server.store.evidenceMeta.bind(server.store);
+    let reads = 0;
+    server.store.evidenceMeta = id => { const row = realMeta(id); return id === ids[0] && reads++ === 0 ? { ...row, supersededBy: null } : row; };
+    const audits = server.store.auditRows(5000).filter(row => row.action === 'evidence-supersede').length;
+    try {
+      const lost = await api('POST', `/evidence/${ids[0]}/supersede`, { token, body: { by: ids[2], reason: 'Race with another manager.' } });
+      assert.equal(lost.status, 409, JSON.stringify(lost.json));
+      assert.match(lost.json.error, new RegExp(ids[1]));
+    } finally { server.store.evidenceMeta = realMeta; }
+    assert.equal(server.store.auditRows(5000).filter(row => row.action === 'evidence-supersede').length, audits, 'the losing request is not audited');
+  });
+  await check('the evidence report survives the largest orphan report and older truncated audit details', async () => {
+    const ids = Array.from({ length: 500 }, (_, index) => `EV-00000000-0000-4000-8000-${String(index).padStart(12, '0')}`);
+    const reported = await api('POST', '/evidence/orphans', { token, body: { ids, uploaded: 3 } });
+    assert.equal(reported.status, 200);
+    assert.equal(reported.json.recorded, 500);
+    await server.store.audit('one', 'evidence-orphans', { ids }); // an entry written before the bounded format, cut at 4,000 characters
+    const report = await api('GET', '/evidence/report', { token });
+    assert.equal(report.status, 200, JSON.stringify(report.json));
+    const [legacy, bounded] = report.json.orphansReported.slice(-2);
+    assert.equal(JSON.stringify([bounded.detail.count, bounded.detail.ids.length, bounded.detail.more]), JSON.stringify([500, 80, 420]), 'the new entry keeps the count and the first IDs');
+    assert.equal(legacy.detail.truncated, true, 'a truncated older entry is reported, not thrown');
+  });
+  await check('a bulk account save compares against rows read inside the authority lock', async () => {
+    const hash = await makeHash('bulk-target-pass-1');
+    server.store.upsertAccount({ username: 'bulk-target', displayName: 'Bulk Target', salt: '', hash, role: 'technician', roles: ['technician'], extraRoles: [], roleTraining: {} });
+    // The bulk save reads the account list, then a concurrent role change adds a role before its transaction runs.
+    const realAccounts = server.store.accounts.bind(server.store);
+    let first = true;
+    server.store.accounts = (...args) => {
+      const rows = realAccounts(...args);
+      if (first) { first = false; const target = server.store.account('bulk-target'); server.store.upsertAccount({ ...target, extraRoles: ['operator'], roleTraining: { operator: { code: 'ESD', at: new Date(now).toISOString(), by: 'one' } } }); }
+      return rows;
+    };
+    try {
+      const saved = await api('PUT', '/auth/accounts', { token, body: { users: [{ username: 'bulk-target', displayName: 'Bulk Target renamed', role: 'technician' }] } });
+      assert.equal(saved.status, 200, JSON.stringify(saved.json));
+    } finally { server.store.accounts = realAccounts; }
+    const after = server.store.account('bulk-target');
+    assert.equal(JSON.stringify([after.displayName, after.extraRoles]), JSON.stringify(['Bulk Target renamed', ['operator']]), 'the concurrent role change is kept, not overwritten with the stale profile');
   });
   await check('action commits converge derived state that never became a command', async () => {
     const before = server.store.getDoc('default');
