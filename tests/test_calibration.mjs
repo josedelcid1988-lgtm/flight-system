@@ -402,4 +402,25 @@ noFlag.calibrationLog.push(host.withAccount(qa, () => { const e = { ...cwRow, id
 check('an imported log-only entry without a torque answer fails validation and diagnose names it', !MES.validate(noFlag) && MES.diagnose(noFlag)?.where === 'CALLOG-09994' && /torque/.test(MES.diagnose(noFlag)?.detail || ''));
 check('seeded tags recorded without a torque answer still validate', state.calibrationLog.some(e => MES.CAL_TOOLS.some(t => t.tag === e.tag) && e.torque === undefined) && MES.validate(state));
 
+// #35 review (Codex 4134256621): every calibration entry a buy-off cites must resolve to a log row for the same
+// tool, so calibration evidence cannot drop out of the log while the acceptance records that cite it stay valid.
+const refFixture = readFileSync(new URL('./fixtures/demo_publish.html', import.meta.url), 'utf8');
+const refState = MES.upgrade(JSON.parse(refFixture.match(/window\.__DEMO_SEED=(\{[\s\S]*?\});/)[1]));
+const refOrder = refState.orders.find(o => o.operations.some(op => op.buyoff && Array.isArray(op.buyoff.tools) && op.buyoff.tools.length));
+const refOp = refOrder.operations.find(op => op.buyoff && Array.isArray(op.buyoff.tools) && op.buyoff.tools.length), refTag = refOp.buyoff.tools[0].tag;
+const refEntry = host.withAccount(qa, () => MES.recordCalibration(refState, { tag: refTag, description: refOp.buyoff.tools[0].description, serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }), refState);
+refOp.buyoff.tools[0] = { ...refOp.buyoff.tools[0], source: 'Calibration log', calibrationEntry: refEntry.id };
+check('a buy-off that cites an existing calibration entry for its tool validates', refEntry.ok && MES.validate(refState));
+const dangling = structuredClone(refState);
+dangling.calibrationLog = dangling.calibrationLog.filter(e => e.id !== refEntry.id);
+check('a buy-off that cites a calibration entry missing from the log fails validation', !MES.validate(dangling));
+check('diagnose names the work order whose buy-off cites the missing entry', MES.diagnose(dangling)?.where === refOrder.id && new RegExp(refEntry.id).test(MES.diagnose(dangling)?.detail || ''));
+const wrongTool = structuredClone(refState);
+wrongTool.orders.find(o => o.id === refOrder.id).operations.find(op => op.id === refOp.id).buyoff.tools[0].tag = 'OTHER-TAG';
+check('a buy-off citing a calibration entry recorded for another tool fails validation', !MES.validate(wrongTool));
+const danglingAtp = structuredClone(refState), atpOpRef = danglingAtp.orders.find(o => o.id === refOrder.id).operations.find(op => op.id === refOp.id);
+atpOpRef.buyoff.tools[0] = { ...atpOpRef.buyoff.tools[0] }; delete atpOpRef.buyoff.tools[0].calibrationEntry;
+atpOpRef.buyoff.testAssets = [{ asset: refTag, calibrationEntry: 'CALLOG-09995' }];
+check('an ATP test asset citing a missing calibration entry fails validation', !MES.validate(danglingAtp));
+
 console.log(`calibration: ${checks} checks, all passed`);

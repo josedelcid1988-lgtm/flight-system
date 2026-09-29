@@ -2679,6 +2679,24 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   function calibrationStatus(state, tag) {
     return calibrationIndex(state).get(String(tag ?? '').trim().toUpperCase()) || null;
   }
+  // Every calibration entry a work-order buy-off cites (operation tools and ATP test assets) must be a row in the
+  // calibration log for the same tool, so evidence cannot drop out of the log while signed acceptance records that
+  // cite it stay valid. Returns { id, detail } naming the work order, or null.
+  function calibrationReferenceProblem(state) {
+    const logged = new Map((plain(state) && Array.isArray(state.calibrationLog) ? state.calibrationLog : []).filter(plain).map(e => [e.id, e.tag]));
+    for (const o of plain(state) && Array.isArray(state.orders) ? state.orders : []) {
+      for (const op of plain(o) && Array.isArray(o.operations) ? o.operations : []) {
+        const b = plain(op) && plain(op.buyoff) ? op.buyoff : null;
+        if (!b) continue;
+        const cited = [...(Array.isArray(b.tools) ? b.tools : []).map(t => [t && t.calibrationEntry, t && t.tag]), ...(Array.isArray(b.testAssets) ? b.testAssets : []).map(a => [a && a.calibrationEntry, a && a.asset])];
+        for (const [entry, tag] of cited) {
+          if (entry === undefined) continue;
+          if (!logged.has(entry) || logged.get(entry) !== String(tag ?? '').trim().toUpperCase()) return { id: o.id, detail: `Work order ${o.id} operation ${op.id} cites calibration entry ${entry} for ${tag}, which the calibration log does not hold for that tool.` };
+        }
+      }
+    }
+    return null;
+  }
   // The ids of the current entry for every tag, in one pass: the log view marks every other entry superseded
   // and offers a correction only on these (#41). Read-only: the name matches no server-mutator prefix.
   function calibrationCurrentIds(state) {
@@ -3107,6 +3125,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const qualityRecordsValid=state=>{
     if(Object.hasOwn(state,'audits')&&(!Array.isArray(state.audits)||state.audits.length>200||!unique(state.audits.map(a=>a&&a.id))||!state.audits.every(qualityAuditValid)))return false;
     if(Object.hasOwn(state,'calibrationLog')&&(!Array.isArray(state.calibrationLog)||state.calibrationLog.length>5000||!unique(state.calibrationLog.map(e=>e&&e.id))||!state.calibrationLog.every(calibrationEntryValid)||calibrationSequenceProblem(state.calibrationLog)))return false;
+    if(calibrationReferenceProblem(state))return false;
     if(Object.hasOwn(state,'certifications')&&(!Array.isArray(state.certifications)||state.certifications.length>200||!unique(state.certifications.map(c=>c&&c.id))||!state.certifications.every(c=>plain(c)&&/^CERT-\d{4}$/.test(c.id)&&str(c.statement,300)&&c.statement.trim().length>=5&&c.statement===c.statement.trim()&&snapshotValid(c.by)&&timestamp(c.at)&&qualityManifestValid(c.manifest))))return false;
     if(Object.hasOwn(state,'supplierApprovals')&&(!Array.isArray(state.supplierApprovals)||state.supplierApprovals.length>200||!unique(state.supplierApprovals.map(s=>s&&s.id))||!state.supplierApprovals.every(s=>plain(s)&&/^SAP-\d{4}$/.test(s.id)&&str(s.supplier,120)&&s.supplier.trim().length>=2&&s.supplier===s.supplier.trim()&&s.decision==='Approved'&&snapshotValid(s.by)&&timestamp(s.at)&&qualityManifestValid(s.manifest))))return false;
     if(Object.hasOwn(state,'qualityValues')&&(!Array.isArray(state.qualityValues)||state.qualityValues.length>400||!unique(state.qualityValues.map(v=>v&&v.id))||!state.qualityValues.every(v=>plain(v)&&/^QV-\d{4}$/.test(v.id)&&QUALITY_KINDS.includes(v.kind)&&typeof v.value==='number'&&Number.isFinite(v.value)&&str(v.name,80,0)&&v.name===v.name.trim())))return false;
@@ -7391,6 +7410,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
       const sequence = calibrationSequenceProblem(log);
       if (sequence) return { where: sequence.id, detail: `${sequence.detail} ${review}`, fix: null };
     }
+    { const reference = calibrationReferenceProblem(state); if (reference) return { where: reference.id, detail: `${reference.detail} The saved workspace was not changed; a QA Manager must review this buy-off against the calibration log.`, fix: null }; }
     if (!supportLogValid(state.supportLog)) return { where: 'supportLog', detail: 'The Support Overrides log has a malformed or duplicate entry.', fix: s => { const seen = new Set(); const keep = [], bad = []; (Array.isArray(s.supportLog) ? s.supportLog : []).forEach(e => (supportEntryValid(e) && !seen.has(e.id) && seen.add(e.id) ? keep : bad).push(e)); s.supportLog = keep.slice(0, SUPPORT_LOG_MAX); s.supportLogQuarantine = [...bad, ...(Array.isArray(s.supportLogQuarantine) ? s.supportLogQuarantine : [])].slice(0, 1000); } };
     if (Object.hasOwn(state, 'masterWIs') && !masterWIsValid(state.masterWIs)) {
       const wi = Array.isArray(state.masterWIs) ? state.masterWIs.find(item => !masterWIValid(item)) : null;
