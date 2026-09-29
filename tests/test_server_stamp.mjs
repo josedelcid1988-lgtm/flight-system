@@ -26,6 +26,8 @@ try {
   for (const [name, html] of [['committed.html', committed], ['released.html', released]]) {
     const server = createServer({ dbPath: ':memory:', indexPath: write(name, html), quiet: true, setupCode: 'stamp-test-setup-code' });
     servers.push(server);
+    // Records written by server actions carry the same stamp as the page the server serves.
+    assert.deepEqual({ ...server.host.MES.buildStamp() }, { version: build, sha256: tag(released) }, `${name}: server actions record the build's SHA-256, not the placeholder`);
     const port = await server.listenAsync(0, '127.0.0.1');
     const page = await (await fetch(`http://127.0.0.1:${port}/`)).text();
     assert.notEqual(tag(page), 'unstamped', `${name}: the served page never carries the placeholder`);
@@ -33,7 +35,7 @@ try {
     // The server adds its own context script to the head; without it the page is the stamped file byte for byte.
     assert.equal(page.replace(/<script id="flight-server">[\s\S]*?<\/script>/, ''), released, `${name}: the served page is the stamped file`);
   }
-  console.log('server stamp: a checkout serves the release stamp for its build; a stamped release file is served as it is');
+  console.log('server stamp: a checkout serves the release stamp for its build and server actions record it; a stamped release file is served as it is; an edited one is refused');
 } finally {
   for (const server of servers) server.close?.();
   fs.rmSync(dir, { recursive: true, force: true });
