@@ -86,15 +86,25 @@ try {
   assert.match(reload.message, /has not loaded from the server/);
   assert.equal(reload.readyAgain, true, 'a successful reload makes the workspace ready again');
 
-  // Resetting the workspace is refused the same way; nothing on this device is replaced.
+  // A shared server workspace is never reset from a page, even signed in and ready: nothing on this device is
+  // cleared or replaced, and no snapshot is sent for the server to refuse.
   const reset = await page.evaluate(() => {
-    const token = sessionStorage.getItem('skyryse-mes-server-token-v1'), stored = localStorage.getItem(KEY), before = JSON.stringify(state);
-    sessionStorage.removeItem('skyryse-mes-server-token-v1');
-    try { resetWorkspace(); return { unchanged: JSON.stringify(state) === before, storedUnchanged: localStorage.getItem(KEY) === stored, toast: document.querySelector('#toast p')?.textContent || '' }; }
-    finally { sessionStorage.setItem('skyryse-mes-server-token-v1', token); }
+    const stored = localStorage.getItem(KEY), before = JSON.stringify(state);
+    resetWorkspace();
+    return { unchanged: JSON.stringify(state) === before, storedUnchanged: localStorage.getItem(KEY) === stored, toast: document.querySelector('#toast p')?.textContent || '' };
   });
   assert.deepEqual({ unchanged: reset.unchanged, storedUnchanged: reset.storedUnchanged }, { unchanged: true, storedUnchanged: true }, 'a refused reset changes nothing');
-  assert.match(reset.toast, /Sign in to the shared server/, 'the reset refusal says what to do');
+  assert.match(reset.toast, /cannot be reset from this page/, 'the reset refusal says why');
+
+  // After a shared workspace load succeeds, the signed-in account's stamp profile is bound again: binding is refused
+  // while the workspace loads, so an in-place account switch would otherwise keep the previous account's profile.
+  const rebound = await page.evaluate(async () => {
+    let calls = 0; const bind = window.skBindCredential;
+    window.skBindCredential = () => { calls++; return bind(); };
+    try { await loadServerWorkspace(); } finally { window.skBindCredential = bind; }
+    return calls;
+  });
+  assert.equal(rebound, 1, 'a successful shared workspace load binds the credential again');
 
   // A traveler is printed only when its print record can reach the server.
   const orderId = await page.evaluate(() => {
@@ -115,6 +125,15 @@ try {
   assert.equal(traveler.opened, 0, 'the traveler is not opened when its print record is refused');
   assert.equal(traveler.historyUnchanged, true, 'no print record is kept on this device');
   assert.match(traveler.toast, /Sign in to the shared server/, 'the print refusal says what to do');
+  // When the print record cannot be saved on this device (storage unavailable), nothing is printed either.
+  const unsaved = await page.evaluate(id => {
+    const opened = []; const open = window.open; window.open = () => { opened.push(1); return null; };
+    const history = JSON.stringify(MES.getOrder(state, id).history || []);
+    storageBlocked = true;
+    try { printTraveler(id); return { opened: opened.length, historyUnchanged: JSON.stringify(MES.getOrder(state, id).history || []) === history, queue: serverActionQueue.length }; }
+    finally { storageBlocked = false; window.open = open; }
+  }, orderId);
+  assert.deepEqual(unsaved, { opened: 0, historyUnchanged: true, queue: 0 }, 'an unsaved print record means no traveler is printed');
 
   const views = await serverViews();
   assert.ok(views.includes('Record path sent') && !views.some(name => name.startsWith('Refused')), `the server record is unchanged by the refused attempts: ${views.join(', ')}`);
