@@ -10876,10 +10876,13 @@ function trackServerMutations(namespace,engine){
     if(typeof original!=='function'||(!serverMutatorName.test(name)&&!serverMutatorExact.has(name))||serverMutatorExclude.has(name)||original.__serverCommandWrapped)return;
     const wrapped=function(){
       const args=Array.from(arguments),candidate=args[0];
-      // A change to the live workspace, or to a proposed copy of it that a caller will commit.
+      // A change to the live workspace, or to a proposed copy of it that a caller will commit. The copy is
+      // compared against the live workspace, not the last saved snapshot: render-time ensure passes (for example
+      // FlightManeuver.ensure in render) can move the live workspace ahead of the last saved snapshot, and a
+      // pristine proposed copy must still be recognized so its action is queued instead of dropped by reconcile.
       let record=!!(candidate&&typeof candidate==='object'&&(candidate===state||serverCommandStates.has(candidate)));
       if(!record&&candidate&&typeof candidate==='object'){
-        try{record=JSON.stringify(candidate)===JSON.stringify(lastSaved);if(record)serverCommandStates.add(candidate);}catch(e){}
+        try{record=JSON.stringify(candidate)===JSON.stringify(state);if(record)serverCommandStates.add(candidate);}catch(e){}
       }
       const server=!!(window.skServer&&window.skServer.active),outer=serverCommandDepth===0;
       let actionArgs=null;
