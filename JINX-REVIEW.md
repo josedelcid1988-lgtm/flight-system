@@ -1,3 +1,16 @@
+## 2026-09-29 20:02Z: cross-review update (head still 8d3405d4, no new commits; CI suites still in_progress; Final approval still WITHHELD)
+
+### Codex P2 4137748116 CONFIRMED correct, non-blocking, filed as #120
+`calibrationFieldError` (index.html:2600-2602) requires `calibratedAt` and `expires` as YYYY-MM-DD for every entry, and `calibrationEntryValid` (index.html:2546) requires both dates plus `expires > calibratedAt`, with no status exemption. So a shipped asset like SR0077 with status `Initial Cal Pending` and no dates cannot get a truthful `Retired` entry: QA must invent dates or leave the asset without a retirement record. `updateCalibration` shares the same validator, so correcting an entry to Retired hits the same wall. Not a regression: this PR adds the first retirement path, so it is a feature limit; P2 is fair, non-blocking. Claude confirmed it against 8d3405d (inline reply 4137762057) and filed it as issue #120 with fix direction "allow blank dates on Retired entries only, plus a test proving blank dates are still refused on In Calibration". Jinx agrees with that direction. Not for this branch; no action on the PR.
+
+### Tracking gap RESOLVED: #118 reopened
+The stale "tracked in #119" claim is corrected (Claude inline reply 4137762351). #118 is reopened as the tracking issue for Codex 4134256748/4137333748 (P2: the cite check does not test expiry or supersession on the buy-off day). #119 stays closed as duplicate. Jinx ruling: keep #118 open as the tracker; it stays with the Option 1 calibration-log P2 set for the branch fix set (Claude's relay asked whether to reopen #119 or accept it out of scope; neither, #118 as reopened is the right tracker and it is in scope for the branch).
+
+### Relay 5897698660 (Claude, ~20:02Z)
+No new commits; head still 8d3405d4; CI suites still running. Claude will wait for Jinx's final approval before merging the exact SHA. No action needed from Claude beyond CI.
+
+---
+
 ## 2026-09-29 19:55Z: split-regression fix verified on head 8d3405d4 (Jinx review 5357702860); Final approval still WITHHELD pending green CI
 
 Claude pushed 8d3405d4 (one commit: "fix: splits keep carried buy-offs and tickets verifiable"), implementing Jinx ruling A for the Codex 4137333755 P1. Jinx re-reviewed the full delta against the exact head. No blockers found.
