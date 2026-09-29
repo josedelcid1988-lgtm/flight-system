@@ -120,4 +120,12 @@ check('a seeded torque wrench with no log entry still classifies as a torque too
 const ntRec = run(qa, () => MES.recordCalibration(state, { tag: 'NT-TOOL', description: 'CLICK WRENCH', serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }));
 const ntCheck = MES.toolCheck('NT-TOOL', now, state);
 check('a log-only tool without TORQUE in its description is not a torque tool', ntRec.ok && ntCheck.ok && MES.isTorqueTool(ntCheck.tool) === false);
+
+// #38: the asset tag rule matches its message and the form's maxlength: 2 to 40 characters.
+const tag40 = 'T' + '1'.repeat(39);
+const rec40 = run(qa, () => MES.recordCalibration(state, { ...entry, tag: tag40 }));
+check('a 40-character asset tag is accepted', tag40.length === 40 && rec40.ok && MES.validate(state));
+const rec41 = run(qa, () => MES.recordCalibration(state, { ...entry, tag: tag40 + '2' }));
+check('a 41-character asset tag is refused with the 2 to 40 message', !rec41.ok && /2 to 40/.test(rec41.message));
+check('a 1-character asset tag is refused', !run(qa, () => MES.recordCalibration(state, { ...entry, tag: 'X' })).ok);
 console.log(`calibration: ${checks} checks, all passed`);

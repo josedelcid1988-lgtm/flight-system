@@ -2515,7 +2515,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // (toolCheck prefers the log when a workspace is passed). A correction appends a new entry that
   // supersedes the original; the original stays in the log untouched.
   const CALIBRATION_STATUSES = Object.freeze(['In Calibration', 'Out for Calibration', 'Quarantined', 'Retired']);
-  const CALIBRATION_TAG_RE = /^[A-Z0-9][A-Z0-9-]{1,38}$/;
+  const CALIBRATION_TAG_RE = /^[A-Z0-9][A-Z0-9-]{1,39}$/;
   // A calibration entry's manifest must be well-formed, hash-bound to this entry's subject,
   // and bound to this entry by meaning, signing time, and signer, the same pattern other
   // signed records use. Presence alone is not enough: an emptied manifest would otherwise
