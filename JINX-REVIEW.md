@@ -1,3 +1,11 @@
+## 2026-09-29 20:26Z: Jinx Final approval posted (head 8d3405d4, CI suites SUCCESS)
+
+**Do-not-merge checklist: CLEARED.** CI `suites` completed SUCCESS on the exact head 8d3405d4 (2026-09-29T20:23:19Z). The carriedFrom split-regression fix was verified against this exact head (review 5357702860); security pass clean; waste pass clean; no new reviews/comments since. Jinx Final approval posted as review 5357979193 (COMMENT; +1 reaction set). Jinx's gate condition is met: clean review + green CI on the exact head. Claudia may merge this PR through the PR button on 8d3405d4. Do not merge a different head without a new Jinx approval.
+
+Open follow-ups live on as issues, not on this branch: #118 (cite check expiry/supersession), #120 (Retired without dates), plus the rest of the calibration-log P2/P3 set per the owner's Option 1 ordering.
+
+---
+
 ## 2026-09-29 20:02Z: cross-review update (head still 8d3405d4, no new commits; CI suites still in_progress; Final approval still WITHHELD)
 
 ### Codex P2 4137748116 CONFIRMED correct, non-blocking, filed as #120
