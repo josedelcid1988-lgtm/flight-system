@@ -1,4 +1,4 @@
-<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v82"><meta name="fs-build-sha256" content="1d7876f8d9e7ba2968d1234d4bb0f6b492cd6ee0b46e11f1b51798de524a6dd3"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><!-- FLIGHT REACT ASSETS BEGIN -->
+<!doctype html><!-- Build id and SHA-256 below are written by tools/stamp-build.mjs from VERSION.md. Do not edit them by hand. --><html><head><meta charset=utf8><meta name="fs-build" content="v82"><meta name="fs-build-sha256" content="80de13034e798c8e9883104267ea4afda1bbfbf71cf9a28cc5cb68381588407a"><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><!-- FLIGHT REACT ASSETS BEGIN -->
 <link rel="stylesheet" href="assets/flight-ui-fonts.css">
 <link rel="stylesheet" href="assets/flight-ui.css">
 <link rel="stylesheet" href="assets/flight-plan-react.css">
@@ -10884,12 +10884,13 @@ function trackServerMutations(namespace,engine){
     if(typeof original!=='function'||(!serverMutatorName.test(name)&&!serverMutatorExact.has(name))||serverMutatorExclude.has(name)||original.__serverCommandWrapped)return;
     const wrapped=function(){
       const args=Array.from(arguments),candidate=args[0];
-      // A change to the live workspace, or to a proposed copy of it that a caller will commit.
+      // A change to the live workspace, or to a proposed copy of it that a caller will commit. The copy is
+      // compared against the live workspace, not the last saved snapshot: render-time ensure passes (for example
+      // FlightManeuver.ensure in render) can move the live workspace ahead of the last saved snapshot, and a
+      // pristine proposed copy must still be recognized so its action is queued instead of dropped by reconcile.
       let record=!!(candidate&&typeof candidate==='object'&&(candidate===state||serverCommandStates.has(candidate)));
-      // Callers propose a change on a clone of the live workspace. The live workspace can differ from lastSaved
-      // (upgrade convergence fills derived fields after a save), so a clone of either is the same record change.
       if(!record&&candidate&&typeof candidate==='object'){
-        try{const copy=JSON.stringify(candidate);record=copy===JSON.stringify(lastSaved)||copy===JSON.stringify(state);if(record)serverCommandStates.add(candidate);}catch(e){}
+        try{record=JSON.stringify(candidate)===JSON.stringify(state);if(record)serverCommandStates.add(candidate);}catch(e){}
       }
       const server=!!(window.skServer&&window.skServer.active),outer=serverCommandDepth===0;
       let actionArgs=null;
