@@ -39,6 +39,42 @@ try {
     const shown = await show(name);
     assert.equal(shown.react, false, `${name} stays on the legacy view in this build`);
   }
+  // The Flight Maneuver detail views stay on legacy, but their React version is bundled and reads its formatting helpers
+  // from window.FlightManeuverUI.helpers. Rendered directly, each one renders without page errors, so routing them to
+  // React later cannot crash on a missing export.
+  const helpers = await page.evaluate(() => Object.fromEntries(['dt', 'historyList', 'mrbProposalNote'].map(k => [k, typeof window.FlightManeuverUI.helpers?.[k]])));
+  assert.deepEqual(helpers, { dt: 'function', historyList: 'function', mrbProposalNote: 'function' }, 'Flight Maneuver exports the helpers its React detail views use');
+  for (const name of ['mnv-board', 'mnv-nc', 'mnv-pfmea', 'mnv-pfmea-detail', 'mnv-changes', 'mnv-metrics', 'mnv-feedback']) {
+    const before = errors.length;
+    const thrown = await page.evaluate(async next => {
+      const host = document.createElement('div'); host.hidden = true; document.body.appendChild(host);
+      try { window.FlightReact.renderManeuverDetail(host, state, MES, window.FlightManeuver, window.FlightManeuverUI.sel, skCan, window.FlightManeuverUI.helpers, next); await new Promise(done => setTimeout(done, 50)); return null; }
+      catch (error) { return error.message; }
+      finally { window.FlightReact.unmount?.(); host.remove(); }
+    }, name);
+    assert.equal(thrown, null, `${name}: the React detail view renders without throwing`);
+    assert.deepEqual(errors.slice(before), [], `${name}: the React detail view renders without page errors`);
+  }
+  // With a record open, each detail view shows its history as a real disclosure list, never as escaped markup text.
+  const opened = await page.evaluate(async () => {
+    const FM = window.FlightManeuver, out = {};
+    const ids = { board: FM.list(state, 'mrb')[0]?.id, nc: FM.list(state, 'ncs')[0]?.id, pfmea: FM.list(state, 'pfmeas')[0]?.id };
+    for (const [next, key] of [['mnv-board', 'board'], ['mnv-nc', 'nc'], ['mnv-pfmea-detail', 'pfmea']]) {
+      const host = document.createElement('div'); host.hidden = true; document.body.appendChild(host);
+      try {
+        window.FlightReact.renderManeuverDetail(host, state, MES, FM, { ...window.FlightManeuverUI.sel, [key]: ids[key] }, skCan, window.FlightManeuverUI.helpers, next);
+        await new Promise(done => setTimeout(done, 50));
+        out[next] = { id: ids[key], history: !!host.querySelector('details.resolve-details ol.mnv-history'), escaped: /<details|<ol|<li/.test(host.textContent) };
+      } finally { window.FlightReact.unmount?.(); host.remove(); }
+    }
+    return out;
+  });
+  for (const [name, shown] of Object.entries(opened)) {
+    assert.ok(shown.id, `${name}: the fixture has a record to open`);
+    assert.deepEqual({ history: shown.history, escaped: shown.escaped }, { history: true, escaped: false }, `${name}: the record history renders as a list, not escaped markup`);
+  }
+  assert.deepEqual(errors, []);
+  await show('home');
   const orderView = await show('order', 'selectedId = state.orders[0].id; tab = "operations"; selectedOp = null;');
   assert.equal(orderView.react, false, 'work order detail stays on the legacy view in this build');
   assert.deepEqual(errors, []);
