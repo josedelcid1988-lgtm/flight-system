@@ -1017,8 +1017,11 @@ function MnvTable({ caption, columns, rows, empty, className }) {
 const mnvWho = a => a ? <>{a.name} · {a.credentialId}</> : '';
 
 function ManeuverDetail({ state, MES, FM, sel, skCan, helpers, view }) {
-  const { dt, historyList, mrbProposalNote } = helpers;
+  const { dt } = helpers;
   const who = mnvWho;
+  // A record's history, newest first, as the legacy Flight Maneuver view shows it. helpers.historyList is that view's
+  // HTML string, which React would print as text, so the same markup is built here.
+  const historyList = h => <details className="resolve-details"><summary>History ({h.length})</summary><ol className="task-list mnv-history">{h.slice().reverse().map((e, i) => <li key={i}><span className="task-main"><strong>{e.action}</strong><small>{e.actor} · {dt(e.at)}</small></span></li>)}</ol></details>;
   const carLink = id => id ? <button className="order-link" data-action="mnv-open-car" data-car={id}>{id}</button> : <span className="muted">None</span>;
   const waitNote = m => <MnvWait>{m}</MnvWait>;
   const pfmeaEditorCan = () => skCan('edit-wi') || skCan('approve-wi');
