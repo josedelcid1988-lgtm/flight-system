@@ -267,9 +267,6 @@ const setUpAccounts = async call => {
 
 // Standalone (browser storage only): there is no archive store, so the archive is refused and the warning says so.
 {
-  const saved = structuredClone(nearState);
-  saved.masterWIs = MES.ensureMasterWIs(structuredClone(saved)).masterWIs;
-  host.FlightManeuver.ensure(saved);
   const browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
   try {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -284,10 +281,11 @@ const setUpAccounts = async call => {
     await page.locator('#sk-confirm').fill('qa-admin-pass');
     await page.locator('#sk-login-submit').click();
     await page.locator('#sk-boot').waitFor({ state: 'hidden', timeout: 15000 });
-    await page.evaluate(raw => localStorage.setItem('skyryse-mes-work-order-v1', raw), JSON.stringify(saved));
-    await page.reload();
-    await page.waitForFunction(() => typeof state === 'object' && Array.isArray(state.calibrationLog) && state.calibrationLog.length === 4500, null, { timeout: 30000 });
-    await page.evaluate(() => { view = 'qms-records'; render(); });
+    // A log this size is larger than browser storage allows once every manifest carries the build stamp, so it is put
+    // into the open page's workspace directly rather than through localStorage. That is also why archiving needs the
+    // server: a standalone workspace reaches the browser storage limit before the calibration log limit.
+    await page.evaluate(raw => { const near = JSON.parse(raw); state.calibrationLog = near.calibrationLog; state.calibrationLogHead = near.calibrationLogHead; view = 'qms-records'; render(); }, JSON.stringify({ calibrationLog: nearState.calibrationLog, calibrationLogHead: nearState.calibrationLogHead }));
+    check('standalone: the page holds the near-limit log and it validates', await page.evaluate(() => state.calibrationLog.length === 4500 && MES.validate(state)));
     const warning = page.locator('#main [data-calibration-capacity]');
     await warning.waitFor({ state: 'visible', timeout: 15000 });
     const text = await warning.innerText();
