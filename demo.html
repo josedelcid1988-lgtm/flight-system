@@ -2693,8 +2693,11 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // shows as a break. The chain is additive: signature manifests are computed and verified exactly as before.
   // Entries recorded before the chain existed carry no previousHash; they are allowed only as the leading run of the
   // log, and MES.upgrade seals such a log once by writing its head with legacyCount and sealedAt.
-  // Scope: this catches mistakes (a truncated file, a bad import, a stale copy). The hashes are unkeyed SHA-256, so
-  // someone who edits the log and recomputes every hash and the head is not stopped by it.
+  // Scope: this catches mistakes (a truncated file, a bad import, an entry added outside the application). It does not
+  // catch a whole-workspace restore of an earlier, internally consistent snapshot in standalone or offline use: the head
+  // lives in the workspace, so the restore brings back the log and its matching head and the chain passes (#165). The
+  // hashes are unkeyed SHA-256, so someone who edits the log and recomputes every hash and the head is not stopped by it.
+  // The system catches mistakes; it does not try to defeat a determined bad actor.
   // canonicalPayload keeps every key, including the entry's own calibrationSignature.manifest: canonical drops nested
   // manifest keys, which would leave the signature metadata outside the chain.
   const calibrationEntryHash = entry => sha256(canonicalPayload(entry));
@@ -3176,7 +3179,10 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     return stamp.ok && !stamp.holder.demo /* DEMO D-14 */ && stamp.holder.buyoffType !== type ? fail(`This operation needs a ${type} buy-off. ${stamp.holder.name} holds a ${stamp.holder.buyoffType} credential.`) : stamp;
   }
   const can = cap => !(typeof window !== 'undefined' && window.skAuth) || window.skAuth.can(cap);
-  const denied = (cap, what) => can(cap) ? null : fail(`Your role cannot ${what}. Ask the QA Manager to change your role.`);
+  // The one role refusal message (#134). The Flight Maneuver engine uses it through MES.roleDeniedMessage, so the
+  // wording cannot drift between engine scopes.
+  const roleDeniedMessage = what => `Your role cannot ${what}. Ask the QA Manager to change your role.`;
+  const denied = (cap, what) => can(cap) ? null : fail(roleDeniedMessage(what));
   const snapshotValid = p => plain(p) && str(p.name, 80) && !!p.name.trim() && str(p.role, 80) && str(p.credentialId, 40) && !!p.credentialId.trim();
   const DISPOSITIONS = Object.freeze(['Use as is', 'Use for Dev', 'Rework', 'Repair', 'Scrap', 'Return to supplier', 'Rejected in Error']);
   const MRB_PEDIGREES = Object.freeze(['Production', 'Development']);
@@ -3375,7 +3381,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // Document control follows the work instruction authorities: a person who may author WIs (edit-wi) or approve them for
   // Quality (approve-wi) authors a controlled document or starts its next revision; only Quality WI approval (approve-wi)
   // reviews and releases one. Author, reviewer and releaser stay three different people.
-  const controlledDocumentAuthorDenied=()=>can('edit-wi')||can('approve-wi')?null:fail('Your role cannot author a controlled document. Ask the QA Manager to change your role.');
+  const controlledDocumentAuthorDenied=()=>can('edit-wi')||can('approve-wi')?null:fail(roleDeniedMessage('author a controlled document'));
   function createControlledDocument(state,input,revisionOf=false){
     {const d=controlledDocumentAuthorDenied();if(d)return d;}
     const bad=controlledDocumentReady(state);if(bad)return bad;if(qualityIsAgent(input))return fail('An agent cannot author a controlled document.');
@@ -6142,7 +6148,7 @@ const OP_BOM_MAX = 12;
 
   // Operation attachments follow the step media on the same operation: the person running it (operate-steps) or
   // inspecting it (inspect-steps).
-  const attachmentDenied = what => can('operate-steps') || can('inspect-steps') ? null : fail(`Your role cannot ${what}. Ask the QA Manager to change your role.`);
+  const attachmentDenied = what => can('operate-steps') || can('inspect-steps') ? null : fail(roleDeniedMessage(what));
   function addAttachment(state, orderId, opId, input) {
     { const d = attachmentDenied('attach files to an operation'); if (d) return d; }
     const { order, error } = target(state, orderId);
@@ -6396,7 +6402,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   // Inspection operations: Inspection classification, or an inspection point (Quality, 8130-9 or Conformity Inspector buy-off).
   const isInspectionOp = op => !!op && (op.classification === 'Inspection' || op.classification === SOURCE_INSPECTION_CLASS || op.inspectionPoint === true);
   // Running operations needs operate-steps. Inspection operations need the Quality role capability.
-  const stepsDenied = (operation, what) => isInspectionOp(operation) ? (can('inspect-steps') ? null : fail(`A current Quality inspection stamp assigned to your account is required to ${what}. Ask a QA Manager to assign or renew your stamp.`)) : (can('operate-steps') ? null : fail(`Your role cannot ${what} outside an inspection operation. Ask the QA Manager to change your role.`));
+  const stepsDenied = (operation, what) => isInspectionOp(operation) ? (can('inspect-steps') ? null : fail(`A current Quality inspection stamp assigned to your account is required to ${what}. Ask a QA Manager to assign or renew your stamp.`)) : (can('operate-steps') ? null : fail(roleDeniedMessage(`${what} outside an inspection operation`)));
   // Nobody inspects their own work. An inspection operation covers every build operation since the previous
   // inspection operation. Anyone who bought off or checked a step on one of those cannot check off or buy off
   // the inspection. No role is exempt and no override lifts it: Master Access and Support Access included.
@@ -8230,6 +8236,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   MES.upgrade = state => { const upgraded = upgradeWithPlanner(state); if (!upgraded) return null; ensurePlanner(upgraded); if(!Array.isArray(upgraded.controlledDocuments))upgraded.controlledDocuments=[];if(!Array.isArray(upgraded.modelAdapterHistory))upgraded.modelAdapterHistory=[];if(!Array.isArray(upgraded.aiActionLog))upgraded.aiActionLog=[];if(!Array.isArray(upgraded.aiSkillDrafts))upgraded.aiSkillDrafts=[];if(!Array.isArray(upgraded.aiSkillTriggers))upgraded.aiSkillTriggers=[];if(!Array.isArray(upgraded.aiSkillTriggerHistory))upgraded.aiSkillTriggerHistory=[];if(!Array.isArray(upgraded.calibrationLog))upgraded.calibrationLog=[];if(!plain(upgraded.modelAdapter))upgraded.modelAdapter=emptyModelAdapter(); ensureInventoryLedger(upgraded); ensureResources(upgraded); ensureProjects(upgraded); syncPlanningBlockers(upgraded); return upgraded; };
   Object.assign(MES, { archivable, archiveOrders, archivedOrderValid, ownWorkRefusal, coveredBuildOps, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, verifyManifests, reviewFair, NFF, recordTraining, personTraining, trainingCurrentFor, trainingCertificateValid, ownWorkHit, OWN_WORK_EXEMPT_PEDIGREES, scryptHex, PIN_KDF, saveTraining, trainingCatalog, requiredTrainings, trainingDef, TRAINING_CODE_RE, importStamps, stampRegisterCsv, nextStampNumber, isPlaceholderStamp, STAMP_NUMBER_RE, wiAuthors, wiAuthorRefusal, wiPeerReviewRefusal, buildStamp, buildStampValid, supportActor, supportGrant, logSupport, SUPPORT_RULES, SUPPORT_KINDS, recordSupportAccess, noteDemoBypassRemoved, supportLogValid, recordCalibration, updateCalibration, calibrationStatus, calibrationChainProblem, calibrationEntryHash, calibrationLegacyHash, calibrationLogChanges, calibrationCurrentIds, calibratedToolChecks, toolUseRecords, calibrationEntryValid, CALIBRATION_STATUSES });
   Object.assign(MES, { SOURCE_INSPECTION_CLASS, SOURCE_INSPECTION_CODES, CONFORMITY_SUBCODES, TEST_SUBCODES, operationType, migrateOperationTypes, sourceInspectionCodes, conformitySubcodes, testSubcodes, operationSubcodes, operationSubcode, saveSourceInspectionCodes, saveOperationSubcodes, mrbTrainingTiers, saveMrbTrainingTiers, recordSourceInspection, sourceInspectionHolds, sourceInspectionWorkspaceValid });
+  MES.roleDeniedMessage = roleDeniedMessage;
   const validateWithSourceInspection = MES.validate;
   MES.validate = state => validateWithSourceInspection(state) && sourceInspectionWorkspaceValid(state);
   if (typeof module !== 'undefined' && module.exports) module.exports = MES;
@@ -8424,7 +8431,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   const now = () => new Date().toISOString();
   const clean = v => String(v ?? '').trim();
   const can = cap => !(root && root.skAuth) || root.skAuth.can(cap);
-  const denied = (cap, what) => can(cap) ? null : fail(`Your role cannot ${what}. Ask the QA Manager to change your role.`);
+  const denied = (cap, what) => can(cap) ? null : fail(MES.roleDeniedMessage(what));
   const accountRole = () => { const a = root && root.skAuth && root.skAuth.actor && root.skAuth.actor(); return a ? a.accountRole : null; };
   const actor = state => { const a = root && root.skAuth && root.skAuth.actor && root.skAuth.actor(); return a ? { name: a.name, role: a.role, credentialId: a.credentialId, account: a.account } : { name: state.profile.name, role: state.profile.role, credentialId: state.profile.credentialId, account: null }; };
   const actorValid = a => plain(a) && str(a.name, 80) && str(a.role, 80) && str(a.credentialId, 40) && (a.account === null || str(a.account, 60));

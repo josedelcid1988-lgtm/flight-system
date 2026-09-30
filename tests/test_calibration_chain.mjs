@@ -1,7 +1,8 @@
 // The hash-chained calibration log (#116, #117): each entry links to the one before it, the workspace keeps a
 // head (entry count and last hash), and the server keeps the stored log append-only. Every rule is checked with
-// the change it refuses. Scope: this catches a truncated file, a bad import or a stale copy; the hashes are
-// unkeyed SHA-256, so someone who recomputes every hash and the head is not stopped by it.
+// the change it refuses. Scope: this catches a truncated file or a bad import. A standalone restore of an earlier,
+// internally consistent workspace brings back its matching head and passes (#165); the hashes are unkeyed SHA-256,
+// so someone who recomputes every hash and the head is not stopped by it.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
