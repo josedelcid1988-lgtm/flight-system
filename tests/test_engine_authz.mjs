@@ -89,8 +89,14 @@ const openBoard = (h, state) => h.withAccount(qm, () => {
   check('Quality (approve-nc) removes a file from an open MRB board', (() => { const id = files('mrb', mrbId)[0]; return run(qe, () => FlightManeuver.removeRecordFile(state, 'mrb', mrbId, id)).ok && !files('mrb', mrbId).includes(id); })());
   // Removing once the record is closed: refused for every role, the QA Manager included, and the file stays.
   check('a Quality manager cancels the CAR for the closed record check', run(qm, () => FlightManeuver.cancelCAR(state, car.id, 'Raised in error.')).ok);
-  for (const [kind, rec, word] of [['ncs', resolvedNc, 'resolved'], ['mrb', decidedBoard, decidedBoard.status.toLowerCase()], ['cars', car, 'cancelled']]) {
-    const label = kind === 'ncs' ? 'NC' : kind === 'mrb' ? 'MRB board' : 'CAR';
+  // A problem report taken to Closed through the engine: raised, sent to Jira, closed from Jira, with a file on it first.
+  const spr = run(qm, () => FlightManeuver.raiseSPR(state, { title: 'Fault code on start', partNumber: 'SR-FC-200', serial: 'FC-200-00003', foundAt: 'HIL', defectCode: 'TEST', subCode: 'TEST-01', description: 'Fault code on first start.', occurred: new Date().toISOString().slice(0, 10) }));
+  const sprAttached = spr.ok && run(technician, () => FlightManeuver.addRecordFile(state, 'sprs', spr.id, photo)).ok;
+  const sprClosed = sprAttached && run(qm, () => FlightManeuver.linkSPRJira(state, spr.id, 'SPR-123')).ok && run(qm, () => FlightManeuver.closeSPR(state, spr.id, 'Resolved in Jira.')).ok;
+  const closedSpr = spr.ok && FlightManeuver.get(state, 'sprs', spr.id);
+  check('a problem report with a file is raised, sent to Jira and closed for the closed record check', sprClosed && closedSpr.status === 'Closed' && files('sprs', spr.id).length === 1);
+  for (const [kind, rec, word] of [['ncs', resolvedNc, 'resolved'], ['mrb', decidedBoard, decidedBoard.status.toLowerCase()], ['cars', car, 'cancelled'], ['sprs', closedSpr, 'closed']]) {
+    const label = kind === 'ncs' ? 'NC' : kind === 'mrb' ? 'MRB board' : kind === 'sprs' ? 'problem report' : 'CAR';
     const fileId = files(kind, rec.id)[0];
     for (const who of [qm, qe, me]) {
       const before = JSON.stringify(state);
