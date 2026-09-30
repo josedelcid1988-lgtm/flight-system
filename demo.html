@@ -36,14 +36,13 @@
   var moved = function (list) { return list.filter(Boolean); };
   each(out.orders, function (order) {
     if (!order || order.status === 'Closed') return;
-    var changes = moved([move(order, 'start', 'Planned start'), move(order, 'due', 'due')]);
-    each(order.conformity, function (p) { if (p && p.form == null && p.status !== 'Closed') changes = changes.concat(moved([move(p, 'mdlReceived', 'conformity package ' + p.serial + ' MDL copy received')])); });
-    if (changes.length && Array.isArray(order.history)) order.history.push({ id: order.id + '-demo-dates', at: at, action: note(changes), actor: ACTOR });
+    var changes = moved([move(order, 'start', 'Planned start'), move(order, 'due', 'due')]), mdl = [];
+    each(order.conformity, function (p) { if (p && p.form == null && p.status !== 'Closed') mdl = mdl.concat(moved([move(p, 'mdlReceived', 'conformity package ' + p.serial + ' MDL copy received')])); });
+    if (mdl.length && Array.isArray(order.history)) order.history.push({ id: order.id + '-demo-dates', at: at, action: note(changes.concat(mdl)), actor: ACTOR });
   });
   each(out.plannedOrders, function (po) {
     if (!po || (po.status !== 'Planned' && po.status !== 'Firm')) return;
-    var changes = moved([move(po, 'needDate', 'Need date')]);
-    if (changes.length && Array.isArray(po.history)) po.history.push({ at: at, action: note(changes), actor: ACTOR });
+    move(po, 'needDate', 'Need date');
   });
   each(out.woRequests, function (r) { if (r && r.status === 'Open') move(r, 'needBy', 'Need by'); });
   each(out.maneuver && out.maneuver.cars, function (car) {
@@ -54,9 +53,8 @@
   });
   each(out.stamps, function (stamp) {
     if (!stamp) return;
-    var changes = moved([move(stamp, 'expires', 'Expiry')]);
-    each(stamp.qualifications, function (q) { changes = changes.concat(moved([move(q, 'expires', (q && q.buyoffType ? q.buyoffType : 'qualification') + ' expiry')])); });
-    if (changes.length && Array.isArray(stamp.history)) stamp.history.push({ at: at, by: 'demo build', action: note(changes) });
+    move(stamp, 'expires', 'Expiry');
+    each(stamp.qualifications, function (q) { move(q, 'expires', 'Qualification expiry'); });
   });
   return out;
 })(window.__DEMO_SEED)/* DEMO D-35 */));localStorage.setItem("skyryse-mes-demo-seed-curated",new Date().toISOString());}}catch(e){}})();</script>
@@ -15267,14 +15265,13 @@ function fsTicketAssignment(order,ticket){MES.syncAssignments(state);return (sta
   var moved = function (list) { return list.filter(Boolean); };
   each(out.orders, function (order) {
     if (!order || order.status === 'Closed') return;
-    var changes = moved([move(order, 'start', 'Planned start'), move(order, 'due', 'due')]);
-    each(order.conformity, function (p) { if (p && p.form == null && p.status !== 'Closed') changes = changes.concat(moved([move(p, 'mdlReceived', 'conformity package ' + p.serial + ' MDL copy received')])); });
-    if (changes.length && Array.isArray(order.history)) order.history.push({ id: order.id + '-demo-dates', at: at, action: note(changes), actor: ACTOR });
+    var changes = moved([move(order, 'start', 'Planned start'), move(order, 'due', 'due')]), mdl = [];
+    each(order.conformity, function (p) { if (p && p.form == null && p.status !== 'Closed') mdl = mdl.concat(moved([move(p, 'mdlReceived', 'conformity package ' + p.serial + ' MDL copy received')])); });
+    if (mdl.length && Array.isArray(order.history)) order.history.push({ id: order.id + '-demo-dates', at: at, action: note(changes.concat(mdl)), actor: ACTOR });
   });
   each(out.plannedOrders, function (po) {
     if (!po || (po.status !== 'Planned' && po.status !== 'Firm')) return;
-    var changes = moved([move(po, 'needDate', 'Need date')]);
-    if (changes.length && Array.isArray(po.history)) po.history.push({ at: at, action: note(changes), actor: ACTOR });
+    move(po, 'needDate', 'Need date');
   });
   each(out.woRequests, function (r) { if (r && r.status === 'Open') move(r, 'needBy', 'Need by'); });
   each(out.maneuver && out.maneuver.cars, function (car) {
@@ -15285,9 +15282,8 @@ function fsTicketAssignment(order,ticket){MES.syncAssignments(state);return (sta
   });
   each(out.stamps, function (stamp) {
     if (!stamp) return;
-    var changes = moved([move(stamp, 'expires', 'Expiry')]);
-    each(stamp.qualifications, function (q) { changes = changes.concat(moved([move(q, 'expires', (q && q.buyoffType ? q.buyoffType : 'qualification') + ' expiry')])); });
-    if (changes.length && Array.isArray(stamp.history)) stamp.history.push({ at: at, by: 'demo build', action: note(changes) });
+    move(stamp, 'expires', 'Expiry');
+    each(stamp.qualifications, function (q) { move(q, 'expires', 'Qualification expiry'); });
   });
   return out;
 })(window.__DEMO_SEED)/* DEMO D-35 */));

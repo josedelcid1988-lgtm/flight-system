@@ -10,11 +10,15 @@
 //   work-order requests that are Open:         needBy
 //   CARs that are not Closed or Cancelled:     dueDate, and dueDate of every action not yet completed
 //   stamps:                                    expires, qualifications[].expires
-// Every record whose dates move gets one history entry, by "Demo build", that names the old and new
-// dates, so the record never silently disagrees with its own history (a CAR's history, for example,
-// quotes the due date it was raised with). A moved MDL date is the same change production records when
-// someone refreshes the MDL copy of the same revision: saveConformity clears steps 1.3 and 1.4 only when
-// the MDL revision or the PDM path changes, not the receipt date.
+// A history entry, by "Demo build", naming the old and new dates is appended where the record would
+// otherwise disagree with its own history or hide a change production records:
+//   CARs: their history quotes the due dates they were raised and actioned with.
+//   orders whose conformity package MDL date moves: production records an MDL copy refresh on the
+//   order. A moved MDL date is the same change production makes when someone refreshes the MDL copy of
+//   the same revision: saveConformity clears steps 1.3 and 1.4 only when the MDL revision or the PDM
+//   path changes, not the receipt date.
+// Order plan dates, planned need dates, request need-by dates and stamp expiries appear in no history
+// text, so they move without an entry.
 // Never moved: anything signed or recorded as having happened (buy-offs, manifests, signatures, existing
 // history, every at / recordedAt field, tool and test-asset calibration dates captured in a buy-off, FAIR
 // and DAR dates, stamp issue dates, closed and stocked orders). Moving those would break
@@ -47,14 +51,13 @@ export function rebaseDemoSeed(seed, now) {
   var moved = function (list) { return list.filter(Boolean); };
   each(out.orders, function (order) {
     if (!order || order.status === 'Closed') return;
-    var changes = moved([move(order, 'start', 'Planned start'), move(order, 'due', 'due')]);
-    each(order.conformity, function (p) { if (p && p.form == null && p.status !== 'Closed') changes = changes.concat(moved([move(p, 'mdlReceived', 'conformity package ' + p.serial + ' MDL copy received')])); });
-    if (changes.length && Array.isArray(order.history)) order.history.push({ id: order.id + '-demo-dates', at: at, action: note(changes), actor: ACTOR });
+    var changes = moved([move(order, 'start', 'Planned start'), move(order, 'due', 'due')]), mdl = [];
+    each(order.conformity, function (p) { if (p && p.form == null && p.status !== 'Closed') mdl = mdl.concat(moved([move(p, 'mdlReceived', 'conformity package ' + p.serial + ' MDL copy received')])); });
+    if (mdl.length && Array.isArray(order.history)) order.history.push({ id: order.id + '-demo-dates', at: at, action: note(changes.concat(mdl)), actor: ACTOR });
   });
   each(out.plannedOrders, function (po) {
     if (!po || (po.status !== 'Planned' && po.status !== 'Firm')) return;
-    var changes = moved([move(po, 'needDate', 'Need date')]);
-    if (changes.length && Array.isArray(po.history)) po.history.push({ at: at, action: note(changes), actor: ACTOR });
+    move(po, 'needDate', 'Need date');
   });
   each(out.woRequests, function (r) { if (r && r.status === 'Open') move(r, 'needBy', 'Need by'); });
   each(out.maneuver && out.maneuver.cars, function (car) {
@@ -65,9 +68,8 @@ export function rebaseDemoSeed(seed, now) {
   });
   each(out.stamps, function (stamp) {
     if (!stamp) return;
-    var changes = moved([move(stamp, 'expires', 'Expiry')]);
-    each(stamp.qualifications, function (q) { changes = changes.concat(moved([move(q, 'expires', (q && q.buyoffType ? q.buyoffType : 'qualification') + ' expiry')])); });
-    if (changes.length && Array.isArray(stamp.history)) stamp.history.push({ at: at, by: 'demo build', action: note(changes) });
+    move(stamp, 'expires', 'Expiry');
+    each(stamp.qualifications, function (q) { move(q, 'expires', 'Qualification expiry'); });
   });
   return out;
 }

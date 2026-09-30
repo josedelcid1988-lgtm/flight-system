@@ -28,8 +28,9 @@ const MOVABLE = [
   /^stamps\[\d+\]\.expires$/,
   /^stamps\[\d+\]\.qualifications\[\d+\]\.expires$/,
 ];
-// A record whose dates move gets one history entry appended after its existing history (never an edit of an existing entry).
-const HISTORY_ENTRY = /^(orders\[\d+\]|plannedOrders\[\d+\]|maneuver\.cars\[\d+\]|stamps\[\d+\])\.history\[(\d+)\]$/;
+// A CAR whose dates move, and an order whose conformity package MDL date moves, get one history entry appended after their
+// existing history (never an edit of an existing entry). Nothing else gains history.
+const HISTORY_ENTRY = /^(orders\[\d+\]|maneuver\.cars\[\d+\])\.history\[(\d+)\]$/;
 const isDate = p => MOVABLE.some(re => re.test(p));
 
 let checks = 0;
@@ -57,9 +58,12 @@ for (const [name, seed] of Object.entries(SEEDS)) {
     check(`${name} +${ahead}d: only operational dates move, plus one appended history entry per moved record`, dates.length > 0 && entries.every(p => { const m = HISTORY_ENTRY.exec(p); return m && Number(m[2]) === get(seed, `${m[1]}.history`).length; }), entries.filter(p => !HISTORY_ENTRY.test(p)).join(', '));
     check(`${name} +${ahead}d: every moved date moves by exactly the days since capture (${gap})`, dates.every(p => addDays(get(seed, p), gap) === get(out, p)));
     const owners = [...new Set(dates.map(p => /^(orders\[\d+\]|plannedOrders\[\d+\]|maneuver\.cars\[\d+\]|stamps\[\d+\]|woRequests\[\d+\])/.exec(p)[1]))];
-    check(`${name} +${ahead}d: each moved record with a history gets exactly one Demo build entry naming every old and new date`, owners.every(owner => {
+    const needsEntry = owner => owner.startsWith('maneuver.cars') || dates.some(p => p.startsWith(`${owner}.conformity`));
+    check(`${name} +${ahead}d: records whose history text would disagree get exactly one Demo build entry naming every old and new date; others get none`, owners.every(owner => {
       const history = get(seed, `${owner}.history`); if (!Array.isArray(history)) return true;
-      const added = get(out, `${owner}.history`).slice(history.length); if (added.length !== 1) return false;
+      const added = get(out, `${owner}.history`).slice(history.length);
+      if (!needsEntry(owner)) return added.length === 0;
+      if (added.length !== 1) return false;
       const entry = added[0], by = entry.actor || entry.by;
       return /^Demo build|^demo build$/.test(by) && entry.at === `${day}T00:00:00.000Z` && dates.filter(p => p.startsWith(`${owner}.`)).every(p => entry.action.includes(`${get(seed, p)} to ${get(out, p)}`)) && !/\u2014/.test(entry.action);
     }));
@@ -72,7 +76,7 @@ for (const [name, seed] of Object.entries(SEEDS)) {
     check(`${name} +${ahead}d: a package with a completed 8130-9 keeps its MDL date (the form locks the package data)`, locked.every(([id, p]) => out.orders.find(o => o.id === id).conformity.find(x => x.serial === p.serial).mdlReceived === p.mdlReceived));
     const doneActions = (seed.maneuver?.cars || []).flatMap((c, i) => (c.actions || []).map((a, j) => [i, j, a]).filter(([, , a]) => a.completedAt));
     check(`${name} +${ahead}d: completed CAR actions and closed CARs keep their due dates`, doneActions.every(([i, j, a]) => out.maneuver.cars[i].actions[j].dueDate === a.dueDate) && (seed.maneuver?.cars || []).every((c, i) => c.status !== 'Closed' || out.maneuver.cars[i].dueDate === c.dueDate));
-    check(`${name} +${ahead}d: stamp issue dates and existing stamp history do not move`, seed.stamps.every((s, i) => out.stamps[i].issued === s.issued && JSON.stringify(out.stamps[i].history.slice(0, s.history.length)) === JSON.stringify(s.history)));
+    check(`${name} +${ahead}d: stamp issue dates and stamp history do not move`, seed.stamps.every((s, i) => out.stamps[i].issued === s.issued && JSON.stringify(out.stamps[i].history) === JSON.stringify(s.history)));
   }
 }
 
