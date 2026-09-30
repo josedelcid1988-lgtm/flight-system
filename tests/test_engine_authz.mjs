@@ -132,4 +132,55 @@ const roleRefused = result => !!result && result.ok === false && /Your role cann
   check('the workspace is valid after the audit close checks', MES.validate(state));
 }
 
+// ---- System QMS records (#97 to #100): signing an audit, certification, supplier approval or study verdict needs
+// approve-nc, the Quality approval that already gates storing the study value on the same page ----
+{
+  const state = MES.seed();
+  const run = (who, fn) => host.withAccount(who, fn, state);
+  const count = key => (state[key] || []).length;
+  const refusedUnchanged = (who, key, fn) => { const before = JSON.stringify(state); return roleRefused(run(who, fn)) && JSON.stringify(state) === before && count(key) === 0; };
+  for (const who of [general, technician, operator, me]) {
+    check(`${who.role} cannot open an audit and no audit is recorded`, refusedUnchanged(who, 'audits', () => MES.openAudit(state, { scope: 'Internal process audit', findings: ['Record sample was short.'] })));
+    check(`${who.role} cannot issue a certification and none is recorded`, refusedUnchanged(who, 'certifications', () => MES.issueCertification(state, { statement: 'Process audit complete for this period.' })));
+    check(`${who.role} cannot approve a supplier and none is recorded`, refusedUnchanged(who, 'supplierApprovals', () => MES.approveSupplier(state, { supplier: 'North Rivet' })));
+  }
+  check('Quality (approve-nc) opens an audit', run(qe, () => MES.openAudit(state, { scope: 'Internal process audit', findings: ['Record sample was short.'] })).ok && count('audits') === 1);
+  check('Quality (approve-nc) issues a certification', run(qe, () => MES.issueCertification(state, { statement: 'Process audit complete for this period.' })).ok && count('certifications') === 1);
+  check('the QA Manager (approve-nc) approves a supplier', run(qm, () => MES.approveSupplier(state, { supplier: 'North Rivet' })).ok && count('supplierApprovals') === 1);
+
+  const stored = run(qe, () => MES.storeQualityValue(state, { kind: 'gage', value: 8.4, name: 'bore gage' }));
+  check('a gage value is stored for the verdict checks', stored.ok);
+  const valueId = state.qualityValues.at(-1).id;
+  for (const who of [general, technician, operator, me]) check(`${who.role} cannot record a quality study verdict and none is recorded`, refusedUnchanged(who, 'qualityVerdicts', () => MES.recordQualityVerdict(state, { kind: 'gage', valueId, verdict: 'Acceptable' })));
+  check('Quality (approve-nc) records a quality study verdict', run(qe, () => MES.recordQualityVerdict(state, { kind: 'gage', valueId, verdict: 'Acceptable' })).ok && count('qualityVerdicts') === 1);
+  check('the workspace is valid after the QMS record checks', MES.validate(state) && MES.verifyManifests(state).ok);
+}
+
+// ---- NC ticket files (#101): removing a file from a ticket needs a record authority, like other quality records ----
+{
+  const state = MES.seed();
+  MES.ensureMasterWIs(state);
+  const run = (who, fn) => host.withAccount(who, fn, state);
+  const wi = state.masterWIs.find(w => w.status === 'Released');
+  const created = run(qm, () => MES.addOrder(state, { masterWI: `${wi.id}|${wi.revision}`, pedigree: 'Development', subcategory: 'Mfg.', quantity: 1, aircraft: MES.AIRCRAFT[0], site: MES.SITES[0] }));
+  check('a work order is created for the ticket file checks', created.ok);
+  const order = () => MES.getOrder(state, created.id);
+  check('Quality approves the release, which issues the order to kitting', MES.requiresReleaseQA(order()) && run(qe, () => MES.approveRelease(state, created.id, { note: 'Released for the ticket file checks.' })).ok);
+  check('the work order is in Kitting, where tickets are raised', order().status === 'Kitting');
+  const raised = run(technician, () => MES.createTicket(state, created.id, order().operations[0].id, { type: 'NC', title: 'Scratched bracket', description: 'Light scratch on the bracket face.', hold: false }));
+  check('a Technician raises an NC ticket', raised.ok);
+  const ticket = () => order().tickets.at(-1);
+  const ticketFiles = () => (ticket().attachments || []).map(f => f.id);
+  const photo = { name: 'scratch.png', type: 'image/png', size: 10, dataUrl: 'data:image/png;base64,iVBORw0KGgo=' };
+  check('anyone who can raise an NC still attaches a file to the ticket', run(technician, () => MES.addTicketAttachment(state, created.id, ticket().id, photo)).ok && ticketFiles().length === 1);
+  for (const who of [general, technician, operator]) {
+    const before = JSON.stringify(state);
+    check(`${who.displayName} (${who.role}) cannot remove a file from an NC ticket and nothing changes`, roleRefused(run(who, () => MES.removeTicketAttachment(state, created.id, ticket().id, ticketFiles()[0]))) && JSON.stringify(state) === before);
+  }
+  check('Manufacturing Engineering (dispo-nc) removes a file from an NC ticket', run(me, () => MES.removeTicketAttachment(state, created.id, ticket().id, ticketFiles()[0])).ok && ticketFiles().length === 0);
+  check('the file is attached again for the Quality check', run(technician, () => MES.addTicketAttachment(state, created.id, ticket().id, photo)).ok && ticketFiles().length === 1);
+  check('Quality (approve-nc) removes a file from an NC ticket', run(qe, () => MES.removeTicketAttachment(state, created.id, ticket().id, ticketFiles()[0])).ok && ticketFiles().length === 0);
+  check('the workspace is valid after the ticket file checks', MES.validate(state));
+}
+
 console.log(`engine authz: ${checks} checks, all passed`);
