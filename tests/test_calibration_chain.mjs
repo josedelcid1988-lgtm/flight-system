@@ -87,10 +87,18 @@ legacyGone.calibrationLog.splice(1, 1);
 legacyGone.calibrationLog[2].previousHash = MES.calibrationEntryHash(legacyGone.calibrationLog[1]);
 relinkHead(legacyGone);
 check('a removed legacy entry is detected against the sealed legacy count', !MES.validate(legacyGone) && /before the chain/.test(MES.diagnose(legacyGone)?.detail || ''));
+check('the seal carries one hash over every entry recorded before the chain', /^[0-9a-f]{64}$/.test(sealed.calibrationLogHead.legacyHash) && sealed.calibrationLogHead.legacyHash === MES.calibrationLegacyHash(sealed.calibrationLog.slice(0, 3)));
+// Every legacy entry is covered by the seal, not only the last one (Codex review on #149).
+const legacyResigned = structuredClone(sealed);
+legacyResigned.calibrationLog[0].calibrationSignature.manifest.signer.role = 'Technician';
+check('a changed signature manifest on an early legacy entry is detected', !MES.validate(legacyResigned) && /no longer matches the seal/.test(MES.calibrationChainProblem(legacyResigned)?.detail || ''));
+const legacyNoDigest = structuredClone(sealed);
+delete legacyNoDigest.calibrationLogHead.legacyHash;
+check('a sealed head without its legacy hash is malformed', !MES.validate(legacyNoDigest) && /head is malformed/.test(MES.calibrationChainProblem(legacyNoDigest)?.detail || ''));
 check('an empty log needs no head', MES.validate(MES.seed()) && MES.seed().calibrationLogHead === undefined);
 
 // The exported helpers are read-only: none is remotely callable.
-for (const name of ['calibrationChainProblem', 'calibrationEntryHash', 'calibrationLogChanges']) check(`MES.${name} is exported and not remotely callable`, typeof MES[name] === 'function' && host.resolveAction(`MES.${name}`) === null);
+for (const name of ['calibrationChainProblem', 'calibrationEntryHash', 'calibrationLegacyHash', 'calibrationLogChanges']) check(`MES.${name} is exported and not remotely callable`, typeof MES[name] === 'function' && host.resolveAction(`MES.${name}`) === null);
 check('calibrationLogChanges accepts an appended log', MES.calibrationLogChanges(truncated, state) === null);
 check('calibrationLogChanges refuses a dropped tail with a plain reason', /remove calibration entry CALLOG-00003/.test(MES.calibrationLogChanges(state, truncated) || '') && /append-only/.test(MES.calibrationLogChanges(state, truncated)));
 check('calibrationLogChanges refuses a changed entry', /alter or move calibration entry CALLOG-00003/.test(MES.calibrationLogChanges(state, swapped) || ''));
@@ -164,7 +172,8 @@ const signIn = async call => {
   host.FlightManeuver.ensure(saved);
   const browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
   try {
-    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await context.newPage();
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(new URL('./fixtures/publish.html', import.meta.url).href);
@@ -185,6 +194,18 @@ const signIn = async call => {
     await page.reload();
     await page.locator('.storage-failure h1').waitFor({ state: 'visible', timeout: 15000 });
     check('standalone: a log shortened after the seal was written is refused on the next load', /latest entry is missing/.test(await page.locator('.storage-failure').innerText()));
+    // If browser storage refuses the one-time seal (quota), the workspace is not opened and the stored copy is untouched.
+    await page.evaluate(raw => localStorage.setItem('skyryse-mes-work-order-v1', raw), JSON.stringify(saved));
+    await page.close();
+    const full = await context.newPage();
+    full.on('pageerror', error => errors.push(error.message));
+    await full.addInitScript(() => { const set = Storage.prototype.setItem; Storage.prototype.setItem = function (key, value) { if (key === 'skyryse-mes-work-order-v1' && String(value).includes('calibrationLogHead')) throw new DOMException('quota', 'QuotaExceededError'); return set.call(this, key, value); }; });
+    await full.goto(new URL('./fixtures/publish.html', import.meta.url).href);
+    // The new tab opens on the sign-in screen, so the alert is read from the page rather than waited for as visible.
+    await full.waitForFunction(() => /browser storage refused to save it/.test(document.querySelector('#storage-alert')?.textContent || ''), null, { timeout: 15000 });
+    check('standalone: a seal that browser storage refuses stops the load with a plain reason', await full.evaluate(() => { const box = document.querySelector('#storage-alert'); return !box.hidden && /Free browser storage, then try again/.test(box.textContent) && !/\u2014/.test(box.textContent); }));
+    check('standalone: the refused seal leaves the stored copy unchanged', await full.evaluate(raw => localStorage.getItem('skyryse-mes-work-order-v1') === raw, JSON.stringify(saved)));
+    await full.close();
     check('standalone: the chain pages raised no page errors', errors.length === 0, errors.join('; '));
   } finally { await browser.close(); }
 }

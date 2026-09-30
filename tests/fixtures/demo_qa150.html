@@ -2611,8 +2611,11 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // canonicalPayload keeps every key, including the entry's own calibrationSignature.manifest: canonical drops nested
   // manifest keys, which would leave the signature metadata outside the chain.
   const calibrationEntryHash = entry => sha256(canonicalPayload(entry));
-  const calibrationHeadFor = (log, legacyCount, sealedAt) => ({ count: log.length, hash: log.length ? calibrationEntryHash(log[log.length - 1]) : null, legacyCount, ...(sealedAt ? { sealedAt } : {}) });
-  const calibrationHeadValid = head => plain(head) && Number.isInteger(head.count) && head.count >= 0 && head.count <= 5000 && (head.hash === null || /^[0-9a-f]{64}$/.test(head.hash)) && Number.isInteger(head.legacyCount) && head.legacyCount >= 0 && head.legacyCount <= head.count && (head.sealedAt === undefined || timestamp(head.sealedAt)) && Object.keys(head).every(k => ['count', 'hash', 'legacyCount', 'sealedAt'].includes(k));
+  const calibrationHeadFor = (log, legacyCount, sealedAt, legacyHash) => ({ count: log.length, hash: log.length ? calibrationEntryHash(log[log.length - 1]) : null, legacyCount, ...(sealedAt ? { sealedAt } : {}), ...(legacyHash ? { legacyHash } : {}) });
+  // One hash over every entry recorded before the chain, taken when the log is sealed, so a change to any of them
+  // (not only the last) is detected. The unlinked entries have no previousHash to carry it.
+  const calibrationLegacyHash = entries => sha256(canonicalPayload(entries));
+  const calibrationHeadValid = head => plain(head) && Number.isInteger(head.count) && head.count >= 0 && head.count <= 5000 && (head.hash === null || /^[0-9a-f]{64}$/.test(head.hash)) && Number.isInteger(head.legacyCount) && head.legacyCount >= 0 && head.legacyCount <= head.count && (head.sealedAt === undefined || timestamp(head.sealedAt)) && (head.legacyCount > 0 ? /^[0-9a-f]{64}$/.test(head.legacyHash) : head.legacyHash === undefined) && Object.keys(head).every(k => ['count', 'hash', 'legacyCount', 'sealedAt', 'legacyHash'].includes(k));
   // The first break in the chain or the head, as { id, detail }, or null. Each detail says what is wrong and what it means.
   function calibrationChainProblem(state) {
     const log = plain(state) && Array.isArray(state.calibrationLog) ? state.calibrationLog : [];
@@ -2635,6 +2638,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (head.count > log.length) return { id: 'calibrationLogHead', detail: `The calibration log holds ${log.length} entr${log.length === 1 ? 'y' : 'ies'} but its head records ${head.count}: the latest ${head.count - log.length === 1 ? 'entry is' : `${head.count - log.length} entries are`} missing, so a retired or quarantined tool could read as usable.` };
     if (head.count < log.length) return { id: 'calibrationLogHead', detail: `The calibration log holds ${log.length} entries but its head records ${head.count}: entries were added outside the application.` };
     if (head.legacyCount !== legacy) return { id: 'calibrationLogHead', detail: `The calibration log has ${legacy} entr${legacy === 1 ? 'y' : 'ies'} from before the chain but its head sealed ${head.legacyCount}: an early entry was removed or added.` };
+    if (legacy && head.legacyHash !== calibrationLegacyHash(log.slice(0, legacy))) return { id: 'calibrationLogHead', detail: `An entry recorded before the chain no longer matches the seal made ${head.sealedAt ? `on ${head.sealedAt}` : 'when the log was sealed'}: one of the first ${legacy} entr${legacy === 1 ? 'y was' : 'ies was'} changed.` };
     if (head.hash !== (log.length ? calibrationEntryHash(log[log.length - 1]) : null)) return { id: 'calibrationLogHead', detail: `The last calibration entry${log.length ? `, ${log[log.length - 1].id},` : ''} does not match the log head: the latest entry was replaced, changed, or removed.` };
     return null;
   }
@@ -2644,7 +2648,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const log = state.calibrationLog, head = plain(state.calibrationLogHead) ? state.calibrationLogHead : null;
     entry.previousHash = log.length ? calibrationEntryHash(log[log.length - 1]) : null;
     log.push(entry);
-    state.calibrationLogHead = calibrationHeadFor(log, head ? head.legacyCount : 0, head ? head.sealedAt : undefined);
+    state.calibrationLogHead = calibrationHeadFor(log, head ? head.legacyCount : 0, head ? head.sealedAt : undefined, head ? head.legacyHash : undefined);
   };
   // Seal a log recorded before the chain existed: write its head once, naming how many unlinked entries it held and
   // when it was sealed. A log that already has linked entries is never resealed, so an import that lost its head
@@ -2652,7 +2656,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const sealCalibrationLog = state => {
     const log = Array.isArray(state.calibrationLog) ? state.calibrationLog : [];
     if (state.calibrationLogHead !== undefined || !log.length || log.some(e => plain(e) && Object.hasOwn(e, 'previousHash'))) return;
-    state.calibrationLogHead = calibrationHeadFor(log, log.length, new Date().toISOString());
+    state.calibrationLogHead = calibrationHeadFor(log, log.length, new Date().toISOString(), calibrationLegacyHash(log));
   };
   // The server write gate: a write keeps every entry the stored log holds, unchanged and in place, and may only
   // append. Returns a plain refusal or null. prev is the stored workspace (null before the first save).
@@ -8093,7 +8097,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   MES.seed = () => { const state = ensurePlanner(seedWithPlanner()); ['audits','certifications','supplierApprovals','qualityValues','qualityVerdicts','controlledDocuments','modelAdapterHistory','aiActionLog','aiSkillDrafts','aiSkillTriggers','aiSkillTriggerHistory','calibrationLog'].forEach(key=>{if(!Array.isArray(state[key]))state[key]=[];}); if(!plain(state.modelAdapter))state.modelAdapter=emptyModelAdapter(); ensureInventoryLedger(state); ensureResources(state); ensureProjects(state); syncPlanningBlockers(state); return state; };
   const upgradeWithPlanner = MES.upgrade;
   MES.upgrade = state => { const upgraded = upgradeWithPlanner(state); if (!upgraded) return null; ensurePlanner(upgraded); if(!Array.isArray(upgraded.controlledDocuments))upgraded.controlledDocuments=[];if(!Array.isArray(upgraded.modelAdapterHistory))upgraded.modelAdapterHistory=[];if(!Array.isArray(upgraded.aiActionLog))upgraded.aiActionLog=[];if(!Array.isArray(upgraded.aiSkillDrafts))upgraded.aiSkillDrafts=[];if(!Array.isArray(upgraded.aiSkillTriggers))upgraded.aiSkillTriggers=[];if(!Array.isArray(upgraded.aiSkillTriggerHistory))upgraded.aiSkillTriggerHistory=[];if(!Array.isArray(upgraded.calibrationLog))upgraded.calibrationLog=[];if(!plain(upgraded.modelAdapter))upgraded.modelAdapter=emptyModelAdapter(); ensureInventoryLedger(upgraded); ensureResources(upgraded); ensureProjects(upgraded); syncPlanningBlockers(upgraded); return upgraded; };
-  Object.assign(MES, { archivable, archiveOrders, archivedOrderValid, ownWorkRefusal, coveredBuildOps, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, verifyManifests, reviewFair, NFF, recordTraining, personTraining, trainingCurrentFor, trainingCertificateValid, ownWorkHit, OWN_WORK_EXEMPT_PEDIGREES, scryptHex, PIN_KDF, saveTraining, trainingCatalog, requiredTrainings, trainingDef, TRAINING_CODE_RE, importStamps, stampRegisterCsv, nextStampNumber, isPlaceholderStamp, STAMP_NUMBER_RE, wiAuthors, wiAuthorRefusal, wiPeerReviewRefusal, buildStamp, buildStampValid, supportActor, supportGrant, logSupport, SUPPORT_RULES, SUPPORT_KINDS, recordSupportAccess, noteDemoBypassRemoved, supportLogValid, recordCalibration, updateCalibration, calibrationStatus, calibrationChainProblem, calibrationEntryHash, calibrationLogChanges, calibrationCurrentIds, calibratedToolChecks, toolUseRecords, calibrationEntryValid, CALIBRATION_STATUSES });
+  Object.assign(MES, { archivable, archiveOrders, archivedOrderValid, ownWorkRefusal, coveredBuildOps, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, verifyManifests, reviewFair, NFF, recordTraining, personTraining, trainingCurrentFor, trainingCertificateValid, ownWorkHit, OWN_WORK_EXEMPT_PEDIGREES, scryptHex, PIN_KDF, saveTraining, trainingCatalog, requiredTrainings, trainingDef, TRAINING_CODE_RE, importStamps, stampRegisterCsv, nextStampNumber, isPlaceholderStamp, STAMP_NUMBER_RE, wiAuthors, wiAuthorRefusal, wiPeerReviewRefusal, buildStamp, buildStampValid, supportActor, supportGrant, logSupport, SUPPORT_RULES, SUPPORT_KINDS, recordSupportAccess, noteDemoBypassRemoved, supportLogValid, recordCalibration, updateCalibration, calibrationStatus, calibrationChainProblem, calibrationEntryHash, calibrationLegacyHash, calibrationLogChanges, calibrationCurrentIds, calibratedToolChecks, toolUseRecords, calibrationEntryValid, CALIBRATION_STATUSES });
   Object.assign(MES, { SOURCE_INSPECTION_CLASS, SOURCE_INSPECTION_CODES, CONFORMITY_SUBCODES, TEST_SUBCODES, operationType, migrateOperationTypes, sourceInspectionCodes, conformitySubcodes, testSubcodes, operationSubcodes, operationSubcode, saveSourceInspectionCodes, saveOperationSubcodes, mrbTrainingTiers, saveMrbTrainingTiers, recordSourceInspection, sourceInspectionHolds, sourceInspectionWorkspaceValid });
   const validateWithSourceInspection = MES.validate;
   MES.validate = state => validateWithSourceInspection(state) && sourceInspectionWorkspaceValid(state);
@@ -11219,11 +11223,14 @@ try{const raw=localStorage.getItem(KEY);
           loadProblem=why&&why.detail?why.detail:'The saved workspace does not match the current record format.';
         }
       }
+      // A calibration log from before the chain is sealed by MES.upgrade. Standalone, the seal is written back before the
+      // workspace is used, so the baseline it records is durable from the first load and a later reload cannot reseal a
+      // shortened log (#116, #117). If browser storage refuses the write, the workspace is not opened.
+      if(saved&&!(window.skServer&&window.skServer.active)&&!parsedRaw.calibrationLogHead&&saved.calibrationLogHead&&MES.validate(saved)){
+        try{localStorage.setItem(KEY,JSON.stringify(saved));}catch(e){saved=null;loadProblem='The calibration log needs a one-time seal for this build, but browser storage refused to save it (it may be full). Free browser storage, then try again.';}
+      }
       if(saved){
         state=saved;
-        // A calibration log from before the chain is sealed by MES.upgrade. Standalone, the seal is written back now, so the
-        // baseline it records is durable from the first load and a later reload cannot reseal a shortened log (#116, #117).
-        try{if(!(window.skServer&&window.skServer.active)&&!parsedRaw.calibrationLogHead&&state.calibrationLogHead&&MES.validate(state))localStorage.setItem(KEY,JSON.stringify(state));}catch(e){}
         const aside=(saved.quarantine||[]).map(q=>q&&q.order&&q.order.id).filter(Boolean);
         if(aside.length){loadProblem=null;setAside=aside;}
         try{const missing=state.orders.filter(o=>o.status!=='Closed'&&!o.inventory&&!o.sourceBuild&&MES.isSerialized(o.partNumber)&&MES.orderSerials(state,o).length<o.quantity);
