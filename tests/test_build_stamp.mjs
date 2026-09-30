@@ -179,7 +179,25 @@ try{
    ok('the asset check accepts exactly what a clean checkout writes for a text=auto asset with a lone CR',assetsProblem({root:s.dir})===null,assetsProblem({root:s.dir}));
    fs.symlinkSync('a\nb',s.at('assets/l.txt'));s.g('add','assets/l.txt');s.g('commit','-q','-m','symlink');
    fs.rmSync(s.at('assets/l.txt'));fs.writeFileSync(s.at('assets/l.txt'),'a\r\nb');
-   ok('the asset check never applies a text conversion to a committed symlink',/assets\/l\.txt differs from HEAD/.test(assetsProblem({root:s.dir})||''),assetsProblem({root:s.dir}));}
+   ok('the asset check never applies a text conversion to a committed symlink',/assets\/l\.txt differs from HEAD/.test(assetsProblem({root:s.dir})||''),assetsProblem({root:s.dir}));
+   s.g('rm','-q','-f','assets/l.txt');s.g('commit','-q','-m','no symlink');
+   fs.writeFileSync(s.at('assets/e.txt'),'a\nb\n');fs.chmodSync(s.at('assets/e.txt'),0o755);s.g('add','assets/e.txt');s.g('commit','-q','-m','executable');
+   const e=fresh('assets/e.txt');
+   ok('the asset check accepts the CRLF checkout of an executable text asset',/^100755 /.test(s.g('ls-tree','HEAD','assets/e.txt'))&&e.toString()==='a\r\nb\r\n'&&assetsProblem({root:s.dir})===null,assetsProblem({root:s.dir}));
+   fs.mkdirSync(path.join(s.dir,'.git/info'),{recursive:true});fs.writeFileSync(path.join(s.dir,'.git/info/attributes'),'docs/** text\n');
+   ok('the asset check ignores a local attributes rule that does not apply to the asset',assetsProblem({root:s.dir})===null,assetsProblem({root:s.dir}));
+   fs.writeFileSync(path.join(s.dir,'.git/info/attributes'),'assets/e.txt -text\n');
+   ok('the asset check refuses when a local attributes rule changes the asset\'s own attributes',/assets\/e\.txt differs from HEAD/.test(assetsProblem({root:s.dir})||''),assetsProblem({root:s.dir}));
+   fs.rmSync(path.join(s.dir,'.git/info/attributes'));}
+  // #135 review: the isolated git uses the source repository's object format, so a SHA-256 repository works too.
+  {const s=sandbox(),dir=fs.mkdtempSync(path.join(os.tmpdir(),'flight-release-sha256-'));sandboxes.push(dir);
+   fs.cpSync(s.dir,dir,{recursive:true,filter:src=>path.basename(src)!=='.git'});
+   const g=(...a)=>execFileSync('git',['-c','user.name=Test','-c','user.email=test@example.com','-c','commit.gpgsign=false',...a],{cwd:dir,encoding:'utf8'}).trim();
+   fs.writeFileSync(path.join(dir,'.gitattributes'),'*.txt text eol=crlf\n');fs.writeFileSync(path.join(dir,'assets/n.txt'),'a\nb\n');
+   g('init','-q','--object-format=sha256');g('add','.');g('commit','-q','-m','sha256 release');
+   fs.rmSync(path.join(dir,'assets/n.txt'));g('checkout','-q','--','assets/n.txt');
+   let r;try{r=assetsProblem({root:dir});}catch(e){r='threw '+e.message;}
+   ok('the asset check accepts a committed CRLF conversion in a SHA-256 repository',g('rev-parse','--show-object-format')==='sha256'&&fs.readFileSync(path.join(dir,'assets/n.txt'),'utf8')==='a\r\nb\r\n'&&r===null,r);}
   // #86 (fixed in PR #82): no git status call remains; a git failure is a plain refusal, not a stack trace.
   {const dir=fs.mkdtempSync(path.join(os.tmpdir(),'flight-nogit-'));sandboxes.push(dir);fs.mkdirSync(path.join(dir,'assets'));fs.writeFileSync(path.join(dir,'assets/a.js'),'one');
    let r;try{r=assetsProblem({root:dir});}catch(e){r='threw '+e.message;}

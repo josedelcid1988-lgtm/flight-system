@@ -92,7 +92,7 @@ export function assetsProblem({ root = ROOT, commit = 'HEAD' } = {}) {
       const blob = committed.get(name);
       if (!blob || blob === hash || !/^[0-9a-f]{40,64}$/.test(blob)) continue;
       // Only a regular file is ever converted on checkout; a symlink (120000) is written as its blob.
-      if (!/^1006[0-7]{2}$/.test(modes.get(name) || '')) continue;
+      if (!/^100(644|755)$/.test(modes.get(name) || '')) continue;
       isolated ??= isolatedGit(run, commit);
       const checkout = committedCheckout(run, isolated, commit, name, blob);
       if (checkout && run(['hash-object', '--no-filters', '--stdin'], { input: checkout, encoding: 'utf8' }).trim() === hash) onDisk.set(name, blob);
@@ -108,9 +108,10 @@ export function assetsProblem({ root = ROOT, commit = 'HEAD' } = {}) {
 function isolatedGit(run, commit) {
   const sha = run(['rev-parse', '--verify', `${commit}^{commit}`], { encoding: 'utf8' }).trim();
   const objects = path.join(run(['rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8' }).trim(), 'objects');
+  const format = run(['rev-parse', '--show-object-format'], { encoding: 'utf8' }).trim();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flight-release-git-'));
   const env = { PATH: process.env.PATH, HOME: dir, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: os.devNull, GIT_ATTR_NOSYSTEM: '1' };
-  execFileSync('git', ['init', '-q', '--bare', path.join(dir, 'repo.git')], { env });
+  execFileSync('git', ['init', '-q', '--bare', `--object-format=${format}`, path.join(dir, 'repo.git')], { env });
   const gitEnv = { ...env, GIT_DIR: path.join(dir, 'repo.git'), GIT_ALTERNATE_OBJECT_DIRECTORIES: objects };
   const git = args => execFileSync('git', ['-c', 'core.autocrlf=false', '-c', 'core.eol=lf', '-c', `core.attributesFile=${os.devNull}`, `--attr-source=${sha}`, ...args], { env: gitEnv, maxBuffer: 64 * 1024 * 1024 });
   return { dir, sha, git };
@@ -123,12 +124,15 @@ function isolatedGit(run, commit) {
 // commit, so no conversion is accepted then and the function returns null. The converted bytes come from git
 // itself, run with no local configuration (isolatedGit), so git's text=auto test decides, not a copy of it.
 function committedCheckout(run, isolated, commit, name, blob) {
-  const local = path.resolve(run(['rev-parse', '--path-format=absolute', '--git-path', 'info/attributes'], { encoding: 'utf8' }).trim());
-  if (fs.existsSync(local) && /^[ \t]*[^#\s]/m.test(fs.readFileSync(local, 'utf8'))) return null;
-  const out = run(['-c', `core.attributesFile=${os.devNull}`, 'check-attr', '-z', `--source=${commit}`, 'text', 'eol', 'filter', 'ident', 'working-tree-encoding', '--', name],
-    { encoding: 'utf8', env: { ...process.env, GIT_ATTR_NOSYSTEM: '1' } }).split('\0');
-  const attr = {};
-  for (let i = 0; i + 2 < out.length; i += 3) attr[out[i + 1]] = out[i + 2];
+  const names = ['text', 'eol', 'filter', 'ident', 'working-tree-encoding'];
+  const parse = out => { const a = {}; const f = out.toString('utf8').split('\0'); for (let i = 0; i + 2 < f.length; i += 3) a[f[i + 1]] = f[i + 2]; return a; };
+  // The attributes the commit alone sets for this path, and the ones this checkout would apply (the commit plus
+  // info/attributes; global and system files are already excluded). A local rule that changes any of them for this
+  // path means another checkout of the commit would not write these bytes; a local rule for other paths is ignored.
+  const attr = parse(isolated.git(['check-attr', '-z', `--source=${isolated.sha}`, ...names, '--', name]));
+  const here = parse(run(['-c', `core.attributesFile=${os.devNull}`, 'check-attr', '-z', `--source=${commit}`, ...names, '--', name],
+    { encoding: 'utf8', env: { ...process.env, GIT_ATTR_NOSYSTEM: '1' } }));
+  if (names.some(n => attr[n] !== here[n])) return null;
   if (['filter', 'ident', 'working-tree-encoding'].some(a => attr[a] !== 'unspecified' && attr[a] !== 'unset')) return null;
   if (attr.eol !== 'crlf' || attr.text === 'unset') return null;
   return isolated.git(['cat-file', '--filters', `--path=${name}`, blob]);
