@@ -64,6 +64,21 @@ try {
   assert.deepEqual(fixed, { status: 'Quarantined', note: 'Failed daily check', current: true }, 'the correction is appended as the current entry');
   assert.equal(await page.locator(`#main #flight-react-island form[data-qms-calibration-correct="${calId}"]`).count(), 0, 'the superseded entry no longer offers a correction form');
   assert.deepEqual(errors, [], 'correcting a calibration from the React view raises no page errors');
+  // #120: the date fields are optional in the form, so a tool that was never calibrated can be retired with both dates
+  // blank. The engine still refuses blank dates on every other status.
+  const undatedForm = page.locator('#main #flight-react-island form[data-qms-record="calibration"]');
+  assert.deepEqual(await undatedForm.locator('[name="calibratedAt"], [name="expires"]').evaluateAll(els => els.map(e => e.required)), [false, false], 'the calibration dates are not browser-required, so a Retired entry can leave them blank');
+  assert.match(await island.innerText(), /leaves them blank/, 'the React calibration panel says when the dates may be blank');
+  await undatedForm.locator('[name="tag"]').fill('SR0077');
+  await undatedForm.locator('[name="description"]').fill('LOAD CELL');
+  await undatedForm.locator('[name="torque"]').selectOption('no');
+  await undatedForm.locator('[name="status"]').selectOption('Retired');
+  await undatedForm.locator('[name="note"]').fill('Never calibrated; scrapped');
+  await undatedForm.locator('button[type="submit"]').click();
+  await page.waitForFunction(() => (state.calibrationLog || []).some(e => e.tag === 'SR0077'));
+  assert.deepEqual(await page.evaluate(() => { const e = state.calibrationLog.find(x => x.tag === 'SR0077'); return { status: e.status, calibratedAt: e.calibratedAt, expires: e.expires, valid: MES.validate(state) }; }), { status: 'Retired', calibratedAt: '', expires: '', valid: true }, 'the undated Retired entry is recorded and the workspace validates');
+  assert.match(await page.locator('#main #flight-react-island').innerText(), /SR0077 · LOAD CELL · no calibration dates/, 'the React log shows an undated Retired entry without a due date');
+  assert.deepEqual(errors, [], 'retiring a never-calibrated tool from the React view raises no page errors');
 
   const report = await show('trace-report', "traceQuery = 'FC-200-00001';");
   assert.equal(report.react, true);

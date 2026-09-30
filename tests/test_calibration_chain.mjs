@@ -187,7 +187,10 @@ const signIn = async call => {
     await page.evaluate(raw => localStorage.setItem('skyryse-mes-work-order-v1', raw), JSON.stringify(saved));
     await page.reload();
     await page.waitForFunction(() => typeof state === 'object' && Array.isArray(state.calibrationLog) && state.calibrationLog.length === 3, null, { timeout: 15000 });
-    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('skyryse-mes-work-order-v1')));
+    // The restored session binds the signed-in credential and saves shortly after load. Wait for that save, or it can
+    // land after the shortened copy below is written and put the full log back before the reload (#171).
+    await page.waitForFunction(() => { const bound = MES.profileOptionFor(state.profile, state); return !!bound && bound.role === state.profile.role && localStorage.getItem('skyryse-mes-work-order-v1') === JSON.stringify(state); }, null, { timeout: 15000 });
+    const stored =await page.evaluate(() => JSON.parse(localStorage.getItem('skyryse-mes-work-order-v1')));
     check('standalone: the first load writes the legacy seal back to browser storage', stored.calibrationLogHead?.legacyCount === 3 && stored.calibrationLogHead?.count === 3 && typeof stored.calibrationLogHead?.sealedAt === 'string' && stored.calibrationLog.length === 3, JSON.stringify(stored.calibrationLogHead));
     const shortened = { ...stored, calibrationLog: stored.calibrationLog.slice(0, 2) };
     await page.evaluate(raw => localStorage.setItem('skyryse-mes-work-order-v1', raw), JSON.stringify(shortened));

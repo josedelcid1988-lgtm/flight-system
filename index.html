@@ -2529,6 +2529,29 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // service through an entry with status Retired, which toolCheck refuses, so the signed history stays whole.
   const CALIBRATION_STATUSES = Object.freeze(['In Calibration', 'Out for Calibration', 'Quarantined', 'Retired']);
   const CALIBRATION_TAG_RE = /^[A-Z0-9][A-Z0-9-]{1,39}$/;
+  // The signer roles that hold configure-qms authority: the QA Manager and Master Access account roles, as the
+  // manifest records them (#112). A signed entry from any other role fails validation, so a hand-made entry signed
+  // as a technician cannot put a tool into service. test_calibration checks this list against ROLE_CAPS.
+  const CALIBRATION_SIGNER_ROLES = Object.freeze(['Quality Manager', 'System Administrator']);
+  const calibrationSignerRole = role => CALIBRATION_SIGNER_ROLES.includes(role);
+  // The signer role is part of the signed subject (entry.signerRole), so it cannot change without breaking the hash.
+  // Builds before this gate did not record it, and a legacy manifest's signer role is not hashed, so it proves
+  // nothing. A legacy entry (no signerRole) is grandfathered as recorded, not role-verified: those builds gated
+  // account signers with configure-qms and let any standalone profile sign. Every new entry carries signerRole.
+  const calibrationSignerOk = (entry, m) => plain(m) && plain(m.signer) && (entry.signerRole === undefined || (entry.signerRole === m.signer.role && calibrationSignerRole(entry.signerRole)));
+  const calibrationSignerRefusal = role => `Calibration entries are signed as Quality Manager or System Administrator. Your signing role is ${role}.`;
+  // A Retired entry for a tool that was never calibrated carries no dates (#120). Every other status claims a
+  // calibration, so it needs both dates, the due date after the calibration date, and a calibration date no
+  // later than the day the entry was recorded.
+  const calibrationUndated = e => e.status === 'Retired' && e.calibratedAt === '' && e.expires === '';
+  // Where a tool's calibration dates are on record: the shipped snapshot, or an earlier log entry. Only a tool with
+  // none may be retired without dates (#120), so a tool that was calibrated cannot lose its dates on retirement.
+  // The write check reads the shipped snapshot too; load validation reads only the signed log, because a later build
+  // may ship a snapshot with new dates and must not invalidate a retirement that was valid when it was signed.
+  const calibrationDatesInLog = (entries, tag) => { const dated = entries.find(e => plain(e) && e.tag === tag && (e.calibratedAt || e.expires)); return dated ? String(dated.id) : null; };
+  const calibrationDatesOnRecord = (entries, tag) => { const seed = CAL_TOOLS.find(t => t.tag.toUpperCase() === tag); if (seed && seed.expires) return 'the shipped tool snapshot'; return calibrationDatesInLog(entries, tag); };
+  const calibrationDatesKept = (tag, where) => `${tag} has calibration dates on record (${where}). Enter its calibration and due dates on the Retired entry. Only a tool that was never calibrated may leave them blank.`;
+  const calibrationDatesValid = e => calibrationUndated(e) || (dateOnly(e.calibratedAt) && dateOnly(e.expires) && e.expires > e.calibratedAt && timestamp(e.recordedAt) && e.calibratedAt <= pacificDay(e.recordedAt));
   // A calibration entry's manifest must be well-formed, hash-bound to this entry's subject,
   // and bound to this entry by meaning, signing time, and signer, the same pattern other
   // signed records use. Presence alone is not enough: an emptied manifest would otherwise
@@ -2536,6 +2559,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const calibrationManifestValid = entry => {
     const m = entry.calibrationSignature && entry.calibrationSignature.manifest;
     if (!qualityManifestValid(m)) return false;
+    // The signer held calibration authority (#112), the same gate recordCalibration and updateCalibration apply.
+    if (!calibrationSignerOk(entry, m)) return false;
     // The meaning is bound to the entry kind (#108): an original entry is recorded, a superseding entry corrects.
     if (m.meaning !== (entry.supersedes === undefined ? 'Calibration recorded' : 'Calibration entry corrected')) return false;
     if (m.at !== entry.recordedAt) return false;
@@ -2543,7 +2568,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const subject = calibrationSubject(entry);
     return canonical(m.subject) === canonical(subject) && m.hash === sha256(canonical(subject));
   };
-  const calibrationEntryValid = entry => plain(entry) && /^CALLOG-\d{5}$/.test(entry.id) && CALIBRATION_TAG_RE.test(entry.tag) && str(entry.description, 80) && str(entry.serial, 40, 0) && dateOnly(entry.calibratedAt) && dateOnly(entry.expires) && entry.expires > entry.calibratedAt && CALIBRATION_STATUSES.includes(entry.status) && str(entry.location, 80, 0) && str(entry.note, 300, 0) && str(entry.recordedBy, 140) && timestamp(entry.recordedAt) && entry.calibratedAt <= pacificDay(entry.recordedAt) && (entry.supersedes === undefined || /^CALLOG-\d{5}$/.test(entry.supersedes)) && (entry.torque === undefined || typeof entry.torque === 'boolean') && calibrationManifestValid(entry);
+  const calibrationEntryValid = entry => plain(entry) && /^CALLOG-\d{5}$/.test(entry.id) && CALIBRATION_TAG_RE.test(entry.tag) && str(entry.description, 80) && str(entry.serial, 40, 0) && CALIBRATION_STATUSES.includes(entry.status) && str(entry.location, 80, 0) && str(entry.note, 300, 0) && str(entry.recordedBy, 140) && timestamp(entry.recordedAt) && calibrationDatesValid(entry) && (entry.supersedes === undefined || /^CALLOG-\d{5}$/.test(entry.supersedes)) && (entry.torque === undefined || typeof entry.torque === 'boolean') && calibrationManifestValid(entry);
   // The first field of a calibration entry that fails calibrationEntryValid, for diagnose. Same order.
   const calibrationInvalidField = entry => {
     if (!plain(entry)) return 'entry';
@@ -2551,20 +2576,22 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (!CALIBRATION_TAG_RE.test(entry.tag)) return 'tag';
     if (!str(entry.description, 80)) return 'description';
     if (!str(entry.serial, 40, 0)) return 'serial';
-    if (!dateOnly(entry.calibratedAt)) return 'calibratedAt';
-    if (!dateOnly(entry.expires) || entry.expires <= entry.calibratedAt) return 'expires';
     if (!CALIBRATION_STATUSES.includes(entry.status)) return 'status';
     if (!str(entry.location, 80, 0)) return 'location';
     if (!str(entry.note, 300, 0)) return 'note';
     if (!str(entry.recordedBy, 140)) return 'recordedBy';
     if (!timestamp(entry.recordedAt)) return 'recordedAt';
-    if (entry.calibratedAt > pacificDay(entry.recordedAt)) return 'calibratedAt';
+    if (!calibrationUndated(entry)) {
+      if (!dateOnly(entry.calibratedAt)) return 'calibratedAt';
+      if (!dateOnly(entry.expires) || entry.expires <= entry.calibratedAt) return 'expires';
+      if (entry.calibratedAt > pacificDay(entry.recordedAt)) return 'calibratedAt';
+    }
     if (entry.supersedes !== undefined && !/^CALLOG-\d{5}$/.test(entry.supersedes)) return 'supersedes';
     if (entry.torque !== undefined && typeof entry.torque !== 'boolean') return 'torque';
     if (!calibrationManifestValid(entry)) return 'signature';
     return null;
   };
-  const calibrationSubject = e => ({ id: e.id, tag: e.tag, description: e.description, serial: e.serial, calibratedAt: e.calibratedAt, expires: e.expires, status: e.status, location: e.location, note: e.note, recordedAt: e.recordedAt, recordedBy: e.recordedBy, supersedes: e.supersedes || null, ...(e.torque !== undefined ? { torque: e.torque } : {}) });
+  const calibrationSubject = e => ({ id: e.id, tag: e.tag, description: e.description, serial: e.serial, calibratedAt: e.calibratedAt, expires: e.expires, status: e.status, location: e.location, note: e.note, recordedAt: e.recordedAt, recordedBy: e.recordedBy, supersedes: e.supersedes || null, ...(e.torque !== undefined ? { torque: e.torque } : {}), ...(e.signerRole !== undefined ? { signerRole: e.signerRole } : {}) });
   // A retired tool returns to service only through a correction whose note gives the reason (owner decision on #35).
   const CALIBRATION_REASON_MIN = 8;
   const reinstatementReasonMissing = (prior, next) => prior.status === 'Retired' && next.status !== 'Retired' && (next.note.length < CALIBRATION_REASON_MIN || next.note === prior.note);
@@ -2573,7 +2600,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // entry for its tag, a retired tag is never recorded again as a new entry, and a correction that returns a
   // retired tool to service carries a new reason. Returns { id, detail } for the first entry that breaks one, or null.
   function calibrationSequenceProblem(log) {
-    const current = new Map();
+    const current = new Map(), seen = [];
     let previous = null;
     for (const e of Array.isArray(log) ? log : []) {
       if (!plain(e)) continue;
@@ -2582,6 +2609,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
         previous = e.id;
       }
       const cur = current.get(e.tag);
+      if (calibrationUndated(e)) { const where = calibrationDatesInLog(seen, e.tag); if (where) return { id: e.id, detail: `Calibration entry ${e.id} retires ${e.tag} without calibration dates, but ${e.tag} has calibration dates on record (${where}).` }; }
+      seen.push(e);
       if (e.torque === undefined && !CAL_TOOLS.some(t => t.tag.toUpperCase() === e.tag)) return { id: e.id, detail: `Calibration entry ${e.id} does not say whether ${e.tag} is a torque tool. A tool that is not in the shipped snapshot needs that answer.` };
       if (cur && cur.torque === true && e.torque !== true) return { id: e.id, detail: `Calibration entry ${e.id} removes the torque classification from ${e.tag}, which ${cur.id} records as a torque tool.` };
       if (e.supersedes !== undefined) {
@@ -2668,11 +2697,14 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (!CALIBRATION_TAG_RE.test(f.tag)) return 'Enter the tool asset tag, 2 to 40 capital letters, digits, or dashes.';
     if (!str(f.description, 80)) return 'Enter the tool description, up to 80 characters.';
     if (!str(f.serial, 40, 0)) return 'Keep the serial number under 40 characters.';
-    if (!dateOnly(f.calibratedAt)) return 'Enter the calibration date as YYYY-MM-DD.';
-    if (!dateOnly(f.expires)) return 'Enter the calibration due date as YYYY-MM-DD.';
-    if (f.expires <= f.calibratedAt) return 'The due date must be after the calibration date.';
-    if (today && f.calibratedAt > today) return `The calibration date ${f.calibratedAt} is later than today (${today}). Record the calibration on or after the day it was done.`;
     if (!CALIBRATION_STATUSES.includes(f.status)) return 'Status is In Calibration, Out for Calibration, Quarantined, or Retired.';
+    if (!calibrationUndated(f)) {
+      const retiredHint = f.status === 'Retired' ? ' A Retired entry for a tool that was never calibrated leaves both dates blank.' : '';
+      if (!dateOnly(f.calibratedAt)) return `Enter the calibration date as YYYY-MM-DD.${retiredHint}`;
+      if (!dateOnly(f.expires)) return `Enter the calibration due date as YYYY-MM-DD.${retiredHint}`;
+      if (f.expires <= f.calibratedAt) return 'The due date must be after the calibration date.';
+      if (today && f.calibratedAt > today) return `The calibration date ${f.calibratedAt} is later than today (${today}). Record the calibration on or after the day it was done.`;
+    }
     if (!str(f.location, 80, 0)) return 'Keep the location under 80 characters.';
     if (!str(f.note, 300, 0)) return 'Keep the note under 300 characters.';
     return null;
@@ -2680,7 +2712,9 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // The next id after the highest in the log, or null once CALLOG-99999 is used: ids stay five digits and rising.
   const CALIBRATION_ID_MAX = 99999;
   const nextCalibrationId = log => { const n = Math.max(0, ...log.map(e => Number(String(e && e.id).slice(7)) || 0)) + 1; return n > CALIBRATION_ID_MAX ? null : `CALLOG-${String(n).padStart(5, '0')}`; };
-  const calibrationIdsUsed = 'The calibration log has used its last entry number, CALLOG-99999. Archive the log before recording more.';
+  // There is no archive: entries are signed records and are never removed (#113), so the limits say that plainly.
+  const calibrationIdsUsed = 'The calibration log has used its last entry number, CALLOG-99999, so this entry was not recorded. Calibration entries are signed records and cannot be removed or archived in Flight System. Ask your Flight System administrator how to continue.';
+  const calibrationLogFull = 'The calibration log is full (5,000 entries), so this entry was not recorded. Calibration entries are signed records and cannot be removed or archived in Flight System. Ask your Flight System administrator how to continue.';
   // The torque answer from a form or API call: true, false, or undefined when not given.
   const torqueAnswer = v => v === true || v === 'yes' || v === 'true' ? true : v === false || v === 'no' || v === 'false' ? false : undefined;
   const seedTorqueTool = tag => CAL_TOOLS.some(t => t.tag.toUpperCase() === tag && /TORQUE/i.test(t.description));
@@ -2704,17 +2738,19 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (bad) return fail(bad);
     const who = actor(state);
     if (!snapshotValid(who)) return fail('Sign in with a named credential before recording a calibration.');
+    if (!calibrationSignerRole(who.role)) return fail(calibrationSignerRefusal(who.role));
     if (!Array.isArray(state.calibrationLog)) state.calibrationLog = [];
     const retired = calibrationStatus(state, fields.tag);
     const torque = calibrationTorque(fields.tag, input?.torque, retired);
     if (torque.error) return fail(torque.error);
+    if (calibrationUndated(fields)) { const where = calibrationDatesOnRecord(state.calibrationLog, fields.tag); if (where) return fail(calibrationDatesKept(fields.tag, where)); }
     if (retired && retired.status === 'Retired') return fail(`${fields.tag} is retired (${retired.id}) and cannot be recorded again. If it was retired by mistake, a QA Manager corrects ${retired.id} and enters the reason in the note.`);
-    if (state.calibrationLog.length >= 5000) return fail('The calibration log is full (5,000 entries). Archive older entries first.');
+    if (state.calibrationLog.length >= 5000) return fail(calibrationLogFull);
     if (!nextCalibrationId(state.calibrationLog)) return fail(calibrationIdsUsed);
-    const entry = { id: nextCalibrationId(state.calibrationLog), ...fields, ...(torque.torque !== undefined ? { torque: torque.torque } : {}), recordedAt, recordedBy: `${who.name} \u00b7 ${who.credentialId}` };
+    const entry = { id: nextCalibrationId(state.calibrationLog), ...fields, ...(torque.torque !== undefined ? { torque: torque.torque } : {}), recordedAt, recordedBy: `${who.name} \u00b7 ${who.credentialId}`, signerRole: who.role };
     entry.calibrationSignature = { manifest: signManifest(state, 'Calibration recorded', calibrationSubject(entry), entry.recordedAt) };
     appendCalibrationEntry(state, entry);
-    return { ok: true, id: entry.id, message: `Calibration recorded for ${entry.tag}; due ${entry.expires}.` };
+    return { ok: true, id: entry.id, message: calibrationUndated(entry) ? `${entry.tag} recorded as Retired with no calibration dates. It cannot be used.` : `Calibration recorded for ${entry.tag}; due ${entry.expires}.` };
   }
   function updateCalibration(state, id, patch) {
     if (!can('configure-qms')) return fail('Only a QA Manager or Master Access account can correct calibration entries.');
@@ -2723,7 +2759,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (!prior) return fail('That calibration entry was not found.');
     const current = calibrationStatus(state, prior.tag);
     if (!current || current.id !== prior.id) return fail(`${prior.id} is not the current entry for ${prior.tag}. Correct the current entry, ${current ? current.id : 'the latest one'}, instead.`);
-    if (log.length >= 5000) return fail('The calibration log is full (5,000 entries). Archive older entries first.');
+    if (log.length >= 5000) return fail(calibrationLogFull);
     if (!nextCalibrationId(log)) return fail(calibrationIdsUsed);
     const fields = { tag: prior.tag, description: patch?.description === undefined ? prior.description : String(patch.description).trim(), serial: patch?.serial === undefined ? prior.serial : String(patch.serial).trim(), calibratedAt: patch?.calibratedAt === undefined ? prior.calibratedAt : String(patch.calibratedAt).trim(), expires: patch?.expires === undefined ? prior.expires : String(patch.expires).trim(), status: patch?.status === undefined ? prior.status : String(patch.status).trim(), location: patch?.location === undefined ? prior.location : String(patch.location).trim(), note: patch?.note === undefined ? prior.note : String(patch.note).trim() };
     const recordedAt = new Date().toISOString();
@@ -2731,10 +2767,12 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (bad) return fail(bad);
     const torque = calibrationTorque(prior.tag, patch?.torque, prior);
     if (torque.error) return fail(torque.error);
+    if (calibrationUndated(fields)) { const where = calibrationDatesOnRecord(log, prior.tag); if (where) return fail(calibrationDatesKept(prior.tag, where)); }
     if (reinstatementReasonMissing(prior, fields)) return fail(`${prior.tag} is retired. To return it to service, enter the reason in the note (at least ${CALIBRATION_REASON_MIN} characters, different from the retirement note), for example which tool was retired by mistake.`);
     const who = actor(state);
     if (!snapshotValid(who)) return fail('Sign in with a named credential before correcting a calibration entry.');
-    const entry = { id: nextCalibrationId(log), ...fields, ...(torque.torque !== undefined ? { torque: torque.torque } : {}), recordedAt, recordedBy: `${who.name} \u00b7 ${who.credentialId}`, supersedes: prior.id };
+    if (!calibrationSignerRole(who.role)) return fail(calibrationSignerRefusal(who.role));
+    const entry = { id: nextCalibrationId(log), ...fields, ...(torque.torque !== undefined ? { torque: torque.torque } : {}), recordedAt, recordedBy: `${who.name} \u00b7 ${who.credentialId}`, supersedes: prior.id, signerRole: who.role };
     entry.calibrationSignature = { manifest: signManifest(state, 'Calibration entry corrected', calibrationSubject(entry), entry.recordedAt) };
     state.calibrationLog = log;
     appendCalibrationEntry(state, entry);
@@ -2955,7 +2993,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     (state.qualityVerdicts||[]).forEach(record=>{if(plain(record.manifest))recheck(record.id,record.manifest,{id:record.id,kind:record.kind,valueId:record.valueId,value:record.value,verdict:record.verdict});});
     (state.controlledDocuments||[]).forEach(doc=>{if(!controlledDocumentFileValid(doc.file))failures.push({where:`${doc.id} file`,reason:'stored file SHA-256 does not match'});const verifyDocumentManifest=(label,manifest,subject)=>{if(!plain(manifest))return;if(!shapeOk(manifest))failures.push({where:`${doc.id} ${label}`,reason:'manifest shape is invalid'});else if(manifest.build!==undefined&&!buildStampValid(manifest.build))failures.push({where:`${doc.id} ${label}`,reason:'build stamp is malformed'});recheck(`${doc.id} ${label}`,manifest,subject);};verifyDocumentManifest('author',doc.authorManifest,controlledDocumentSubject(doc));if(doc.reviewManifest)verifyDocumentManifest('review',doc.reviewManifest,controlledDocumentReviewSubject(doc));if(doc.releaseManifest)verifyDocumentManifest('release',doc.releaseManifest,controlledDocumentReleaseSubject(doc));});
     (state.trainingRecords||[]).forEach(record=>{if(record.certificate&&!trainingCertificateValid(record.certificate))failures.push({where:`${record.id} certificate`,reason:'stored file SHA-256 does not match'});});
-    (state.calibrationLog||[]).forEach(record=>{const m=record.calibrationSignature&&record.calibrationSignature.manifest;if(!plain(m))failures.push({where:record.id,reason:'calibration entry is not signed'});else recheck(record.id,m,calibrationSubject(record));});
+    (state.calibrationLog||[]).forEach(record=>{const m=record.calibrationSignature&&record.calibrationSignature.manifest;if(!plain(m))failures.push({where:record.id,reason:'calibration entry is not signed'});else{recheck(record.id,m,calibrationSubject(record));if(!calibrationSignerOk(record,m))failures.push({where:record.id,reason:'calibration entry is signed by a role without calibration authority'});}});
     (state.orders || []).forEach(order => {
       (order.operations || []).forEach(op => {
         const b = op.buyoff; if (!plain(b) || !plain(b.manifest)) return;
@@ -5194,7 +5232,7 @@ const OP_BOM_MAX = 12;
     const loggedTool = calibrationStatus(state, q);
     const tool = loggedTool ? { tag: loggedTool.tag, description: loggedTool.description, serial: loggedTool.serial, calibratedAt: loggedTool.calibratedAt, expires: loggedTool.expires, status: loggedTool.status, location: loggedTool.location, calibrationEntry: loggedTool.id } : CAL_TOOLS.find(t => up(t.tag) === q) || null;
     // Tool usage: buy-off tools, ATP test assets (#107) and torque steps.
-    const toolIn = op => !!op && ((op.buyoff && Array.isArray(op.buyoff.tools) && op.buyoff.tools.some(t => up(typeof t === 'string' ? t : (t && t.tag)).startsWith(q))) || (op.buyoff && Array.isArray(op.buyoff.testAssets) && op.buyoff.testAssets.some(a => a && up(a.asset) === q)) || (plain(op.stepChecks) && Object.values(op.stepChecks).some(c => c && c.torque && up(c.torque.tool) === q)));
+    const toolIn = op => !!op && ((op.buyoff && Array.isArray(op.buyoff.tools) && op.buyoff.tools.some(t => up(typeof t === 'string' ? t : (t && t.tag)) === q)) || (op.buyoff && Array.isArray(op.buyoff.testAssets) && op.buyoff.testAssets.some(a => a && up(a.asset) === q)) || (plain(op.stepChecks) && Object.values(op.stepChecks).some(c => c && c.torque && up(c.torque.tool) === q)));
     let kind = 'text';
     if (tool) kind = 'tool';
     else if (/^LOT-/.test(q)) kind = 'lot';
@@ -11479,9 +11517,9 @@ function renderQmsRecords(){
   const values=(state.qualityValues||[]).slice().reverse().map(row=>`<option value="${esc(row.id)}" data-kind="${esc(row.kind)}">${esc(row.id)} · ${esc(row.kind)} · ${esc(row.value)}${row.name?' · '+esc(row.name):''}</option>`).join('');
   const calCurrent=MES.calibrationCurrentIds(state);
   const calCanCorrect=!!window.skAuth?.can?.('configure-qms');
-  const calibrations=(state.calibrationLog||[]).slice().reverse().map(row=>`<li><strong>${esc(row.id)}</strong> · ${esc(row.tag)} · ${esc(row.description)}${row.torque===true?' · torque tool':''} · due ${esc(row.expires)} <span class="pill ${row.status==='In Calibration'?'closed':'high'}">${esc(row.status)}</span>${row.supersedes?` <span class="muted">corrects ${esc(row.supersedes)}</span>`:''}${calCurrent.has(row.id)?'':' <span class="muted">superseded</span>'}<br><span class="muted">Recorded by ${esc(row.recordedBy)} · ${date(row.recordedAt)} · SHA-256${row.note?' · '+esc(row.note):''}</span>${calCanCorrect&&calCurrent.has(row.id)?`<details class="resolve-details"><summary>Correct this entry</summary><form data-qms-calibration-correct="${esc(row.id)}"><div class="form-grid"><label class="field">Description<input name="description" maxlength="80" required value="${esc(row.description)}"></label><label class="field">Torque tool<select name="torque"><option value="">Keep as recorded</option><option value="yes">Yes</option><option value="no">No</option></select></label><label class="field">Serial number<input name="serial" maxlength="40" value="${esc(row.serial)}"></label><label class="field">Calibrated on<input name="calibratedAt" type="date" required value="${esc(row.calibratedAt)}"></label><label class="field">Due date<input name="expires" type="date" required value="${esc(row.expires)}"></label><label class="field">Status<select name="status">${['In Calibration','Out for Calibration','Quarantined','Retired'].map(v=>`<option${v===row.status?' selected':''}>${v}</option>`).join('')}</select></label><label class="field">Location<input name="location" maxlength="80" value="${esc(row.location)}"></label><label class="field wide">Note or reason<input name="note" maxlength="300" value="${esc(row.note)}"></label></div><p class="small muted">The correction is signed and appended; ${esc(row.id)} stays in the log. To return a retired tool to service, give the reason in the note.</p><button class="btn" type="submit">Sign correction</button></form></details>`:''}</li>`).join('');
+  const calibrations=(state.calibrationLog||[]).slice().reverse().map(row=>`<li><strong>${esc(row.id)}</strong> · ${esc(row.tag)} · ${esc(row.description)}${row.torque===true?' · torque tool':''}${row.expires?` · due ${esc(row.expires)}`:' · no calibration dates'} <span class="pill ${row.status==='In Calibration'?'closed':'high'}">${esc(row.status)}</span>${row.supersedes?` <span class="muted">corrects ${esc(row.supersedes)}</span>`:''}${calCurrent.has(row.id)?'':' <span class="muted">superseded</span>'}<br><span class="muted">Recorded by ${esc(row.recordedBy)} · ${date(row.recordedAt)} · SHA-256${row.note?' · '+esc(row.note):''}</span>${calCanCorrect&&calCurrent.has(row.id)?`<details class="resolve-details"><summary>Correct this entry</summary><form data-qms-calibration-correct="${esc(row.id)}"><div class="form-grid"><label class="field">Description<input name="description" maxlength="80" required value="${esc(row.description)}"></label><label class="field">Torque tool<select name="torque"><option value="">Keep as recorded</option><option value="yes">Yes</option><option value="no">No</option></select></label><label class="field">Serial number<input name="serial" maxlength="40" value="${esc(row.serial)}"></label><label class="field">Calibrated on<input name="calibratedAt" type="date" value="${esc(row.calibratedAt)}"></label><label class="field">Due date<input name="expires" type="date" value="${esc(row.expires)}"></label><label class="field">Status<select name="status">${['In Calibration','Out for Calibration','Quarantined','Retired'].map(v=>`<option${v===row.status?' selected':''}>${v}</option>`).join('')}</select></label><label class="field">Location<input name="location" maxlength="80" value="${esc(row.location)}"></label><label class="field wide">Note or reason<input name="note" maxlength="300" value="${esc(row.note)}"></label></div><p class="small muted">The correction is signed and appended; ${esc(row.id)} stays in the log. To return a retired tool to service, give the reason in the note.</p><button class="btn" type="submit">Sign correction</button></form></details>`:''}</li>`).join('');
   const verdicts=(state.qualityVerdicts||[]).slice().reverse().map(row=>`<li><strong>${esc(row.id)}</strong> · ${esc(row.kind)} ${esc(row.value)} · ${esc(row.verdict)} <span class="muted">Signed by ${esc(row.by.name)} · ${date(row.at)} · SHA-256</span></li>`).join('');
-  return `<section class="qms-config-page"><div class="page-heading"><div><p class="hero-eyebrow">Flight Maneuver · Quality system</p><h1>System QMS records</h1><p class="lede">Audits, controlled documents, supplier approvals, certifications, recorded quality study results, and the calibration log. Signatures and content hashes are checked by the Flight record verifier.</p></div></div>${renderAIGovernance()}<section class="panel"><div class="panel-head"><h2>Audits</h2><span class="pill">${(state.audits||[]).length} records</span></div><form data-qms-record="audit"><div class="form-grid"><label class="field">Audit scope<input name="scope" maxlength="200" minlength="3" required placeholder="Internal process audit"></label><label class="field wide">Findings<textarea name="findings" rows="3" required placeholder="One finding per line"></textarea></label></div><p class="small muted">The person who records a finding cannot close it. A different person signs each closure.</p><button class="btn primary" type="submit">Open audit</button></form>${audits||'<p class="muted">No audits recorded.</p>'}</section>${renderControlledDocumentBlock()}<section class="panel"><div class="panel-head"><h2>Calibration log</h2><span class="pill">${(state.calibrationLog||[]).length} records</span></div><form data-qms-record="calibration"><div class="form-grid"><label class="field">Tool asset tag<input name="tag" maxlength="40" required placeholder="CAL-022"></label><label class="field">Description<input name="description" maxlength="80" required placeholder="DIGITAL CALIPER"></label><label class="field">Torque tool<select name="torque" required><option value="">Choose</option><option value="yes">Yes</option><option value="no">No</option></select></label><label class="field">Serial number<input name="serial" maxlength="40"></label><label class="field">Calibrated on<input name="calibratedAt" type="date" required></label><label class="field">Due date<input name="expires" type="date" required></label><label class="field">Status<select name="status"><option>In Calibration</option><option>Out for Calibration</option><option>Quarantined</option><option>Retired</option></select></label><label class="field">Location<input name="location" maxlength="80" placeholder="Production Floor"></label><label class="field wide">Note<input name="note" maxlength="300" placeholder="Certificate reference or lab"></label></div><p class="small muted">New entries supersede the shipped tool snapshot at point of use. A correction appends a new superseding entry; the original stays in the log. Entries are never deleted: to take a tool out of use for good, record it as Retired.</p><button class="btn primary" type="submit">Record calibration</button></form><ul>${calibrations||'<li class="muted">No calibrations recorded.</li>'}</ul></section><div class="form-grid qms-record-columns"><section class="panel"><div class="panel-head"><h2>Certifications</h2><span class="pill">${(state.certifications||[]).length}</span></div><form data-qms-record="certification"><label class="field">Certification statement<textarea name="statement" minlength="5" maxlength="300" required rows="3" placeholder="What this certification covers"></textarea></label><button class="btn primary" type="submit">Sign certification</button></form><ul>${certifications||'<li class="muted">No certifications recorded.</li>'}</ul></section><section class="panel"><div class="panel-head"><h2>Supplier approvals</h2><span class="pill">${(state.supplierApprovals||[]).length}</span></div><form data-qms-record="supplier"><label class="field">Supplier name<input name="supplier" minlength="2" maxlength="120" required></label><button class="btn primary" type="submit">Sign supplier approval</button></form><ul>${suppliers||'<li class="muted">No supplier approvals recorded.</li>'}</ul></section></div><section class="panel"><div class="panel-head"><h2>Quality study values and verdicts</h2><span class="pill">The app records values; it does not calculate them.</span></div><div class="form-grid qms-record-columns"><form data-qms-record="quality-value"><label class="field">Study type<select name="kind"><option value="gage">Gage</option><option value="capability">Capability</option><option value="sampling">Sampling</option></select></label><label class="field">Computed value<input name="value" type="number" step="any" required></label><label class="field">Study or characteristic name<input name="name" maxlength="80"></label><button class="btn" type="submit">Store computed value</button></form><form data-qms-record="quality-verdict"><label class="field">Stored study value<select name="valueId" required><option value="">Choose a value</option>${values}</select></label><label class="field">Verdict<input name="verdict" minlength="2" maxlength="80" required placeholder="Acceptable"></label><p class="small muted">A verdict cites the stored result and is signed as a separate record.</p><button class="btn primary" type="submit">Sign verdict</button></form></div><ul>${verdicts||'<li class="muted">No signed verdicts recorded.</li>'}</ul></section></section>`;
+  return `<section class="qms-config-page"><div class="page-heading"><div><p class="hero-eyebrow">Flight Maneuver · Quality system</p><h1>System QMS records</h1><p class="lede">Audits, controlled documents, supplier approvals, certifications, recorded quality study results, and the calibration log. Signatures and content hashes are checked by the Flight record verifier.</p></div></div>${renderAIGovernance()}<section class="panel"><div class="panel-head"><h2>Audits</h2><span class="pill">${(state.audits||[]).length} records</span></div><form data-qms-record="audit"><div class="form-grid"><label class="field">Audit scope<input name="scope" maxlength="200" minlength="3" required placeholder="Internal process audit"></label><label class="field wide">Findings<textarea name="findings" rows="3" required placeholder="One finding per line"></textarea></label></div><p class="small muted">The person who records a finding cannot close it. A different person signs each closure.</p><button class="btn primary" type="submit">Open audit</button></form>${audits||'<p class="muted">No audits recorded.</p>'}</section>${renderControlledDocumentBlock()}<section class="panel"><div class="panel-head"><h2>Calibration log</h2><span class="pill">${(state.calibrationLog||[]).length} records</span></div><form data-qms-record="calibration"><div class="form-grid"><label class="field">Tool asset tag<input name="tag" maxlength="40" required placeholder="CAL-022"></label><label class="field">Description<input name="description" maxlength="80" required placeholder="DIGITAL CALIPER"></label><label class="field">Torque tool<select name="torque" required><option value="">Choose</option><option value="yes">Yes</option><option value="no">No</option></select></label><label class="field">Serial number<input name="serial" maxlength="40"></label><label class="field">Calibrated on<input name="calibratedAt" type="date"></label><label class="field">Due date<input name="expires" type="date"></label><label class="field">Status<select name="status"><option>In Calibration</option><option>Out for Calibration</option><option>Quarantined</option><option>Retired</option></select></label><label class="field">Location<input name="location" maxlength="80" placeholder="Production Floor"></label><label class="field wide">Note<input name="note" maxlength="300" placeholder="Certificate reference or lab"></label></div><p class="small muted">New entries supersede the shipped tool snapshot at point of use. A correction appends a new superseding entry; the original stays in the log. Entries are never deleted: to take a tool out of use for good, record it as Retired. Both dates are required, except on a Retired entry for a tool that was never calibrated, which leaves them blank.</p><button class="btn primary" type="submit">Record calibration</button></form><ul>${calibrations||'<li class="muted">No calibrations recorded.</li>'}</ul></section><div class="form-grid qms-record-columns"><section class="panel"><div class="panel-head"><h2>Certifications</h2><span class="pill">${(state.certifications||[]).length}</span></div><form data-qms-record="certification"><label class="field">Certification statement<textarea name="statement" minlength="5" maxlength="300" required rows="3" placeholder="What this certification covers"></textarea></label><button class="btn primary" type="submit">Sign certification</button></form><ul>${certifications||'<li class="muted">No certifications recorded.</li>'}</ul></section><section class="panel"><div class="panel-head"><h2>Supplier approvals</h2><span class="pill">${(state.supplierApprovals||[]).length}</span></div><form data-qms-record="supplier"><label class="field">Supplier name<input name="supplier" minlength="2" maxlength="120" required></label><button class="btn primary" type="submit">Sign supplier approval</button></form><ul>${suppliers||'<li class="muted">No supplier approvals recorded.</li>'}</ul></section></div><section class="panel"><div class="panel-head"><h2>Quality study values and verdicts</h2><span class="pill">The app records values; it does not calculate them.</span></div><div class="form-grid qms-record-columns"><form data-qms-record="quality-value"><label class="field">Study type<select name="kind"><option value="gage">Gage</option><option value="capability">Capability</option><option value="sampling">Sampling</option></select></label><label class="field">Computed value<input name="value" type="number" step="any" required></label><label class="field">Study or characteristic name<input name="name" maxlength="80"></label><button class="btn" type="submit">Store computed value</button></form><form data-qms-record="quality-verdict"><label class="field">Stored study value<select name="valueId" required><option value="">Choose a value</option>${values}</select></label><label class="field">Verdict<input name="verdict" minlength="2" maxlength="80" required placeholder="Acceptable"></label><p class="small muted">A verdict cites the stored result and is signed as a separate record.</p><button class="btn primary" type="submit">Sign verdict</button></form></div><ul>${verdicts||'<li class="muted">No signed verdicts recorded.</li>'}</ul></section></section>`;
 }
 document.addEventListener('submit',event=>{const form=event.target.closest?.('[data-qms-record]');if(!form)return;event.preventDefault();const data=Object.fromEntries(new FormData(form)),kind=form.dataset.qmsRecord;let result;if(kind==='audit')result=MES.openAudit(state,{scope:data.scope,findings:data.findings.split(/\r?\n/).filter(Boolean)});else if(kind==='certification')result=MES.issueCertification(state,data);else if(kind==='calibration')result=MES.recordCalibration(state,data);else if(kind==='supplier')result=MES.approveSupplier(state,data);else if(kind==='quality-value')result=MES.storeQualityValue(state,{kind:data.kind,value:Number(data.value),name:data.name});else if(kind==='quality-verdict'){const option=form.elements.valueId.selectedOptions[0];result=MES.recordQualityVerdict(state,{kind:option?.dataset.kind,valueId:data.valueId,verdict:data.verdict});}if(result?.ok)view='qms-records';applyResult(result);});
 document.addEventListener('submit',event=>{const form=event.target.closest?.('[data-qms-calibration-correct]');if(!form)return;event.preventDefault();const data=Object.fromEntries(new FormData(form));const result=MES.updateCalibration(state,form.dataset.qmsCalibrationCorrect,data);if(result?.ok)view='qms-records';applyResult(result);});

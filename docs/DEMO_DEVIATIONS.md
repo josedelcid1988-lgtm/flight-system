@@ -18,7 +18,7 @@ differs byte for byte, if any target is missing, or if the production engine com
 The accounts `tech`, `quality`, `mfgeng`, `operations`, `engineering` are pilot seats. They keep the capabilities of
 their real role (Technician, Quality, Manufacturing Engineering, Operations, Engineering) so a pilot
 can rehearse the real hand-offs. Every other demo account (`demo`, `master`, `safety`,
-`certification` and any account a person creates) has full access (D-6 to D-32). The stamp,
+`certification` and any account a person creates) has full access (D-6 to D-36). The stamp,
 PIN and separation-of-duties relaxations (D-13 to D-19; D-20 to D-33) apply to every
 demo account so no scenario stalls. Sign in with any account and the password `demo1234`.
 
@@ -73,3 +73,4 @@ Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-2
 | D-33 | Separation of duties | The person who verified a FAIR may sign box 22 | One person can verify a FAIR and review it in box 22, so an FAI order can be walked alone. Production refuses this to every role, Master Access and Support Access included. The QA approval still waits for box 22. | 1 |
 | D-34 | Data | Demo-only Flight Maneuver examples | Sample corrective actions, SPRs and NCs load only in the explicitly marked demo build. Production opens a valid empty register and never replaces damaged records with examples. | 1 |
 | D-35 | Data | Seed operational dates follow the first-load day | The sample workspace is captured on a fixed day. When a browser first loads it, due and start dates of open work, the MDL date of a package with no 8130-9 yet, planned need dates, open request and CAR due dates, and stamp expiries move forward by the days since capture, so the sample data does not age. A CAR, whose history quotes its due dates, and an order whose MDL date moves get a Demo build history entry naming the old and new dates. Signed and recorded dates (buy-offs, manifests, signatures, existing history, closed orders) never move. The calibrated tool snapshot is production data and is not moved. Source: tools/demo/seed-dates.mjs. | 2 |
+| D-36 | Roles | Any named signer role may sign a calibration entry | The full-access demo accounts (D-6) hold configure-qms whatever their role, so their calibration entries record and validate. Production accepts only the Quality Manager and System Administrator signer roles. Pilot seats are still refused by the configure-qms gate. | 1 |
