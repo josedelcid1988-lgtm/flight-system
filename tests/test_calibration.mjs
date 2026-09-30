@@ -336,6 +336,15 @@ check('an older-version workspace holding a __proto__ key is not upgraded either
 const closedEntry = { order: { id: 'WO-ARCH-1', status: 'Closed', operations: [], tickets: [] }, activity: [] };
 const taintedEntry = { order: { id: 'WO-ARCH-2', status: 'Closed', operations: [JSON.parse('{"__proto__":{"note":"hidden"}}')], tickets: [] }, activity: [] };
 check('an archive candidate holding a __proto__ key is refused, while a clean closed order still archives', MES.archivedOrderValid(closedEntry) && !MES.archivedOrderValid(taintedEntry));
+// Codex review on #168 (4146176864): archiving must name the forbidden key, not report missing fields.
+{ const a = JSON.parse(JSON.stringify(hist)); a.orders = [JSON.parse('{"id":"WO-9001","status":"Closed","inventory":{"at":"2026-09-30"},"operations":[{"__proto__":{"x":1}}],"tickets":[],"materials":[],"partNumber":"P-1"}')];
+  const r = MES.archiveOrders(a);
+  check('archiving a closed order that holds a __proto__ key names the order and the key, and keeps it live', !r.ok && /WO-9001/.test(r.message) && /__proto__/.test(r.message) && /WO-9001\.operations\[0\]/.test(r.message) && !/missing required/.test(r.message) && a.orders.length === 1); }
+// Codex review on #168 (4146176855): a deeply nested draft body gets the key refusal (or a plain depth message), never a throw.
+{ let deepProto = '{"__proto__":1}', deepPlain = '{"x":1}'; for (let n = 0; n < 5000; n += 1) { deepProto = `{"a":${deepProto}}`; deepPlain = `{"a":${deepPlain}}`; }
+  let rp = null, rq = null, threw = null;
+  try { rp = runHist(() => MES.updateSkillDraft(hist, spc.draftId, JSON.parse(deepProto), 'A deeply nested body with the forbidden key.')); rq = runHist(() => MES.updateSkillDraft(hist, spc.draftId, JSON.parse(deepPlain), 'A deeply nested body without the forbidden key.')); } catch (e) { threw = e; }
+  check('a deeply nested draft body is refused with the __proto__ message, and one without the key with a plain depth message, never a throw', !threw && rp && !rp.ok && /__proto__/.test(rp.message) && rq && !rq.ok && /nested too deeply/.test(rq.message)); }
 // #64: the calibration log is append-only. Retirement, not deletion, removes a tool from use: a retired
 // tool reads unusable at point of use and its entries stay in the signed log.
 check('there is no calibration delete command', MES.deleteCalibration === undefined && MES.removeCalibration === undefined && host.resolveAction('MES.deleteCalibration') === null);
