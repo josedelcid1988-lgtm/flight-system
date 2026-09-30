@@ -3660,7 +3660,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     return version < 3 || (unique(state.orders.flatMap(order => order.operations.flatMap(operation => operation.evidence.map(item => item.id)))) && state.orders.every(order => !order.sourceTicket || state.orders.some(source => source.id === order.sourceTicket.orderId && source.tickets.some(ticket => ticket.id === order.sourceTicket.ticketId))));
   }
 
-  const validate = state => validateVersion(state, 3) && (!Object.hasOwn(state, 'masterWIs') || masterWIsValid(state.masterWIs));
+  const validate = state => !hasProtoKey(state) && validateVersion(state, 3) && (!Object.hasOwn(state, 'masterWIs') || masterWIsValid(state.masterWIs));
 
   // Buy-off types, inspection points, operation sequence changes, and master WIs (master work orders).
   const BUYOFF_TYPES = Object.freeze(['Technician', 'Quality', 'A&P', 'Engineering', '8130-9 Authorized Inspector', 'Conformity Inspector']);
@@ -7513,6 +7513,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   // without touching any manufacturing record.
   function diagnose(state) {
     if (validate(state)) return null;
+    { const at = protoKeyPath(state); if (at) return { where: at, detail: `The record at ${at} carries a "__proto__" key. Remove that key; saved data cannot use that key name.`, fix: null }; }
     const clone = s => JSON.parse(JSON.stringify(s));
     const ok = mut => { try { const s = clone(state); mut(s); return validate(s); } catch (e) { return false; } };
     if (!plain(state) || state.version !== 3 || !Array.isArray(state.orders)) return { where: 'workspace', detail: 'Workspace envelope is not the current version.', fix: null };
@@ -8152,9 +8153,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   Object.assign(MES, { archivable, archiveOrders, archivedOrderValid, ownWorkRefusal, coveredBuildOps, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, verifyManifests, reviewFair, NFF, recordTraining, personTraining, trainingCurrentFor, trainingCertificateValid, ownWorkHit, OWN_WORK_EXEMPT_PEDIGREES, scryptHex, PIN_KDF, saveTraining, trainingCatalog, requiredTrainings, trainingDef, TRAINING_CODE_RE, importStamps, stampRegisterCsv, nextStampNumber, isPlaceholderStamp, STAMP_NUMBER_RE, wiAuthors, wiAuthorRefusal, wiPeerReviewRefusal, buildStamp, buildStampValid, supportActor, supportGrant, logSupport, SUPPORT_RULES, SUPPORT_KINDS, recordSupportAccess, noteDemoBypassRemoved, supportLogValid, recordCalibration, updateCalibration, calibrationStatus, calibrationChainProblem, calibrationEntryHash, calibrationLegacyHash, calibrationLogChanges, calibrationCurrentIds, calibratedToolChecks, toolUseRecords, calibrationEntryValid, CALIBRATION_STATUSES });
   Object.assign(MES, { SOURCE_INSPECTION_CLASS, SOURCE_INSPECTION_CODES, CONFORMITY_SUBCODES, TEST_SUBCODES, operationType, migrateOperationTypes, sourceInspectionCodes, conformitySubcodes, testSubcodes, operationSubcodes, operationSubcode, saveSourceInspectionCodes, saveOperationSubcodes, mrbTrainingTiers, saveMrbTrainingTiers, recordSourceInspection, sourceInspectionHolds, sourceInspectionWorkspaceValid });
   const validateWithSourceInspection = MES.validate;
-  MES.validate = state => !hasProtoKey(state) && validateWithSourceInspection(state) && sourceInspectionWorkspaceValid(state);
-  const diagnoseWithoutProtoKeys = MES.diagnose;
-  MES.diagnose = state => { const at = protoKeyPath(state); return at ? { where: at, detail: `The record at ${at} carries a "__proto__" key. Remove that key; saved data cannot use that key name.`, fix: null } : diagnoseWithoutProtoKeys(state); };
+  MES.validate = state => validateWithSourceInspection(state) && sourceInspectionWorkspaceValid(state);
   if (typeof module !== 'undefined' && module.exports) module.exports = MES;
   if (root) root.MES = MES;
 })(typeof window !== 'undefined' ? window: null);

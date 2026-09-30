@@ -320,6 +320,13 @@ check('a signed draft body holding a __proto__ key fails validation, before and 
 const protoDiag = MES.diagnose(protoTampered);
 check('diagnose names where the __proto__ key sits', !!protoDiag && protoDiag.where === `workspace.aiSkillDrafts[${protoTampered.aiSkillDrafts.findIndex(d => d.id === spc.draftId)}].body` && /__proto__/.test(protoDiag.detail) && protoDiag.fix === null);
 check('the server gate refuses the tampered workspace and says why', /__proto__/.test(srv.validState(structuredClone(protoTampered)) || ''));
+// Codex review on #168 (4145296659): the standalone boot path opens whatever MES.upgrade returns, and save() writes when
+// MES.repair reports ok. Both close over the engine's own validate and diagnose, so the rule must live there too.
+check('MES.upgrade refuses a stored workspace holding a __proto__ key, so the standalone boot path does not open it', MES.upgrade(structuredClone(protoTampered)) === null && !!MES.upgrade(structuredClone(hist)));
+const protoRepair = MES.repair(structuredClone(protoTampered));
+check('MES.repair does not report a __proto__ workspace as fixed, so save() refuses to write it', protoRepair.ok === false && /__proto__/.test(protoRepair.blocker?.detail || ''));
+const oldVersion = structuredClone(protoTampered); oldVersion.version = 2;
+check('an older-version workspace holding a __proto__ key is not upgraded either', !MES.upgrade(oldVersion));
 // #64: the calibration log is append-only. Retirement, not deletion, removes a tool from use: a retired
 // tool reads unusable at point of use and its entries stay in the signed log.
 check('there is no calibration delete command', MES.deleteCalibration === undefined && MES.removeCalibration === undefined && host.resolveAction('MES.deleteCalibration') === null);
