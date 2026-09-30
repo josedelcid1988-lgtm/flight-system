@@ -15246,7 +15246,10 @@ function fsTicketMrbLine(order,ticket){
   else{
     if(!ticket.dispo||(!FM.needsMRB(order,ticket)&&m.proposed!==ticket.dispo.decision))return '';
     const gate=FM.gateResolve(state,order.id,ticket.id);
-    if(m.status==='Open'){const waiting=FM.seatsOf(m).filter(seat=>!(m.votes||[]).some(v=>v.seat===seat));next=waiting.length?`Waiting on votes from ${waiting.join(', ')}. Quality records the decision in Flight Maneuver once every seat has voted.`:`Every seat has voted. Quality records the board decision in Flight Maneuver next.`;}
+    if(m.status==='Open'){const waiting=FM.seatsOf(m).filter(seat=>!(m.votes||[]).some(v=>v.seat===seat)),d=ticket.dispo.decision;
+      // A board still open on a disposition that was returned and replaced: it must be decided before a new board can convene.
+      if(m.proposed!==d)next=`This board reviews ${m.proposed}, but ${ticket.id} now proposes ${d}. ${waiting.length?`Waiting on votes from ${waiting.join(', ')}, then Quality records this board's decision`:'Quality records this board\'s decision'}, then a new board for ${d} convenes in Flight Maneuver.`;
+      else next=waiting.length?`Waiting on votes from ${waiting.join(', ')}. Quality records the decision in Flight Maneuver once every seat has voted.`:`Every seat has voted. Quality records the board decision in Flight Maneuver next.`;}
     else if(gate&&gate.message)next=gate.message;
     else if(m.status==='Approved')next=`Board approved ${m.proposed}. Quality approves ${ticket.id} next.`;
     else return '';
