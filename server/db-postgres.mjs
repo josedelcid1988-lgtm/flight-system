@@ -69,6 +69,30 @@ export async function openPostgres(connectionString, options = {}) {
   }
 }
 
+// Read-only access for one-off operator scans (tools/scan-archive-proto.mjs). It runs no schema step: the session
+// defaults to read-only transactions and the scan runs in one REPEATABLE READ READ ONLY transaction, so PostgreSQL
+// itself refuses any write and every page comes from the same snapshot.
+export async function openPostgresReadOnly(connectionString) {
+  if (!connectionString) throw new Error('Set FLIGHT_DATABASE_URL to scan PostgreSQL storage.');
+  const { Pool } = await import('pg');
+  const pool = new Pool({ connectionString, max: 1, application_name: 'Flight System read-only scan', options: '-c default_transaction_read_only=on' });
+  return {
+    async *archiveRows(pageSize = 200) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+        for (let after = '', rows; (rows = (await client.query('SELECT order_id, json FROM archive WHERE order_id > $1 ORDER BY order_id LIMIT $2', [after, pageSize])).rows).length; after = rows[rows.length - 1].order_id) {
+          for (const r of rows) yield { id: r.order_id, json: r.json };
+        }
+      } finally {
+        await client.query('ROLLBACK').catch(() => {});
+        client.release();
+      }
+    },
+    async close() { await pool.end(); }
+  };
+}
+
 // Restore a pg_dump custom-format archive (as produced by store.backup()) into a
 // PostgreSQL database. This is an offline, pre-startup operation: stop the server
 // before restoring into its database, or restore into an empty database and point
