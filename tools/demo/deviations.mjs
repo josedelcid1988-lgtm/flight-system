@@ -152,7 +152,7 @@ const LIST = [
     find: 'window.FlightManeuver.ensure(state);const FM=window.FlightManeuver;', count: 1,
     replace: (ctx, m, id) => `const hadManeuver=Object.hasOwn(state,'maneuver');window.FlightManeuver.ensure(state);if(!hadManeuver)window.FlightManeuver.seedDemoRecords(state);/* DEMO ${id} */const FM=window.FlightManeuver;` },
   { area: 'Data', title: 'Seed operational dates follow the first-load day',
-    why: 'The sample workspace is captured on a fixed day. When a browser first loads it, due and start dates of open work, the MDL date of a package with no 8130-9 yet, planned need dates, open request and CAR due dates, and stamp expiries move forward by the days since capture, so the demo does not age. Signed and recorded dates (buy-offs, manifests, signatures, history, closed orders) never move. Source: tools/demo/seed-dates.mjs.',
+    why: 'The sample workspace is captured on a fixed day. When a browser first loads it, due and start dates of open work, the MDL date of a package with no 8130-9 yet, planned need dates, open request and CAR due dates, and stamp expiries move forward by the days since capture, so the sample data does not age. Each moved record gets a Demo build history entry naming the old and new dates. Signed and recorded dates (buy-offs, manifests, signatures, existing history, closed orders) never move. The calibrated tool snapshot is production data and is not moved. Source: tools/demo/seed-dates.mjs.',
     find: /JSON\.stringify\(window\.__DEMO_SEED\)/g, count: 2,
     replace: (ctx, m, id) => `JSON.stringify((${ctx.rebase})(window.__DEMO_SEED)/* DEMO ${id} */)` },
 ];
