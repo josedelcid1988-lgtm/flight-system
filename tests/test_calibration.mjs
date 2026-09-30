@@ -266,7 +266,7 @@ strayManifest._probe = { manifest: { document: 'not a signature' } };
 check('a plain-object manifest outside a draft body is still refused by the server gate', typeof srv.validState(strayManifest) === 'string');
 // #114 (#115 duplicate): the edit-history bodyHash covers the full body. It used the manifest-stripping
 // canonical form, so two revisions that differed only in a payload key named manifest hashed the same.
-const payloadForm = value => JSON.stringify(value, (key, val) => (val && typeof val === 'object' && !Array.isArray(val)) ? Object.keys(val).sort().reduce((o, k) => { o[k] = val[k]; return o; }, {}) : val);
+const payloadForm = value => JSON.stringify(value, (key, val) => (val && typeof val === 'object' && !Array.isArray(val)) ? Object.keys(val).sort().reduce((o, k) => { o[k] = val[k]; return o; }, Object.create(null)) : val);
 const hist = structuredClone(state), runHist = fn => host.withAccount(qa, fn, hist);
 const draftOf = s => s.aiSkillDrafts.find(d => d.id === spc.draftId);
 const lastEdit = () => draftOf(hist).editHistory[draftOf(hist).editHistory.length - 1];
@@ -281,6 +281,14 @@ check('edits that differ only in a manifest-named payload key record different b
 check('the recorded body hash is the key-preserving digest of the body and names its form', hashB === MES.sha256(payloadForm(revB)) && lastEdit().bodyHashForm === 'payload');
 runHist(() => MES.updateSkillDraft(hist, spc.draftId, { manifest: { revision: 'B', document: 'supplier package' }, summary: 'review' }, 'Resubmitted the same revision B content.'));
 check('identical bodies record the same body hash regardless of key order', lastEdit().bodyHash === hashB);
+// Codex review on #133: a JSON body can carry an own __proto__ key. It must stay in the hash, not be
+// dropped by the prototype setter while the key-sorted copy is built.
+const protoA = JSON.parse('{"summary":"review","__proto__":{"revision":"A"}}'), protoB = JSON.parse('{"summary":"review","__proto__":{"revision":"B"}}');
+runHist(() => MES.updateSkillDraft(hist, spc.draftId, protoA, 'The body carries a __proto__ key at revision A.'));
+const protoHashA = lastEdit().bodyHash;
+runHist(() => MES.updateSkillDraft(hist, spc.draftId, protoB, 'The body carries a __proto__ key at revision B.'));
+check('edits that differ only inside an own __proto__ key record different body hashes', Object.hasOwn(draftOf(hist).body, '__proto__') && protoHashA !== lastEdit().bodyHash && lastEdit().bodyHash === MES.sha256(payloadForm(protoB)));
+runHist(() => MES.updateSkillDraft(hist, spc.draftId, revB, 'Back to the revision B supplier package manifest.'));
 check('edits with the new body hash pass validation, manifest verification and the server gate', MES.validate(hist) && MES.verifyManifests(hist).ok && srv.validState(structuredClone(hist)) === null);
 // Legacy history written before #114 has no bodyHashForm and a stripping-form hash. It still loads and validates.
 const draftSubjectOf = d => ({ id: d.id, skill: d.skill, title: d.title, body: d.body, status: d.status, reason: d.reason, targetRefs: d.targetRefs, runId: d.runId, createdAt: d.createdAt, review: d.review, decision: d.decision, editHistory: d.editHistory || [], ...(/"manifest":/.test(JSON.stringify(d.body)) ? { bodyDigest: MES.sha256(payloadForm(d.body)) } : {}) });
