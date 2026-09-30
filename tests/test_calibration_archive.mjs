@@ -119,6 +119,9 @@ check('removing a live entry next to an archived gap fails validation', !MES.val
 const restored = structuredClone(state);
 restored.calibrationLog.unshift(structuredClone(before.calibrationLog[0]));
 check('an archived entry put back into the live log fails validation', !MES.validate(restored));
+const markerMoved = structuredClone(state);
+markerMoved.calibrationLogStart = { ...markerMoved.calibrationLogStart, firstHash: MES.calibrationEntryHash(markerMoved.calibrationLog[0]) };
+check('the start marker (#162) still names the archived first entry, and a marker rewritten to the first live entry fails', MES.validate(state) && state.calibrationLogStart.firstId === 'CALLOG-00001' && !MES.validate(markerMoved));
 const tail = structuredClone(state);
 tail.calibrationLog.pop();
 check('a truncated tail still fails validation after an archive', !MES.validate(tail));
@@ -152,6 +155,8 @@ check('an archive record signed by a role without calibration authority fails va
   for (let i = 5; i < legacy.calibrationLog.length; i += 1) legacy.calibrationLog[i].previousHash = MES.calibrationEntryHash(legacy.calibrationLog[i - 1]);
   const log = legacy.calibrationLog;
   legacy.calibrationLogHead = { count: log.length, hash: MES.calibrationEntryHash(log[log.length - 1]), legacyCount: 4, sealedAt: now, legacyHash: MES.calibrationLegacyHash(log.slice(0, 4)) };
+  // The start marker (#162) names the first entry as it now reads, as MES.upgrade writes it for a log from before the marker.
+  legacy.calibrationLogStart = { firstId: log[0].id, firstHash: MES.calibrationEntryHash(log[0]), recordedAt: log[0].recordedAt };
   check('a partly legacy log validates', MES.validate(legacy), MES.diagnose(legacy)?.detail);
   check('unlinked legacy entries are not archivable', JSON.stringify(MES.calibrationArchivable(legacy)) === JSON.stringify(['CALLOG-00006', 'CALLOG-00008']), JSON.stringify(MES.calibrationArchivable(legacy)));
   const r = as(qa, legacy, () => MES.recordCalibrationArchive(legacy));
@@ -284,7 +289,7 @@ const setUpAccounts = async call => {
     // A log this size is larger than browser storage allows once every manifest carries the build stamp, so it is put
     // into the open page's workspace directly rather than through localStorage. That is also why archiving needs the
     // server: a standalone workspace reaches the browser storage limit before the calibration log limit.
-    await page.evaluate(raw => { const near = JSON.parse(raw); state.calibrationLog = near.calibrationLog; state.calibrationLogHead = near.calibrationLogHead; view = 'qms-records'; render(); }, JSON.stringify({ calibrationLog: nearState.calibrationLog, calibrationLogHead: nearState.calibrationLogHead }));
+    await page.evaluate(raw => { const near = JSON.parse(raw); state.calibrationLog = near.calibrationLog; state.calibrationLogHead = near.calibrationLogHead; state.calibrationLogStart = near.calibrationLogStart; view = 'qms-records'; render(); }, JSON.stringify({ calibrationLog: nearState.calibrationLog, calibrationLogHead: nearState.calibrationLogHead, calibrationLogStart: nearState.calibrationLogStart }));
     check('standalone: the page holds the near-limit log and it validates', await page.evaluate(() => state.calibrationLog.length === 4500 && MES.validate(state)));
     const warning = page.locator('#main [data-calibration-capacity]');
     await warning.waitFor({ state: 'visible', timeout: 15000 });

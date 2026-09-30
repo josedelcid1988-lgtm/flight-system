@@ -730,14 +730,6 @@ const wiOrderSummaryText = orders => {
 /* ------------------------------------------------------------------
  * v2 order-screen shared helpers (ported from legacy module scope).
  * ------------------------------------------------------------------ */
-const RECORD_PATTERNS = [
-  [/\b(WO-\d{3,6})\b/g, 'order'],
-  [/\b((?:IDR|NC)-\d{4,8})\b/g, 'ticket'],
-  [/\b(ATP-\d{3,8})\b/g, 'report'],
-  [/\b(ECR-[0-9]+-[0-9]+)\b/g, 'rev'],
-  [/\b(LOT-\d{6,8}-\d{3,5})\b/g, 'lot'],
-  [/\b(SNL-\d{4,6})\b/g, 'serial']
-];
 const buyoffDate = value => new Date(value).toLocaleString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/Los_Angeles', timeZoneName: 'short' });
 const fileSizeLabel = bytes => bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : bytes >= 1024 ? `${Math.round(bytes / 1024)} KB` : `${bytes} B`;
 const opDispoStatus = (oo, op) => { const t = (oo.tickets || []).find(x => x.status === 'Open' && x.operationId === op.id && x.reworkPlan); if (!t) return ''; const p = t.reworkPlan; return p.stage === 'Awaiting ME operation' ? ` · ${p.decision} required, awaiting ME ${p.decision.toLowerCase()} operation` : ` · ${p.decision} Op ${operationNumber(oo, p.opId)} awaiting QA release`; };
@@ -1528,32 +1520,13 @@ function orderCreatedOn(o) { const h = (Array.isArray(o.historyArchive) && o.his
  *   recent      Master WI detail: the last five entries, newest first.
  * tests/test_react_history_ui.mjs renders each legacy template beside its React view and fails if they differ.
  * ------------------------------------------------------------------ */
-// Record numbers in a history line as links, the React form of the legacy recordLinks(): the same patterns, the same targets and
-// the same rule that a ticket, report, revision or lot number links only when the entry names its work order.
-function recordLinkParts(text, orderId) {
-  const source = asText(text), hits = [];
-  for (const [pattern, kind] of RECORD_PATTERNS) {
-    for (const match of source.matchAll(pattern)) {
-      const target = kind === 'order' ? match[1] : (orderId || '');
-      if (kind !== 'order' && kind !== 'serial' && !target) continue;
-      hits.push({ start: match.index, end: match.index + match[0].length, id: match[1], kind, target });
-    }
-  }
-  hits.sort((a, b) => a.start - b.start);
-  const parts = [];
-  let at = 0;
-  for (const hit of hits) {
-    if (hit.start < at) continue;
-    if (hit.start > at) parts.push(source.slice(at, hit.start));
-    parts.push(hit);
-    at = hit.end;
-  }
-  if (at < source.length) parts.push(source.slice(at));
-  return parts;
-}
-
+// Record numbers in a history line as links. The split into text and links and the attributes of each link come
+// from window.FlightRecordLinks in index.html, the same builder the legacy recordLinks() uses, so both paths show
+// the same links, targets and order. The parts are React elements and text, never an HTML string.
+const reactAttributeName = name => name === 'class' ? 'className' : name;
 function RecordLinks({ text, orderId }) {
-  return <>{recordLinkParts(text, orderId).map((part, i) => typeof part === 'string' ? part : <button key={i} type="button" className="record-link" data-action="record-link" data-kind={part.kind} data-order={asText(part.target)} data-record={asText(part.id)} title={`Open ${asText(part.id)}`}>{asText(part.id)}</button>)}</>;
+  const links = window.FlightRecordLinks;
+  return <>{links.parts(asText(text), orderId).map((part, i) => typeof part === 'string' ? part : <button key={i} {...Object.fromEntries(links.attributes(part).map(([name, value]) => [reactAttributeName(name), value]))}>{asText(part.id)}</button>)}</>;
 }
 
 const historyActor = e => String(e.actor || '').split(' · ')[0].trim();
