@@ -567,7 +567,18 @@ check('the undated retired tool is unusable at point of use', !MES.toolCheck('SR
 const reinstateUndated = host.withAccount(qa, () => MES.updateCalibration(undated, retiredUndated.id, { status: 'In Calibration', note: 'Retired by mistake: the scrapped cell was SR0079' }), undated);
 check('returning an undated retired tool to service without calibration dates is refused', !reinstateUndated.ok && /calibration date/.test(reinstateUndated.message) && MES.calibrationStatus(undated, 'SR0077').id === retiredUndated.id);
 const datedRetire = host.withAccount(qa, () => MES.updateCalibration(undated, MES.calibrationStatus(undated, 'TEST-001').id, { status: 'Retired', calibratedAt: '', expires: '', note: 'Entered in error; never calibrated' }), undated);
-check('a correction to Retired may clear both dates', datedRetire.ok && MES.calibrationStatus(undated, 'TEST-001').expires === '' && MES.validate(undated) && MES.verifyManifests(undated).ok);
+// Codex review on #129: only a tool that was never calibrated may be retired without dates. A tool with dates in the
+// log or in the shipped snapshot keeps them on its Retired entry, at write time and when the workspace loads.
+check('a correction to Retired cannot clear the dates of a tool with calibration dates in the log', !datedRetire.ok && /calibration dates on record/.test(datedRetire.message) && MES.calibrationStatus(undated, 'TEST-001').expires !== '');
+const seedDatedRetire = host.withAccount(qa, () => MES.recordCalibration(undated, { tag: 'NONE-175', description: 'TORQUE WRENCH', serial: '', calibratedAt: '', expires: '', status: 'Retired', location: '', note: 'Scrapped' }), undated);
+check('a tool with a due date in the shipped snapshot cannot be retired without dates', !seedDatedRetire.ok && /shipped tool snapshot/.test(seedDatedRetire.message));
+const datedRetireOk = host.withAccount(qa, () => MES.updateCalibration(undated, MES.calibrationStatus(undated, 'TEST-001').id, { status: 'Retired', note: 'Worn out; retired with its last calibration dates' }), undated);
+check('a tool with calibration history is retired with its dates', datedRetireOk.ok && MES.calibrationStatus(undated, 'TEST-001').status === 'Retired' && MES.calibrationStatus(undated, 'TEST-001').expires !== '' && MES.validate(undated));
+const forgedStrip = structuredClone(undated);
+const stripRow = { ...structuredClone(forgedStrip.calibrationLog.find(e => e.id === retiredUndated.id)), id: 'CALLOG-09000', tag: 'CAL-022', description: 'DIGITAL CALIPER', recordedAt: new Date().toISOString() };
+host.withAccount(qa, () => { stripRow.calibrationSignature = { manifest: MES.signManifest(forgedStrip, 'Calibration recorded', calSubject(stripRow), stripRow.recordedAt) }; }, forgedStrip);
+forgedStrip.calibrationLog.push(stripRow);
+check('a signed undated retirement of a tool with calibration dates on record fails validation', !MES.validate(forgedStrip) && /calibration dates on record/.test(JSON.stringify(MES.diagnose(forgedStrip))));
 const clearedInService = host.withAccount(qa, () => MES.updateCalibration(undated, MES.calibrationStatus(undated, 'CAL-022').id, { calibratedAt: '', expires: '' }), undated);
 check('a correction that clears the dates of an entry that is not Retired is refused', !clearedInService.ok && /calibration date/.test(clearedInService.message));
 // A hand-made undated entry with any status but Retired fails validation, even with a valid signature.

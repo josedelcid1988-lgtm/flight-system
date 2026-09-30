@@ -2546,6 +2546,10 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // calibration, so it needs both dates, the due date after the calibration date, and a calibration date no
   // later than the day the entry was recorded.
   const calibrationUndated = e => e.status === 'Retired' && e.calibratedAt === '' && e.expires === '';
+  // Where a tool's calibration dates are on record: the shipped snapshot, or an earlier log entry. Only a tool with
+  // none may be retired without dates (#120), so a tool that was calibrated cannot lose its dates on retirement.
+  const calibrationDatesOnRecord = (entries, tag) => { const seed = CAL_TOOLS.find(t => t.tag.toUpperCase() === tag); if (seed && seed.expires) return 'the shipped tool snapshot'; const dated = entries.find(e => plain(e) && e.tag === tag && (e.calibratedAt || e.expires)); return dated ? String(dated.id) : null; };
+  const calibrationDatesKept = (tag, where) => `${tag} has calibration dates on record (${where}). Enter its calibration and due dates on the Retired entry. Only a tool that was never calibrated may leave them blank.`;
   const calibrationDatesValid = e => calibrationUndated(e) || (dateOnly(e.calibratedAt) && dateOnly(e.expires) && e.expires > e.calibratedAt && timestamp(e.recordedAt) && e.calibratedAt <= pacificDay(e.recordedAt));
   // A calibration entry's manifest must be well-formed, hash-bound to this entry's subject,
   // and bound to this entry by meaning, signing time, and signer, the same pattern other
@@ -2595,7 +2599,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // entry for its tag, a retired tag is never recorded again as a new entry, and a correction that returns a
   // retired tool to service carries a new reason. Returns { id, detail } for the first entry that breaks one, or null.
   function calibrationSequenceProblem(log) {
-    const current = new Map();
+    const current = new Map(), seen = [];
     let previous = null;
     for (const e of Array.isArray(log) ? log : []) {
       if (!plain(e)) continue;
@@ -2604,6 +2608,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
         previous = e.id;
       }
       const cur = current.get(e.tag);
+      if (calibrationUndated(e)) { const where = calibrationDatesOnRecord(seen, e.tag); if (where) return { id: e.id, detail: `Calibration entry ${e.id} retires ${e.tag} without calibration dates, but ${e.tag} has calibration dates on record (${where}).` }; }
+      seen.push(e);
       if (e.torque === undefined && !CAL_TOOLS.some(t => t.tag.toUpperCase() === e.tag)) return { id: e.id, detail: `Calibration entry ${e.id} does not say whether ${e.tag} is a torque tool. A tool that is not in the shipped snapshot needs that answer.` };
       if (cur && cur.torque === true && e.torque !== true) return { id: e.id, detail: `Calibration entry ${e.id} removes the torque classification from ${e.tag}, which ${cur.id} records as a torque tool.` };
       if (e.supersedes !== undefined) {
@@ -2665,6 +2671,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const retired = calibrationStatus(state, fields.tag);
     const torque = calibrationTorque(fields.tag, input?.torque, retired);
     if (torque.error) return fail(torque.error);
+    if (calibrationUndated(fields)) { const where = calibrationDatesOnRecord(state.calibrationLog, fields.tag); if (where) return fail(calibrationDatesKept(fields.tag, where)); }
     if (retired && retired.status === 'Retired') return fail(`${fields.tag} is retired (${retired.id}) and cannot be recorded again. If it was retired by mistake, a QA Manager corrects ${retired.id} and enters the reason in the note.`);
     if (state.calibrationLog.length >= 5000) return fail(calibrationLogFull);
     if (!nextCalibrationId(state.calibrationLog)) return fail(calibrationIdsUsed);
@@ -2688,6 +2695,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (bad) return fail(bad);
     const torque = calibrationTorque(prior.tag, patch?.torque, prior);
     if (torque.error) return fail(torque.error);
+    if (calibrationUndated(fields)) { const where = calibrationDatesOnRecord(log, prior.tag); if (where) return fail(calibrationDatesKept(prior.tag, where)); }
     if (reinstatementReasonMissing(prior, fields)) return fail(`${prior.tag} is retired. To return it to service, enter the reason in the note (at least ${CALIBRATION_REASON_MIN} characters, different from the retirement note), for example which tool was retired by mistake.`);
     const who = actor(state);
     if (!snapshotValid(who)) return fail('Sign in with a named credential before correcting a calibration entry.');
