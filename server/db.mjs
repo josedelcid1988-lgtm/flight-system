@@ -18,6 +18,11 @@ export function openDb(path) {
     CREATE TABLE IF NOT EXISTS evidence (id TEXT PRIMARY KEY, sha256 TEXT NOT NULL, size INTEGER NOT NULL, mime TEXT NOT NULL, file_name TEXT, uploaded_by TEXT NOT NULL, uploaded_at TEXT NOT NULL, bytes BLOB NOT NULL, superseded_by TEXT, superseded_at TEXT, superseded_reason TEXT);
     -- Closed work orders moved out of the live document. Same file, same backup. Rows are never deleted.
     CREATE TABLE IF NOT EXISTS archive (order_id TEXT PRIMARY KEY, json TEXT NOT NULL, sha256 TEXT NOT NULL, schema INTEGER NOT NULL, part_number TEXT, serials TEXT NOT NULL, lots TEXT NOT NULL, parts TEXT NOT NULL, title TEXT, closed_at TEXT, archived_at TEXT NOT NULL, archived_by TEXT);
+    -- Superseded calibration entries moved out of the live log (#130), each exactly as it was signed. Never changed or deleted.
+    CREATE TABLE IF NOT EXISTS calibration_archive (entry_id TEXT PRIMARY KEY, tag TEXT NOT NULL, record_id TEXT NOT NULL, json TEXT NOT NULL, sha256 TEXT NOT NULL, archived_at TEXT NOT NULL, archived_by TEXT);
+    CREATE INDEX IF NOT EXISTS calibration_archive_tag ON calibration_archive (tag, entry_id);
+    CREATE TRIGGER IF NOT EXISTS calibration_archive_no_update BEFORE UPDATE ON calibration_archive BEGIN SELECT RAISE(ABORT, 'archived calibration entries are append-only'); END;
+    CREATE TRIGGER IF NOT EXISTS calibration_archive_no_delete BEFORE DELETE ON calibration_archive BEGIN SELECT RAISE(ABORT, 'archived calibration entries are append-only'); END;
     CREATE TABLE IF NOT EXISTS record_extracts (export_id TEXT PRIMARY KEY, sequence INTEGER NOT NULL DEFAULT 0, record_type TEXT NOT NULL, record_id TEXT NOT NULL, kind TEXT NOT NULL, exported_at TEXT NOT NULL, exported_by TEXT NOT NULL, sha256 TEXT NOT NULL, summary TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS record_extracts_record ON record_extracts (record_type, record_id, exported_at);
     CREATE TRIGGER IF NOT EXISTS record_extracts_no_update BEFORE UPDATE ON record_extracts BEGIN SELECT RAISE(ABORT, 'record extracts are append-only'); END;
@@ -146,6 +151,15 @@ export function openDb(path) {
         ? db.prepare("SELECT order_id, part_number, serials, lots, parts, title, closed_at, archived_at FROM archive WHERE UPPER(order_id) = ? OR EXISTS (SELECT 1 FROM json_each(archive.serials) WHERE UPPER(value) = ?) OR EXISTS (SELECT 1 FROM json_each(archive.lots) WHERE UPPER(value) = ?) OR EXISTS (SELECT 1 FROM json_each(archive.parts) WHERE UPPER(value) = ?) ORDER BY archived_at DESC LIMIT ?").all(q, q, q, q, limit)
         : db.prepare('SELECT order_id, part_number, serials, lots, parts, title, closed_at, archived_at FROM archive ORDER BY archived_at DESC LIMIT ?').all(limit);
       return rows.map(r => ({ orderId: r.order_id, partNumber: r.part_number, serials: JSON.parse(r.serials), lots: JSON.parse(r.lots), parts: JSON.parse(r.parts), title: r.title, closedAt: r.closed_at, archivedAt: r.archived_at, status: 'Closed', source: 'archive' }));
+    },
+    // ---- archived calibration entries (#130) ----
+    calibrationArchived(id) { const r = db.prepare('SELECT entry_id, tag, record_id, json, sha256, archived_at, archived_by FROM calibration_archive WHERE entry_id = ?').get(id); return r ? { id: r.entry_id, tag: r.tag, recordId: r.record_id, entry: JSON.parse(r.json), sha256: r.sha256, archivedAt: r.archived_at, archivedBy: r.archived_by } : null; },
+    putCalibrationArchived(e) { db.prepare('INSERT INTO calibration_archive (entry_id, tag, record_id, json, sha256, archived_at, archived_by) VALUES (?, ?, ?, ?, ?, ?, ?)').run(e.id, e.tag, e.recordId, e.json, e.sha256, now(), e.by || null); },
+    // The archived entries for one tool, or the latest archived when no tool is named.
+    calibrationArchiveList(tag, limit = 500) {
+      const t = String(tag || '').trim().toUpperCase();
+      const rows = t ? db.prepare('SELECT entry_id, tag, record_id, json, archived_at FROM calibration_archive WHERE tag = ? ORDER BY entry_id LIMIT ?').all(t, limit) : db.prepare('SELECT entry_id, tag, record_id, json, archived_at FROM calibration_archive ORDER BY archived_at DESC, entry_id DESC LIMIT ?').all(limit);
+      return rows.map(r => { const e = JSON.parse(r.json); return { id: r.entry_id, tag: r.tag, recordId: r.record_id, status: e.status, calibratedAt: e.calibratedAt, expires: e.expires, recordedAt: e.recordedAt, recordedBy: e.recordedBy, archivedAt: r.archived_at }; });
     },
     // Stamped downloads and prints are separate append-only history rows so an archived order stays immutable.
     recordExtract(e) {

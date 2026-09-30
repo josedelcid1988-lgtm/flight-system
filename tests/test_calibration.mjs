@@ -672,9 +672,10 @@ standalone.profile = { name: 'Morgan Lee', role: 'Quality Manager', credentialId
 const standaloneQm = MES.recordCalibration(standalone, { ...entry, tag: 'SOLO-002' });
 check('a standalone Quality Manager profile records a calibration that validates', standaloneQm.ok && MES.validate(standalone) && MES.verifyManifests(standalone).ok);
 
-// #113: there is no archive path, so the log limits say what happened and what to do instead of promising one.
-check('the full-log refusal no longer tells the operator to archive', !/Archive older/.test(fullCorrect.message) && /was not recorded/.test(fullCorrect.message) && /cannot be removed or archived/.test(fullCorrect.message) && /administrator/.test(fullCorrect.message));
-check('the last-entry-number refusal no longer tells the operator to archive', !/Archive the log/.test(exhausted.message) && /was not recorded/.test(exhausted.message) && /cannot be removed or archived/.test(exhausted.message));
+// #113, #130: the log limits say what happened and what to do next. A full log makes room when a QA Manager archives
+// superseded entries on the shared server; archiving does not free entry numbers, so the last number names the administrator.
+check('the full-log refusal says a QA Manager archives superseded entries to make room', !/Archive older/.test(fullCorrect.message) && /was not recorded/.test(fullCorrect.message) && /archive superseded entries/.test(fullCorrect.message) && /shared Flight System server/.test(fullCorrect.message) && !/\u2014/.test(fullCorrect.message));
+check('the last-entry-number refusal says archiving does not free numbers and names the administrator', !/Archive the log/.test(exhausted.message) && /was not recorded/.test(exhausted.message) && /does not free entry numbers/.test(exhausted.message) && /administrator/.test(exhausted.message));
 check('the page carries no calibration archive instruction', !/Archive older entries|Archive the log before/.test(pageSource));
 
 // #120: a tool that was never calibrated can be retired with blank calibration and due dates. Every status that

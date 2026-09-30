@@ -107,6 +107,19 @@ try {
   assert.equal((await server.store.verifyAudit()).ok, true);
   console.log('ok PostgreSQL archive extracts and audit hash chain');
 
+  // #130: archived calibration entries are stored once, read back unchanged, listed by tool, and never changed.
+  const calEntry = { id: 'CALLOG-00001', tag: 'PG-CAL', status: 'In Calibration', calibratedAt: '2026-09-28', expires: '2027-09-28', recordedAt: '2026-09-28T17:00:00.000Z', recordedBy: 'Quinn Manager \u00b7 ACCT-pg', calibrationSignature: { manifest: { hash: 'a'.repeat(64) } } };
+  const calJson = JSON.stringify(calEntry);
+  await server.store.putCalibrationArchived({ id: calEntry.id, tag: calEntry.tag, recordId: 'CALARC-0001', json: calJson, sha256: createHash('sha256').update(calJson).digest('hex'), by: 'pg-admin' });
+  const calRow = await server.store.calibrationArchived('CALLOG-00001');
+  assert.equal(JSON.stringify(calRow.entry), calJson, 'an archived calibration entry reads back unchanged');
+  assert.equal(calRow.recordId, 'CALARC-0001');
+  assert.deepEqual((await server.store.calibrationArchiveList('pg-cal')).map(row => row.id), ['CALLOG-00001'], 'archived calibration entries list by tool');
+  await assert.rejects(server.store.putCalibrationArchived({ id: calEntry.id, tag: calEntry.tag, recordId: 'CALARC-0002', json: calJson, sha256: 'x', by: 'pg-admin' }), 'an archived calibration entry is stored once');
+  await assert.rejects(server.store._query("UPDATE calibration_archive SET record_id='CALARC-0009' WHERE entry_id='CALLOG-00001'"), /append-only/, 'an archived calibration entry cannot be changed');
+  await assert.rejects(server.store._query("DELETE FROM calibration_archive WHERE entry_id='CALLOG-00001'"), /append-only/, 'an archived calibration entry cannot be deleted');
+  console.log('ok PostgreSQL calibration archive is append-only and reads back unchanged');
+
   for(let n=0;n<100;n+=1){const jobs=await server.store.exportJobs(100);if(jobs.length===closedCount+fairCount&&jobs.every(job=>['delivered','failed'].includes(job.status)))break;await new Promise(resolve=>setTimeout(resolve,50));}
   const exportJobs=await server.store.exportJobs(100);
   assert.equal(exportJobs.filter(job=>job.recordType==='work-order'&&job.status==='delivered').length,closedCount);

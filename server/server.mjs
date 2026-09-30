@@ -313,15 +313,26 @@ export function createServer(options = {}) {
     // The calibration log is append-only against the stored copy: a write that drops, changes or reorders an entry
     // the server holds is refused, whatever the head in the new document says (#116, #117).
     { const changed = host.MES.calibrationLogChanges(beforeState, state); if (changed) return { problem: changed }; }
+    // Superseded calibration entries an archive record in this write moved out of the live log (#130) go to the
+    // calibration archive exactly as the stored log held them, in the same transaction as the document write.
+    const calibrationRows = host.MES.calibrationArchivedEntries(beforeState, state).map(({ entry, recordId }) => { const json = JSON.stringify(entry); return { id: entry.id, tag: entry.tag, recordId, json, sha256: sha256hex(json), by: username }; });
+    // A workspace that already names archived entries can only start on a server that holds them.
+    if (!beforeState) {
+      const named = (state.calibrationLogHead && Array.isArray(state.calibrationLogHead.archived) ? state.calibrationLogHead.archived : []).flatMap(record => record.manifest.subject.entries.map(summary => summary.id));
+      const absent = []; for (const id of named) if (!await store.calibrationArchived(id)) absent.push(id);
+      if (absent.length) return { problem: `The workspace names ${absent.length} archived calibration entr${absent.length === 1 ? 'y' : 'ies'} that this server does not hold, starting with ${absent[0]}. Restore the server database that holds the calibration archive, or initialize from the workspace export made on that server. Nothing was saved.` };
+    }
     const rows = r.archived.map(e => { const json = JSON.stringify({ order: e.order, activity: e.activity }); return { id: e.order.id, json, sha256: sha256hex(json), schema: state.version, keys: e.keys, by: username }; });
     let etag = null, clash = null, queuedExports = [];
     await store.transaction(async tx => {
       if (expectedEtag === null && await tx.getDoc(TENANT)) return false;
       for (const row of rows) { if (await tx.archivedSha(row.id)) { clash = row.id; return false; } await tx.putArchived(row); }
+      for (const row of calibrationRows) { if (await tx.calibrationArchived(row.id)) { clash = row.id; return false; } await tx.putCalibrationArchived(row); }
       etag = await tx.putDoc(TENANT, JSON.stringify(state), expectedEtag, username);
       if (!etag) return false;
       queuedExports = await queueNewFinalRecords(beforeState, exportState, username, tx);
       for (const row of rows) await tx.audit(username, 'archive', { orderId: row.id, sha256: row.sha256 });
+      for (const recordId of new Set(calibrationRows.map(row => row.recordId))) { const moved = calibrationRows.filter(row => row.recordId === recordId); await tx.audit(username, 'calibration-archive', { recordId, entries: moved.map(row => row.id), sha256: moved.map(row => row.sha256) }); }
       for (const entry of audits) await tx.audit(username, entry.action, typeof entry.detail === 'function' ? entry.detail(etag) : entry.detail);
       return true;
     });
@@ -914,6 +925,14 @@ export function createServer(options = {}) {
         const found = state && host.MES.traceSearch ? host.MES.traceSearch(state, q) : null;
         const live = found && Array.isArray(found.orders) ? found.orders.map(o => ({ ...(host.MES.traceKeys ? host.MES.traceKeys(state, host.MES.getOrder(state, o.id) || o) : { orderId: o.id }), why: o.why, source: 'live' })) : [];
         send(res, 200, { query: q, results: [...live, ...await store.archiveSearch(q, 1000)] }); return;
+      }
+      // -- calibration archive: superseded calibration entries out of the live log, read-only (#130) --
+      if (route === '/calibration-archive' && m === 'GET') { send(res, 200, { entries: await store.calibrationArchiveList(url.searchParams.get('tag') || '', Math.min(1000, Number(url.searchParams.get('limit')) || 500)), readOnly: true }); return; }
+      const calArc = /^\/calibration-archive\/(CALLOG-\d{5})$/.exec(route);
+      if (calArc && m === 'GET') {
+        const a = await store.calibrationArchived(calArc[1]);
+        if (!a) { send(res, 404, { error: `${calArc[1]} is not in the calibration archive. An entry that was never archived is in the live calibration log under System QMS records.` }); return; }
+        send(res, 200, { entry: a.entry, sha256: a.sha256, recordId: a.recordId, archivedAt: a.archivedAt, archivedBy: a.archivedBy, readOnly: true }); return;
       }
       const arc = /^\/archive\/(WO-[A-Za-z0-9-]+)(\/print|\/export)?$/.exec(route);
       if (arc && m === 'GET') {
