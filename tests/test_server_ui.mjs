@@ -101,18 +101,19 @@ try {
   const aqiPackage = aqiOrder?.conformity?.find(item => item.serial === 'FC-200-00001');
   assert.ok(aqiPackage?.form, 'the portable fixture includes a completed 8130-9 for the AQI server-action check');
   aqiPackage.status = '8130-9 completed';
-  // The fixture's MDL date is fixed and the checklist allows a copy up to 30 days old; keep it current so the run does not depend on the calendar.
-  aqiPackage.mdlReceived = new Date().toISOString().slice(0, 10);
   aqiPackage.aqi = null;
   aqiPackage.notified = null;
   aqiPackage.darApproval = null;
-  aqiPackage.form.prepared.by.credentialId = 'ACCT-independent-inspector';
   aqiOrder.status = 'Quality';
   delete aqiOrder.closure;
   delete aqiOrder.closedAt;
   delete aqiOrder.closureRequest;
-  const aqiGaps = server.host.MES.confGaps(fixture, aqiOrder, aqiPackage, 'aqi');
-  assert.equal(aqiGaps.length, 0, `the AQI package fixture has no open checklist gaps: ${JSON.stringify(aqiGaps)}`);
+  // The package's 8130-9 was completed on the day the seed was captured, against the MDL copy received then, and a
+  // completed 8130-9 locks the package data. A separate preparer re-completes it below through the production
+  // path (void, record the current MDL copy, complete the form), so the AQI check does not depend on the calendar.
+  const capturedForm = structuredClone(aqiPackage.form);
+  const preparerStamp = fixture.stamps.find(stamp => stamp.buyoffType === 'Quality' && stamp.status === 'Active' && !stamp.account);
+  assert.ok(preparerStamp, 'the fixture has an unassigned Quality stamp for the 8130-9 preparer');
   const aqiStamp = fixture.stamps.find(stamp => stamp.buyoffType === '8130-9 Authorized Inspector');
   assert.ok(aqiStamp, 'the fixture has an AQI stamp record');
   const credentialExpires = new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 10);
@@ -121,6 +122,9 @@ try {
   assert.equal(pinResult.ok, true, 'the QA manager sets a valid test PIN using the production PIN hashing path');
   const trainingResult = server.host.withAccount(server.store.account('server-ui-qa'), () => server.host.MES.recordTraining(fixture, { account: 'aqi-inspector', code: 'ESD', expires: credentialExpires, note: 'Server UI authorization fixture' }), fixture);
   assert.equal(trainingResult.ok, true, 'the QA manager records current training for the AQI test inspector');
+  Object.assign(preparerStamp, { account: 'conf-preparer', name: 'Conformity Preparer', expires: credentialExpires });
+  assert.equal(server.host.withAccount(server.store.account('server-ui-admin'), () => server.host.MES.setStampPin(fixture, preparerStamp.id, '1357', '1357'), fixture).ok, true, 'the QA manager sets the 8130-9 preparer stamp PIN');
+  assert.equal(server.host.withAccount(server.store.account('server-ui-qa'), () => server.host.MES.recordTraining(fixture, { account: 'conf-preparer', code: 'ESD', expires: credentialExpires, note: 'Server UI conformity fixture' }), fixture).ok, true, 'the QA manager records current training for the 8130-9 preparer');
   const adminAccount = server.store.account('server-ui-admin');
   const inspectorAccount = { ...adminAccount, username: 'aqi-inspector', displayName: 'AQI Test Inspector', role: 'qe', roles: ['qe'], extraRoles: [], roleTraining: {}, grants: {}, grantHistory: [], supportAccess: false, createdBy: 'server-ui-admin' };
   await server.store.upsertAccount(inspectorAccount);
@@ -133,6 +137,31 @@ try {
   assert.ok(fixtureEtag, 'the test installs a valid portable Building workspace directly into its isolated test database');
   const grantResponse = await fetch(`http://127.0.0.1:${port}/api/auth/access`, { method: 'POST', headers: { Authorization: `Bearer ${qaToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'grant', username: 'aqi-inspector', cap: 'aqi-sign', reason: 'Current AQI qualification for the server UI integration test', trainingCode: 'ESD' }) });
   assert.equal(grantResponse.status, 200, await grantResponse.text());
+  // Re-complete the 8130-9 against a current MDL copy through the server action route, as the preparer.
+  const preparerPassword = 'conf-preparer-password';
+  await server.store.upsertAccount({ username: 'conf-preparer', displayName: 'Conformity Preparer', salt: '', hash: await makeHash(preparerPassword), role: 'qe', roles: ['qe'], createdAt: new Date().toISOString(), createdBy: 'server-ui-admin' });
+  const preparerGrant = await fetch(`http://127.0.0.1:${port}/api/auth/access`, { method: 'POST', headers: { Authorization: `Bearer ${qaToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'grant', username: 'conf-preparer', cap: 'conformity', reason: 'Current conformity qualification for the server UI integration test', trainingCode: 'ESD' }) });
+  assert.equal(preparerGrant.status, 200, await preparerGrant.text());
+  const preparerLogin = await fetch(`http://127.0.0.1:${port}/api/auth/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'conf-preparer', password: preparerPassword }) });
+  assert.equal(preparerLogin.status, 200, await preparerLogin.clone().text());
+  const preparerToken = (await preparerLogin.json()).token;
+  const preparerAction = async (name, args) => {
+    const result = await fetch(`http://127.0.0.1:${port}/api/workspace/actions/${name}`, { method: 'POST', headers: { Authorization: `Bearer ${preparerToken}`, 'Content-Type': 'application/json', 'If-Match': server.store.getDoc('default').etag }, body: JSON.stringify({ args }) });
+    assert.equal(result.status, 200, `${name}: ${await result.clone().text()}`);
+  };
+  const today = new Date().toISOString().slice(0, 10);
+  await preparerAction('MES.void8130_9', [aqiOrder.id, aqiPackage.serial, 'Re-completed against the current MDL copy for the server UI AQI check.']);
+  await preparerAction('MES.saveConformity', [aqiOrder.id, aqiPackage.serial, { mdlReceived: today }]);
+  const { section, item, make, model, registration, checkDate, basis } = capturedForm;
+  await preparerAction('MES.complete8130_9', [aqiOrder.id, aqiPackage.serial, { section, item, make, model, registration, checkDate, basis }, { pin: '1357' }]);
+  await preparerAction('MES.checkConformity', [aqiOrder.id, aqiPackage.serial, '6.1', true]);
+  const recompleted = JSON.parse(server.store.getDoc('default').json), recompletedOrder = recompleted.orders.find(order => order.id === aqiOrder.id), recompletedPackage = recompletedOrder.conformity.find(part => part.serial === aqiPackage.serial);
+  assert.equal(recompletedPackage.status, '8130-9 completed', 'the preparer completes a new 8130-9');
+  assert.equal(recompletedPackage.mdlReceived, today, 'the new 8130-9 is completed against the MDL copy received today');
+  assert.equal(recompletedPackage.form.prepared.by.credentialId, 'ACCT-conf-preparer', 'the new 8130-9 records its preparer, a different person from the AQI');
+  assert.ok(recompletedPackage.voided.some(entry => entry.hash === capturedForm.prepared.manifest.hash), 'the void record keeps the hash of the form captured with the seed');
+  const aqiGaps = server.host.MES.confGaps(recompleted, recompletedOrder, recompletedPackage, 'aqi');
+  assert.equal(aqiGaps.length, 0, `the AQI package fixture has no open checklist gaps: ${JSON.stringify(aqiGaps)}`);
   const installed = JSON.parse(server.store.getDoc('default').json);
   assert.ok(installed.orders.some(order => order.id === aqiOrder.id && order.conformity?.some(part => part.serial === aqiPackage.serial)), `the database installs the AQI package: ${installed.orders.map(order => order.id).join(', ')}`);
   await page.evaluate(() => loadServerWorkspace());

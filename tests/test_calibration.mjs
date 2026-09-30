@@ -678,7 +678,7 @@ check('a signed In Calibration entry with blank dates fails validation', !MES.va
 check('the calibration record forms leave the dates optional and say when they may be blank', /leaves them blank/.test(pageSource) && !/name="calibratedAt" type="date" required/.test(pageSource));
 
 // Codex review on #129: the demo build gives every account that is not a pilot seat full capabilities (D-6), so the
-// signer-role rule is relaxed there too (D-35); production keeps only the Quality Manager and System Administrator roles.
+// signer-role rule is relaxed there too (D-36); production keeps only the Quality Manager and System Administrator roles.
 const demoHost = createHost(fileURLToPath(new URL('./fixtures/demo_publish.html', import.meta.url)));
 const demoCal = demoHost.MES.seed(), prodCal = MES.seed();
 for (const ws of [demoCal, prodCal]) ws.profile = { name: 'Sky Safety', role: 'Safety Engineer', credentialId: 'SR-SF-001' };
