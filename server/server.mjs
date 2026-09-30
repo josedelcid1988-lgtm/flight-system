@@ -310,6 +310,9 @@ export function createServer(options = {}) {
     if (!r.ok) return { problem: r.message };
     for (const e of r.archived) if (!host.MES.archivedOrderValid(e)) return { problem: `${e.order.id} could not move to the archive: it does not validate as a closed work order. It stays in the live workspace.` };
     const invalid = validState(state); if (invalid) return { problem: invalid };
+    // The calibration log is append-only against the stored copy: a write that drops, changes or reorders an entry
+    // the server holds is refused, whatever the head in the new document says (#116, #117).
+    { const changed = host.MES.calibrationLogChanges(beforeState, state); if (changed) return { problem: changed }; }
     const rows = r.archived.map(e => { const json = JSON.stringify({ order: e.order, activity: e.activity }); return { id: e.order.id, json, sha256: sha256hex(json), schema: state.version, keys: e.keys, by: username }; });
     let etag = null, clash = null, queuedExports = [];
     await store.transaction(async tx => {

@@ -319,6 +319,10 @@ const retiredList = MES.calibratedToolChecks(state, now);
 check('a retired tool is not offered as usable', !retiredList.some(c => c.ok && ['B2-TOOL', 'NONE-176'].includes(c.tool.tag)));
 check('the retired tool\'s earlier signed entries stay in the log and verify', state.calibrationLog.filter(e => e.tag === 'B2-TOOL').length === 2 && MES.validate(state) && MES.verifyManifests(state).ok);
 check('the record form tells the user that Retired is how a tool leaves service', /record it as Retired/.test(pageSource));
+// An imported row is linked into the hash chain and the head moved, as an application write would, so each check
+// below exercises the rule it names rather than the chain (#116, #117 cover the chain on their own).
+const relinkHead = ws => { const log = ws.calibrationLog; ws.calibrationLogHead = { ...ws.calibrationLogHead, count: log.length, hash: log.length ? MES.calibrationEntryHash(log[log.length - 1]) : null }; };
+const appendImported = (ws, e) => { const log = ws.calibrationLog; e.previousHash = log.length ? MES.calibrationEntryHash(log[log.length - 1]) : null; log.push(e); relinkHead(ws); };
 // The signed subject of a calibration entry (calibrationSubject in index.html), for building imported rows.
 const calSubject = e => ({ id: e.id, tag: e.tag, description: e.description, serial: e.serial, calibratedAt: e.calibratedAt, expires: e.expires, status: e.status, location: e.location, note: e.note, recordedAt: e.recordedAt, recordedBy: e.recordedBy, supersedes: e.supersedes || null, ...(e.torque !== undefined ? { torque: e.torque } : {}), ...(e.signerRole !== undefined ? { signerRole: e.signerRole } : {}) });
 // #35 review: only the current entry for a tag can be corrected. With two independent entries A (usable)
@@ -331,7 +335,7 @@ check('a correction to an older, non-current entry for the tag is refused and na
 check('the quarantined tool stays unusable after the refused correction', !MES.toolCheck('CUR-TOOL', now, state).ok && MES.calibrationStatus(state, 'CUR-TOOL').id === curB.id);
 check('the current entry can still be corrected', run(qa, () => MES.updateCalibration(state, curB.id, { note: 'Failed gage check, sent to lab' })).ok);
 const staleImport = structuredClone(state), staleSource = staleImport.calibrationLog.find(e => e.id === curA.id);
-staleImport.calibrationLog.push(host.withAccount(qa, () => { const e = { ...staleSource, id: 'CALLOG-09990', supersedes: curA.id, note: 'restored', recordedAt: new Date().toISOString() }; e.calibrationSignature = { manifest: MES.signManifest(staleImport, 'Calibration entry corrected', calSubject(e), e.recordedAt) }; return e; }, staleImport));
+appendImported(staleImport, host.withAccount(qa, () => { const e = { ...staleSource, id: 'CALLOG-09990', supersedes: curA.id, note: 'restored', recordedAt: new Date().toISOString() }; e.calibrationSignature = { manifest: MES.signManifest(staleImport, 'Calibration entry corrected', calSubject(e), e.recordedAt) }; return e; }, staleImport));
 check('a workspace with a correction of a non-current entry fails validation', !MES.validate(staleImport));
 check('diagnose names the correction of a non-current entry', /CALLOG-09990/.test(MES.diagnose(staleImport)?.where || '') && /not the current entry/.test(MES.diagnose(staleImport)?.detail || ''));
 
@@ -341,7 +345,7 @@ const reuseSeed = run(qa, () => MES.recordCalibration(state, { tag: 'NONE-176', 
 check('a new record for a retired tag is refused and says how a mistaken retirement is undone', !reuse.ok && /retired/i.test(reuse.message) && /reason/.test(reuse.message) && !reuseSeed.ok);
 check('the retired tools stay unusable after the refused records', !MES.toolCheck('B2-TOOL', now, state).ok && !MES.toolCheck('NONE-176', now, state).ok);
 const reuseImport = structuredClone(state), retiredRow = MES.calibrationStatus(reuseImport, 'B2-TOOL');
-reuseImport.calibrationLog.push(host.withAccount(qa, () => { const e = { ...retiredRow, id: 'CALLOG-09991', status: 'In Calibration', note: '', recordedAt: new Date().toISOString() }; delete e.supersedes; delete e.calibrationSignature; e.calibrationSignature = { manifest: MES.signManifest(reuseImport, 'Calibration recorded', calSubject(e), e.recordedAt) }; return e; }, reuseImport));
+appendImported(reuseImport, host.withAccount(qa, () => { const e = { ...retiredRow, id: 'CALLOG-09991', status: 'In Calibration', note: '', recordedAt: new Date().toISOString() }; delete e.supersedes; delete e.calibrationSignature; e.calibrationSignature = { manifest: MES.signManifest(reuseImport, 'Calibration recorded', calSubject(e), e.recordedAt) }; return e; }, reuseImport));
 check('a workspace that records a retired tag again fails validation', !MES.validate(reuseImport));
 check('diagnose names the entry that records a retired tag again', /CALLOG-09991/.test(MES.diagnose(reuseImport)?.where || '') && /retired/.test(MES.diagnose(reuseImport)?.detail || ''));
 
@@ -360,7 +364,7 @@ check('a QA Manager returns a mistakenly retired tool to service with a reason',
 check('the retirement stays in the signed history under the same tag, with the reason on the correction', twRows.length === 3 && twRows[1].status === 'Retired' && twRows[2].supersedes === twRows[1].id && /TW-024/.test(twRows[2].note) && MES.validate(state) && MES.verifyManifests(state).ok);
 const noReasonImport = structuredClone(state);
 noReasonImport.calibrationLog.pop();
-noReasonImport.calibrationLog.push(host.withAccount(qa, () => { const e = { ...twRows[1], id: 'CALLOG-09992', status: 'In Calibration', supersedes: twRows[1].id, recordedAt: new Date().toISOString() }; delete e.calibrationSignature; e.calibrationSignature = { manifest: MES.signManifest(noReasonImport, 'Calibration entry corrected', calSubject(e), e.recordedAt) }; return e; }, noReasonImport));
+appendImported(noReasonImport, host.withAccount(qa, () => { const e = { ...twRows[1], id: 'CALLOG-09992', status: 'In Calibration', supersedes: twRows[1].id, recordedAt: new Date().toISOString() }; delete e.calibrationSignature; e.calibrationSignature = { manifest: MES.signManifest(noReasonImport, 'Calibration entry corrected', calSubject(e), e.recordedAt) }; return e; }, noReasonImport));
 check('a workspace that returns a retired tool to service without a reason fails validation', !MES.validate(noReasonImport) && /CALLOG-09992/.test(MES.diagnose(noReasonImport)?.where || ''));
 // #35 review (Codex 4133296942): the current entry follows log order, so the order is bound to the signed ids.
 // Reversing an independent usable entry and a later quarantine would otherwise re-enable the tool.
@@ -375,7 +379,7 @@ check('the quarantine stays current in the log as recorded', !MES.toolCheck('ORD
 // #35 review (Codex 4133296971): calibration ids stay five digits. After CALLOG-99999 a new entry is refused
 // before anything is written, instead of producing CALLOG-100000 and an invalid workspace.
 const idFull = structuredClone(state), highRow = idFull.calibrationLog[idFull.calibrationLog.length - 1];
-idFull.calibrationLog.push(host.withAccount(qa, () => { const e = { ...highRow, id: 'CALLOG-99999', tag: 'HIGH-TOOL', status: 'In Calibration', note: '', recordedAt: new Date().toISOString() }; delete e.supersedes; delete e.calibrationSignature; e.calibrationSignature = { manifest: MES.signManifest(idFull, 'Calibration recorded', calSubject(e), e.recordedAt) }; return e; }, idFull));
+appendImported(idFull, host.withAccount(qa, () => { const e = { ...highRow, id: 'CALLOG-99999', tag: 'HIGH-TOOL', status: 'In Calibration', note: '', recordedAt: new Date().toISOString() }; delete e.supersedes; delete e.calibrationSignature; e.calibrationSignature = { manifest: MES.signManifest(idFull, 'Calibration recorded', calSubject(e), e.recordedAt) }; return e; }, idFull));
 const fullLen = idFull.calibrationLog.length, exhausted = host.withAccount(qa, () => MES.recordCalibration(idFull, { ...entry, tag: 'NEXT-TOOL' }), idFull), exhaustedFix = host.withAccount(qa, () => MES.updateCalibration(idFull, 'CALLOG-99999', { note: 'cert 9' }), idFull);
 check('a new calibration entry after CALLOG-99999 is refused without writing', MES.validate(idFull) && !exhausted.ok && !exhaustedFix.ok && /CALLOG-99999/.test(exhausted.message) && idFull.calibrationLog.length === fullLen);
 
@@ -407,7 +411,7 @@ check('corrections and later records keep the torque classification without rest
 const promote = run(qa, () => MES.updateCalibration(state, MES.calibrationStatus(state, 'NT-TOOL').id, { torque: 'yes', note: 'It is a torque wrench' }));
 check('a correction can classify a tool as a torque tool', promote.ok && MES.isTorqueTool(MES.toolCheck('NT-TOOL', now, state).tool));
 const declassImport = structuredClone(state), cwCurrent = MES.calibrationStatus(declassImport, 'CW-310');
-declassImport.calibrationLog.push(host.withAccount(qa, () => { const e = { ...cwCurrent, id: 'CALLOG-09993', torque: false, supersedes: cwCurrent.id, note: 'relabel', recordedAt: new Date().toISOString() }; delete e.calibrationSignature; e.calibrationSignature = { manifest: MES.signManifest(declassImport, 'Calibration entry corrected', calSubject(e), e.recordedAt) }; return e; }, declassImport));
+appendImported(declassImport, host.withAccount(qa, () => { const e = { ...cwCurrent, id: 'CALLOG-09993', torque: false, supersedes: cwCurrent.id, note: 'relabel', recordedAt: new Date().toISOString() }; delete e.calibrationSignature; e.calibrationSignature = { manifest: MES.signManifest(declassImport, 'Calibration entry corrected', calSubject(e), e.recordedAt) }; return e; }, declassImport));
 check('a workspace that declassifies a torque tool fails validation and diagnose names the entry', !MES.validate(declassImport) && MES.diagnose(declassImport)?.where === 'CALLOG-09993' && /torque/.test(MES.diagnose(declassImport)?.detail || ''));
 const badFlag = structuredClone(state);
 badFlag.calibrationLog[badFlag.calibrationLog.length - 1].torque = 'yes';
@@ -438,7 +442,7 @@ check('the log views take the current entries from the engine, not an inline sup
 // #35 review (Codex 4134256601): the torque answer is required on load too, not only in recordCalibration, so an
 // imported log-only entry without it cannot be read as a non-torque tool. Seeded tags may omit it.
 const noFlag = structuredClone(state), cwRow = MES.calibrationStatus(noFlag, 'NT-TOOL');
-noFlag.calibrationLog.push(host.withAccount(qa, () => { const e = { ...cwRow, id: 'CALLOG-09994', tag: 'CW-IMPORT', description: 'CLICK WRENCH', note: '', recordedAt: new Date().toISOString() }; delete e.supersedes; delete e.torque; delete e.calibrationSignature; e.calibrationSignature = { manifest: MES.signManifest(noFlag, 'Calibration recorded', calSubject(e), e.recordedAt) }; return e; }, noFlag));
+appendImported(noFlag, host.withAccount(qa, () => { const e = { ...cwRow, id: 'CALLOG-09994', tag: 'CW-IMPORT', description: 'CLICK WRENCH', note: '', recordedAt: new Date().toISOString() }; delete e.supersedes; delete e.torque; delete e.calibrationSignature; e.calibrationSignature = { manifest: MES.signManifest(noFlag, 'Calibration recorded', calSubject(e), e.recordedAt) }; return e; }, noFlag));
 check('an imported log-only entry without a torque answer fails validation and diagnose names it', !MES.validate(noFlag) && MES.diagnose(noFlag)?.where === 'CALLOG-09994' && /torque/.test(MES.diagnose(noFlag)?.detail || ''));
 check('seeded tags recorded without a torque answer still validate', state.calibrationLog.some(e => MES.CAL_TOOLS.some(t => t.tag === e.tag) && e.torque === undefined) && MES.validate(state));
 
@@ -455,6 +459,7 @@ refOp.buyoff.at = new Date(Date.parse(refState.calibrationLog.find(e => e.id ===
 check('a buy-off that cites an existing calibration entry for its tool validates', refEntry.ok && MES.validate(refState));
 const dangling = structuredClone(refState);
 dangling.calibrationLog = dangling.calibrationLog.filter(e => e.id !== refEntry.id);
+relinkHead(dangling); // the removed entry was the only one; a head that still named it would fail first on the chain
 check('a buy-off that cites a calibration entry missing from the log fails validation', !MES.validate(dangling));
 check('diagnose names the work order whose buy-off cites the missing entry', MES.diagnose(dangling)?.where === refOrder.id && new RegExp(refEntry.id).test(MES.diagnose(dangling)?.detail || ''));
 const wrongTool = structuredClone(refState);
@@ -468,10 +473,10 @@ check('an ATP test asset citing a missing calibration entry fails validation', !
 // #35 review (Codex 4134619499): the write-path rule that a calibration is dated on or before the Pacific day it
 // is recorded also holds on load, so an imported or hand-signed entry cannot postdate its own calibration.
 const postdated = structuredClone(state), pdSource = MES.calibrationStatus(postdated, 'NT-TOOL');
-postdated.calibrationLog.push(host.withAccount(qa, () => { const e = { ...pdSource, id: 'CALLOG-09996', tag: 'PD-TOOL', torque: false, calibratedAt: '2026-10-01', expires: '2027-10-01', note: '', recordedAt: '2026-09-29T19:00:00.000Z' }; delete e.supersedes; delete e.calibrationSignature; e.calibrationSignature = { manifest: MES.signManifest(postdated, 'Calibration recorded', calSubject(e), e.recordedAt) }; return e; }, postdated));
+appendImported(postdated, host.withAccount(qa, () => { const e = { ...pdSource, id: 'CALLOG-09996', tag: 'PD-TOOL', torque: false, calibratedAt: '2026-10-01', expires: '2027-10-01', note: '', recordedAt: '2026-09-29T19:00:00.000Z' }; delete e.supersedes; delete e.calibrationSignature; e.calibrationSignature = { manifest: MES.signManifest(postdated, 'Calibration recorded', calSubject(e), e.recordedAt) }; return e; }, postdated));
 check('a calibration dated after the day it was recorded fails validation and diagnose names it', !MES.validate(postdated) && MES.diagnose(postdated)?.where === 'CALLOG-09996');
 const sameDay = structuredClone(state);
-sameDay.calibrationLog.push(host.withAccount(qa, () => { const e = { ...pdSource, id: 'CALLOG-09997', tag: 'SD-TOOL', torque: false, calibratedAt: '2026-09-29', expires: '2027-09-29', note: '', recordedAt: '2026-09-29T19:00:00.000Z' }; delete e.supersedes; delete e.calibrationSignature; e.calibrationSignature = { manifest: MES.signManifest(sameDay, 'Calibration recorded', calSubject(e), e.recordedAt) }; return e; }, sameDay));
+appendImported(sameDay, host.withAccount(qa, () => { const e = { ...pdSource, id: 'CALLOG-09997', tag: 'SD-TOOL', torque: false, calibratedAt: '2026-09-29', expires: '2027-09-29', note: '', recordedAt: '2026-09-29T19:00:00.000Z' }; delete e.supersedes; delete e.calibrationSignature; e.calibrationSignature = { manifest: MES.signManifest(sameDay, 'Calibration recorded', calSubject(e), e.recordedAt) }; return e; }, sameDay));
 check('a calibration dated the Pacific day it was recorded validates', MES.validate(sameDay));
 
 // #35 review (Codex 4135389174, Jinx option B): a buy-off may cite only calibration evidence that existed when it
@@ -558,6 +563,7 @@ const signerRow = signerBase.calibrationLog[signerBase.calibrationLog.length - 1
 check('a calibration entry recorded by a QA Manager is signed with the Quality Manager role', signerRow.calibrationSignature.manifest.signer.role === 'Quality Manager' && MES.validate(signerBase));
 const forgedRole = structuredClone(signerBase);
 forgedRole.calibrationLog[forgedRole.calibrationLog.length - 1].calibrationSignature.manifest.signer.role = 'Assembly technician';
+relinkHead(forgedRole);
 check('a calibration entry signed by a technician fails entry validation', !MES.validate(forgedRole));
 check('a calibration entry signed by a technician fails manifest verification', !MES.verifyManifests(forgedRole).ok && MES.verifyManifests(forgedRole).failures.some(f => /calibration authority/.test(f.reason)));
 check('the server gate rejects a calibration entry signed by a technician', typeof srv.validState(forgedRole) === 'string');
@@ -571,6 +577,7 @@ const resignLastAs = (ws, role) => {
   row.signerRole = role;
   row.calibrationSignature = { manifest: MES.signManifest(ws, row.calibrationSignature.manifest.meaning, calSubject(row), row.recordedAt) };
   ws.profile = saved;
+  relinkHead(ws);
   return ws;
 };
 const roleVerdicts = host.roles.ROLES.map(r => {
@@ -584,9 +591,11 @@ const techSigned = resignLastAs(structuredClone(signerBase), 'Assembly technicia
 check('a fully signed technician entry fails validation', !MES.validate(techSigned) && !MES.verifyManifests(techSigned).ok);
 const roleOnlyEdit = structuredClone(techSigned);
 roleOnlyEdit.calibrationLog[roleOnlyEdit.calibrationLog.length - 1].calibrationSignature.manifest.signer.role = 'Quality Manager';
+relinkHead(roleOnlyEdit);
 check('changing only the manifest signer role of a technician entry does not make it valid', !MES.validate(roleOnlyEdit) && !MES.verifyManifests(roleOnlyEdit).ok && typeof srv.validState(roleOnlyEdit) === 'string');
 const bothEdited = structuredClone(roleOnlyEdit);
 bothEdited.calibrationLog[bothEdited.calibrationLog.length - 1].signerRole = 'Quality Manager';
+relinkHead(bothEdited);
 check('changing the signed signerRole without re-signing breaks the manifest hash', !MES.validate(bothEdited) && !MES.verifyManifests(bothEdited).ok);
 check('entries written by this build carry the signer role in the signed subject', signerBase.calibrationLog.every(e => e.signerRole === e.calibrationSignature.manifest.signer.role && e.calibrationSignature.manifest.subject.signerRole === e.signerRole));
 // Entries from builds before the signer-role gate have no signerRole, and their manifest role is not hashed, so they
@@ -599,6 +608,7 @@ const resignLegacy = (ws, role, credentialId, recordedAt) => {
   delete row.signerRole; row.recordedBy = `${name} · ${cred}`; if (recordedAt) row.recordedAt = recordedAt;
   row.calibrationSignature = { manifest: MES.signManifest(ws, row.calibrationSignature.manifest.meaning, calSubject(row), row.recordedAt) };
   ws.profile = saved;
+  relinkHead(ws);
   return ws;
 };
 const legacyQe = resignLegacy(structuredClone(signerBase), 'Quality Engineer', 'SR-QE-001', '2026-09-30T12:00:00.000Z');
@@ -608,7 +618,7 @@ const legacyLateQe = resignLegacy(structuredClone(signerBase), 'Quality Engineer
 check('a legacy standalone entry is not expired by any date', MES.validate(legacyLateQe) && MES.verifyManifests(legacyLateQe).ok);
 const legacyAcct = resignLegacy(structuredClone(signerBase), 'Quality Engineer');
 check('a legacy account-signed entry is grandfathered as recorded', /ACCT-/.test(legacyAcct.calibrationLog.at(-1).recordedBy) && MES.validate(legacyAcct) && MES.verifyManifests(legacyAcct).ok);
-const legacyStrip = structuredClone(signerBase); delete legacyStrip.calibrationLog.at(-1).signerRole;
+const legacyStrip = structuredClone(signerBase); delete legacyStrip.calibrationLog.at(-1).signerRole; relinkHead(legacyStrip);
 check('removing signerRole from an entry this build wrote breaks its manifest hash', !MES.validate(legacyStrip) && !MES.verifyManifests(legacyStrip).ok);
 // Standalone use (no account): the profile signs, so a profile without calibration authority cannot record or correct.
 const standalone = structuredClone(state);
@@ -658,14 +668,14 @@ check('a tool with calibration history is retired with its dates', datedRetireOk
 const forgedStrip = structuredClone(undated);
 const stripRow = { ...structuredClone(forgedStrip.calibrationLog.find(e => e.id === retiredUndated.id)), id: 'CALLOG-09000', tag: 'CAL-022', description: 'DIGITAL CALIPER', recordedAt: new Date().toISOString() };
 host.withAccount(qa, () => { stripRow.calibrationSignature = { manifest: MES.signManifest(forgedStrip, 'Calibration recorded', calSubject(stripRow), stripRow.recordedAt) }; }, forgedStrip);
-forgedStrip.calibrationLog.push(stripRow);
+appendImported(forgedStrip, stripRow);
 check('a signed undated retirement of a tool with calibration dates on record fails validation', !MES.validate(forgedStrip) && /calibration dates on record/.test(JSON.stringify(MES.diagnose(forgedStrip))));
 // Codex review on #129: load validation reads only the signed log, not the shipped snapshot, so a later build that ships
 // new snapshot dates cannot invalidate a retirement that was valid when it was signed. The write path still reads it.
 const snapshotOnly = structuredClone(undated);
 const snapRow = { ...structuredClone(snapshotOnly.calibrationLog.find(e => e.id === retiredUndated.id)), id: 'CALLOG-09001', tag: 'NONE-175', description: 'TORQUE WRENCH', recordedAt: new Date().toISOString() };
 host.withAccount(qa, () => { snapRow.calibrationSignature = { manifest: MES.signManifest(snapshotOnly, 'Calibration recorded', calSubject(snapRow), snapRow.recordedAt) }; }, snapshotOnly);
-snapshotOnly.calibrationLog.push(snapRow);
+appendImported(snapshotOnly, snapRow);
 check('an undated retirement whose only dated record is the shipped snapshot still loads', MES.validate(snapshotOnly) && MES.verifyManifests(snapshotOnly).ok);
 const clearedInService = host.withAccount(qa, () => MES.updateCalibration(undated, MES.calibrationStatus(undated, 'CAL-022').id, { calibratedAt: '', expires: '' }), undated);
 check('a correction that clears the dates of an entry that is not Retired is refused', !clearedInService.ok && /calibration date/.test(clearedInService.message));
@@ -674,6 +684,7 @@ const forgedUndated = structuredClone(undated);
 const undatedRow = forgedUndated.calibrationLog.find(e => e.id === retiredUndated.id);
 undatedRow.status = 'In Calibration';
 host.withAccount(qa, () => { undatedRow.calibrationSignature = { manifest: MES.signManifest(forgedUndated, 'Calibration recorded', calSubject(undatedRow), undatedRow.recordedAt) }; }, forgedUndated);
+forgedUndated.calibrationLog.forEach((e, i, log) => { if (i) e.previousHash = MES.calibrationEntryHash(log[i - 1]); }); relinkHead(forgedUndated);
 check('a signed In Calibration entry with blank dates fails validation', !MES.validate(forgedUndated) && /calibratedAt/.test(JSON.stringify(MES.diagnose(forgedUndated))));
 check('the calibration record forms leave the dates optional and say when they may be blank', /leaves them blank/.test(pageSource) && !/name="calibratedAt" type="date" required/.test(pageSource));
 
@@ -684,6 +695,6 @@ const demoCal = demoHost.MES.seed(), prodCal = MES.seed();
 for (const ws of [demoCal, prodCal]) ws.profile = { name: 'Sky Safety', role: 'Safety Engineer', credentialId: 'SR-SF-001' };
 const demoSafety = demoHost.MES.recordCalibration(demoCal, { ...entry, tag: 'DEMO-CAL-1' });
 check('in the demo build a full-access signer role records a calibration that validates', demoSafety.ok && demoHost.MES.validate(demoCal) && demoHost.MES.verifyManifests(demoCal).ok);
-check('the production build still refuses the same signer role', !MES.recordCalibration(prodCal, { ...entry, tag: 'DEMO-CAL-1' }).ok && !MES.validate({ ...structuredClone(prodCal), calibrationLog: structuredClone(demoCal.calibrationLog) }));
+check('the production build still refuses the same signer role', !MES.recordCalibration(prodCal, { ...entry, tag: 'DEMO-CAL-1' }).ok && !MES.validate({ ...structuredClone(prodCal), calibrationLog: structuredClone(demoCal.calibrationLog), calibrationLogHead: structuredClone(demoCal.calibrationLogHead) }));
 
 console.log(`calibration: ${checks} checks, all passed`);
