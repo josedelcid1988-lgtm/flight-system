@@ -2,8 +2,11 @@
 // POST /api/workspace/actions/<name> cannot do what the page would refuse. Each rule is checked for the refusal
 // (nothing changes) and for the role that is meant to do it.
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { Readable, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { createHost } from '../server/mes-host.mjs';
+import { createServer, makeHash } from '../server/server.mjs';
 
 const host = createHost(fileURLToPath(new URL('../index.html', import.meta.url)));
 const { MES, FlightManeuver } = host;
@@ -14,6 +17,9 @@ const operator = account('operator', 'Owen Operator');
 const me = account('me', 'Morgan Engineer');
 const qe = account('qe', 'Quinn Quality');
 const qm = account('qm', 'Quincy Manager');
+const safety = account('safety', 'Sam Safety');
+const swe = account('swe', 'Ellis Engineer');
+const cert = account('cert', 'Casey Cert');
 let checks = 0;
 const check = (name, result) => { checks += 1; assert.ok(result, name); console.log(`ok ${name}`); };
 const roleRefused = result => !!result && result.ok === false && /Your role cannot/.test(result.message);
@@ -27,7 +33,7 @@ const roleRefused = result => !!result && result.ok === false && /Your role cann
   check('an NC is raised for the record file checks', nc.ok);
   const photo = { name: 'scratch.png', type: 'image/png', size: 10, dataUrl: 'data:image/png;base64,iVBORw0KGgo=' };
   const added = run(technician, () => FlightManeuver.addRecordFile(state, 'ncs', nc.id, photo));
-  check('anyone who can raise an NC still attaches a file to it', added.ok);
+  check('a Technician (raise-nc) attaches a file to an NC', added.ok);
   const files = () => (FlightManeuver.get(state, 'ncs', nc.id).attachments || []).map(f => f.id);
   const fileId = files().at(-1);
   for (const who of [general, technician, operator]) {
@@ -38,6 +44,106 @@ const roleRefused = result => !!result && result.ok === false && /Your role cann
   const again = run(technician, () => FlightManeuver.addRecordFile(state, 'ncs', nc.id, photo));
   check('Quality (approve-nc) removes a file from a quality record', again.ok && run(qe, () => FlightManeuver.removeRecordFile(state, 'ncs', nc.id, files().at(-1))).ok && files().length === 0);
   check('the workspace is valid after the record file checks', MES.validate(state));
+}
+
+// ---- Flight Maneuver record files (#102, owner decision): any role attaches to any record, open or closed;
+// removing takes dispo-nc or approve-nc and is refused once the record is closed, for every role ----
+const curated = () => JSON.parse(fs.readFileSync(new URL('./fixtures/demo_publish.html', import.meta.url), 'utf8').match(/window\.__DEMO_SEED=(\{[\s\S]*?\});/)[1]);
+const photo = { name: 'evidence.png', type: 'image/png', size: 10, dataUrl: 'data:image/png;base64,iVBORw0KGgo=' };
+// An open stock NC with a Use as is disposition and the open MRB board it convenes, raised through the engine.
+const openBoard = (h, state) => h.withAccount(qm, () => {
+  const nc = h.FlightManeuver.raiseNC(state, { sourceType: 'Serial number', type: 'NC', title: 'Scuffed bracket', description: 'Scuff on the bracket face.', partNumber: 'SR-IH-040', revision: 'A', serial: 'IH-040-AF1', quantity: 1, foundAt: 'Stock', pedigree: 'Production', escaped: 'no' });
+  const dispo = nc.ok && h.FlightManeuver.dispositionNC(state, nc.id, { decision: 'Use as is', note: 'Cosmetic only.' });
+  const board = dispo && dispo.ok && h.FlightManeuver.openMRB(state, 'STOCK', nc.id, 'Cosmetic scuff, justification attached.');
+  return { ncId: nc.id, mrbId: board && board.ok ? board.id : null };
+}, state);
+{
+  const state = curated();
+  FlightManeuver.ensure(state);
+  const run = (who, fn) => host.withAccount(who, fn, state);
+  const { ncId, mrbId } = openBoard(host, state);
+  check('an open stock NC and its open MRB board are raised for the file checks', !!mrbId && FlightManeuver.get(state, 'mrb', mrbId).status === 'Open' && FlightManeuver.get(state, 'ncs', ncId).status === 'Open');
+  const car = state.maneuver.cars.find(c => !['Closed', 'Cancelled'].includes(c.status));
+  const resolvedNc = state.maneuver.ncs.find(t => t.status === 'Resolved'), decidedBoard = state.maneuver.mrb.find(m => m.status !== 'Open');
+  check('the curated set carries a resolved NC and a decided MRB board', !!resolvedNc && !!decidedBoard);
+  const files = (kind, id) => (FlightManeuver.get(state, kind, id).attachments || []).map(f => f.id);
+  const everyone = [general, technician, operator, safety, me, qe, swe, cert, qm];
+  // Attaching: every role, every record type, open or not.
+  for (const who of everyone) {
+    const targets = [['ncs', ncId], ['cars', car.id], ['mrb', mrbId], ['ncs', resolvedNc.id], ['mrb', decidedBoard.id]];
+    const before = targets.map(([k, id]) => files(k, id).length);
+    const ok = targets.every(([k, id]) => run(who, () => FlightManeuver.addRecordFile(state, k, id, photo)).ok);
+    check(`${who.displayName} (${who.role}) attaches to an open NC, CAR and MRB board and to a resolved NC and a decided board`, ok && targets.every(([k, id], n) => files(k, id).length === before[n] + 1));
+    for (const [k, id] of targets) FlightManeuver.get(state, k, id).attachments = FlightManeuver.get(state, k, id).attachments.slice(0, 2);
+  }
+  // Viewing: an attached file is on the record for every reader, with who added it and when.
+  const shown = FlightManeuver.get(state, 'ncs', ncId).attachments[0];
+  check('an attached file keeps the name, who added it and when, and the record history logs it', !!shown.name && !!shown.addedBy && !!shown.addedAt && FlightManeuver.get(state, 'ncs', ncId).history.some(h => String(h.text || h.note || h.message || JSON.stringify(h)).includes(shown.name)));
+  // Removing an open record's file: dispo-nc or approve-nc only.
+  for (const who of [general, technician, operator, safety]) {
+    const before = JSON.stringify(state);
+    const result = run(who, () => FlightManeuver.removeRecordFile(state, 'ncs', ncId, files('ncs', ncId)[0]));
+    check(`${who.displayName} (${who.role}) cannot remove a file from an open NC and nothing changes`, roleRefused(result) && JSON.stringify(state) === before && run(who, () => FlightManeuver.canRemoveFiles('ncs', FlightManeuver.get(state, 'ncs', ncId))) === false);
+  }
+  check('Manufacturing Engineering (dispo-nc) removes a file from an open NC', run(me, () => FlightManeuver.canRemoveFiles('ncs', FlightManeuver.get(state, 'ncs', ncId))) && (() => { const id = files('ncs', ncId)[0]; return run(me, () => FlightManeuver.removeRecordFile(state, 'ncs', ncId, id)).ok && !files('ncs', ncId).includes(id); })());
+  check('Quality (approve-nc) removes a file from an open MRB board', (() => { const id = files('mrb', mrbId)[0]; return run(qe, () => FlightManeuver.removeRecordFile(state, 'mrb', mrbId, id)).ok && !files('mrb', mrbId).includes(id); })());
+  // Removing once the record is closed: refused for every role, the QA Manager included, and the file stays.
+  check('a Quality manager cancels the CAR for the closed record check', run(qm, () => FlightManeuver.cancelCAR(state, car.id, 'Raised in error.')).ok);
+  // A problem report taken to Closed through the engine: raised, sent to Jira, closed from Jira, with a file on it first.
+  const spr = run(qm, () => FlightManeuver.raiseSPR(state, { title: 'Fault code on start', partNumber: 'SR-FC-200', serial: 'FC-200-00003', foundAt: 'HIL', defectCode: 'TEST', subCode: 'TEST-01', description: 'Fault code on first start.', occurred: new Date().toISOString().slice(0, 10) }));
+  const sprAttached = spr.ok && run(technician, () => FlightManeuver.addRecordFile(state, 'sprs', spr.id, photo)).ok;
+  const sprClosed = sprAttached && run(qm, () => FlightManeuver.linkSPRJira(state, spr.id, 'SPR-123')).ok && run(qm, () => FlightManeuver.closeSPR(state, spr.id, 'Resolved in Jira.')).ok;
+  const closedSpr = spr.ok && FlightManeuver.get(state, 'sprs', spr.id);
+  check('a problem report with a file is raised, sent to Jira and closed for the closed record check', sprClosed && closedSpr.status === 'Closed' && files('sprs', spr.id).length === 1);
+  for (const [kind, rec, word] of [['ncs', resolvedNc, 'resolved'], ['mrb', decidedBoard, decidedBoard.status.toLowerCase()], ['cars', car, 'cancelled'], ['sprs', closedSpr, 'closed']]) {
+    const label = kind === 'ncs' ? 'NC' : kind === 'mrb' ? 'MRB board' : kind === 'sprs' ? 'problem report' : 'CAR';
+    const fileId = files(kind, rec.id)[0];
+    for (const who of [qm, qe, me]) {
+      const before = JSON.stringify(state);
+      const result = run(who, () => FlightManeuver.removeRecordFile(state, kind, rec.id, fileId));
+      check(`${who.displayName} (${who.role}) cannot remove a file from ${/^[aeiou]/.test(word) ? 'an' : 'a'} ${word} ${label} and nothing changes`, result.ok === false && result.message.includes(`is ${word}, so its files can no longer be removed`) && JSON.stringify(state) === before && files(kind, rec.id).includes(fileId) && run(who, () => FlightManeuver.canRemoveFiles(kind, FlightManeuver.get(state, kind, rec.id))) === false);
+    }
+    check(`${/^[aeiou]/.test(word) ? 'An' : 'A'} ${word} ${label} still takes a new file`, run(technician, () => FlightManeuver.addRecordFile(state, kind, rec.id, photo)).ok);
+  }
+  check('the workspace is valid after the record file checks', MES.validate(state));
+}
+
+// ---- the same rules over the server actions: POST /api/workspace/actions/FlightManeuver.addRecordFile and removeRecordFile ----
+{
+  const server = createServer({ dbPath: ':memory:', quiet: true, setupCode: 'record-file-authz' });
+  await server.ready;
+  const call = async (method, url, token, body, headers = {}) => {
+    const incoming = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]); incoming.method = method; incoming.url = url;
+    incoming.headers = { ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...(token ? { authorization: `Bearer ${token}` } : {}), ...Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v])) };
+    const chunks = [], outgoing = new Writable({ write(c, e, cb) { chunks.push(Buffer.from(c)); cb(); } });
+    outgoing.writeHead = status => { outgoing.statusCode = status; return outgoing; };
+    const done = new Promise((resolve, reject) => { outgoing.once('finish', resolve); outgoing.once('error', reject); });
+    server.listeners('request')[0](incoming, outgoing); await done;
+    const text = Buffer.concat(chunks).toString('utf8'); let json = null; try { json = text ? JSON.parse(text) : null; } catch { json = null; }
+    return { status: outgoing.statusCode, json };
+  };
+  try {
+    for (const [username, role] of [['srv-tech', 'technician'], ['srv-qe', 'qe']]) await server.store.upsertAccount({ username, displayName: `Server ${role}`, salt: '', hash: await makeHash(`${username}-pass-1`), role, roles: [role] });
+    const state = curated();
+    server.host.FlightManeuver.ensure(state);
+    const { mrbId } = openBoard(server.host, state);
+    const resolvedId = state.maneuver.ncs.find(t => t.status === 'Resolved').id;
+    await server.store.putDoc('default', JSON.stringify(state), null, 'record-file-authz');
+    const token = async username => (await call('POST', '/api/auth/session', null, { username, password: `${username}-pass-1` })).json.token;
+    const tech = await token('srv-tech'), quality = await token('srv-qe');
+    const doc = async () => JSON.parse((await server.store.getDoc('default')).json);
+    const files = async (kind, id) => ((await doc()).maneuver[kind].find(r => r.id === id).attachments || []).map(f => f.id);
+    const post = async (who, action, args) => call('POST', `/api/workspace/actions/FlightManeuver.${action}`, who, { args }, { 'If-Match': (await server.store.getDoc('default')).etag });
+    check('over the server a Technician attaches a file to an open MRB board', (await post(tech, 'addRecordFile', ['mrb', mrbId, photo])).status === 200 && (await files('mrb', mrbId)).length === 1);
+    check('over the server a Technician attaches a file to a resolved NC', (await post(tech, 'addRecordFile', ['ncs', resolvedId, photo])).status === 200 && (await files('ncs', resolvedId)).length === 1);
+    const onBoard = (await files('mrb', mrbId))[0], onResolved = (await files('ncs', resolvedId))[0];
+    const techRemove = await post(tech, 'removeRecordFile', ['mrb', mrbId, onBoard]);
+    check('over the server a Technician cannot remove a file from an open MRB board (403) and it stays', techRemove.status === 403 && (await files('mrb', mrbId)).includes(onBoard));
+    const before = (await server.store.getDoc('default')).etag;
+    const closedRemove = await post(quality, 'removeRecordFile', ['ncs', resolvedId, onResolved]);
+    check('over the server Quality cannot remove a file from a resolved NC (403), the workspace is not written and the file stays', closedRemove.status === 403 && /can no longer be removed/.test(closedRemove.json.error) && (await server.store.getDoc('default')).etag === before && (await files('ncs', resolvedId)).includes(onResolved));
+    check('over the server Quality removes a file from an open MRB board', (await post(quality, 'removeRecordFile', ['mrb', mrbId, onBoard])).status === 200 && !(await files('mrb', mrbId)).includes(onBoard));
+  } finally { server.store.close(); }
 }
 
 // ---- smaller write paths (#78): each checks the capability of the page control that calls it ----
