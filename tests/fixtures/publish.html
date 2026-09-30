@@ -2641,6 +2641,23 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // (not only the last) is detected. The unlinked entries have no previousHash to carry it.
   const calibrationLegacyHash = entries => sha256(canonicalPayload(entries));
   const calibrationHeadValid = head => plain(head) && Number.isInteger(head.count) && head.count >= 0 && head.count <= 5000 && (head.hash === null || /^[0-9a-f]{64}$/.test(head.hash)) && Number.isInteger(head.legacyCount) && head.legacyCount >= 0 && head.legacyCount <= head.count && (head.sealedAt === undefined || timestamp(head.sealedAt)) && (head.legacyCount > 0 ? /^[0-9a-f]{64}$/.test(head.legacyHash) : head.legacyHash === undefined) && Object.keys(head).every(k => ['count', 'hash', 'legacyCount', 'sealedAt', 'legacyHash'].includes(k));
+  // The start marker (#162), state.calibrationLogStart = { firstId, firstHash, recordedAt }, is written with the first
+  // calibration entry and never changes. It names that entry and the hash of the whole entry, so once a workspace has
+  // held a calibration entry it cannot read as one that never had a log: deleting both the log and its head leaves the
+  // marker behind, and validation refuses it. A log with entries needs the marker; MES.upgrade adds it to a workspace
+  // recorded before the marker existed. A brand-new workspace has no entries and no marker.
+  // Scope: like the chain, this catches mistakes (a wrong click, a bad import, a stale or hand-edited copy that lost
+  // the calibration keys). Someone who deliberately removes the log, the head and the marker together is not stopped.
+  const calibrationStartFor = log => ({ firstId: log[0].id, firstHash: calibrationEntryHash(log[0]), recordedAt: log[0].recordedAt });
+  const calibrationStartValid = start => plain(start) && /^CALLOG-\d{5}$/.test(start.firstId) && /^[0-9a-f]{64}$/.test(start.firstHash) && timestamp(start.recordedAt) && Object.keys(start).length === 3;
+  function calibrationStartProblem(log, start) {
+    if (start === undefined) return log.length ? { id: 'calibrationLogStart', detail: `The calibration log has ${log.length} entr${log.length === 1 ? 'y' : 'ies'} but no start marker, so a later removal of the whole log could not be detected.` } : null;
+    if (!calibrationStartValid(start)) return { id: 'calibrationLogStart', detail: 'The calibration log start marker is malformed.' };
+    if (!log.length) return { id: 'calibrationLogStart', detail: `The calibration log is empty, but this workspace started it with ${start.firstId} on ${start.recordedAt}: the log and its head were removed, so a retired or quarantined tool could read as usable again.` };
+    const first = log[0];
+    if (!plain(first) || first.id !== start.firstId || calibrationEntryHash(first) !== start.firstHash) return { id: 'calibrationLogStart', detail: `The first calibration entry${plain(first) && first.id ? `, ${first.id},` : ''} does not match the start marker, which records ${start.firstId}: the first entry was removed, replaced, or changed.` };
+    return null;
+  }
   // The first break in the chain or the head, as { id, detail }, or null. Each detail says what is wrong and what it means.
   function calibrationChainProblem(state) {
     const log = plain(state) && Array.isArray(state.calibrationLog) ? state.calibrationLog : [];
@@ -2658,14 +2675,14 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       const want = i ? calibrationEntryHash(log[i - 1]) : null;
       if (e.previousHash !== want) return { id: e.id, detail: i ? `Calibration entry ${e.id} does not link to ${log[i - 1].id}, the entry before it: an entry between them was removed or changed, or the log was reordered.` : `Calibration entry ${e.id} is first in the log but links to an earlier entry, so the entries before it were removed.` };
     }
-    if (head === undefined) return log.length ? { id: 'calibrationLogHead', detail: `The calibration log has ${log.length} entr${log.length === 1 ? 'y' : 'ies'} but no recorded head, so missing latest entries cannot be ruled out.` } : null;
+    if (head === undefined) return log.length ? { id: 'calibrationLogHead', detail: `The calibration log has ${log.length} entr${log.length === 1 ? 'y' : 'ies'} but no recorded head, so missing latest entries cannot be ruled out.` } : calibrationStartProblem(log, plain(state) ? state.calibrationLogStart : undefined);
     if (!calibrationHeadValid(head)) return { id: 'calibrationLogHead', detail: 'The calibration log head is malformed.' };
     if (head.count > log.length) return { id: 'calibrationLogHead', detail: `The calibration log holds ${log.length} entr${log.length === 1 ? 'y' : 'ies'} but its head records ${head.count}: the latest ${head.count - log.length === 1 ? 'entry is' : `${head.count - log.length} entries are`} missing, so a retired or quarantined tool could read as usable.` };
     if (head.count < log.length) return { id: 'calibrationLogHead', detail: `The calibration log holds ${log.length} entries but its head records ${head.count}: entries were added outside the application.` };
     if (head.legacyCount !== legacy) return { id: 'calibrationLogHead', detail: `The calibration log has ${legacy} entr${legacy === 1 ? 'y' : 'ies'} from before the chain but its head sealed ${head.legacyCount}: an early entry was removed or added.` };
     if (legacy && head.legacyHash !== calibrationLegacyHash(log.slice(0, legacy))) return { id: 'calibrationLogHead', detail: `An entry recorded before the chain no longer matches the seal made ${head.sealedAt ? `on ${head.sealedAt}` : 'when the log was sealed'}: one of the first ${legacy} entr${legacy === 1 ? 'y was' : 'ies was'} changed.` };
     if (head.hash !== (log.length ? calibrationEntryHash(log[log.length - 1]) : null)) return { id: 'calibrationLogHead', detail: `The last calibration entry${log.length ? `, ${log[log.length - 1].id},` : ''} does not match the log head: the latest entry was replaced, changed, or removed.` };
-    return null;
+    return calibrationStartProblem(log, state.calibrationLogStart);
   }
   // Append one entry to the chain and move the head. The entry is signed before it is linked; previousHash is not
   // part of the signed subject, so the manifest is unchanged by the chain.
@@ -2673,6 +2690,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const log = state.calibrationLog, head = plain(state.calibrationLogHead) ? state.calibrationLogHead : null;
     entry.previousHash = log.length ? calibrationEntryHash(log[log.length - 1]) : null;
     log.push(entry);
+    if (state.calibrationLogStart === undefined) state.calibrationLogStart = calibrationStartFor(log);
     state.calibrationLogHead = calibrationHeadFor(log, head ? head.legacyCount : 0, head ? head.sealedAt : undefined, head ? head.legacyHash : undefined);
   };
   // Seal a log recorded before the chain existed: write its head once, naming how many unlinked entries it held and
@@ -2682,6 +2700,13 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const log = Array.isArray(state.calibrationLog) ? state.calibrationLog : [];
     if (state.calibrationLogHead !== undefined || !log.length || log.some(e => plain(e) && Object.hasOwn(e, 'previousHash'))) return;
     state.calibrationLogHead = calibrationHeadFor(log, log.length, new Date().toISOString(), calibrationLegacyHash(log));
+  };
+  // Give a log recorded before the start marker existed its marker, from the entry that is first in it now (#162).
+  // A log that is empty gets none, so a workspace whose log was already deleted is not given one after the fact.
+  const markCalibrationStart = state => {
+    const log = Array.isArray(state.calibrationLog) ? state.calibrationLog : [];
+    if (state.calibrationLogStart !== undefined || !log.length || !plain(log[0])) return;
+    state.calibrationLogStart = calibrationStartFor(log);
   };
   // The server write gate: a write keeps every entry the stored log holds, unchanged and in place, and may only
   // append. Returns a plain refusal or null. prev is the stored workspace (null before the first save).
@@ -6247,7 +6272,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     try {
       state = renameKitOp(migrateEngineeringChanges(migrateSplitIds(state)));
       try { migrateChangeIds(state); } catch (e) {}
-      if (plain(state)) sealCalibrationLog(state);
+      if (plain(state)) { sealCalibrationLog(state); markCalibrationStart(state); }
       if (validate(state)) { const migrated = JSON.parse(JSON.stringify(state)); ['audits','certifications','supplierApprovals','qualityValues','qualityVerdicts'].forEach(key=>{if(!Array.isArray(migrated[key]))migrated[key]=[];}); migrateOperationTypes(migrated); return validate(migrated) ? migrated : JSON.parse(JSON.stringify(state)); }
       if (!validateVersion(state, 1) && !validateVersion(state, 2)) return null;
       const upgraded = JSON.parse(JSON.stringify(state));
@@ -11280,8 +11305,9 @@ try{const raw=localStorage.getItem(KEY);
       }
       // A calibration log from before the chain is sealed by MES.upgrade. Standalone, the seal is written back before the
       // workspace is used, so the baseline it records is durable from the first load and a later reload cannot reseal a
-      // shortened log (#116, #117). If browser storage refuses the write, the workspace is not opened.
-      if(saved&&!(window.skServer&&window.skServer.active)&&!parsedRaw.calibrationLogHead&&saved.calibrationLogHead&&MES.validate(saved)){
+      // shortened log (#116, #117). The calibration start marker added on upgrade is written back the same way (#162).
+      // If browser storage refuses the write, the workspace is not opened.
+      if(saved&&!(window.skServer&&window.skServer.active)&&((!parsedRaw.calibrationLogHead&&saved.calibrationLogHead)||(!parsedRaw.calibrationLogStart&&saved.calibrationLogStart))&&MES.validate(saved)){
         try{localStorage.setItem(KEY,JSON.stringify(saved));}catch(e){saved=null;loadProblem='The calibration log needs a one-time seal for this build, but browser storage refused to save it (it may be full). Free browser storage, then try again.';}
       }
       if(saved){
@@ -11694,25 +11720,43 @@ document.addEventListener('submit',e=>{const f=e.target;if(!f||(f.id!=='wo-issue
   else{r=MES.returnIssuedOrder(state,f.dataset.order,f.dataset.material,f.elements.reason.value);if(!r.ok){$('#wo-return-error').textContent=r.message;return;}}
   if(!save())return;$('#dialog').close();render();notify(r.message);});
 // Turn record identifiers inside an activity line into links to the record they name.
-// The text is escaped first; every pattern below matches only characters that escaping leaves alone.
-const RECORD_PATTERNS=[
+// This is the one record-link builder: the legacy recordLinks() below and RecordLinks in src/react/flight-ui.jsx
+// both build from window.FlightRecordLinks, so the patterns, the link targets, the link order and the attributes of
+// a link are written once. tests/test_record_link_builder_ui.mjs fails if the two paths differ.
+const RECORD_PATTERNS=Object.freeze([
   [/\b(WO-\d{3,6})\b/g,'order'],
   [/\b((?:IDR|NC)-\d{4,8})\b/g,'ticket'],
   [/\b(ATP-\d{3,8})\b/g,'report'],
   [/\b(ECR-[0-9]+-[0-9]+)\b/g,'rev'],
   [/\b(LOT-\d{6,8}-\d{3,5})\b/g,'lot'],
   [/\b(SNL-\d{4,6})\b/g,'serial']
-];
-function recordLinks(text,orderId){
-  let html=esc(text);
+].map(p=>Object.freeze(p)));
+// Split the raw text into plain strings and links in text order. A work order number links to itself; a ticket,
+// report, revision or lot number links only when the entry names its work order; a serial links either way.
+function recordLinkParts(text,orderId){
+  const source=String(text??''),hits=[];
   for(const [pattern,kind] of RECORD_PATTERNS){
-    html=html.replace(pattern,(match,id)=>{
-      const target=kind==='order'?id:(orderId||'');
-      if(kind!=='order'&&kind!=='serial'&&!target)return match;
-      return `<button type="button" class="record-link" data-action="record-link" data-kind="${kind}" data-order="${esc(target)}" data-record="${esc(id)}" title="Open ${esc(id)}">${esc(id)}</button>`;
-    });
+    for(const match of source.matchAll(pattern)){
+      const target=kind==='order'?match[1]:(orderId||'');
+      if(kind!=='order'&&kind!=='serial'&&!target)continue;
+      hits.push({start:match.index,end:match.index+match[0].length,id:match[1],kind,target});
+    }
   }
-  return html;
+  hits.sort((a,b)=>a.start-b.start);
+  const parts=[];let at=0;
+  for(const hit of hits){
+    if(hit.start<at)continue;
+    if(hit.start>at)parts.push(source.slice(at,hit.start));
+    parts.push(hit);at=hit.end;
+  }
+  if(at<source.length)parts.push(source.slice(at));
+  return parts;
+}
+// The attributes of one record-link button as [name, value] pairs, in the order both paths write them.
+function recordLinkAttributes(link){return [['type','button'],['class','record-link'],['data-action','record-link'],['data-kind',String(link.kind)],['data-order',String(link.target??'')],['data-record',String(link.id)],['title',`Open ${link.id}`]];}
+window.FlightRecordLinks=Object.freeze({patterns:RECORD_PATTERNS,parts:recordLinkParts,attributes:recordLinkAttributes});
+function recordLinks(text,orderId){
+  return recordLinkParts(text,orderId).map(part=>typeof part==='string'?esc(part):`<button ${recordLinkAttributes(part).map(([name,value])=>`${name}="${esc(value)}"`).join(' ')}>${esc(part.id)}</button>`).join('');
 }
 function historyKind(a){a=String(a||'');return /\b(NC|IDR)-\d/.test(a)?'NC':/ECR|engineering|re-release|Engineering edit/i.test(a)?'ECR / engineering change':/[Cc]losure|closed/.test(a)?'Closure':/[Ss]plit/.test(a)?'Split':/[Pp]edigree/.test(a)?'Pedigree':/Stage changed|issued to kitting/i.test(a)?'Stage change':/operation recorded|[Ss]tep |Video/.test(a)?'Operation / buy-off':/sequence|operation added|Operation Op|removed:/i.test(a)?'Sequence change':/availability|[Ll]ot |Material/.test(a)?'Kitting':/[Ss]erial|inventory|Stocked/.test(a)?'Serial / inventory':/QA approval|release/i.test(a)?'QA release':/note:/.test(a)?'Note':/Priority|AOG|Planned dates/.test(a)?'Priority / schedule':/[Aa]ssigned/.test(a)?'Assignment':/cloned|created/i.test(a)?'Creation':'Other';}
 function historyDay(at){try{return new Date(at).toLocaleDateString('en-CA',{timeZone:'America/Los_Angeles'});}catch(e){return '';}}
@@ -15154,7 +15198,7 @@ body[data-view="order"] .page-heading .rev-strip .rev-chip{border-color:#53667d!
 .fs-work-cue .btn{color:#034694;background:white;border-color:white;flex-shrink:0}
 .fs-work-cue[data-blocked="true"]{background:#722900}.fs-work-cue[data-blocked="true"] p{color:#ffe4ce}
 .fs-work-cue[data-blocked="true"]{align-items:flex-start;background:linear-gradient(135deg,#fff7f7 0,#fff0f1 60%,#ffe9eb 100%);color:#861c1c;border:2px solid #c92a2a;box-shadow:0 0 0 4px rgba(201,42,42,.08),0 8px 28px rgba(147,20,20,.12);overflow:visible;padding:18px 20px}.fs-cue-kicker{display:block;margin-bottom:4px;color:#b4232f;font:800 11px/16px var(--font);letter-spacing:.12em;text-transform:uppercase}.fs-work-cue[data-blocked="true"]>div>strong{color:#541818;font-size:22px;line-height:28px;letter-spacing:-.02em}.fs-work-cue[data-blocked="true"] p{color:#672323}.fs-work-cue[data-blocked="true"] .fs-work-beacon{margin-top:20px;background:#ff7a66;box-shadow:0 0 0 7px rgba(255,122,102,.15)}.fs-work-cue[data-blocked="true"] .fs-cue-action{align-self:center;min-height:44px;color:white!important;border-color:#9f1d1d!important;background:#9f1d1d!important;box-shadow:0 8px 20px rgba(159,29,29,.18)}.fs-hold-record{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:14px;margin-top:10px;padding:10px 14px;background:rgba(255,255,255,.86);border:1px solid #e8a8ad;box-shadow:0 6px 20px rgba(126,24,31,.06)}.fs-hold-link{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 10px;width:100%;min-width:0;padding:0;border:0;background:transparent;color:#541818;text-align:left;cursor:pointer}.fs-hold-link strong{font-size:16px!important;line-height:22px!important}.fs-hold-link span{color:#8f3a41;font-size:13px;line-height:18px}.fs-hold-link:focus-visible{outline:3px solid #075ec9;outline-offset:4px}.fs-hold-owner{display:flex;align-items:center;gap:8px;margin:0;padding:0 0 0 14px;border:0;border-left:1px solid #efc5c8;color:#672323;font-size:13px}.fs-hold-owner>svg{width:18px;height:18px}.fs-hold-owner>span{min-width:92px}.fs-hold-owner>span>small{display:block;color:#a85a60;font:800 10px/14px var(--font);letter-spacing:.1em;text-transform:uppercase}.fs-hold-owner>span>strong{font-size:15px!important;line-height:20px!important}.fs-hold-owner .btn{min-height:36px;padding:6px 10px;color:#861c1c;border-color:#d98f8f;background:#fff8f8}
-.fs-work-cue[data-blocked="true"]{flex-wrap:wrap}.fs-work-cue[data-blocked="true"]>div{flex:1 1 520px;max-width:100%}.fs-hold-record,.fs-hold-link{min-width:0;max-width:100%}.fs-hold-link strong,.fs-hold-link span{overflow-wrap:anywhere}.op-locked svg{width:13px;height:13px;vertical-align:-2px}
+.fs-work-cue[data-blocked="true"]{flex-wrap:wrap}.fs-work-cue[data-blocked="true"]>div{flex:1 1 520px;max-width:100%}.fs-hold-record,.fs-hold-link{min-width:0;max-width:100%}.fs-hold-link strong,.fs-hold-link span{overflow-wrap:anywhere}.op-locked svg{width:13px;height:13px;vertical-align:-2px}.fs-hold-link .fs-hold-mrb{flex-basis:100%;color:#672323;font-weight:700}
 .fs-work-cue[data-blocked="true"]::after{content:"";position:absolute;inset:-7px;border:3px solid #ff4d57;border-radius:8px;opacity:.12;pointer-events:none;transform:scale(.995)}
 .fs-work-beacon{position:relative;width:14px;height:14px;border-radius:50%;background:#a9ff48;flex-shrink:0;box-shadow:0 0 0 6px rgba(169,255,72,.16)}
 .fs-blocked-icon{display:grid;place-items:center;width:28px;height:28px;flex:none;color:#9f1d1d;background:#ffe0e3;border:1px solid #d98f8f}.fs-blocked-icon svg{width:17px;height:17px}
@@ -15199,6 +15243,22 @@ function fsTicketStage(ticket){
   if(!ticket.dispo)return 'Awaiting ME initial disposition';
   if(ticket.reworkPlan)return ticket.reworkPlan.stage==='Awaiting ME operation'?`Awaiting ME ${ticket.reworkPlan.decision.toLowerCase()} operation`:'Awaiting QA sequence release';
   return 'Awaiting independent Quality approval';
+}
+// The MRB board behind a hold, with its status and the step that clears it. Empty when the NC has no board,
+// or when the board no longer applies: the disposition was returned, or it is a different one MRB does not review.
+function fsTicketMrbLine(order,ticket){
+  const FM=window.FlightManeuver,m=FM&&FM.mrbFor?FM.mrbFor(state,order.id,ticket.id):null;if(!m)return '';
+  const plan=ticket.reworkPlan,lower=v=>String(v||'').toLowerCase();let next='';
+  if(plan){if(m.status!=='Approved'||m.proposed!==plan.decision)return '';next=`Board approved ${m.proposed} and Quality approved ${ticket.id}. ${plan.stage==='Awaiting ME operation'?`ME adds the ${lower(plan.decision)} operation next.`:`QA releases the ${lower(plan.decision)} sequence next.`}`;}
+  else{
+    if(!ticket.dispo||(!FM.needsMRB(order,ticket)&&m.proposed!==ticket.dispo.decision))return '';
+    const gate=FM.gateResolve(state,order.id,ticket.id);
+    if(m.status==='Open'){const waiting=FM.seatsOf(m).filter(seat=>!(m.votes||[]).some(v=>v.seat===seat));next=waiting.length?`Waiting on votes from ${waiting.join(', ')}. Quality records the decision in Flight Maneuver once every seat has voted.`:`Every seat has voted. Quality records the board decision in Flight Maneuver next.`;}
+    else if(gate&&gate.message)next=gate.message;
+    else if(m.status==='Approved')next=`Board approved ${m.proposed}. Quality approves ${ticket.id} next.`;
+    else return '';
+  }
+  return `<span class="fs-hold-mrb">${esc(m.id)} · ${esc(m.status)} · ${esc(next)}</span>`;
 }
 function fsTicketAssignment(order,ticket){MES.syncAssignments(state);return (state.assignments||[]).find(a=>a.status==='Open'&&a.type==='ticket'&&a.orderId===order.id&&a.ticketId===ticket.id)||null;}
 (function(){
@@ -15267,7 +15327,7 @@ function fsTicketAssignment(order,ticket){MES.syncAssignments(state);return (sta
       main.querySelectorAll('.operation-btn').forEach(button=>{const index=o.operations.findIndex(op=>op.id===button.dataset.op);if(index<0)return;const op=o.operations[index],status=fsOperationStatus(o,op,index);button.dataset.fsStatus=status.status;button.dataset.fsNext=String(status.next);button.dataset.fsLocked=String(!!status.locked);const label=button.querySelector('.op-sub');if(label)label.textContent=status.label;let lock=button.querySelector('.op-locked');if(status.locked){if(!lock){lock=document.createElement('span');lock.className='op-locked';label?.before(lock);}lock.innerHTML=icon('lock')+' '+esc(status.label);}else lock?.remove();button.setAttribute('aria-label','Operation '+String((index+1)*10).padStart(3,'0')+': '+op.title+'. '+status.label);if(status.next){attentionKey=o.id+'/'+op.id;if(attentionKey!==lastAttentionKey)button.classList.add('fs-shimmy');}});
       lastAttentionKey=attentionKey;
     }else lastAttentionKey='';
-    if(view==='order'&&tab==='operations'&&!main.querySelector('.fs-work-cue')){const o=order()||{status:'',operations:[]},next=currentIndex(o),op=o.operations[next],layout=main.querySelector('.execution-layout');if(o.status==='Building'&&op&&!op.done&&layout){const blockers=MES.blockingTickets(o,op.id),blocked=orderBlocked(o)||!!MES.pendingSequenceChange(o)||!!MES.inspectionGate(o,next),cue=document.createElement('section');cue.className='fs-work-cue';cue.dataset.blocked=String(blocked);cue.setAttribute('aria-label',blocked?'Current operation blocked':'Current work');const detail=blockers.length?blockers.map(ticket=>{const assignment=fsTicketAssignment(o,ticket);return `<div class="fs-hold-record"><button type="button" class="fs-hold-link" data-action="ticket" data-ticket="${esc(ticket.id)}"><strong>${esc(ticket.id)} · ${esc(ticket.title)}</strong><span>${esc(ticket.dispo?.decision||'No disposition')} · ${esc(fsTicketStage(ticket))}</span></button><div class="fs-hold-owner">${icon('user')}<span>${assignment?`Assigned to <strong>${esc(assignment.assignee.name)}</strong>`:'No owner assigned'}</span>${assignment?`<button type="button" class="btn quiet" data-fs-ping="${esc(assignment.id)}">Ping ${esc(assignment.assignee.name)}</button>`:skCan('assign-work')?`<button type="button" class="btn quiet" data-fs-assign-ticket="${esc(ticket.id)}">Assign reviewer</button>`:''}</div></div>`;}).join(''):`<p>Op ${esc(String((next+1)*10).padStart(3,'0'))} · ${esc(op.title)}</p>`;cue.innerHTML=`${blocked?`<span class="fs-blocked-icon" aria-hidden="true">${icon('lock')}</span>`:'<span class="fs-work-beacon" aria-hidden="true"></span>'}<div><strong>${blocked?'Resolve holds before continuing':'Current operation · Continue here'}</strong>${detail}</div><button class="btn fs-cue-action" data-fs-current-op="${esc(op.id)}">${blocked?'Review operation':'Go to operation'} ${icon('arrow')}</button>`;layout.before(cue);const panel=main.querySelector('.task-panel');if(panel)panel.dataset.fsCurrent=String(selectedOp===op.id&&!blocked);}}
+    if(view==='order'&&tab==='operations'&&!main.querySelector('.fs-work-cue')){const o=order()||{status:'',operations:[]},next=currentIndex(o),op=o.operations[next],layout=main.querySelector('.execution-layout');if(o.status==='Building'&&op&&!op.done&&layout){const blockers=MES.blockingTickets(o,op.id),blocked=orderBlocked(o)||!!MES.pendingSequenceChange(o)||!!MES.inspectionGate(o,next),cue=document.createElement('section');cue.className='fs-work-cue';cue.dataset.blocked=String(blocked);cue.setAttribute('aria-label',blocked?'Current operation blocked':'Current work');const detail=blockers.length?blockers.map(ticket=>{const assignment=fsTicketAssignment(o,ticket);return `<div class="fs-hold-record"><button type="button" class="fs-hold-link" data-action="ticket" data-ticket="${esc(ticket.id)}"><strong>${esc(ticket.id)} · ${esc(ticket.title)}</strong><span>${esc(ticket.dispo?.decision||'No disposition')} · ${esc(fsTicketStage(ticket))}</span>${fsTicketMrbLine(o,ticket)}</button><div class="fs-hold-owner">${icon('user')}<span>${assignment?`Assigned to <strong>${esc(assignment.assignee.name)}</strong>`:'No owner assigned'}</span>${assignment?`<button type="button" class="btn quiet" data-fs-ping="${esc(assignment.id)}">Ping ${esc(assignment.assignee.name)}</button>`:skCan('assign-work')?`<button type="button" class="btn quiet" data-fs-assign-ticket="${esc(ticket.id)}">Assign reviewer</button>`:''}</div></div>`;}).join(''):`<p>Op ${esc(String((next+1)*10).padStart(3,'0'))} · ${esc(op.title)}</p>`;cue.innerHTML=`${blocked?`<span class="fs-blocked-icon" aria-hidden="true">${icon('lock')}</span>`:'<span class="fs-work-beacon" aria-hidden="true"></span>'}<div><strong>${blocked?'Resolve holds before continuing':'Current operation · Continue here'}</strong>${detail}</div><button class="btn fs-cue-action" data-fs-current-op="${esc(op.id)}">${blocked?'Review operation':'Go to operation'} ${icon('arrow')}</button>`;layout.before(cue);const panel=main.querySelector('.task-panel');if(panel)panel.dataset.fsCurrent=String(selectedOp===op.id&&!blocked);}}
     if(view==='order'){const header=main.querySelector('.page-heading');if(header&&!header.querySelector('.fs-order-photo')){const photo=document.createElement('figure');photo.className='fs-photo fs-order-photo';photo.innerHTML='<img src="../../assets/hero-order.png" alt="Helicopter cockpit detail" decoding="async"><figcaption>Flight deck / Built one operation at a time</figcaption>';header.append(photo);}}
     if(window.__dashOpen===undefined){const first=main.querySelector('[data-action="dash-toggle"]');if(first)first.click();}
     const footer=main.querySelector('.app-footer');if(footer&&!main.querySelector('.fs-glossary')){const glossary=document.createElement('details');glossary.className='fs-glossary';glossary.innerHTML='<summary>Terms and acronyms</summary><dl><dt>WI</dt><dd>Work instruction</dd><dt>WO</dt><dd>Work order</dd><dt>MRP</dt><dd>Material requirements planning</dd><dt>NC</dt><dd>Nonconformance</dd><dt>MRB</dt><dd>Material Review Board</dd><dt>FAIR</dt><dd>First Article Inspection Report</dd><dt>CAR</dt><dd>Corrective Action Request</dd><dt>SCAR</dt><dd>Supplier Corrective Action Request</dd><dt>PFMEA</dt><dd>Process Failure Mode and Effects Analysis</dd></dl>';footer.before(glossary);}

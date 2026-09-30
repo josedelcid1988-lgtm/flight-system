@@ -231,12 +231,17 @@ try {
   await page.evaluate(() => { view = 'plan'; render(); });
   await page.locator('#big3-heading').waitFor();
   assert.equal(await page.locator('[data-action="big3-create"]').count(), 1, `Flight Plan offers the actual user's daily priority plan`);
+  // #137: the page keys the plan by the UTC day at the click. Read the day before the click and take whichever of
+  // that day or the one after the server stored, so a run that crosses 00:00 UTC here does not look up the wrong day.
+  const plannerDayBefore = new Date().toISOString().slice(0, 10);
   await page.locator('[data-action="big3-create"]').click();
   await page.waitForFunction(() => window.skServer?.sync?.status === 'synced');
   const plannerWorkspaceResponse = await fetch(`http://127.0.0.1:${port}/api/workspace`, { headers: { Authorization: `Bearer ${token}` } });
   const plannerWorkspace = await plannerWorkspaceResponse.json();
   const plannerUser = 'server-ui-admin';
-  const plannerDate = new Date().toISOString().slice(0, 10);
+  const plannerDays = plannerWorkspace.planner.days[plannerUser] || {};
+  const plannerDate = [plannerDayBefore, new Date().toISOString().slice(0, 10)].find(day => plannerDays[day]);
+  assert.ok(plannerDate, `the server stores a planner day for the signed-in account: ${Object.keys(plannerDays).join(', ')}`);
   assert.equal(plannerWorkspace.planner.days[plannerUser][plannerDate].big3.filter(slot => slot.t).length, 3, 'the server stores three derived proposals for the signed-in account');
   await page.locator('[data-action="big3-decide"][data-decision="accept"]').first().click();
   await page.waitForFunction(() => window.skServer?.sync?.status === 'synced');
