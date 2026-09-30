@@ -501,6 +501,7 @@ check('a buy-off that cites an existing calibration entry for its tool validates
 const dangling = structuredClone(refState);
 dangling.calibrationLog = dangling.calibrationLog.filter(e => e.id !== refEntry.id);
 relinkHead(dangling); // the removed entry was the only one; a head that still named it would fail first on the chain
+delete dangling.calibrationLogStart; // likewise the start marker (#162), which would otherwise name the removed entry first
 check('a buy-off that cites a calibration entry missing from the log fails validation', !MES.validate(dangling));
 check('diagnose names the work order whose buy-off cites the missing entry', MES.diagnose(dangling)?.where === refOrder.id && new RegExp(refEntry.id).test(MES.diagnose(dangling)?.detail || ''));
 const wrongTool = structuredClone(refState);

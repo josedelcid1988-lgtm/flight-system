@@ -76,6 +76,7 @@ check('a malformed head fails validation', !MES.validate(badHead) && /head is ma
 const legacy = structuredClone(state);
 legacy.calibrationLog.forEach(e => { delete e.previousHash; });
 delete legacy.calibrationLogHead;
+delete legacy.calibrationLogStart; // a log from before the chain predates the start marker too (#162)
 const sealed = MES.upgrade(structuredClone(legacy));
 check('a legacy log loads, is sealed once on upgrade and validates', !!sealed && sealed.calibrationLogHead.legacyCount === 3 && sealed.calibrationLogHead.count === 3 && typeof sealed.calibrationLogHead.sealedAt === 'string' && MES.validate(sealed) && MES.verifyManifests(sealed).ok);
 const sealedAt = sealed.calibrationLogHead.sealedAt;
@@ -96,6 +97,42 @@ const legacyNoDigest = structuredClone(sealed);
 delete legacyNoDigest.calibrationLogHead.legacyHash;
 check('a sealed head without its legacy hash is malformed', !MES.validate(legacyNoDigest) && /head is malformed/.test(MES.calibrationChainProblem(legacyNoDigest)?.detail || ''));
 check('an empty log needs no head', MES.validate(MES.seed()) && MES.seed().calibrationLogHead === undefined);
+
+// #162: once a workspace has held a calibration entry, it keeps a start marker bound to the first entry. Deleting
+// both the log and its head no longer reads as a brand-new workspace, so a tool whose only Retired entry was in the
+// deleted log cannot fall back to the shipped snapshot and read as usable.
+check('#162 the first entry writes a start marker bound to that entry', state.calibrationLogStart?.firstId === state.calibrationLog[0].id && state.calibrationLogStart.firstHash === MES.calibrationEntryHash(state.calibrationLog[0]) && state.calibrationLogStart.recordedAt === state.calibrationLog[0].recordedAt);
+check('#162 later entries leave the start marker unchanged', JSON.stringify(state.calibrationLogStart) === JSON.stringify({ firstId: state.calibrationLog[0].id, firstHash: MES.calibrationEntryHash(state.calibrationLog[0]), recordedAt: state.calibrationLog[0].recordedAt }));
+const deleted = structuredClone(state);
+delete deleted.calibrationLog;
+delete deleted.calibrationLogHead;
+check('#162 deleting both the log and its head fails validation', !MES.validate(deleted));
+const deletedDiag = MES.diagnose(deleted);
+check('#162 diagnose says the log and its head were removed and what to do', deletedDiag?.where === 'calibrationLogStart' && /log and its head were removed/.test(deletedDiag.detail) && /CALLOG-00001/.test(deletedDiag.detail) && /Restore the workspace/.test(deletedDiag.detail) && !/\u2014/.test(deletedDiag.detail), deletedDiag?.detail);
+const deletedUp = MES.upgrade(structuredClone(deleted));
+check('#162 upgrade does not accept a workspace whose log and head were deleted', !deletedUp || !MES.validate(deletedUp));
+const emptiedNoHead = structuredClone(state);
+emptiedNoHead.calibrationLog = [];
+delete emptiedNoHead.calibrationLogHead;
+check('#162 an emptied log without its head fails validation', !MES.validate(emptiedNoHead) && MES.calibrationChainProblem(emptiedNoHead)?.id === 'calibrationLogStart');
+check('#162 a fresh seed with no entries has no marker and validates', MES.seed().calibrationLogStart === undefined && MES.validate(MES.seed()) && MES.validate(MES.upgrade(MES.seed())) && MES.upgrade(MES.seed()).calibrationLogStart === undefined);
+const noMarker = structuredClone(state);
+delete noMarker.calibrationLogStart;
+check('#162 a log with entries but no start marker fails validation with a plain reason', !MES.validate(noMarker) && /no start marker/.test(MES.calibrationChainProblem(noMarker)?.detail || ''));
+const noMarkerUp = MES.upgrade(structuredClone(noMarker));
+check('#162 upgrade of a pre-change chained workspace adds the marker and validates', !!noMarkerUp && noMarkerUp.calibrationLogStart?.firstId === 'CALLOG-00001' && noMarkerUp.calibrationLogStart.firstHash === MES.calibrationEntryHash(noMarkerUp.calibrationLog[0]) && MES.validate(noMarkerUp) && MES.verifyManifests(noMarkerUp).ok);
+const legacyNoMarker = structuredClone(legacy);
+const legacyUp = MES.upgrade(structuredClone(legacyNoMarker));
+check('#162 upgrade of a pre-chain legacy log seals it and adds the marker', !!legacyUp && legacyUp.calibrationLogHead?.legacyCount === 3 && legacyUp.calibrationLogStart?.firstHash === MES.calibrationEntryHash(legacyUp.calibrationLog[0]) && MES.validate(legacyUp));
+const wrongMarker = structuredClone(state);
+wrongMarker.calibrationLogStart = { ...wrongMarker.calibrationLogStart, firstHash: MES.calibrationEntryHash(state.calibrationLog[1]) };
+check('#162 a start marker that does not match the first entry fails validation', !MES.validate(wrongMarker) && MES.calibrationChainProblem(wrongMarker)?.id === 'calibrationLogStart');
+const badMarker = structuredClone(state);
+badMarker.calibrationLogStart = { firstId: 'CALLOG-00001', firstHash: 'nope', recordedAt: 'x', extra: 1 };
+check('#162 a malformed start marker fails validation', !MES.validate(badMarker) && /start marker is malformed/.test(MES.calibrationChainProblem(badMarker)?.detail || ''));
+const markerOnly = MES.seed();
+markerOnly.calibrationLogStart = structuredClone(state.calibrationLogStart);
+check('#162 a start marker on a workspace that never held its entries fails validation', !MES.validate(markerOnly));
 
 // The exported helpers are read-only: none is remotely callable.
 for (const name of ['calibrationChainProblem', 'calibrationEntryHash', 'calibrationLegacyHash', 'calibrationLogChanges']) check(`MES.${name} is exported and not remotely callable`, typeof MES[name] === 'function' && host.resolveAction(`MES.${name}`) === null);
@@ -145,6 +182,8 @@ const signIn = async call => {
     const token = await signIn(call);
     const refused = await call('PUT', '/api/workspace', { token, body: truncated });
     check('the server refuses to initialize from a truncated calibration log, with the plain reason', refused.status === 422 && /latest entry is missing/.test(refused.json?.error || ''), JSON.stringify(refused.json));
+    const emptiedInit = await call('PUT', '/api/workspace', { token, body: deleted });
+    check('#162 the server refuses to initialize from a workspace whose calibration log and head were deleted', emptiedInit.status === 422 && /log and its head were removed/.test(emptiedInit.json?.error || ''), JSON.stringify(emptiedInit.json));
     const put = await call('PUT', '/api/workspace', { token, body: state });
     check('the server initializes from an intact chained log', put.status === 204, JSON.stringify(put.json));
     let etag = put.etag;
@@ -192,6 +231,14 @@ const signIn = async call => {
     await page.waitForFunction(() => { const bound = MES.profileOptionFor(state.profile, state); return !!bound && bound.role === state.profile.role && localStorage.getItem('skyryse-mes-work-order-v1') === JSON.stringify(state); }, null, { timeout: 15000 });
     const stored =await page.evaluate(() => JSON.parse(localStorage.getItem('skyryse-mes-work-order-v1')));
     check('standalone: the first load writes the legacy seal back to browser storage', stored.calibrationLogHead?.legacyCount === 3 && stored.calibrationLogHead?.count === 3 && typeof stored.calibrationLogHead?.sealedAt === 'string' && stored.calibrationLog.length === 3, JSON.stringify(stored.calibrationLogHead));
+    check('#162 standalone: the first load writes the start marker back with the seal', stored.calibrationLogStart?.firstId === stored.calibrationLog[0].id, JSON.stringify(stored.calibrationLogStart));
+    const wiped = { ...stored };
+    delete wiped.calibrationLog;
+    delete wiped.calibrationLogHead;
+    await page.evaluate(raw => localStorage.setItem('skyryse-mes-work-order-v1', raw), JSON.stringify(wiped));
+    await page.reload();
+    await page.locator('.storage-failure h1').waitFor({ state: 'visible', timeout: 15000 });
+    check('#162 standalone: a stored workspace whose log and head were deleted is refused on load', /log and its head were removed/.test(await page.locator('.storage-failure').innerText()));
     const shortened = { ...stored, calibrationLog: stored.calibrationLog.slice(0, 2) };
     await page.evaluate(raw => localStorage.setItem('skyryse-mes-work-order-v1', raw), JSON.stringify(shortened));
     await page.reload();
