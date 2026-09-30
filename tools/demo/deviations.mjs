@@ -152,13 +152,23 @@ const LIST = [
     find: 'window.FlightManeuver.ensure(state);const FM=window.FlightManeuver;', count: 1,
     replace: (ctx, m, id) => `const hadManeuver=Object.hasOwn(state,'maneuver');window.FlightManeuver.ensure(state);if(!hadManeuver)window.FlightManeuver.seedDemoRecords(state);/* DEMO ${id} */const FM=window.FlightManeuver;` },
   { area: 'Data', title: 'Seed operational dates follow the first-load day',
-    why: 'The sample workspace is captured on a fixed day. When a browser first loads it, due and start dates of open work, the MDL date of a package with no 8130-9 yet, planned need dates, open request and CAR due dates, and stamp expiries move forward by the days since capture, so the sample data does not age. A CAR, whose history quotes its due dates, and an order whose MDL date moves get a Demo build history entry naming the old and new dates. Signed and recorded dates (buy-offs, manifests, signatures, existing history, closed orders) never move. The calibrated tool snapshot is production data and is not moved. Source: tools/demo/seed-dates.mjs.',
+    why: 'The sample workspace is captured on a fixed day. When a browser first loads it, due and start dates of open work, the MDL date of a package with no 8130-9 yet, planned need dates, open request and CAR due dates, and stamp expiries move forward by the days since capture, so the sample data does not age. A CAR, whose history quotes its due dates, and an order whose MDL date moves get a Demo build history entry naming the old and new dates. Signed and recorded dates (buy-offs, manifests, signatures, existing history, closed orders) never move. The calibrated tool snapshot moves by the same days (D-37). Source: tools/demo/seed-dates.mjs.',
     find: /JSON\.stringify\(window\.__DEMO_SEED\)/g, count: 2,
     replace: (ctx, m, id) => `JSON.stringify((${ctx.rebase})(window.__DEMO_SEED)/* DEMO ${id} */)` },
   { area: 'Roles', title: 'Any named signer role may sign a calibration entry',
     why: 'The full-access demo accounts (D-6) hold configure-qms whatever their role, so their calibration entries record and validate. Production accepts only the Quality Manager and System Administrator signer roles. Pilot seats are still refused by the configure-qms gate.',
     find: 'const calibrationSignerRole = role => CALIBRATION_SIGNER_ROLES.includes(role);', count: 1,
     replace: (ctx, m, id) => `const calibrationSignerRole = role => typeof role === 'string' && !!role.trim(); /* DEMO ${id} */` },
+  { area: 'Data', title: 'Calibrated tool snapshot follows the first-load day',
+    why: 'The demo seeds carry no calibration log, so demo tool checks read the Calibrated Tool Log snapshot shipped in the production file, and every snapshot tool would expire within a year of capture and block every operation that needs tooling. The snapshot label and every snapshot tool expiry move forward by the same days as the seed dates (D-35), counted from the day the browser first loaded the demo, so the spacing between tools is kept and tools still come due as days pass. Signed buy-offs keep the tool expiries they recorded. Production keeps the shipped snapshot. Source: tools/demo/seed-dates.mjs.',
+    find: /const CAL_SNAPSHOT = '[^']*';\n  const CAL_TOOLS = Object\.freeze\(\[\[.*?\]\]\.map\(\(\[tag, description, serial, expires, status, location\]\) => Object\.freeze\(\{ tag, description, serial, expires, status, location \}\)\)\);/g, count: 1,
+    replace: (ctx, m, id) => {
+      const firstLoad = `(function(){try{return localStorage.getItem(${JSON.stringify(ctx.seedMark)})||undefined;}catch(e){return undefined;}})()`;
+      const snapshot = /^const CAL_SNAPSHOT = ('[^']*');/.exec(m)[1];
+      return m
+        .replace(/^const CAL_SNAPSHOT = '[^']*';/, () => `/* DEMO ${id} */ const DEMO_CAL = (${ctx.calRebase})(${snapshot}, (typeof window !== 'undefined' && window.__DEMO_SEED) || null, ${firstLoad});\n  const CAL_SNAPSHOT = DEMO_CAL.snapshot;`)
+        .replace(/Object\.freeze\(\{ tag, description, serial, expires, status, location \}\)\)\);$/, () => 'Object.freeze({ tag, description, serial, expires: DEMO_CAL.expires(expires), status, location })));');
+    } },
 ];
 
 export const DEVIATIONS = LIST.map((d, i) => Object.freeze({ ...d, id: `D-${i + 1}` }));

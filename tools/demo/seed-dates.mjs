@@ -73,3 +73,28 @@ export function rebaseDemoSeed(seed, now) {
   });
   return out;
 }
+
+// Moves the Calibrated Tool Log snapshot shipped in index.html (CAL_SNAPSHOT and each CAL_TOOLS expiry) forward
+// by the same days as rebaseDemoSeed moves the seed, for the demo build only (deviation "Calibrated tool
+// snapshot follows the first-load day"). The demo seeds carry no calibration log, so without this every
+// snapshot tool expires within a year of capture and every operation that needs tooling is blocked in the demo.
+// Signed buy-offs keep the tool expiries they recorded: those live in the seed and this function never sees them.
+//
+// Returns { days, snapshot, expires(date) }: the days moved, the moved snapshot label (date moved, time kept)
+// and a function that moves one expiry date and returns anything that is not a date as it is. `now` is the
+// first-load moment; the page passes the time it recorded when it first loaded the seed, so the snapshot does
+// not roll forward on later visits. Self-contained (no imports, no outer names): its source is inlined.
+export function rebaseCalSnapshot(snapshot, seed, now) {
+  var DAY = 86400000, DATE = /^\d{4}-\d{2}-\d{2}$/;
+  var same = { days: 0, snapshot: snapshot, expires: function (value) { return value; } };
+  if (!seed || typeof seed !== 'object' || !Array.isArray(seed.activity)) return same;
+  var at = typeof now === 'string' && Number.isFinite(Date.parse(now)) ? new Date(Date.parse(now)).toISOString() : new Date().toISOString();
+  var today = at.slice(0, 10);
+  var captured = seed.activity.reduce(function (max, a) { var d = a && typeof a.at === 'string' ? a.at.slice(0, 10) : ''; return DATE.test(d) && d > max ? d : max; }, '');
+  if (!captured) return same;
+  var days = Math.round((Date.parse(today) - Date.parse(captured)) / DAY);
+  if (!(days > 0)) return same;
+  var expires = function (value) { return typeof value === 'string' && DATE.test(value) ? new Date(Date.parse(value) + days * DAY).toISOString().slice(0, 10) : value; };
+  var label = typeof snapshot === 'string' && DATE.test(snapshot.slice(0, 10)) ? expires(snapshot.slice(0, 10)) + snapshot.slice(10) : snapshot;
+  return { days: days, snapshot: label, expires: expires };
+}
