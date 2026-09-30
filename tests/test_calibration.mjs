@@ -589,22 +589,27 @@ const bothEdited = structuredClone(roleOnlyEdit);
 bothEdited.calibrationLog[bothEdited.calibrationLog.length - 1].signerRole = 'Quality Manager';
 check('changing the signed signerRole without re-signing breaks the manifest hash', !MES.validate(bothEdited) && !MES.verifyManifests(bothEdited).ok);
 check('entries written by this build carry the signer role in the signed subject', signerBase.calibrationLog.every(e => e.signerRole === e.calibrationSignature.manifest.signer.role && e.calibrationSignature.manifest.subject.signerRole === e.signerRole));
-// Entries from builds before the signer-role gate have no signerRole; one recorded before the cutoff still loads, even
-// signed by a role without calibration authority (a standalone Quality Engineer profile could sign then), so saved
-// workspaces from those builds are not refused. A legacy-shaped entry recorded after the cutoff is refused.
-const resignLegacy = (ws, role, recordedAt) => {
-  const row = ws.calibrationLog[ws.calibrationLog.length - 1], [name, credentialId] = row.recordedBy.split(' · ');
-  const saved = ws.profile; ws.profile = { name, role, credentialId };
-  delete row.signerRole; if (recordedAt) row.recordedAt = recordedAt;
+// Entries from builds before the signer-role gate have no signerRole. Those builds gated account signers with
+// configure-qms, but a standalone profile of any role could sign, so a legacy standalone-profile entry is accepted
+// whenever it was written, and a legacy account-signed (ACCT-) entry still needs an authorized role.
+const resignLegacy = (ws, role, credentialId, recordedAt) => {
+  const row = ws.calibrationLog[ws.calibrationLog.length - 1], [name] = row.recordedBy.split(' · ');
+  const cred = credentialId || row.recordedBy.split(' · ')[1];
+  const saved = ws.profile; ws.profile = { name, role, credentialId: cred };
+  delete row.signerRole; row.recordedBy = `${name} · ${cred}`; if (recordedAt) row.recordedAt = recordedAt;
   row.calibrationSignature = { manifest: MES.signManifest(ws, row.calibrationSignature.manifest.meaning, calSubject(row), row.recordedAt) };
   ws.profile = saved;
   return ws;
 };
-const legacyQe = resignLegacy(structuredClone(signerBase), 'Quality Engineer', '2026-09-30T12:00:00.000Z');
-check('a legacy calibration entry signed by a standalone Quality Engineer before the cutoff still validates and verifies', MES.validate(legacyQe) && MES.verifyManifests(legacyQe).ok && srv.validState(structuredClone(legacyQe)) === null);
-check('a saved workspace holding the legacy entry still upgrades and loads', !!MES.upgrade(structuredClone(legacyQe)));
-const legacyLate = resignLegacy(structuredClone(signerBase), 'Quality Engineer', '2026-10-20T12:00:00.000Z');
-check('a legacy-shaped entry recorded after the cutoff is refused', !MES.validate(legacyLate) && !MES.verifyManifests(legacyLate).ok && /signature/.test(JSON.stringify(MES.diagnose(legacyLate))));
+const legacyQe = resignLegacy(structuredClone(signerBase), 'Quality Engineer', 'SR-QE-001', '2026-09-30T12:00:00.000Z');
+check('a legacy calibration entry signed by a standalone Quality Engineer profile validates and verifies', MES.validate(legacyQe) && MES.verifyManifests(legacyQe).ok && srv.validState(structuredClone(legacyQe)) === null);
+check('a saved workspace holding the legacy standalone entry still upgrades and loads', !!MES.upgrade(structuredClone(legacyQe)));
+const legacyLateQe = resignLegacy(structuredClone(signerBase), 'Quality Engineer', 'SR-QE-001', '2027-03-01T12:00:00.000Z');
+check('a legacy standalone entry is not expired by any date', MES.validate(legacyLateQe) && MES.verifyManifests(legacyLateQe).ok);
+const legacyAcctQe = resignLegacy(structuredClone(signerBase), 'Quality Engineer');
+check('a legacy account-signed entry without calibration authority is refused', /ACCT-/.test(legacyAcctQe.calibrationLog.at(-1).recordedBy) && !MES.validate(legacyAcctQe) && !MES.verifyManifests(legacyAcctQe).ok && /signature/.test(JSON.stringify(MES.diagnose(legacyAcctQe))));
+const legacyAcctQm = resignLegacy(structuredClone(signerBase), 'Quality Manager');
+check('a legacy account-signed Quality Manager entry validates', MES.validate(legacyAcctQm) && MES.verifyManifests(legacyAcctQm).ok);
 // Standalone use (no account): the profile signs, so a profile without calibration authority cannot record or correct.
 const standalone = structuredClone(state);
 standalone.profile = { name: 'Riley Quality', role: 'Quality Engineer', credentialId: 'SR-QE-001' };
@@ -655,6 +660,13 @@ const stripRow = { ...structuredClone(forgedStrip.calibrationLog.find(e => e.id 
 host.withAccount(qa, () => { stripRow.calibrationSignature = { manifest: MES.signManifest(forgedStrip, 'Calibration recorded', calSubject(stripRow), stripRow.recordedAt) }; }, forgedStrip);
 forgedStrip.calibrationLog.push(stripRow);
 check('a signed undated retirement of a tool with calibration dates on record fails validation', !MES.validate(forgedStrip) && /calibration dates on record/.test(JSON.stringify(MES.diagnose(forgedStrip))));
+// Codex review on #129: load validation reads only the signed log, not the shipped snapshot, so a later build that ships
+// new snapshot dates cannot invalidate a retirement that was valid when it was signed. The write path still reads it.
+const snapshotOnly = structuredClone(undated);
+const snapRow = { ...structuredClone(snapshotOnly.calibrationLog.find(e => e.id === retiredUndated.id)), id: 'CALLOG-09001', tag: 'NONE-175', description: 'TORQUE WRENCH', recordedAt: new Date().toISOString() };
+host.withAccount(qa, () => { snapRow.calibrationSignature = { manifest: MES.signManifest(snapshotOnly, 'Calibration recorded', calSubject(snapRow), snapRow.recordedAt) }; }, snapshotOnly);
+snapshotOnly.calibrationLog.push(snapRow);
+check('an undated retirement whose only dated record is the shipped snapshot still loads', MES.validate(snapshotOnly) && MES.verifyManifests(snapshotOnly).ok);
 const clearedInService = host.withAccount(qa, () => MES.updateCalibration(undated, MES.calibrationStatus(undated, 'CAL-022').id, { calibratedAt: '', expires: '' }), undated);
 check('a correction that clears the dates of an entry that is not Retired is refused', !clearedInService.ok && /calibration date/.test(clearedInService.message));
 // A hand-made undated entry with any status but Retired fails validation, even with a valid signature.
