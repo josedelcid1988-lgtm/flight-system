@@ -110,6 +110,28 @@ const roleRefused = result => !!result && result.ok === false && /Your role cann
   check('the workspace is valid after the write path checks', MES.validate(state));
 }
 
+// ---- audit close (#126): signing a finding closed and closing the audit need approve-nc, like opening one ----
+{
+  const state = MES.seed();
+  const run = (who, fn) => host.withAccount(who, fn, state);
+  const snapshot = () => JSON.stringify(state);
+  const opened = run(qm, () => MES.openAudit(state, { scope: 'Internal process audit', findings: ['Record sample was short.'] }));
+  check('an audit is opened for the close checks', opened.ok);
+  const audit = () => state.audits.at(-1);
+  const auditId = audit().id, findingId = audit().findings[0].id;
+  for (const who of [general, technician, operator, me]) {
+    const before = snapshot();
+    check(`${who.displayName} (${who.role}) cannot sign an audit finding closed and nothing changes`, roleRefused(run(who, () => MES.closeAuditFinding(state, auditId, findingId))) && snapshot() === before);
+  }
+  check('Quality (approve-nc) signs the audit finding closed', run(qe, () => MES.closeAuditFinding(state, auditId, findingId)).ok && audit().findings[0].status === 'Closed');
+  for (const who of [general, technician, operator, me]) {
+    const before = snapshot();
+    check(`${who.displayName} (${who.role}) cannot close an audit and nothing changes`, roleRefused(run(who, () => MES.closeAudit(state, auditId))) && snapshot() === before);
+  }
+  check('Quality (approve-nc) closes the audit', run(qe, () => MES.closeAudit(state, auditId)).ok && audit().status === 'Closed');
+  check('the workspace is valid after the audit close checks', MES.validate(state));
+}
+
 // ---- System QMS records (#97 to #100): signing an audit, certification, supplier approval or study verdict needs
 // approve-nc, the Quality approval that already gates storing the study value on the same page ----
 {
