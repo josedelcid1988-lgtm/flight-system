@@ -164,7 +164,22 @@ try{
    fs.writeFileSync(s.at('assets/n.txt'),'a\nb\n');
    ok('the asset check still accepts the committed blob bytes under a filter attribute',assetsProblem({root:s.dir})===null,assetsProblem({root:s.dir}));
    fs.writeFileSync(s.at('.gitattributes'),'*.txt text=auto eol=crlf\n');s.g('add','.gitattributes');s.g('commit','-q','-m','auto');fs.writeFileSync(s.at('assets/n.txt'),'a\r\nb\r\n');
-   ok('the asset check accepts the CRLF checkout of a text=auto eol=crlf asset the commit declares',assetsProblem({root:s.dir})===null,assetsProblem({root:s.dir}));}
+   ok('the asset check accepts the CRLF checkout of a text=auto eol=crlf asset the commit declares',assetsProblem({root:s.dir})===null,assetsProblem({root:s.dir}));
+   // #135 review: git itself writes the accepted checkout bytes, so its own text=auto test decides, not a copy of it.
+   const fresh=f=>{fs.rmSync(s.at(f));s.g('checkout','-q','--',f);return fs.readFileSync(s.at(f));};
+   fs.writeFileSync(s.at('assets/m.txt'),Buffer.concat([Buffer.alloc(127,'x'),Buffer.from('\n\x01','latin1')]));s.g('add','assets/m.txt');s.g('commit','-q','-m','mostly printable');
+   const m=fresh('assets/m.txt');fs.writeFileSync(s.at('assets/m.txt'),Buffer.from(m.toString('latin1').replace('\n','\r\n'),'latin1'));
+   ok('the asset check refuses a CRLF form git would not write for a text=auto blob it treats as binary',!m.includes('\r')&&/assets\/m\.txt differs from HEAD/.test(assetsProblem({root:s.dir})||''),assetsProblem({root:s.dir}));
+   fresh('assets/m.txt');
+   fs.writeFileSync(s.at('assets/d.txt'),Buffer.from('a\n\x1a','latin1'));s.g('add','assets/d.txt');s.g('commit','-q','-m','dos eof');
+   const d=fresh('assets/d.txt');
+   ok('the asset check accepts git\'s CRLF checkout of a text=auto asset ending in a DOS EOF byte',d.toString('latin1')==='a\r\n\x1a'&&assetsProblem({root:s.dir})===null,assetsProblem({root:s.dir}));
+   fs.writeFileSync(s.at('assets/c.txt'),Buffer.from('a\rb\nc\n','latin1'));s.g('add','assets/c.txt');s.g('commit','-q','-m','lone cr');
+   fresh('assets/c.txt');
+   ok('the asset check accepts exactly what a clean checkout writes for a text=auto asset with a lone CR',assetsProblem({root:s.dir})===null,assetsProblem({root:s.dir}));
+   fs.symlinkSync('a\nb',s.at('assets/l.txt'));s.g('add','assets/l.txt');s.g('commit','-q','-m','symlink');
+   fs.rmSync(s.at('assets/l.txt'));fs.writeFileSync(s.at('assets/l.txt'),'a\r\nb');
+   ok('the asset check never applies a text conversion to a committed symlink',/assets\/l\.txt differs from HEAD/.test(assetsProblem({root:s.dir})||''),assetsProblem({root:s.dir}));}
   // #86 (fixed in PR #82): no git status call remains; a git failure is a plain refusal, not a stack trace.
   {const dir=fs.mkdtempSync(path.join(os.tmpdir(),'flight-nogit-'));sandboxes.push(dir);fs.mkdirSync(path.join(dir,'assets'));fs.writeFileSync(path.join(dir,'assets/a.js'),'one');
    let r;try{r=assetsProblem({root:dir});}catch(e){r='threw '+e.message;}
