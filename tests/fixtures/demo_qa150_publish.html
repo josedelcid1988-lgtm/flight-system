@@ -2850,6 +2850,26 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     }
     return null;
   }
+  // Whether the server's calibration archive holds exactly the entries the workspace's archive records signed (#130).
+  // held is one { id, recordId, entry } per stored row the records name (a missing row is simply absent). Each row must
+  // be filed under its record, match its signed summary, and together the rows of a record must hash to the record's
+  // digest, so rows left in the table from another workspace under the same entry ids are refused, not adopted.
+  // Returns a plain refusal or null. Read-only.
+  function calibrationArchiveHeldProblem(state, held) {
+    const rows = new Map((Array.isArray(held) ? held : []).filter(plain).map(h => [h.id, h]));
+    for (const r of calibrationArchiveRecords(state)) {
+      const s = calibrationArchiveSubject(r), entries = [];
+      for (const summary of Array.isArray(s.entries) ? s.entries : []) {
+        const row = rows.get(summary.id);
+        if (!row || !plain(row.entry)) return `The workspace names archived calibration entry ${summary.id} (${r.id}), which this server does not hold. Restore the server database that holds the calibration archive, or initialize from the workspace export made on that server. Nothing was saved.`;
+        if (row.recordId !== r.id || row.entry.id !== summary.id || canonicalPayload(calibrationArchiveSummary(row.entry)) !== canonicalPayload(summary)) return `Archived calibration entry ${summary.id} on this server does not match archive record ${r.id} in the workspace${row.recordId !== r.id ? `: the server files it under ${row.recordId}` : ''}. The server archive belongs to other history. Restore the server database that holds this workspace's calibration archive. Nothing was saved.`;
+        entries.push(row.entry);
+      }
+      entries.sort((a, b) => Number(String(a.id).slice(7)) - Number(String(b.id).slice(7)));
+      if (sha256(canonicalPayload(entries)) !== s.digest) return `The archived calibration entries of ${r.id} on this server (${entries.slice(0, 5).map(e => e.id).join(', ')}${entries.length > 5 ? ` and ${entries.length - 5} more` : ''}) do not match the SHA-256 the archive record signed: one of them does not match. The server archive belongs to other history. Restore the server database that holds this workspace's calibration archive. Nothing was saved.`;
+    }
+    return null;
+  }
   // The entries an accepted write moves to the server archive, exactly as the stored log holds them, with the id of
   // the archive record that moved each. Call it only after calibrationLogChanges(prev, next) returned null.
   function calibrationArchivedEntries(prev, next) {
@@ -8363,7 +8383,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   MES.seed = () => { const state = ensurePlanner(seedWithPlanner()); ['audits','certifications','supplierApprovals','qualityValues','qualityVerdicts','controlledDocuments','modelAdapterHistory','aiActionLog','aiSkillDrafts','aiSkillTriggers','aiSkillTriggerHistory','calibrationLog'].forEach(key=>{if(!Array.isArray(state[key]))state[key]=[];}); if(!plain(state.modelAdapter))state.modelAdapter=emptyModelAdapter(); ensureInventoryLedger(state); ensureResources(state); ensureProjects(state); syncPlanningBlockers(state); return state; };
   const upgradeWithPlanner = MES.upgrade;
   MES.upgrade = state => { const upgraded = upgradeWithPlanner(state); if (!upgraded) return null; ensurePlanner(upgraded); if(!Array.isArray(upgraded.controlledDocuments))upgraded.controlledDocuments=[];if(!Array.isArray(upgraded.modelAdapterHistory))upgraded.modelAdapterHistory=[];if(!Array.isArray(upgraded.aiActionLog))upgraded.aiActionLog=[];if(!Array.isArray(upgraded.aiSkillDrafts))upgraded.aiSkillDrafts=[];if(!Array.isArray(upgraded.aiSkillTriggers))upgraded.aiSkillTriggers=[];if(!Array.isArray(upgraded.aiSkillTriggerHistory))upgraded.aiSkillTriggerHistory=[];if(!Array.isArray(upgraded.calibrationLog))upgraded.calibrationLog=[];if(!plain(upgraded.modelAdapter))upgraded.modelAdapter=emptyModelAdapter(); ensureInventoryLedger(upgraded); ensureResources(upgraded); ensureProjects(upgraded); syncPlanningBlockers(upgraded); return upgraded; };
-  Object.assign(MES, { archivable, archiveOrders, archivedOrderValid, ownWorkRefusal, coveredBuildOps, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, verifyManifests, reviewFair, NFF, recordTraining, personTraining, trainingCurrentFor, trainingCertificateValid, ownWorkHit, OWN_WORK_EXEMPT_PEDIGREES, scryptHex, PIN_KDF, saveTraining, trainingCatalog, requiredTrainings, trainingDef, TRAINING_CODE_RE, importStamps, stampRegisterCsv, nextStampNumber, isPlaceholderStamp, STAMP_NUMBER_RE, wiAuthors, wiAuthorRefusal, wiPeerReviewRefusal, buildStamp, buildStampValid, supportActor, supportGrant, logSupport, SUPPORT_RULES, SUPPORT_KINDS, recordSupportAccess, noteDemoBypassRemoved, supportLogValid, recordCalibration, updateCalibration, calibrationStatus, calibrationChainProblem, calibrationEntryHash, calibrationLegacyHash, calibrationLogChanges, recordCalibrationArchive, calibrationArchivable, calibrationArchiveSummary, calibrationArchivedEntries, calibrationCapacity, CALIBRATION_LOG_LIMIT, calibrationCurrentIds, calibratedToolChecks, toolUseRecords, calibrationEntryValid, CALIBRATION_STATUSES });
+  Object.assign(MES, { archivable, archiveOrders, archivedOrderValid, ownWorkRefusal, coveredBuildOps, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, verifyManifests, reviewFair, NFF, recordTraining, personTraining, trainingCurrentFor, trainingCertificateValid, ownWorkHit, OWN_WORK_EXEMPT_PEDIGREES, scryptHex, PIN_KDF, saveTraining, trainingCatalog, requiredTrainings, trainingDef, TRAINING_CODE_RE, importStamps, stampRegisterCsv, nextStampNumber, isPlaceholderStamp, STAMP_NUMBER_RE, wiAuthors, wiAuthorRefusal, wiPeerReviewRefusal, buildStamp, buildStampValid, supportActor, supportGrant, logSupport, SUPPORT_RULES, SUPPORT_KINDS, recordSupportAccess, noteDemoBypassRemoved, supportLogValid, recordCalibration, updateCalibration, calibrationStatus, calibrationChainProblem, calibrationEntryHash, calibrationLegacyHash, calibrationLogChanges, recordCalibrationArchive, calibrationArchivable, calibrationArchiveSummary, calibrationArchivedEntries, calibrationArchiveHeldProblem, calibrationCapacity, CALIBRATION_LOG_LIMIT, calibrationCurrentIds, calibratedToolChecks, toolUseRecords, calibrationEntryValid, CALIBRATION_STATUSES });
   Object.assign(MES, { SOURCE_INSPECTION_CLASS, SOURCE_INSPECTION_CODES, CONFORMITY_SUBCODES, TEST_SUBCODES, operationType, migrateOperationTypes, sourceInspectionCodes, conformitySubcodes, testSubcodes, operationSubcodes, operationSubcode, saveSourceInspectionCodes, saveOperationSubcodes, mrbTrainingTiers, saveMrbTrainingTiers, recordSourceInspection, sourceInspectionHolds, sourceInspectionWorkspaceValid });
   const validateWithSourceInspection = MES.validate;
   MES.validate = state => validateWithSourceInspection(state) && sourceInspectionWorkspaceValid(state);

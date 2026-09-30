@@ -247,6 +247,12 @@ const setUpAccounts = async call => {
     check('the calibration archive is not readable without a session', (await call('GET', '/api/calibration-archive/CALLOG-00001')).status === 401 && (await call('GET', '/api/calibration-archive')).status === 401);
     const byTag = await call('GET', '/api/calibration-archive?tag=ARC-A', { token: techToken });
     check('the archive lists the archived entries for a tool', byTag.status === 200 && JSON.stringify(byTag.json.entries.map(e => e.id).sort()) === JSON.stringify(['CALLOG-00001', 'CALLOG-00003']), JSON.stringify(byTag.json));
+    // Codex review on #194: a non-positive limit is not passed to the database (SQLite reads LIMIT -1 as unlimited,
+    // PostgreSQL refuses it), so it falls back to the default page.
+    const oneRow = await call('GET', '/api/calibration-archive?tag=ARC-A&limit=1', { token: techToken });
+    const negative = await call('GET', '/api/calibration-archive?tag=ARC-A&limit=-1', { token: techToken });
+    const zero = await call('GET', '/api/calibration-archive?tag=ARC-A&limit=0', { token: techToken });
+    check('the archive list honours a positive limit and treats a non-positive one as the default page', oneRow.status === 200 && oneRow.json.entries.length === 1 && negative.status === 200 && negative.json.entries.length === 2 && zero.status === 200 && zero.json.entries.length === 2, JSON.stringify([oneRow.json, negative.json, zero.json]));
     const missing = await call('GET', '/api/calibration-archive/CALLOG-00002', { token: techToken });
     check('an entry still in the live log is not in the archive, and the answer says where to look', missing.status === 404 && /live calibration log/.test(missing.json?.error || ''), JSON.stringify(missing.json));
     const audit = server.store.db.prepare("SELECT action, detail FROM audit WHERE action = 'calibration-archive'").all();
@@ -267,6 +273,20 @@ const setUpAccounts = async call => {
     as(qa, moved, () => MES.recordCalibrationArchive(moved));
     const init = await call('PUT', '/api/workspace', { token, body: moved });
     check('the server refuses to initialize from a workspace whose archived calibration entries it does not hold', init.status === 422 && /archived calibration entr/.test(init.json?.error || '') && !server.store.getDoc('default'), JSON.stringify(init.json));
+    // Codex review on #194: rows already in the table under the same entry ids must be the entries the archive record
+    // signed, not unrelated history left from another workspace.
+    const stray = (id, patch) => { const e = { ...before.calibrationLog.find(x => x.id === id), ...patch }; const json = JSON.stringify(e); server.store.putCalibrationArchived({ id, tag: e.tag, recordId: 'CALARC-0001', json, sha256: sha256(json), by: 'someone-else' }); };
+    stray('CALLOG-00001', { note: 'Different history' });
+    for (const id of ['CALLOG-00003', 'CALLOG-00004', 'CALLOG-00006', 'CALLOG-00008']) stray(id, {});
+    const mismatched = await call('PUT', '/api/workspace', { token, body: moved });
+    check('the server refuses to initialize when a stored archived entry is not the one the archive record signed', mismatched.status === 422 && /CALLOG-00001/.test(mismatched.json?.error || '') && /does not match/.test(mismatched.json?.error || '') && !server.store.getDoc('default'), JSON.stringify(mismatched.json));
+    check('MES.calibrationArchiveHeldProblem is exported and not remotely callable', typeof MES.calibrationArchiveHeldProblem === 'function' && host.resolveAction('MES.calibrationArchiveHeldProblem') === null);
+    const held = ['CALLOG-00001', 'CALLOG-00003', 'CALLOG-00004', 'CALLOG-00006', 'CALLOG-00008'].map(id => ({ id, recordId: 'CALARC-0001', entry: before.calibrationLog.find(e => e.id === id) }));
+    check('the held-archive check accepts the entries the record signed', MES.calibrationArchiveHeldProblem(moved, held) === null, MES.calibrationArchiveHeldProblem(moved, held));
+    check('the held-archive check refuses a row filed under another archive record', /CALARC-0002/.test(MES.calibrationArchiveHeldProblem(moved, held.map((h, i) => i ? h : { ...h, recordId: 'CALARC-0002' })) || ''));
+    check('the held-archive check refuses a missing row', /does not hold/.test(MES.calibrationArchiveHeldProblem(moved, held.slice(1)) || ''));
+    const reordered = held.map(h => h.id === 'CALLOG-00008' ? { ...h, entry: { ...h.entry, location: 'Moved bench' } } : h);
+    check('the held-archive check refuses a row whose content differs where the summary does not look', /does not match/.test(MES.calibrationArchiveHeldProblem(moved, reordered) || ''), MES.calibrationArchiveHeldProblem(moved, reordered));
   } finally { server.store.close(); }
 }
 

@@ -316,11 +316,19 @@ export function createServer(options = {}) {
     // Superseded calibration entries an archive record in this write moved out of the live log (#130) go to the
     // calibration archive exactly as the stored log held them, in the same transaction as the document write.
     const calibrationRows = host.MES.calibrationArchivedEntries(beforeState, state).map(({ entry, recordId }) => { const json = JSON.stringify(entry); return { id: entry.id, tag: entry.tag, recordId, json, sha256: sha256hex(json), by: username }; });
-    // A workspace that already names archived entries can only start on a server that holds them.
+    // A workspace that already names archived entries can only start on a server that holds exactly those entries:
+    // each stored row must be the entry its archive record signed (row SHA-256, record id, summary, record digest).
     if (!beforeState) {
       const named = (state.calibrationLogHead && Array.isArray(state.calibrationLogHead.archived) ? state.calibrationLogHead.archived : []).flatMap(record => record.manifest.subject.entries.map(summary => summary.id));
-      const absent = []; for (const id of named) if (!await store.calibrationArchived(id)) absent.push(id);
-      if (absent.length) return { problem: `The workspace names ${absent.length} archived calibration entr${absent.length === 1 ? 'y' : 'ies'} that this server does not hold, starting with ${absent[0]}. Restore the server database that holds the calibration archive, or initialize from the workspace export made on that server. Nothing was saved.` };
+      const held = [];
+      for (const id of named) {
+        const row = await store.calibrationArchived(id);
+        if (!row) continue;
+        if (sha256hex(JSON.stringify(row.entry)) !== row.sha256) return { problem: `Archived calibration entry ${id} on this server no longer matches the SHA-256 it was stored with. Restore the server database from a good backup. Nothing was saved.` };
+        held.push({ id, recordId: row.recordId, entry: row.entry });
+      }
+      const heldProblem = host.MES.calibrationArchiveHeldProblem(state, held);
+      if (heldProblem) return { problem: heldProblem };
     }
     const rows = r.archived.map(e => { const json = JSON.stringify({ order: e.order, activity: e.activity }); return { id: e.order.id, json, sha256: sha256hex(json), schema: state.version, keys: e.keys, by: username }; });
     let etag = null, clash = null, queuedExports = [];
@@ -927,7 +935,9 @@ export function createServer(options = {}) {
         send(res, 200, { query: q, results: [...live, ...await store.archiveSearch(q, 1000)] }); return;
       }
       // -- calibration archive: superseded calibration entries out of the live log, read-only (#130) --
-      if (route === '/calibration-archive' && m === 'GET') { send(res, 200, { entries: await store.calibrationArchiveList(url.searchParams.get('tag') || '', Math.min(1000, Number(url.searchParams.get('limit')) || 500)), readOnly: true }); return; }
+      // A page of 1 to 1,000 entries; anything else (missing, zero, negative, not a whole number) reads the default 500.
+      const calibrationArchiveLimit = raw => { const n = Number(raw); return Number.isInteger(n) && n >= 1 ? Math.min(1000, n) : 500; };
+      if (route === '/calibration-archive' && m === 'GET') { send(res, 200, { entries: await store.calibrationArchiveList(url.searchParams.get('tag') || '', calibrationArchiveLimit(url.searchParams.get('limit'))), readOnly: true }); return; }
       const calArc = /^\/calibration-archive\/(CALLOG-\d{5})$/.exec(route);
       if (calArc && m === 'GET') {
         const a = await store.calibrationArchived(calArc[1]);
