@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { Readable, Writable } from 'node:stream';
 import { createHost } from '../server/mes-host.mjs';
 import { createServer } from '../server/server.mjs';
+import { chromium } from 'playwright';
 
 const indexPath = fileURLToPath(new URL('../index.html', import.meta.url));
 const host = createHost(indexPath);
@@ -94,6 +95,16 @@ check('calibrationLogChanges accepts an appended log', MES.calibrationLogChanges
 check('calibrationLogChanges refuses a dropped tail with a plain reason', /remove calibration entry CALLOG-00003/.test(MES.calibrationLogChanges(state, truncated) || '') && /append-only/.test(MES.calibrationLogChanges(state, truncated)));
 check('calibrationLogChanges refuses a changed entry', /alter or move calibration entry CALLOG-00003/.test(MES.calibrationLogChanges(state, swapped) || ''));
 
+// The hash covers the whole entry, the signature manifest included: canonical drops nested manifest keys, so a
+// changed signer role or build on an earlier entry must still break the link (Codex review on #149).
+const reSigned = structuredClone(state);
+reSigned.calibrationLog[0].calibrationSignature.manifest.signer.role = 'Technician';
+check('a changed signature manifest on an earlier entry breaks the link to it', MES.calibrationChainProblem(reSigned)?.id === state.calibrationLog[1].id);
+const reBuilt = structuredClone(state);
+reBuilt.calibrationLog[2].calibrationSignature.manifest.build = 'v00';
+check('a changed signature manifest on the last entry no longer matches the head', MES.calibrationChainProblem(reBuilt)?.id === 'calibrationLogHead');
+check('calibrationLogChanges refuses a change to a stored entry\'s signature manifest', /alter or move calibration entry CALLOG-00001/.test(MES.calibrationLogChanges(state, reSigned) || ''));
+
 // Server: a bad import is refused at initialization, and the write gate keeps the stored log append-only.
 const sha = (salt, password) => createHash('sha256').update(`${salt}:${password}`).digest('hex');
 const makeServer = () => {
@@ -143,6 +154,39 @@ const signIn = async call => {
     check('the server write gate refuses a write that drops a stored calibration entry', gated.status === 422 && /remove calibration entry/.test(gated.json?.error || '') && /append-only/.test(gated.json.error), JSON.stringify(gated.json));
     check('the refused write leaves the stored log unchanged', JSON.parse(server.store.getDoc('default').json).calibrationLog.length === 4 && server.store.getDoc('default').etag === etag);
   } finally { server.store.close(); }
+}
+
+// Standalone: a legacy log is sealed on the first load and the seal is written back to browser storage at once, so a
+// log shortened before the next save is not resealed as found (Codex review on #149).
+{
+  const saved = structuredClone(legacy);
+  saved.masterWIs = MES.ensureMasterWIs(structuredClone(saved)).masterWIs;
+  host.FlightManeuver.ensure(saved);
+  const browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
+  try {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.goto(new URL('./fixtures/publish.html', import.meta.url).href);
+    await page.locator('#sk-login').waitFor({ state: 'visible' });
+    await page.locator('#sk-displayname').fill('QA Administrator');
+    await page.locator('#sk-username').fill('qa-admin');
+    await page.locator('#sk-password').fill('qa-admin-pass');
+    await page.locator('#sk-confirm').fill('qa-admin-pass');
+    await page.locator('#sk-login-submit').click();
+    await page.locator('#sk-boot').waitFor({ state: 'hidden', timeout: 15000 });
+    await page.evaluate(raw => localStorage.setItem('skyryse-mes-work-order-v1', raw), JSON.stringify(saved));
+    await page.reload();
+    await page.waitForFunction(() => typeof state === 'object' && Array.isArray(state.calibrationLog) && state.calibrationLog.length === 3, null, { timeout: 15000 });
+    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('skyryse-mes-work-order-v1')));
+    check('standalone: the first load writes the legacy seal back to browser storage', stored.calibrationLogHead?.legacyCount === 3 && stored.calibrationLogHead?.count === 3 && typeof stored.calibrationLogHead?.sealedAt === 'string' && stored.calibrationLog.length === 3, JSON.stringify(stored.calibrationLogHead));
+    const shortened = { ...stored, calibrationLog: stored.calibrationLog.slice(0, 2) };
+    await page.evaluate(raw => localStorage.setItem('skyryse-mes-work-order-v1', raw), JSON.stringify(shortened));
+    await page.reload();
+    await page.locator('.storage-failure h1').waitFor({ state: 'visible', timeout: 15000 });
+    check('standalone: a log shortened after the seal was written is refused on the next load', /latest entry is missing/.test(await page.locator('.storage-failure').innerText()));
+    check('standalone: the chain pages raised no page errors', errors.length === 0, errors.join('; '));
+  } finally { await browser.close(); }
 }
 
 console.log(`calibration chain: ${checks} checks, all passed`);

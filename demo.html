@@ -2600,7 +2600,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     return null;
   }
   // The calibration log is hash-chained (#116, #117). Each entry recorded from this build carries previousHash, the
-  // SHA-256 of the canonical form of the entry before it (null for the first entry), and the workspace keeps a head,
+  // SHA-256 of the whole entry before it, every key included (null for the first entry), and the workspace keeps a head,
   // state.calibrationLogHead = { count, hash, legacyCount }, that names how many entries the log holds and the hash
   // of the last one. Dropping the tail, removing or reordering an entry, or adding one outside the application then
   // shows as a break. The chain is additive: signature manifests are computed and verified exactly as before.
@@ -2608,7 +2608,9 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // log, and MES.upgrade seals such a log once by writing its head with legacyCount and sealedAt.
   // Scope: this catches mistakes (a truncated file, a bad import, a stale copy). The hashes are unkeyed SHA-256, so
   // someone who edits the log and recomputes every hash and the head is not stopped by it.
-  const calibrationEntryHash = entry => sha256(canonical(entry));
+  // canonicalPayload keeps every key, including the entry's own calibrationSignature.manifest: canonical drops nested
+  // manifest keys, which would leave the signature metadata outside the chain.
+  const calibrationEntryHash = entry => sha256(canonicalPayload(entry));
   const calibrationHeadFor = (log, legacyCount, sealedAt) => ({ count: log.length, hash: log.length ? calibrationEntryHash(log[log.length - 1]) : null, legacyCount, ...(sealedAt ? { sealedAt } : {}) });
   const calibrationHeadValid = head => plain(head) && Number.isInteger(head.count) && head.count >= 0 && head.count <= 5000 && (head.hash === null || /^[0-9a-f]{64}$/.test(head.hash)) && Number.isInteger(head.legacyCount) && head.legacyCount >= 0 && head.legacyCount <= head.count && (head.sealedAt === undefined || timestamp(head.sealedAt)) && Object.keys(head).every(k => ['count', 'hash', 'legacyCount', 'sealedAt'].includes(k));
   // The first break in the chain or the head, as { id, detail }, or null. Each detail says what is wrong and what it means.
@@ -2660,7 +2662,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     for (let i = 0; i < before.length; i += 1) {
       const id = plain(before[i]) && before[i].id ? before[i].id : `calibrationLog[${i}]`;
       if (i >= after.length) return `The change would remove calibration entry ${id} and ${before.length - i - 1 > 0 ? `${before.length - i - 1} later entr${before.length - i - 1 === 1 ? 'y' : 'ies'}` : 'nothing after it'} from the shared log. The calibration log is append-only; nothing was saved. Reload the workspace and record the change as a correction.`;
-      if (canonical(before[i]) !== canonical(after[i])) return `The change would alter or move calibration entry ${id} in the shared log. The calibration log is append-only; nothing was saved. Reload the workspace and record the change as a correction.`;
+      if (canonicalPayload(before[i]) !== canonicalPayload(after[i])) return `The change would alter or move calibration entry ${id} in the shared log. The calibration log is append-only; nothing was saved. Reload the workspace and record the change as a correction.`;
     }
     return null;
   }
@@ -11217,6 +11219,9 @@ try{const raw=localStorage.getItem(KEY);
       }
       if(saved){
         state=saved;
+        // A calibration log from before the chain is sealed by MES.upgrade. Standalone, the seal is written back now, so the
+        // baseline it records is durable from the first load and a later reload cannot reseal a shortened log (#116, #117).
+        try{if(!(window.skServer&&window.skServer.active)&&!parsedRaw.calibrationLogHead&&state.calibrationLogHead&&MES.validate(state))localStorage.setItem(KEY,JSON.stringify(state));}catch(e){}
         const aside=(saved.quarantine||[]).map(q=>q&&q.order&&q.order.id).filter(Boolean);
         if(aside.length){loadProblem=null;setAside=aside;}
         try{const missing=state.orders.filter(o=>o.status!=='Closed'&&!o.inventory&&!o.sourceBuild&&MES.isSerialized(o.partNumber)&&MES.orderSerials(state,o).length<o.quantity);
