@@ -2710,6 +2710,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   function calibrationChainProblem(state) {
     const log = plain(state) && Array.isArray(state.calibrationLog) ? state.calibrationLog : [];
     const head = plain(state) ? state.calibrationLogHead : undefined;
+    const start = plain(state) ? state.calibrationLogStart : undefined;
     let legacy = 0, chained = false;
     for (let i = 0; i < log.length; i += 1) {
       const e = log[i];
@@ -2723,14 +2724,14 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       const want = i ? calibrationEntryHash(log[i - 1]) : null;
       if (e.previousHash !== want) return { id: e.id, detail: i ? `Calibration entry ${e.id} does not link to ${log[i - 1].id}, the entry before it: an entry between them was removed or changed, or the log was reordered.` : `Calibration entry ${e.id} is first in the log but links to an earlier entry, so the entries before it were removed.` };
     }
-    if (head === undefined) return log.length ? { id: 'calibrationLogHead', detail: `The calibration log has ${log.length} entr${log.length === 1 ? 'y' : 'ies'} but no recorded head, so missing latest entries cannot be ruled out.` } : calibrationStartProblem(log, plain(state) ? state.calibrationLogStart : undefined);
+    if (head === undefined) return log.length ? { id: 'calibrationLogHead', detail: `The calibration log has ${log.length} entr${log.length === 1 ? 'y' : 'ies'} but no recorded head, so missing latest entries cannot be ruled out.` } : calibrationStartProblem(log, start);
     if (!calibrationHeadValid(head)) return { id: 'calibrationLogHead', detail: 'The calibration log head is malformed.' };
     if (head.count > log.length) return { id: 'calibrationLogHead', detail: `The calibration log holds ${log.length} entr${log.length === 1 ? 'y' : 'ies'} but its head records ${head.count}: the latest ${head.count - log.length === 1 ? 'entry is' : `${head.count - log.length} entries are`} missing, so a retired or quarantined tool could read as usable.` };
     if (head.count < log.length) return { id: 'calibrationLogHead', detail: `The calibration log holds ${log.length} entries but its head records ${head.count}: entries were added outside the application.` };
     if (head.legacyCount !== legacy) return { id: 'calibrationLogHead', detail: `The calibration log has ${legacy} entr${legacy === 1 ? 'y' : 'ies'} from before the chain but its head sealed ${head.legacyCount}: an early entry was removed or added.` };
     if (legacy && head.legacyHash !== calibrationLegacyHash(log.slice(0, legacy))) return { id: 'calibrationLogHead', detail: `An entry recorded before the chain no longer matches the seal made ${head.sealedAt ? `on ${head.sealedAt}` : 'when the log was sealed'}: one of the first ${legacy} entr${legacy === 1 ? 'y was' : 'ies was'} changed.` };
     if (head.hash !== (log.length ? calibrationEntryHash(log[log.length - 1]) : null)) return { id: 'calibrationLogHead', detail: `The last calibration entry${log.length ? `, ${log[log.length - 1].id},` : ''} does not match the log head: the latest entry was replaced, changed, or removed.` };
-    return calibrationStartProblem(log, state.calibrationLogStart);
+    return calibrationStartProblem(log, start);
   }
   // Append one entry to the chain and move the head. The entry is signed before it is linked; previousHash is not
   // part of the signed subject, so the manifest is unchanged by the chain.
@@ -11352,8 +11353,10 @@ try{const raw=localStorage.getItem(KEY);
       // workspace is used, so the baseline it records is durable from the first load and a later reload cannot reseal a
       // shortened log (#116, #117). The calibration start marker added on upgrade is written back the same way (#162).
       // If browser storage refuses the write, the workspace is not opened.
-      if(saved&&!(window.skServer&&window.skServer.active)&&((!parsedRaw.calibrationLogHead&&saved.calibrationLogHead)||(!parsedRaw.calibrationLogStart&&saved.calibrationLogStart))&&MES.validate(saved)){
-        try{localStorage.setItem(KEY,JSON.stringify(saved));}catch(e){saved=null;loadProblem='The calibration log needs a one-time seal for this build, but browser storage refused to save it (it may be full). Free browser storage, then try again.';}
+      // The refusal names what this load had to write: the seal (with the marker, when both were added), or only the marker.
+      const addedSeal=saved&&!parsedRaw.calibrationLogHead&&saved.calibrationLogHead, addedStart=saved&&!parsedRaw.calibrationLogStart&&saved.calibrationLogStart;
+      if(saved&&!(window.skServer&&window.skServer.active)&&(addedSeal||addedStart)&&MES.validate(saved)){
+        try{localStorage.setItem(KEY,JSON.stringify(saved));}catch(e){saved=null;loadProblem=addedSeal?'The calibration log needs a one-time seal for this build, but browser storage refused to save it (it may be full). Free browser storage, then try again.':'The calibration log needs a start marker added for this build, but browser storage refused to save it (it may be full). Free browser storage, then try again.';}
       }
       if(saved){
         state=saved;

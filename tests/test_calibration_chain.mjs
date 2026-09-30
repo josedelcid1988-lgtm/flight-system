@@ -134,6 +134,20 @@ const markerOnly = MES.seed();
 markerOnly.calibrationLogStart = structuredClone(state.calibrationLogStart);
 check('#162 a start marker on a workspace that never held its entries fails validation', !MES.validate(markerOnly));
 
+// #191: the start marker is read through the same plain(state) guard as the log and the head, at every call site. A
+// value that is not a workspace object (even one carrying calibration keys) is reported the same clean way, without
+// throwing, and never passes validation.
+const oddArray = [];
+oddArray.calibrationLog = structuredClone(state.calibrationLog);
+oddArray.calibrationLogHead = structuredClone(state.calibrationLogHead);
+oddArray.calibrationLogStart = { firstId: 'bad' };
+for (const [label, odd] of [['null', null], ['an array carrying calibration keys', oddArray], ['a string', 'workspace'], ['a number', 7]]) {
+  let problem, threw = false, valid = true;
+  try { problem = MES.calibrationChainProblem(odd); valid = MES.validate(odd); } catch (e) { threw = true; }
+  check(`#191 a non-plain state (${label}) gets the same clean result from the chain check and fails validation`, !threw && problem === null && !valid);
+}
+check('#191 a plain state still has its start marker checked after an intact head', MES.calibrationChainProblem(wrongMarker)?.id === 'calibrationLogStart' && MES.calibrationChainProblem(deleted)?.id === 'calibrationLogStart');
+
 // The exported helpers are read-only: none is remotely callable.
 for (const name of ['calibrationChainProblem', 'calibrationEntryHash', 'calibrationLegacyHash', 'calibrationLogChanges']) check(`MES.${name} is exported and not remotely callable`, typeof MES[name] === 'function' && host.resolveAction(`MES.${name}`) === null);
 check('calibrationLogChanges accepts an appended log', MES.calibrationLogChanges(truncated, state) === null);
@@ -255,7 +269,21 @@ const signIn = async call => {
     await full.waitForFunction(() => /browser storage refused to save it/.test(document.querySelector('#storage-alert')?.textContent || ''), null, { timeout: 15000 });
     check('standalone: a seal that browser storage refuses stops the load with a plain reason', await full.evaluate(() => { const box = document.querySelector('#storage-alert'); return !box.hidden && /Free browser storage, then try again/.test(box.textContent) && !/\u2014/.test(box.textContent); }));
     check('standalone: the refused seal leaves the stored copy unchanged', await full.evaluate(raw => localStorage.getItem('skyryse-mes-work-order-v1') === raw, JSON.stringify(saved)));
+    check('#192 standalone: a refused seal says the log needs a one-time seal', await full.evaluate(() => { const text = document.querySelector('#storage-alert').textContent; return /needs a one-time seal/.test(text) && !/start marker/.test(text); }), await full.evaluate(() => document.querySelector('#storage-alert').textContent));
     await full.close();
+    // #192: a log already sealed but recorded before the start marker only needs the marker written back. If storage
+    // refuses that write, the message says so instead of asking for a seal the log already has.
+    const markerOnlyStored = { ...stored };
+    delete markerOnlyStored.calibrationLogStart;
+    const markerPage = await context.newPage();
+    markerPage.on('pageerror', error => errors.push(error.message));
+    await markerPage.addInitScript(raw => { if (!sessionStorage.getItem('seeded-192')) { localStorage.setItem('skyryse-mes-work-order-v1', raw); sessionStorage.setItem('seeded-192', '1'); } const set = Storage.prototype.setItem; Storage.prototype.setItem = function (key, value) { if (key === 'skyryse-mes-work-order-v1' && String(value).includes('calibrationLogStart')) throw new DOMException('quota', 'QuotaExceededError'); return set.call(this, key, value); }; }, JSON.stringify(markerOnlyStored));
+    await markerPage.goto(new URL('./fixtures/publish.html', import.meta.url).href);
+    await markerPage.waitForFunction(() => /browser storage refused to save it/.test(document.querySelector('#storage-alert')?.textContent || ''), null, { timeout: 15000 });
+    const markerText = await markerPage.evaluate(() => document.querySelector('#storage-alert').textContent);
+    check('#192 standalone: a refused start marker write says the start marker could not be saved, not that a seal is needed', /start marker/.test(markerText) && !/one-time seal/.test(markerText) && /Free browser storage, then try again/.test(markerText) && !/\u2014/.test(markerText), markerText);
+    check('#192 standalone: the refused start marker write leaves the stored copy unchanged', await markerPage.evaluate(raw => localStorage.getItem('skyryse-mes-work-order-v1') === raw, JSON.stringify(markerOnlyStored)));
+    await markerPage.close();
     check('standalone: the chain pages raised no page errors', errors.length === 0, errors.join('; '));
   } finally { await browser.close(); }
 }
