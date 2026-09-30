@@ -281,14 +281,16 @@ check('edits that differ only in a manifest-named payload key record different b
 check('the recorded body hash is the key-preserving digest of the body and names its form', hashB === MES.sha256(payloadForm(revB)) && lastEdit().bodyHashForm === 'payload');
 runHist(() => MES.updateSkillDraft(hist, spc.draftId, { manifest: { revision: 'B', document: 'supplier package' }, summary: 'review' }, 'Resubmitted the same revision B content.'));
 check('identical bodies record the same body hash regardless of key order', lastEdit().bodyHash === hashB);
-// Codex review on #133: a JSON body can carry an own __proto__ key. It must stay in the hash, not be
-// dropped by the prototype setter while the key-sorted copy is built.
-const protoA = JSON.parse('{"summary":"review","__proto__":{"revision":"A"}}'), protoB = JSON.parse('{"summary":"review","__proto__":{"revision":"B"}}');
-runHist(() => MES.updateSkillDraft(hist, spc.draftId, protoA, 'The body carries a __proto__ key at revision A.'));
-const protoHashA = lastEdit().bodyHash;
-runHist(() => MES.updateSkillDraft(hist, spc.draftId, protoB, 'The body carries a __proto__ key at revision B.'));
-check('edits that differ only inside an own __proto__ key record different body hashes', Object.hasOwn(draftOf(hist).body, '__proto__') && protoHashA !== lastEdit().bodyHash && lastEdit().bodyHash === MES.sha256(payloadForm(protoB)));
-runHist(() => MES.updateSkillDraft(hist, spc.draftId, revB, 'Back to the revision B supplier package manifest.'));
+// #141: an own __proto__ key falls outside the signed canonical forms, so saved data may not carry one.
+// updateSkillDraft refuses it, and validation, diagnose and the server gate refuse a workspace holding one.
+const protoA = JSON.parse('{"summary":"review","__proto__":{"revision":"A"}}');
+const nestedProto = JSON.parse('{"summary":"review","sections":[{"__proto__":{"items":3}}]}');
+const beforeProto = JSON.stringify(draftOf(hist));
+const protoRefused = runHist(() => MES.updateSkillDraft(hist, spc.draftId, protoA, 'The body carries a __proto__ key at revision A.'));
+const nestedRefused = runHist(() => MES.updateSkillDraft(hist, spc.draftId, nestedProto, 'A nested section carries a __proto__ key.'));
+check('updateSkillDraft refuses a body with an own __proto__ key and names the key', !protoRefused.ok && /__proto__/.test(protoRefused.message) && !nestedRefused.ok && JSON.stringify(draftOf(hist)) === beforeProto);
+const probeWith = key => { const s = JSON.parse(JSON.stringify(hist)); s._probe = JSON.parse(`{"list":[{"${key}":{"text":"x"}}]}`); return s; };
+check('the same nested payload validates under an ordinary key but fails under __proto__ anywhere in the workspace', MES.validate(probeWith('other')) && !MES.validate(probeWith('__proto__')) && MES.diagnose(probeWith('__proto__')).where === 'workspace._probe.list[0]' && /__proto__/.test(srv.validState(probeWith('__proto__')) || ''));
 check('edits with the new body hash pass validation, manifest verification and the server gate', MES.validate(hist) && MES.verifyManifests(hist).ok && srv.validState(structuredClone(hist)) === null);
 // Legacy history written before #114 has no bodyHashForm and a stripping-form hash. It still loads and validates.
 const draftSubjectOf = d => ({ id: d.id, skill: d.skill, title: d.title, body: d.body, status: d.status, reason: d.reason, targetRefs: d.targetRefs, runId: d.runId, createdAt: d.createdAt, review: d.review, decision: d.decision, editHistory: d.editHistory || [], ...(/"manifest":/.test(JSON.stringify(d.body)) ? { bodyDigest: MES.sha256(payloadForm(d.body)) } : {}) });
@@ -304,6 +306,18 @@ const unknownForm = structuredClone(hist);
 draftOf(unknownForm).editHistory.at(-1).bodyHashForm = 'stripped';
 resignDraft(unknownForm);
 check('an edit-history row naming an unknown body hash form fails validation', !MES.validate(unknownForm));
+// #141: a draft signed with an own __proto__ key in its body. The signed forms do not cover content under that
+// key, so changing it leaves every manifest valid; the new rule is what refuses the workspace.
+const protoSigned = structuredClone(hist);
+draftOf(protoSigned).body = JSON.parse('{"summary":"review","__proto__":{"revision":"A"}}');
+resignDraft(protoSigned);
+const protoTampered = structuredClone(protoSigned);
+draftOf(protoTampered).body.__proto__.revision = 'TAMPERED';
+check('content changed under a signed __proto__ key still passes manifest verification (the gap #141 closes)', Object.hasOwn(draftOf(protoTampered).body, '__proto__') && MES.verifyManifests(protoTampered).ok);
+check('a signed draft body holding a __proto__ key fails validation, before and after the change', !MES.validate(protoSigned) && !MES.validate(protoTampered));
+const protoDiag = MES.diagnose(protoTampered);
+check('diagnose names where the __proto__ key sits', !!protoDiag && protoDiag.where === `workspace.aiSkillDrafts[${protoTampered.aiSkillDrafts.findIndex(d => d.id === spc.draftId)}].body` && /__proto__/.test(protoDiag.detail) && protoDiag.fix === null);
+check('the server gate refuses the tampered workspace and says why', /__proto__/.test(srv.validState(structuredClone(protoTampered)) || ''));
 // #64: the calibration log is append-only. Retirement, not deletion, removes a tool from use: a retired
 // tool reads unusable at point of use and its entries stay in the signed log.
 check('there is no calibration delete command', MES.deleteCalibration === undefined && MES.removeCalibration === undefined && host.resolveAction('MES.deleteCalibration') === null);
