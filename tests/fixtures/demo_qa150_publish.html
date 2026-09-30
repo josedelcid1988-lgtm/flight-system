@@ -11739,25 +11739,43 @@ document.addEventListener('submit',e=>{const f=e.target;if(!f||(f.id!=='wo-issue
   else{r=MES.returnIssuedOrder(state,f.dataset.order,f.dataset.material,f.elements.reason.value);if(!r.ok){$('#wo-return-error').textContent=r.message;return;}}
   if(!save())return;$('#dialog').close();render();notify(r.message);});
 // Turn record identifiers inside an activity line into links to the record they name.
-// The text is escaped first; every pattern below matches only characters that escaping leaves alone.
-const RECORD_PATTERNS=[
+// This is the one record-link builder: the legacy recordLinks() below and RecordLinks in src/react/flight-ui.jsx
+// both build from window.FlightRecordLinks, so the patterns, the link targets, the link order and the attributes of
+// a link are written once. tests/test_record_link_builder_ui.mjs fails if the two paths differ.
+const RECORD_PATTERNS=Object.freeze([
   [/\b(WO-\d{3,6})\b/g,'order'],
   [/\b((?:IDR|NC)-\d{4,8})\b/g,'ticket'],
   [/\b(ATP-\d{3,8})\b/g,'report'],
   [/\b(ECR-[0-9]+-[0-9]+)\b/g,'rev'],
   [/\b(LOT-\d{6,8}-\d{3,5})\b/g,'lot'],
   [/\b(SNL-\d{4,6})\b/g,'serial']
-];
-function recordLinks(text,orderId){
-  let html=esc(text);
+].map(p=>Object.freeze(p)));
+// Split the raw text into plain strings and links in text order. A work order number links to itself; a ticket,
+// report, revision or lot number links only when the entry names its work order; a serial links either way.
+function recordLinkParts(text,orderId){
+  const source=String(text??''),hits=[];
   for(const [pattern,kind] of RECORD_PATTERNS){
-    html=html.replace(pattern,(match,id)=>{
-      const target=kind==='order'?id:(orderId||'');
-      if(kind!=='order'&&kind!=='serial'&&!target)return match;
-      return `<button type="button" class="record-link" data-action="record-link" data-kind="${kind}" data-order="${esc(target)}" data-record="${esc(id)}" title="Open ${esc(id)}">${esc(id)}</button>`;
-    });
+    for(const match of source.matchAll(pattern)){
+      const target=kind==='order'?match[1]:(orderId||'');
+      if(kind!=='order'&&kind!=='serial'&&!target)continue;
+      hits.push({start:match.index,end:match.index+match[0].length,id:match[1],kind,target});
+    }
   }
-  return html;
+  hits.sort((a,b)=>a.start-b.start);
+  const parts=[];let at=0;
+  for(const hit of hits){
+    if(hit.start<at)continue;
+    if(hit.start>at)parts.push(source.slice(at,hit.start));
+    parts.push(hit);at=hit.end;
+  }
+  if(at<source.length)parts.push(source.slice(at));
+  return parts;
+}
+// The attributes of one record-link button as [name, value] pairs, in the order both paths write them.
+function recordLinkAttributes(link){return [['type','button'],['class','record-link'],['data-action','record-link'],['data-kind',String(link.kind)],['data-order',String(link.target??'')],['data-record',String(link.id)],['title',`Open ${link.id}`]];}
+window.FlightRecordLinks=Object.freeze({patterns:RECORD_PATTERNS,parts:recordLinkParts,attributes:recordLinkAttributes});
+function recordLinks(text,orderId){
+  return recordLinkParts(text,orderId).map(part=>typeof part==='string'?esc(part):`<button ${recordLinkAttributes(part).map(([name,value])=>`${name}="${esc(value)}"`).join(' ')}>${esc(part.id)}</button>`).join('');
 }
 function historyKind(a){a=String(a||'');return /\b(NC|IDR)-\d/.test(a)?'NC':/ECR|engineering|re-release|Engineering edit/i.test(a)?'ECR / engineering change':/[Cc]losure|closed/.test(a)?'Closure':/[Ss]plit/.test(a)?'Split':/[Pp]edigree/.test(a)?'Pedigree':/Stage changed|issued to kitting/i.test(a)?'Stage change':/operation recorded|[Ss]tep |Video/.test(a)?'Operation / buy-off':/sequence|operation added|Operation Op|removed:/i.test(a)?'Sequence change':/availability|[Ll]ot |Material/.test(a)?'Kitting':/[Ss]erial|inventory|Stocked/.test(a)?'Serial / inventory':/QA approval|release/i.test(a)?'QA release':/note:/.test(a)?'Note':/Priority|AOG|Planned dates/.test(a)?'Priority / schedule':/[Aa]ssigned/.test(a)?'Assignment':/cloned|created/i.test(a)?'Creation':'Other';}
 function historyDay(at){try{return new Date(at).toLocaleDateString('en-CA',{timeZone:'America/Los_Angeles'});}catch(e){return '';}}
