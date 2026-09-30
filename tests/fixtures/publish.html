@@ -15193,8 +15193,22 @@ function fsTicketStage(ticket){
   if(ticket.reworkPlan)return ticket.reworkPlan.stage==='Awaiting ME operation'?`Awaiting ME ${ticket.reworkPlan.decision.toLowerCase()} operation`:'Awaiting QA sequence release';
   return 'Awaiting independent Quality approval';
 }
-// The MRB board behind a hold, with its status and the step that clears it. Empty when the NC has no board.
-function fsTicketMrbLine(order,ticket){const FM=window.FlightManeuver,m=FM&&FM.mrbFor?FM.mrbFor(state,order.id,ticket.id):null;if(!m)return '';const gate=FM.gateResolve?FM.gateResolve(state,order.id,ticket.id):null;const next=m.status==='Open'?`Board has not decided ${m.proposed}. Every seat votes and Quality records the decision in Flight Maneuver before ${ticket.id} can be approved.`:gate&&gate.message?gate.message:m.status==='Approved'?(ticket.reworkPlan?`Board approved ${m.proposed} and Quality approved ${ticket.id}. ${ticket.reworkPlan.stage==='Awaiting ME operation'?`ME adds the ${String(ticket.reworkPlan.decision||m.proposed).toLowerCase()} operation next.`:`QA releases the ${String(ticket.reworkPlan.decision||m.proposed).toLowerCase()} sequence next.`}`:`Board approved ${m.proposed}. Quality approves ${ticket.id} next.`):`Board rejected ${m.proposed}. Return ${ticket.id} to ME for a new disposition.`;return `<span class="fs-hold-mrb">${esc(m.id)} · ${esc(m.status)} · ${esc(next)}</span>`;}
+// The MRB board behind a hold, with its status and the step that clears it. Empty when the NC has no board,
+// or when the board no longer applies: the disposition was returned, or it is a different one MRB does not review.
+function fsTicketMrbLine(order,ticket){
+  const FM=window.FlightManeuver,m=FM&&FM.mrbFor?FM.mrbFor(state,order.id,ticket.id):null;if(!m)return '';
+  const plan=ticket.reworkPlan,lower=v=>String(v||'').toLowerCase();let next='';
+  if(plan){if(m.status!=='Approved'||m.proposed!==plan.decision)return '';next=`Board approved ${m.proposed} and Quality approved ${ticket.id}. ${plan.stage==='Awaiting ME operation'?`ME adds the ${lower(plan.decision)} operation next.`:`QA releases the ${lower(plan.decision)} sequence next.`}`;}
+  else{
+    if(!ticket.dispo||(!FM.needsMRB(order,ticket)&&m.proposed!==ticket.dispo.decision))return '';
+    const gate=FM.gateResolve(state,order.id,ticket.id);
+    if(m.status==='Open'){const waiting=FM.seatsOf(m).filter(seat=>!(m.votes||[]).some(v=>v.seat===seat));next=waiting.length?`Waiting on votes from ${waiting.join(', ')}. Quality records the decision in Flight Maneuver once every seat has voted.`:`Every seat has voted. Quality records the board decision in Flight Maneuver next.`;}
+    else if(gate&&gate.message)next=gate.message;
+    else if(m.status==='Approved')next=`Board approved ${m.proposed}. Quality approves ${ticket.id} next.`;
+    else return '';
+  }
+  return `<span class="fs-hold-mrb">${esc(m.id)} · ${esc(m.status)} · ${esc(next)}</span>`;
+}
 function fsTicketAssignment(order,ticket){MES.syncAssignments(state);return (state.assignments||[]).find(a=>a.status==='Open'&&a.type==='ticket'&&a.orderId===order.id&&a.ticketId===ticket.id)||null;}
 (function(){
   'use strict';
