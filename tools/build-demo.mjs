@@ -12,6 +12,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { DEVIATIONS, PILOT_SEATS } from './demo/deviations.mjs';
+import { rebaseDemoSeed } from './demo/seed-dates.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const at = p => path.join(ROOT, p);
@@ -55,6 +56,7 @@ export function buildDemo(production, dataset) {
     accounts: JSON.stringify(JSON.parse(read('tools/demo/accounts.json'))),
     seedMark,
     overlay: read('tools/demo/overlay.js').replace('__SEED_MARK__', seedMark),
+    rebase: rebaseDemoSeed.toString(),
   };
   if (ctx.seed.includes('</script')) throw new Error(`tools/demo/seed-${dataset}.json contains "</script" and would break the page.`);
   let out = production;
