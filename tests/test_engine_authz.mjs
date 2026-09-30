@@ -69,9 +69,28 @@ const openBoard = (h, state) => h.withAccount(qm, () => {
     const result = run(who, () => FlightManeuver.addRecordFile(state, 'mrb', mrbId, photo));
     check(`${who.displayName} (${who.role}) cannot attach a file to an MRB record and nothing changes`, roleRefused(result) && /MRB record/.test(result.message) && JSON.stringify(state) === before);
   }
-  for (const who of [me, qe, swe, cert]) {
+  for (const who of [me, qe, swe]) {
     const before = count('mrb', mrbId);
     check(`${who.displayName} (${who.role}, board authority) attaches a file to an open MRB record`, run(who, () => FlightManeuver.addRecordFile(state, 'mrb', mrbId, photo)).ok && count('mrb', mrbId) === before + 1);
+  }
+  // A Certification seat counts only on a board convened with one: Production FAI and Mfg. work orders.
+  {
+    check('the stock NC board has the three standard seats and no Certification seat', !FlightManeuver.get(state, 'mrb', mrbId).seats.includes('Certification'));
+    const before = JSON.stringify(state);
+    const result = run(cert, () => FlightManeuver.addRecordFile(state, 'mrb', mrbId, photo));
+    check('Certification cannot attach to a board without a Certification seat and nothing changes', roleRefused(result) && result.message.includes(`without a seat on ${mrbId}`) && JSON.stringify(state) === before && run(cert, () => FlightManeuver.canAttach('mrb', FlightManeuver.get(state, 'mrb', mrbId))) === false);
+    const order = state.orders.find(o => o.id === 'WO-10006');
+    const certBoard = run(qm, () => {
+      const op = order.operations.find(x => !x.done) || order.operations[0];
+      const raised = MES.createTicket(state, order.id, op.id, { type: 'NC', title: 'Scratch on the bracket face', description: 'Light surface scratch, no structural effect.', hold: true });
+      const tid = raised.ok && MES.getOrder(state, order.id).tickets.slice(-1)[0].id;
+      const dispo = tid && MES.dispositionTicket(state, order.id, tid, { decision: 'Use as is', note: 'Cosmetic only.' });
+      const board = dispo && dispo.ok && FlightManeuver.openMRB(state, order.id, tid, 'Cosmetic scratch, justification attached.');
+      return board && board.ok ? board.id : null;
+    });
+    check('a Production Mfg. work order convenes an open board with a Certification seat', !!certBoard && FlightManeuver.get(state, 'mrb', certBoard).seats.includes('Certification'));
+    const seated = count('mrb', certBoard);
+    check('Certification (mrb-cert) attaches a file to a board with a Certification seat', run(cert, () => FlightManeuver.addRecordFile(state, 'mrb', certBoard, photo)).ok && count('mrb', certBoard) === seated + 1);
   }
   for (const who of [general, technician, safety, me, qe]) {
     const before = count('cars', car.id) + count('ncs', ncId);
