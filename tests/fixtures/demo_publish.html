@@ -2586,12 +2586,10 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const CALIBRATION_SIGNER_ROLES = Object.freeze(['Quality Manager', 'System Administrator']);
   const calibrationSignerRole = role => typeof role === 'string' && !!role.trim(); /* DEMO D-36 */
   // The signer role is part of the signed subject (entry.signerRole), so it cannot change without breaking the hash.
-  // Builds before this gate did not record it. Their account-signed entries were gated by configure-qms, so an entry
-  // without signerRole whose signed recordedBy names an account credential (ACCT-) still needs an authorized role.
-  // Their standalone-profile entries could be signed by any profile role, so those are accepted as recorded and
-  // saved workspaces from those builds keep loading, whenever they were written.
-  const calibrationAccountSigned = entry => typeof entry.recordedBy === 'string' && /\u00b7 ACCT-[^\u00b7]+$/.test(entry.recordedBy);
-  const calibrationSignerOk = (entry, m) => plain(m) && plain(m.signer) && (entry.signerRole !== undefined ? entry.signerRole === m.signer.role && calibrationSignerRole(entry.signerRole) : !calibrationAccountSigned(entry) || calibrationSignerRole(m.signer.role));
+  // Builds before this gate did not record it, and a legacy manifest's signer role is not hashed, so it proves
+  // nothing. A legacy entry (no signerRole) is grandfathered as recorded, not role-verified: those builds gated
+  // account signers with configure-qms and let any standalone profile sign. Every new entry carries signerRole.
+  const calibrationSignerOk = (entry, m) => plain(m) && plain(m.signer) && (entry.signerRole === undefined || (entry.signerRole === m.signer.role && calibrationSignerRole(entry.signerRole)));
   const calibrationSignerRefusal = role => `Calibration entries are signed as Quality Manager or System Administrator. Your signing role is ${role}.`;
   // A Retired entry for a tool that was never calibrated carries no dates (#120). Every other status claims a
   // calibration, so it needs both dates, the due date after the calibration date, and a calibration date no

@@ -589,9 +589,9 @@ const bothEdited = structuredClone(roleOnlyEdit);
 bothEdited.calibrationLog[bothEdited.calibrationLog.length - 1].signerRole = 'Quality Manager';
 check('changing the signed signerRole without re-signing breaks the manifest hash', !MES.validate(bothEdited) && !MES.verifyManifests(bothEdited).ok);
 check('entries written by this build carry the signer role in the signed subject', signerBase.calibrationLog.every(e => e.signerRole === e.calibrationSignature.manifest.signer.role && e.calibrationSignature.manifest.subject.signerRole === e.signerRole));
-// Entries from builds before the signer-role gate have no signerRole. Those builds gated account signers with
-// configure-qms, but a standalone profile of any role could sign, so a legacy standalone-profile entry is accepted
-// whenever it was written, and a legacy account-signed (ACCT-) entry still needs an authorized role.
+// Entries from builds before the signer-role gate have no signerRole, and their manifest role is not hashed, so they
+// are grandfathered as recorded rather than role-verified (Codex review on #129). Saved workspaces from those builds
+// load at any date; the role binding applies to every entry this build writes.
 const resignLegacy = (ws, role, credentialId, recordedAt) => {
   const row = ws.calibrationLog[ws.calibrationLog.length - 1], [name] = row.recordedBy.split(' · ');
   const cred = credentialId || row.recordedBy.split(' · ')[1];
@@ -606,10 +606,10 @@ check('a legacy calibration entry signed by a standalone Quality Engineer profil
 check('a saved workspace holding the legacy standalone entry still upgrades and loads', !!MES.upgrade(structuredClone(legacyQe)));
 const legacyLateQe = resignLegacy(structuredClone(signerBase), 'Quality Engineer', 'SR-QE-001', '2027-03-01T12:00:00.000Z');
 check('a legacy standalone entry is not expired by any date', MES.validate(legacyLateQe) && MES.verifyManifests(legacyLateQe).ok);
-const legacyAcctQe = resignLegacy(structuredClone(signerBase), 'Quality Engineer');
-check('a legacy account-signed entry without calibration authority is refused', /ACCT-/.test(legacyAcctQe.calibrationLog.at(-1).recordedBy) && !MES.validate(legacyAcctQe) && !MES.verifyManifests(legacyAcctQe).ok && /signature/.test(JSON.stringify(MES.diagnose(legacyAcctQe))));
-const legacyAcctQm = resignLegacy(structuredClone(signerBase), 'Quality Manager');
-check('a legacy account-signed Quality Manager entry validates', MES.validate(legacyAcctQm) && MES.verifyManifests(legacyAcctQm).ok);
+const legacyAcct = resignLegacy(structuredClone(signerBase), 'Quality Engineer');
+check('a legacy account-signed entry is grandfathered as recorded', /ACCT-/.test(legacyAcct.calibrationLog.at(-1).recordedBy) && MES.validate(legacyAcct) && MES.verifyManifests(legacyAcct).ok);
+const legacyStrip = structuredClone(signerBase); delete legacyStrip.calibrationLog.at(-1).signerRole;
+check('removing signerRole from an entry this build wrote breaks its manifest hash', !MES.validate(legacyStrip) && !MES.verifyManifests(legacyStrip).ok);
 // Standalone use (no account): the profile signs, so a profile without calibration authority cannot record or correct.
 const standalone = structuredClone(state);
 standalone.profile = { name: 'Riley Quality', role: 'Quality Engineer', credentialId: 'SR-QE-001' };
