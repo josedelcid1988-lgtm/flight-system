@@ -2638,6 +2638,23 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // (not only the last) is detected. The unlinked entries have no previousHash to carry it.
   const calibrationLegacyHash = entries => sha256(canonicalPayload(entries));
   const calibrationHeadValid = head => plain(head) && Number.isInteger(head.count) && head.count >= 0 && head.count <= 5000 && (head.hash === null || /^[0-9a-f]{64}$/.test(head.hash)) && Number.isInteger(head.legacyCount) && head.legacyCount >= 0 && head.legacyCount <= head.count && (head.sealedAt === undefined || timestamp(head.sealedAt)) && (head.legacyCount > 0 ? /^[0-9a-f]{64}$/.test(head.legacyHash) : head.legacyHash === undefined) && Object.keys(head).every(k => ['count', 'hash', 'legacyCount', 'sealedAt', 'legacyHash'].includes(k));
+  // The start marker (#162), state.calibrationLogStart = { firstId, firstHash, recordedAt }, is written with the first
+  // calibration entry and never changes. It names that entry and the hash of the whole entry, so once a workspace has
+  // held a calibration entry it cannot read as one that never had a log: deleting both the log and its head leaves the
+  // marker behind, and validation refuses it. A log with entries needs the marker; MES.upgrade adds it to a workspace
+  // recorded before the marker existed. A brand-new workspace has no entries and no marker.
+  // Scope: like the chain, this catches mistakes (a wrong click, a bad import, a stale or hand-edited copy that lost
+  // the calibration keys). Someone who deliberately removes the log, the head and the marker together is not stopped.
+  const calibrationStartFor = log => ({ firstId: log[0].id, firstHash: calibrationEntryHash(log[0]), recordedAt: log[0].recordedAt });
+  const calibrationStartValid = start => plain(start) && /^CALLOG-\d{5}$/.test(start.firstId) && /^[0-9a-f]{64}$/.test(start.firstHash) && timestamp(start.recordedAt) && Object.keys(start).length === 3;
+  function calibrationStartProblem(log, start) {
+    if (start === undefined) return log.length ? { id: 'calibrationLogStart', detail: `The calibration log has ${log.length} entr${log.length === 1 ? 'y' : 'ies'} but no start marker, so a later removal of the whole log could not be detected.` } : null;
+    if (!calibrationStartValid(start)) return { id: 'calibrationLogStart', detail: 'The calibration log start marker is malformed.' };
+    if (!log.length) return { id: 'calibrationLogStart', detail: `The calibration log is empty, but this workspace started it with ${start.firstId} on ${start.recordedAt}: the log and its head were removed, so a retired or quarantined tool could read as usable again.` };
+    const first = log[0];
+    if (!plain(first) || first.id !== start.firstId || calibrationEntryHash(first) !== start.firstHash) return { id: 'calibrationLogStart', detail: `The first calibration entry${plain(first) && first.id ? `, ${first.id},` : ''} does not match the start marker, which records ${start.firstId}: the first entry was removed, replaced, or changed.` };
+    return null;
+  }
   // The first break in the chain or the head, as { id, detail }, or null. Each detail says what is wrong and what it means.
   function calibrationChainProblem(state) {
     const log = plain(state) && Array.isArray(state.calibrationLog) ? state.calibrationLog : [];
@@ -2655,14 +2672,14 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       const want = i ? calibrationEntryHash(log[i - 1]) : null;
       if (e.previousHash !== want) return { id: e.id, detail: i ? `Calibration entry ${e.id} does not link to ${log[i - 1].id}, the entry before it: an entry between them was removed or changed, or the log was reordered.` : `Calibration entry ${e.id} is first in the log but links to an earlier entry, so the entries before it were removed.` };
     }
-    if (head === undefined) return log.length ? { id: 'calibrationLogHead', detail: `The calibration log has ${log.length} entr${log.length === 1 ? 'y' : 'ies'} but no recorded head, so missing latest entries cannot be ruled out.` } : null;
+    if (head === undefined) return log.length ? { id: 'calibrationLogHead', detail: `The calibration log has ${log.length} entr${log.length === 1 ? 'y' : 'ies'} but no recorded head, so missing latest entries cannot be ruled out.` } : calibrationStartProblem(log, plain(state) ? state.calibrationLogStart : undefined);
     if (!calibrationHeadValid(head)) return { id: 'calibrationLogHead', detail: 'The calibration log head is malformed.' };
     if (head.count > log.length) return { id: 'calibrationLogHead', detail: `The calibration log holds ${log.length} entr${log.length === 1 ? 'y' : 'ies'} but its head records ${head.count}: the latest ${head.count - log.length === 1 ? 'entry is' : `${head.count - log.length} entries are`} missing, so a retired or quarantined tool could read as usable.` };
     if (head.count < log.length) return { id: 'calibrationLogHead', detail: `The calibration log holds ${log.length} entries but its head records ${head.count}: entries were added outside the application.` };
     if (head.legacyCount !== legacy) return { id: 'calibrationLogHead', detail: `The calibration log has ${legacy} entr${legacy === 1 ? 'y' : 'ies'} from before the chain but its head sealed ${head.legacyCount}: an early entry was removed or added.` };
     if (legacy && head.legacyHash !== calibrationLegacyHash(log.slice(0, legacy))) return { id: 'calibrationLogHead', detail: `An entry recorded before the chain no longer matches the seal made ${head.sealedAt ? `on ${head.sealedAt}` : 'when the log was sealed'}: one of the first ${legacy} entr${legacy === 1 ? 'y was' : 'ies was'} changed.` };
     if (head.hash !== (log.length ? calibrationEntryHash(log[log.length - 1]) : null)) return { id: 'calibrationLogHead', detail: `The last calibration entry${log.length ? `, ${log[log.length - 1].id},` : ''} does not match the log head: the latest entry was replaced, changed, or removed.` };
-    return null;
+    return calibrationStartProblem(log, state.calibrationLogStart);
   }
   // Append one entry to the chain and move the head. The entry is signed before it is linked; previousHash is not
   // part of the signed subject, so the manifest is unchanged by the chain.
@@ -2670,6 +2687,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const log = state.calibrationLog, head = plain(state.calibrationLogHead) ? state.calibrationLogHead : null;
     entry.previousHash = log.length ? calibrationEntryHash(log[log.length - 1]) : null;
     log.push(entry);
+    if (state.calibrationLogStart === undefined) state.calibrationLogStart = calibrationStartFor(log);
     state.calibrationLogHead = calibrationHeadFor(log, head ? head.legacyCount : 0, head ? head.sealedAt : undefined, head ? head.legacyHash : undefined);
   };
   // Seal a log recorded before the chain existed: write its head once, naming how many unlinked entries it held and
@@ -2679,6 +2697,13 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const log = Array.isArray(state.calibrationLog) ? state.calibrationLog : [];
     if (state.calibrationLogHead !== undefined || !log.length || log.some(e => plain(e) && Object.hasOwn(e, 'previousHash'))) return;
     state.calibrationLogHead = calibrationHeadFor(log, log.length, new Date().toISOString(), calibrationLegacyHash(log));
+  };
+  // Give a log recorded before the start marker existed its marker, from the entry that is first in it now (#162).
+  // A log that is empty gets none, so a workspace whose log was already deleted is not given one after the fact.
+  const markCalibrationStart = state => {
+    const log = Array.isArray(state.calibrationLog) ? state.calibrationLog : [];
+    if (state.calibrationLogStart !== undefined || !log.length || !plain(log[0])) return;
+    state.calibrationLogStart = calibrationStartFor(log);
   };
   // The server write gate: a write keeps every entry the stored log holds, unchanged and in place, and may only
   // append. Returns a plain refusal or null. prev is the stored workspace (null before the first save).
@@ -6241,7 +6266,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     try {
       state = renameKitOp(migrateEngineeringChanges(migrateSplitIds(state)));
       try { migrateChangeIds(state); } catch (e) {}
-      if (plain(state)) sealCalibrationLog(state);
+      if (plain(state)) { sealCalibrationLog(state); markCalibrationStart(state); }
       if (validate(state)) { const migrated = JSON.parse(JSON.stringify(state)); ['audits','certifications','supplierApprovals','qualityValues','qualityVerdicts'].forEach(key=>{if(!Array.isArray(migrated[key]))migrated[key]=[];}); migrateOperationTypes(migrated); return validate(migrated) ? migrated : JSON.parse(JSON.stringify(state)); }
       if (!validateVersion(state, 1) && !validateVersion(state, 2)) return null;
       const upgraded = JSON.parse(JSON.stringify(state));
@@ -11273,8 +11298,9 @@ try{const raw=localStorage.getItem(KEY);
       }
       // A calibration log from before the chain is sealed by MES.upgrade. Standalone, the seal is written back before the
       // workspace is used, so the baseline it records is durable from the first load and a later reload cannot reseal a
-      // shortened log (#116, #117). If browser storage refuses the write, the workspace is not opened.
-      if(saved&&!(window.skServer&&window.skServer.active)&&!parsedRaw.calibrationLogHead&&saved.calibrationLogHead&&MES.validate(saved)){
+      // shortened log (#116, #117). The calibration start marker added on upgrade is written back the same way (#162).
+      // If browser storage refuses the write, the workspace is not opened.
+      if(saved&&!(window.skServer&&window.skServer.active)&&((!parsedRaw.calibrationLogHead&&saved.calibrationLogHead)||(!parsedRaw.calibrationLogStart&&saved.calibrationLogStart))&&MES.validate(saved)){
         try{localStorage.setItem(KEY,JSON.stringify(saved));}catch(e){saved=null;loadProblem='The calibration log needs a one-time seal for this build, but browser storage refused to save it (it may be full). Free browser storage, then try again.';}
       }
       if(saved){
