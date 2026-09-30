@@ -155,6 +155,10 @@ const LIST = [
     why: 'The sample workspace is captured on a fixed day. When a browser first loads it, due and start dates of open work, the MDL date of a package with no 8130-9 yet, planned need dates, open request and CAR due dates, and stamp expiries move forward by the days since capture, so the sample data does not age. A CAR, whose history quotes its due dates, and an order whose MDL date moves get a Demo build history entry naming the old and new dates. Signed and recorded dates (buy-offs, manifests, signatures, existing history, closed orders) never move. The calibrated tool snapshot is production data and is not moved. Source: tools/demo/seed-dates.mjs.',
     find: /JSON\.stringify\(window\.__DEMO_SEED\)/g, count: 2,
     replace: (ctx, m, id) => `JSON.stringify((${ctx.rebase})(window.__DEMO_SEED)/* DEMO ${id} */)` },
+  { area: 'Roles', title: 'Any named signer role may sign a calibration entry',
+    why: 'The full-access demo accounts (D-6) hold configure-qms whatever their role, so their calibration entries record and validate. Production accepts only the Quality Manager and System Administrator signer roles. Pilot seats are still refused by the configure-qms gate.',
+    find: 'const calibrationSignerRole = role => CALIBRATION_SIGNER_ROLES.includes(role);', count: 1,
+    replace: (ctx, m, id) => `const calibrationSignerRole = role => typeof role === 'string' && !!role.trim(); /* DEMO ${id} */` },
 ];
 
 export const DEVIATIONS = LIST.map((d, i) => Object.freeze({ ...d, id: `D-${i + 1}` }));

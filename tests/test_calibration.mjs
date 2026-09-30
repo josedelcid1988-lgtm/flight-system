@@ -281,14 +281,18 @@ check('edits that differ only in a manifest-named payload key record different b
 check('the recorded body hash is the key-preserving digest of the body and names its form', hashB === MES.sha256(payloadForm(revB)) && lastEdit().bodyHashForm === 'payload');
 runHist(() => MES.updateSkillDraft(hist, spc.draftId, { manifest: { revision: 'B', document: 'supplier package' }, summary: 'review' }, 'Resubmitted the same revision B content.'));
 check('identical bodies record the same body hash regardless of key order', lastEdit().bodyHash === hashB);
-// Codex review on #133: a JSON body can carry an own __proto__ key. It must stay in the hash, not be
-// dropped by the prototype setter while the key-sorted copy is built.
-const protoA = JSON.parse('{"summary":"review","__proto__":{"revision":"A"}}'), protoB = JSON.parse('{"summary":"review","__proto__":{"revision":"B"}}');
-runHist(() => MES.updateSkillDraft(hist, spc.draftId, protoA, 'The body carries a __proto__ key at revision A.'));
-const protoHashA = lastEdit().bodyHash;
-runHist(() => MES.updateSkillDraft(hist, spc.draftId, protoB, 'The body carries a __proto__ key at revision B.'));
-check('edits that differ only inside an own __proto__ key record different body hashes', Object.hasOwn(draftOf(hist).body, '__proto__') && protoHashA !== lastEdit().bodyHash && lastEdit().bodyHash === MES.sha256(payloadForm(protoB)));
-runHist(() => MES.updateSkillDraft(hist, spc.draftId, revB, 'Back to the revision B supplier package manifest.'));
+// #141: an own __proto__ key falls outside the signed canonical forms, so saved data may not carry one.
+// updateSkillDraft refuses it, and validation, diagnose and the server gate refuse a workspace holding one.
+const protoA = JSON.parse('{"summary":"review","__proto__":{"revision":"A"}}');
+const nestedProto = JSON.parse('{"summary":"review","sections":[{"__proto__":{"items":3}}]}');
+const beforeProto = JSON.stringify(draftOf(hist));
+const protoRefused = runHist(() => MES.updateSkillDraft(hist, spc.draftId, protoA, 'The body carries a __proto__ key at revision A.'));
+const nestedRefused = runHist(() => MES.updateSkillDraft(hist, spc.draftId, nestedProto, 'A nested section carries a __proto__ key.'));
+check('updateSkillDraft refuses a body with an own __proto__ key and names the key', !protoRefused.ok && /__proto__/.test(protoRefused.message) && !nestedRefused.ok && JSON.stringify(draftOf(hist)) === beforeProto);
+const probeWith = key => { const s = JSON.parse(JSON.stringify(hist)); s._probe = JSON.parse(`{"list":[{"${key}":{"text":"x"}}]}`); return s; };
+check('the same nested payload validates under an ordinary key but fails under __proto__ anywhere in the workspace', MES.validate(probeWith('other')) && !MES.validate(probeWith('__proto__')) && MES.diagnose(probeWith('__proto__')).where === 'workspace._probe.list[0]' && /__proto__/.test(srv.validState(probeWith('__proto__')) || ''));
+const lookalike = JSON.parse(JSON.stringify(hist)); lookalike._probe = JSON.parse('{"text":"see \\"__proto__\\": in the spec","x\\"__proto__":1,"__proto__x":2}');
+check('text that only looks like a __proto__ key (inside a string value or a longer key name) is not refused', !Object.hasOwn(lookalike._probe, '__proto__') && MES.validate(lookalike));
 check('edits with the new body hash pass validation, manifest verification and the server gate', MES.validate(hist) && MES.verifyManifests(hist).ok && srv.validState(structuredClone(hist)) === null);
 // Legacy history written before #114 has no bodyHashForm and a stripping-form hash. It still loads and validates.
 const draftSubjectOf = d => ({ id: d.id, skill: d.skill, title: d.title, body: d.body, status: d.status, reason: d.reason, targetRefs: d.targetRefs, runId: d.runId, createdAt: d.createdAt, review: d.review, decision: d.decision, editHistory: d.editHistory || [], ...(/"manifest":/.test(JSON.stringify(d.body)) ? { bodyDigest: MES.sha256(payloadForm(d.body)) } : {}) });
@@ -304,6 +308,43 @@ const unknownForm = structuredClone(hist);
 draftOf(unknownForm).editHistory.at(-1).bodyHashForm = 'stripped';
 resignDraft(unknownForm);
 check('an edit-history row naming an unknown body hash form fails validation', !MES.validate(unknownForm));
+// #141: a draft signed with an own __proto__ key in its body. The signed forms do not cover content under that
+// key, so changing it leaves every manifest valid; the new rule is what refuses the workspace.
+const protoSigned = structuredClone(hist);
+draftOf(protoSigned).body = JSON.parse('{"summary":"review","__proto__":{"revision":"A"}}');
+resignDraft(protoSigned);
+const protoTampered = structuredClone(protoSigned);
+draftOf(protoTampered).body.__proto__.revision = 'TAMPERED';
+check('content changed under a signed __proto__ key still passes manifest verification (the gap #141 closes)', Object.hasOwn(draftOf(protoTampered).body, '__proto__') && MES.verifyManifests(protoTampered).ok);
+check('a signed draft body holding a __proto__ key fails validation, before and after the change', !MES.validate(protoSigned) && !MES.validate(protoTampered));
+const protoDiag = MES.diagnose(protoTampered);
+check('diagnose names where the __proto__ key sits', !!protoDiag && protoDiag.where === `workspace.aiSkillDrafts[${protoTampered.aiSkillDrafts.findIndex(d => d.id === spc.draftId)}].body` && /__proto__/.test(protoDiag.detail) && protoDiag.fix === null);
+check('the server gate refuses the tampered workspace and says why', /__proto__/.test(srv.validState(structuredClone(protoTampered)) || ''));
+// Codex review on #168 (4145296659): the standalone boot path opens whatever MES.upgrade returns, and save() writes when
+// MES.repair reports ok. Both close over the engine's own validate and diagnose, so the rule must live there too.
+check('MES.upgrade refuses a stored workspace holding a __proto__ key, so the standalone boot path does not open it', MES.upgrade(structuredClone(protoTampered)) === null && !!MES.upgrade(structuredClone(hist)));
+const protoRepair = MES.repair(structuredClone(protoTampered));
+check('MES.repair does not report a __proto__ workspace as fixed, so save() refuses to write it', protoRepair.ok === false && /__proto__/.test(protoRepair.blocker?.detail || ''));
+const oldVersion = structuredClone(protoTampered); oldVersion.version = 2;
+check('an older-version workspace holding a __proto__ key is not upgraded either', !MES.upgrade(oldVersion));
+// Codex review on #168 (4145767754): the diagnostic path walk must not overflow the stack on deeply nested input.
+{ let deep = '{"__proto__":1}'; for (let n = 0; n < 5000; n += 1) deep = `{"a":${deep}}`; const d = JSON.parse(JSON.stringify(hist)); d._probe = JSON.parse(deep);
+  let found = null, threw = null; try { found = MES.diagnose(d); } catch (e) { threw = e; }
+  check('diagnose names a __proto__ key nested 5000 levels deep instead of overflowing the stack', !threw && !MES.validate(d) && !!found && found.where.startsWith('workspace._probe.a.a') && found.where.endsWith('.a') && /__proto__/.test(found.detail)); }
+// Codex review on #168 (4145767770): a closed order holding a __proto__ key must not move into the archive, where the
+// live-workspace check no longer sees it. Every archive candidate passes archivedOrderValid (server commitState, archiveOrders).
+const closedEntry = { order: { id: 'WO-ARCH-1', status: 'Closed', operations: [], tickets: [] }, activity: [] };
+const taintedEntry = { order: { id: 'WO-ARCH-2', status: 'Closed', operations: [JSON.parse('{"__proto__":{"note":"hidden"}}')], tickets: [] }, activity: [] };
+check('an archive candidate holding a __proto__ key is refused, while a clean closed order still archives', MES.archivedOrderValid(closedEntry) && !MES.archivedOrderValid(taintedEntry));
+// Codex review on #168 (4146176864): archiving must name the forbidden key, not report missing fields.
+{ const a = JSON.parse(JSON.stringify(hist)); a.orders = [JSON.parse('{"id":"WO-9001","status":"Closed","inventory":{"at":"2026-09-30"},"operations":[{"__proto__":{"x":1}}],"tickets":[],"materials":[],"partNumber":"P-1"}')];
+  const r = MES.archiveOrders(a);
+  check('archiving a closed order that holds a __proto__ key names the order and the key, and keeps it live', !r.ok && /WO-9001/.test(r.message) && /__proto__/.test(r.message) && /WO-9001\.operations\[0\]/.test(r.message) && !/missing required/.test(r.message) && a.orders.length === 1); }
+// Codex review on #168 (4146176855): a deeply nested draft body gets the key refusal (or a plain depth message), never a throw.
+{ let deepProto = '{"__proto__":1}', deepPlain = '{"x":1}'; for (let n = 0; n < 5000; n += 1) { deepProto = `{"a":${deepProto}}`; deepPlain = `{"a":${deepPlain}}`; }
+  let rp = null, rq = null, threw = null;
+  try { rp = runHist(() => MES.updateSkillDraft(hist, spc.draftId, JSON.parse(deepProto), 'A deeply nested body with the forbidden key.')); rq = runHist(() => MES.updateSkillDraft(hist, spc.draftId, JSON.parse(deepPlain), 'A deeply nested body without the forbidden key.')); } catch (e) { threw = e; }
+  check('a deeply nested draft body is refused with the __proto__ message, and one without the key with a plain depth message, never a throw', !threw && rp && !rp.ok && /__proto__/.test(rp.message) && rq && !rq.ok && /nested too deeply/.test(rq.message)); }
 // #64: the calibration log is append-only. Retirement, not deletion, removes a tool from use: a retired
 // tool reads unusable at point of use and its entries stay in the signed log.
 check('there is no calibration delete command', MES.deleteCalibration === undefined && MES.removeCalibration === undefined && host.resolveAction('MES.deleteCalibration') === null);
@@ -324,7 +365,7 @@ check('the record form tells the user that Retired is how a tool leaves service'
 const relinkHead = ws => { const log = ws.calibrationLog; ws.calibrationLogHead = { ...ws.calibrationLogHead, count: log.length, hash: log.length ? MES.calibrationEntryHash(log[log.length - 1]) : null }; };
 const appendImported = (ws, e) => { const log = ws.calibrationLog; e.previousHash = log.length ? MES.calibrationEntryHash(log[log.length - 1]) : null; log.push(e); relinkHead(ws); };
 // The signed subject of a calibration entry (calibrationSubject in index.html), for building imported rows.
-const calSubject = e => ({ id: e.id, tag: e.tag, description: e.description, serial: e.serial, calibratedAt: e.calibratedAt, expires: e.expires, status: e.status, location: e.location, note: e.note, recordedAt: e.recordedAt, recordedBy: e.recordedBy, supersedes: e.supersedes || null, ...(e.torque !== undefined ? { torque: e.torque } : {}) });
+const calSubject = e => ({ id: e.id, tag: e.tag, description: e.description, serial: e.serial, calibratedAt: e.calibratedAt, expires: e.expires, status: e.status, location: e.location, note: e.note, recordedAt: e.recordedAt, recordedBy: e.recordedBy, supersedes: e.supersedes || null, ...(e.torque !== undefined ? { torque: e.torque } : {}), ...(e.signerRole !== undefined ? { signerRole: e.signerRole } : {}) });
 // #35 review: only the current entry for a tag can be corrected. With two independent entries A (usable)
 // then B (Quarantined), correcting A would copy A's usable status into the newest row and re-enable the tool.
 const curA = run(qa, () => MES.recordCalibration(state, { tag: 'CUR-TOOL', description: 'DIAL INDICATOR', torque: false, serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }));
@@ -544,5 +585,157 @@ const tkRun = host.withAccount(splitAdmin, () => {
 check('the signed ticket verifies on its original order before the split', tkRun.before);
 check('the split moves the signed ticket onto the new order', tkRun.split.ok && tkRun.moved, JSON.stringify(tkRun.split));
 check('a moved ticket still verifies against the order it was signed on', tkRun.verify.ok && tkRun.carriedFrom?.orderId === tkOrderId, JSON.stringify(tkRun.verify.failures?.[0]));
+
+// #111: a traceability search matches buy-off tools by exact tag, like test assets and torque steps, so the search for
+// one tool does not report operations that used only a longer tag that starts with it.
+const prefixTrace = structuredClone(traceState);
+prefixTrace.orders = [...prefixTrace.orders, { id: 'WO-PREFIX-1', status: 'In Work', partNumber: 'PN-TRACE', revision: 'A', pedigree: 'Production', subcategory: 'Mfg.', materials: [], tickets: [], history: [], operations: [{ id: 'OP-9', title: 'Measure', buyoff: { at: '2026-09-30T18:00:00.000Z', name: 'Sam Tech', tools: [{ tag: 'B2-TOOLX', description: 'MICROMETER' }, 'B2-TOOL-2'] } }] }];
+const prefixHits = MES.traceSearch(prefixTrace, 'B2-TOOL');
+check('a tool search does not report an operation that used only a longer tag starting with it', prefixHits.kind === 'tool' && !prefixHits.orders.some(o => o.id === 'WO-PREFIX-1'));
+check('a tool search still reports the operation that used the exact tag', prefixHits.orders.some(o => o.id === 'WO-TRACE-1'));
+const exactString = structuredClone(prefixTrace);
+exactString.orders[1].operations[0].buyoff.tools = ['b2-tool'];
+check('a buy-off tool stored as a plain string still matches its exact tag, in any case', MES.traceSearch(exactString, 'B2-TOOL').orders.some(o => o.id === 'WO-PREFIX-1'));
+
+// #112: the manifest signer of a calibration entry must hold calibration authority, the role gate the mutators apply.
+// A hand-made entry signed as a technician fails validation, the manifest verifier and the server gate.
+const signerBase = structuredClone(state);
+const signerRow = signerBase.calibrationLog[signerBase.calibrationLog.length - 1];
+check('a calibration entry recorded by a QA Manager is signed with the Quality Manager role', signerRow.calibrationSignature.manifest.signer.role === 'Quality Manager' && MES.validate(signerBase));
+const forgedRole = structuredClone(signerBase);
+forgedRole.calibrationLog[forgedRole.calibrationLog.length - 1].calibrationSignature.manifest.signer.role = 'Assembly technician';
+relinkHead(forgedRole);
+check('a calibration entry signed by a technician fails entry validation', !MES.validate(forgedRole));
+check('a calibration entry signed by a technician fails manifest verification', !MES.verifyManifests(forgedRole).ok && MES.verifyManifests(forgedRole).failures.some(f => /calibration authority/.test(f.reason)));
+check('the server gate rejects a calibration entry signed by a technician', typeof srv.validState(forgedRole) === 'string');
+check('diagnose names the signature of the technician-signed entry', /signature/.test(JSON.stringify(MES.diagnose(forgedRole))));
+// The allowed signer roles are exactly the account roles that hold configure-qms, so the list cannot drift from ROLE_CAPS.
+// Re-signs a workspace's last calibration entry as the same named person holding another role: signerRole and the
+// manifest are rebuilt together, so only the role differs from an entry the mutators would write.
+const resignLastAs = (ws, role) => {
+  const row = ws.calibrationLog[ws.calibrationLog.length - 1], [name, credentialId] = row.recordedBy.split(' \u00b7 ');
+  const saved = ws.profile; ws.profile = { name, role, credentialId };
+  row.signerRole = role;
+  row.calibrationSignature = { manifest: MES.signManifest(ws, row.calibrationSignature.manifest.meaning, calSubject(row), row.recordedAt) };
+  ws.profile = saved;
+  relinkHead(ws);
+  return ws;
+};
+const roleVerdicts = host.roles.ROLES.map(r => {
+  const probe = resignLastAs(structuredClone(signerBase), r.profileRole);
+  return { key: r.key, allowed: (host.roles.ROLE_CAPS[r.key] || host.roles.EVERYONE).includes('configure-qms'), valid: MES.validate(probe) };
+});
+check('every role with configure-qms signs a valid calibration entry and every other role does not', roleVerdicts.length > 5 && roleVerdicts.every(v => v.allowed === v.valid) && roleVerdicts.filter(v => v.valid).map(v => v.key).sort().join() === 'admin,qm');
+// Codex review on #129: the signer role is inside the signed subject (entry.signerRole), so changing only the manifest's
+// signer role, or only the entry's signerRole, no longer turns a technician entry into a valid one.
+const techSigned = resignLastAs(structuredClone(signerBase), 'Assembly technician');
+check('a fully signed technician entry fails validation', !MES.validate(techSigned) && !MES.verifyManifests(techSigned).ok);
+const roleOnlyEdit = structuredClone(techSigned);
+roleOnlyEdit.calibrationLog[roleOnlyEdit.calibrationLog.length - 1].calibrationSignature.manifest.signer.role = 'Quality Manager';
+relinkHead(roleOnlyEdit);
+check('changing only the manifest signer role of a technician entry does not make it valid', !MES.validate(roleOnlyEdit) && !MES.verifyManifests(roleOnlyEdit).ok && typeof srv.validState(roleOnlyEdit) === 'string');
+const bothEdited = structuredClone(roleOnlyEdit);
+bothEdited.calibrationLog[bothEdited.calibrationLog.length - 1].signerRole = 'Quality Manager';
+relinkHead(bothEdited);
+check('changing the signed signerRole without re-signing breaks the manifest hash', !MES.validate(bothEdited) && !MES.verifyManifests(bothEdited).ok);
+check('entries written by this build carry the signer role in the signed subject', signerBase.calibrationLog.every(e => e.signerRole === e.calibrationSignature.manifest.signer.role && e.calibrationSignature.manifest.subject.signerRole === e.signerRole));
+// Entries from builds before the signer-role gate have no signerRole, and their manifest role is not hashed, so they
+// are grandfathered as recorded rather than role-verified (Codex review on #129). Saved workspaces from those builds
+// load at any date; the role binding applies to every entry this build writes.
+const resignLegacy = (ws, role, credentialId, recordedAt) => {
+  const row = ws.calibrationLog[ws.calibrationLog.length - 1], [name] = row.recordedBy.split(' · ');
+  const cred = credentialId || row.recordedBy.split(' · ')[1];
+  const saved = ws.profile; ws.profile = { name, role, credentialId: cred };
+  delete row.signerRole; row.recordedBy = `${name} · ${cred}`; if (recordedAt) row.recordedAt = recordedAt;
+  row.calibrationSignature = { manifest: MES.signManifest(ws, row.calibrationSignature.manifest.meaning, calSubject(row), row.recordedAt) };
+  ws.profile = saved;
+  relinkHead(ws);
+  return ws;
+};
+const legacyQe = resignLegacy(structuredClone(signerBase), 'Quality Engineer', 'SR-QE-001', '2026-09-30T12:00:00.000Z');
+check('a legacy calibration entry signed by a standalone Quality Engineer profile validates and verifies', MES.validate(legacyQe) && MES.verifyManifests(legacyQe).ok && srv.validState(structuredClone(legacyQe)) === null);
+check('a saved workspace holding the legacy standalone entry still upgrades and loads', !!MES.upgrade(structuredClone(legacyQe)));
+const legacyLateQe = resignLegacy(structuredClone(signerBase), 'Quality Engineer', 'SR-QE-001', '2027-03-01T12:00:00.000Z');
+check('a legacy standalone entry is not expired by any date', MES.validate(legacyLateQe) && MES.verifyManifests(legacyLateQe).ok);
+const legacyAcct = resignLegacy(structuredClone(signerBase), 'Quality Engineer');
+check('a legacy account-signed entry is grandfathered as recorded', /ACCT-/.test(legacyAcct.calibrationLog.at(-1).recordedBy) && MES.validate(legacyAcct) && MES.verifyManifests(legacyAcct).ok);
+const legacyStrip = structuredClone(signerBase); delete legacyStrip.calibrationLog.at(-1).signerRole; relinkHead(legacyStrip);
+check('removing signerRole from an entry this build wrote breaks its manifest hash', !MES.validate(legacyStrip) && !MES.verifyManifests(legacyStrip).ok);
+// Standalone use (no account): the profile signs, so a profile without calibration authority cannot record or correct.
+const standalone = structuredClone(state);
+standalone.profile = { name: 'Riley Quality', role: 'Quality Engineer', credentialId: 'SR-QE-001' };
+const standaloneLen = standalone.calibrationLog.length;
+const standaloneRecord = MES.recordCalibration(standalone, { ...entry, tag: 'SOLO-001' });
+const standaloneFix = MES.updateCalibration(standalone, MES.calibrationStatus(standalone, 'TEST-001').id, { note: 'Lab cert 44' });
+check('a standalone profile without calibration authority cannot record or correct a calibration', !standaloneRecord.ok && /Quality Manager or System Administrator/.test(standaloneRecord.message) && !standaloneFix.ok && standalone.calibrationLog.length === standaloneLen);
+standalone.profile = { name: 'Morgan Lee', role: 'Quality Manager', credentialId: 'SR-QM-001' };
+const standaloneQm = MES.recordCalibration(standalone, { ...entry, tag: 'SOLO-002' });
+check('a standalone Quality Manager profile records a calibration that validates', standaloneQm.ok && MES.validate(standalone) && MES.verifyManifests(standalone).ok);
+
+// #113: there is no archive path, so the log limits say what happened and what to do instead of promising one.
+check('the full-log refusal no longer tells the operator to archive', !/Archive older/.test(fullCorrect.message) && /was not recorded/.test(fullCorrect.message) && /cannot be removed or archived/.test(fullCorrect.message) && /administrator/.test(fullCorrect.message));
+check('the last-entry-number refusal no longer tells the operator to archive', !/Archive the log/.test(exhausted.message) && /was not recorded/.test(exhausted.message) && /cannot be removed or archived/.test(exhausted.message));
+check('the page carries no calibration archive instruction', !/Archive older entries|Archive the log before/.test(pageSource));
+
+// #120: a tool that was never calibrated can be retired with blank calibration and due dates. Every status that
+// claims a calibration still needs both dates.
+const undated = structuredClone(state);
+const undatedFields = { tag: 'SR0077', description: 'LOAD CELL', serial: '902115', calibratedAt: '', expires: '', location: 'Production Floor', note: 'Never calibrated; scrapped' };
+const undatedLen = undated.calibrationLog.length;
+for (const status of ['In Calibration', 'Out for Calibration', 'Quarantined']) {
+  const refused = host.withAccount(qa, () => MES.recordCalibration(undated, { ...undatedFields, status }), undated);
+  check(`blank calibration dates on a ${status} entry are refused`, !refused.ok && /calibration date/.test(refused.message) && undated.calibrationLog.length === undatedLen);
+}
+const halfDated = host.withAccount(qa, () => MES.recordCalibration(undated, { ...undatedFields, calibratedAt: '2026-09-01', status: 'Retired' }), undated);
+check('a Retired entry with only one of the two dates is refused', !halfDated.ok && /due date/.test(halfDated.message) && undated.calibrationLog.length === undatedLen);
+const halfDated2 = host.withAccount(qa, () => MES.recordCalibration(undated, { ...undatedFields, expires: '2027-09-01', status: 'Retired' }), undated);
+check('a Retired entry with only a due date is refused', !halfDated2.ok && /blank/.test(halfDated2.message) && undated.calibrationLog.length === undatedLen);
+const retiredUndated = host.withAccount(qa, () => MES.recordCalibration(undated, { ...undatedFields, status: 'Retired' }), undated);
+const undatedRetiredRow = undated.calibrationLog.find(e => e.id === retiredUndated.id);
+check('the confirmation for an undated retirement names no due date', retiredUndated.ok && /recorded as Retired with no calibration dates/.test(retiredUndated.message) && !/due/.test(retiredUndated.message));
+check('a never-calibrated tool is retired with blank calibration and due dates', retiredUndated.ok && undatedRetiredRow.calibratedAt === '' && undatedRetiredRow.expires === '' && undatedRetiredRow.status === 'Retired');
+check('the undated Retired entry validates and its manifest verifies', MES.validate(undated) && MES.verifyManifests(undated).ok && srv.validState(structuredClone(undated)) === null);
+check('the undated retired tool is unusable at point of use', !MES.toolCheck('SR0077', now, undated).ok && /Retired/.test(MES.toolCheck('SR0077', now, undated).message));
+const reinstateUndated = host.withAccount(qa, () => MES.updateCalibration(undated, retiredUndated.id, { status: 'In Calibration', note: 'Retired by mistake: the scrapped cell was SR0079' }), undated);
+check('returning an undated retired tool to service without calibration dates is refused', !reinstateUndated.ok && /calibration date/.test(reinstateUndated.message) && MES.calibrationStatus(undated, 'SR0077').id === retiredUndated.id);
+const datedRetire = host.withAccount(qa, () => MES.updateCalibration(undated, MES.calibrationStatus(undated, 'TEST-001').id, { status: 'Retired', calibratedAt: '', expires: '', note: 'Entered in error; never calibrated' }), undated);
+// Codex review on #129: only a tool that was never calibrated may be retired without dates. A tool with dates in the
+// log or in the shipped snapshot keeps them on its Retired entry, at write time and when the workspace loads.
+check('a correction to Retired cannot clear the dates of a tool with calibration dates in the log', !datedRetire.ok && /calibration dates on record/.test(datedRetire.message) && MES.calibrationStatus(undated, 'TEST-001').expires !== '');
+const seedDatedRetire = host.withAccount(qa, () => MES.recordCalibration(undated, { tag: 'NONE-175', description: 'TORQUE WRENCH', serial: '', calibratedAt: '', expires: '', status: 'Retired', location: '', note: 'Scrapped' }), undated);
+check('a tool with a due date in the shipped snapshot cannot be retired without dates', !seedDatedRetire.ok && /shipped tool snapshot/.test(seedDatedRetire.message));
+const datedRetireOk = host.withAccount(qa, () => MES.updateCalibration(undated, MES.calibrationStatus(undated, 'TEST-001').id, { status: 'Retired', note: 'Worn out; retired with its last calibration dates' }), undated);
+check('a tool with calibration history is retired with its dates', datedRetireOk.ok && MES.calibrationStatus(undated, 'TEST-001').status === 'Retired' && MES.calibrationStatus(undated, 'TEST-001').expires !== '' && MES.validate(undated));
+const forgedStrip = structuredClone(undated);
+const stripRow = { ...structuredClone(forgedStrip.calibrationLog.find(e => e.id === retiredUndated.id)), id: 'CALLOG-09000', tag: 'CAL-022', description: 'DIGITAL CALIPER', recordedAt: new Date().toISOString() };
+host.withAccount(qa, () => { stripRow.calibrationSignature = { manifest: MES.signManifest(forgedStrip, 'Calibration recorded', calSubject(stripRow), stripRow.recordedAt) }; }, forgedStrip);
+appendImported(forgedStrip, stripRow);
+check('a signed undated retirement of a tool with calibration dates on record fails validation', !MES.validate(forgedStrip) && /calibration dates on record/.test(JSON.stringify(MES.diagnose(forgedStrip))));
+// Codex review on #129: load validation reads only the signed log, not the shipped snapshot, so a later build that ships
+// new snapshot dates cannot invalidate a retirement that was valid when it was signed. The write path still reads it.
+const snapshotOnly = structuredClone(undated);
+const snapRow = { ...structuredClone(snapshotOnly.calibrationLog.find(e => e.id === retiredUndated.id)), id: 'CALLOG-09001', tag: 'NONE-175', description: 'TORQUE WRENCH', recordedAt: new Date().toISOString() };
+host.withAccount(qa, () => { snapRow.calibrationSignature = { manifest: MES.signManifest(snapshotOnly, 'Calibration recorded', calSubject(snapRow), snapRow.recordedAt) }; }, snapshotOnly);
+appendImported(snapshotOnly, snapRow);
+check('an undated retirement whose only dated record is the shipped snapshot still loads', MES.validate(snapshotOnly) && MES.verifyManifests(snapshotOnly).ok);
+const clearedInService = host.withAccount(qa, () => MES.updateCalibration(undated, MES.calibrationStatus(undated, 'CAL-022').id, { calibratedAt: '', expires: '' }), undated);
+check('a correction that clears the dates of an entry that is not Retired is refused', !clearedInService.ok && /calibration date/.test(clearedInService.message));
+// A hand-made undated entry with any status but Retired fails validation, even with a valid signature.
+const forgedUndated = structuredClone(undated);
+const undatedRow = forgedUndated.calibrationLog.find(e => e.id === retiredUndated.id);
+undatedRow.status = 'In Calibration';
+host.withAccount(qa, () => { undatedRow.calibrationSignature = { manifest: MES.signManifest(forgedUndated, 'Calibration recorded', calSubject(undatedRow), undatedRow.recordedAt) }; }, forgedUndated);
+forgedUndated.calibrationLog.forEach((e, i, log) => { if (i) e.previousHash = MES.calibrationEntryHash(log[i - 1]); }); relinkHead(forgedUndated);
+check('a signed In Calibration entry with blank dates fails validation', !MES.validate(forgedUndated) && /calibratedAt/.test(JSON.stringify(MES.diagnose(forgedUndated))));
+check('the calibration record forms leave the dates optional and say when they may be blank', /leaves them blank/.test(pageSource) && !/name="calibratedAt" type="date" required/.test(pageSource));
+
+// Codex review on #129: the demo build gives every account that is not a pilot seat full capabilities (D-6), so the
+// signer-role rule is relaxed there too (D-36); production keeps only the Quality Manager and System Administrator roles.
+const demoHost = createHost(fileURLToPath(new URL('./fixtures/demo_publish.html', import.meta.url)));
+const demoCal = demoHost.MES.seed(), prodCal = MES.seed();
+for (const ws of [demoCal, prodCal]) ws.profile = { name: 'Sky Safety', role: 'Safety Engineer', credentialId: 'SR-SF-001' };
+const demoSafety = demoHost.MES.recordCalibration(demoCal, { ...entry, tag: 'DEMO-CAL-1' });
+check('in the demo build a full-access signer role records a calibration that validates', demoSafety.ok && demoHost.MES.validate(demoCal) && demoHost.MES.verifyManifests(demoCal).ok);
+check('the production build still refuses the same signer role', !MES.recordCalibration(prodCal, { ...entry, tag: 'DEMO-CAL-1' }).ok && !MES.validate({ ...structuredClone(prodCal), calibrationLog: structuredClone(demoCal.calibrationLog), calibrationLogHead: structuredClone(demoCal.calibrationLogHead) }));
 
 console.log(`calibration: ${checks} checks, all passed`);
