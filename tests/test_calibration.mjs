@@ -560,6 +560,7 @@ const halfDated2 = host.withAccount(qa, () => MES.recordCalibration(undated, { .
 check('a Retired entry with only a due date is refused', !halfDated2.ok && /blank/.test(halfDated2.message) && undated.calibrationLog.length === undatedLen);
 const retiredUndated = host.withAccount(qa, () => MES.recordCalibration(undated, { ...undatedFields, status: 'Retired' }), undated);
 const undatedRetiredRow = undated.calibrationLog.find(e => e.id === retiredUndated.id);
+check('the confirmation for an undated retirement names no due date', retiredUndated.ok && /recorded as Retired with no calibration dates/.test(retiredUndated.message) && !/due/.test(retiredUndated.message));
 check('a never-calibrated tool is retired with blank calibration and due dates', retiredUndated.ok && undatedRetiredRow.calibratedAt === '' && undatedRetiredRow.expires === '' && undatedRetiredRow.status === 'Retired');
 check('the undated Retired entry validates and its manifest verifies', MES.validate(undated) && MES.verifyManifests(undated).ok && srv.validState(structuredClone(undated)) === null);
 check('the undated retired tool is unusable at point of use', !MES.toolCheck('SR0077', now, undated).ok && /Retired/.test(MES.toolCheck('SR0077', now, undated).message));
@@ -576,5 +577,14 @@ undatedRow.status = 'In Calibration';
 host.withAccount(qa, () => { undatedRow.calibrationSignature = { manifest: MES.signManifest(forgedUndated, 'Calibration recorded', calSubject(undatedRow), undatedRow.recordedAt) }; }, forgedUndated);
 check('a signed In Calibration entry with blank dates fails validation', !MES.validate(forgedUndated) && /calibratedAt/.test(JSON.stringify(MES.diagnose(forgedUndated))));
 check('the calibration record forms leave the dates optional and say when they may be blank', /leaves them blank/.test(pageSource) && !/name="calibratedAt" type="date" required/.test(pageSource));
+
+// Codex review on #129: the demo build gives every account that is not a pilot seat full capabilities (D-6), so the
+// signer-role rule is relaxed there too (D-35); production keeps only the Quality Manager and System Administrator roles.
+const demoHost = createHost(fileURLToPath(new URL('./fixtures/demo_publish.html', import.meta.url)));
+const demoCal = demoHost.MES.seed(), prodCal = MES.seed();
+for (const ws of [demoCal, prodCal]) ws.profile = { name: 'Sky Safety', role: 'Safety Engineer', credentialId: 'SR-SF-001' };
+const demoSafety = demoHost.MES.recordCalibration(demoCal, { ...entry, tag: 'DEMO-CAL-1' });
+check('in the demo build a full-access signer role records a calibration that validates', demoSafety.ok && demoHost.MES.validate(demoCal) && demoHost.MES.verifyManifests(demoCal).ok);
+check('the production build still refuses the same signer role', !MES.recordCalibration(prodCal, { ...entry, tag: 'DEMO-CAL-1' }).ok && !MES.validate({ ...structuredClone(prodCal), calibrationLog: structuredClone(demoCal.calibrationLog) }));
 
 console.log(`calibration: ${checks} checks, all passed`);

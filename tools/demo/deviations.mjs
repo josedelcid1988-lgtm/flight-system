@@ -151,6 +151,10 @@ const LIST = [
     why: 'Sample corrective actions, SPRs and NCs load only in the explicitly marked demo build. Production opens a valid empty register and never replaces damaged records with examples.',
     find: 'window.FlightManeuver.ensure(state);const FM=window.FlightManeuver;', count: 1,
     replace: (ctx, m, id) => `const hadManeuver=Object.hasOwn(state,'maneuver');window.FlightManeuver.ensure(state);if(!hadManeuver)window.FlightManeuver.seedDemoRecords(state);/* DEMO ${id} */const FM=window.FlightManeuver;` },
+  { area: 'Roles', title: 'Any named signer role may sign a calibration entry',
+    why: 'The full-access demo accounts (D-6) hold configure-qms whatever their role, so their calibration entries record and validate. Production accepts only the Quality Manager and System Administrator signer roles. Pilot seats are still refused by the configure-qms gate.',
+    find: 'const calibrationSignerRole = role => CALIBRATION_SIGNER_ROLES.includes(role);', count: 1,
+    replace: (ctx, m, id) => `const calibrationSignerRole = role => typeof role === 'string' && !!role.trim(); /* DEMO ${id} */` },
 ];
 
 export const DEVIATIONS = LIST.map((d, i) => Object.freeze({ ...d, id: `D-${i + 1}` }));

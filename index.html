@@ -2534,6 +2534,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // as a technician cannot put a tool into service. test_calibration checks this list against ROLE_CAPS.
   const CALIBRATION_SIGNER_ROLES = Object.freeze(['Quality Manager', 'System Administrator']);
   const calibrationSignerRole = role => CALIBRATION_SIGNER_ROLES.includes(role);
+  const calibrationSignerRefusal = role => `Calibration entries are signed as Quality Manager or System Administrator. Your signing role is ${role}.`;
   // A Retired entry for a tool that was never calibrated carries no dates (#120). Every other status claims a
   // calibration, so it needs both dates, the due date after the calibration date, and a calibration date no
   // later than the day the entry was recorded.
@@ -2652,7 +2653,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (bad) return fail(bad);
     const who = actor(state);
     if (!snapshotValid(who)) return fail('Sign in with a named credential before recording a calibration.');
-    if (!calibrationSignerRole(who.role)) return fail(`Calibration entries are signed as Quality Manager or System Administrator. Your signing role is ${who.role}.`);
+    if (!calibrationSignerRole(who.role)) return fail(calibrationSignerRefusal(who.role));
     if (!Array.isArray(state.calibrationLog)) state.calibrationLog = [];
     const retired = calibrationStatus(state, fields.tag);
     const torque = calibrationTorque(fields.tag, input?.torque, retired);
@@ -2663,7 +2664,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const entry = { id: nextCalibrationId(state.calibrationLog), ...fields, ...(torque.torque !== undefined ? { torque: torque.torque } : {}), recordedAt, recordedBy: `${who.name} \u00b7 ${who.credentialId}` };
     entry.calibrationSignature = { manifest: signManifest(state, 'Calibration recorded', calibrationSubject(entry), entry.recordedAt) };
     state.calibrationLog.push(entry);
-    return { ok: true, id: entry.id, message: `Calibration recorded for ${entry.tag}; due ${entry.expires}.` };
+    return { ok: true, id: entry.id, message: calibrationUndated(entry) ? `${entry.tag} recorded as Retired with no calibration dates. It cannot be used.` : `Calibration recorded for ${entry.tag}; due ${entry.expires}.` };
   }
   function updateCalibration(state, id, patch) {
     if (!can('configure-qms')) return fail('Only a QA Manager or Master Access account can correct calibration entries.');
@@ -2683,7 +2684,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (reinstatementReasonMissing(prior, fields)) return fail(`${prior.tag} is retired. To return it to service, enter the reason in the note (at least ${CALIBRATION_REASON_MIN} characters, different from the retirement note), for example which tool was retired by mistake.`);
     const who = actor(state);
     if (!snapshotValid(who)) return fail('Sign in with a named credential before correcting a calibration entry.');
-    if (!calibrationSignerRole(who.role)) return fail(`Calibration entries are signed as Quality Manager or System Administrator. Your signing role is ${who.role}.`);
+    if (!calibrationSignerRole(who.role)) return fail(calibrationSignerRefusal(who.role));
     const entry = { id: nextCalibrationId(log), ...fields, ...(torque.torque !== undefined ? { torque: torque.torque } : {}), recordedAt, recordedBy: `${who.name} \u00b7 ${who.credentialId}`, supersedes: prior.id };
     entry.calibrationSignature = { manifest: signManifest(state, 'Calibration entry corrected', calibrationSubject(entry), entry.recordedAt) };
     log.push(entry);
