@@ -10,6 +10,7 @@
 // compresses anyway, the assets are already JPEG and PNG), with fixed timestamps and sorted entries, so
 // the same tree always produces byte-identical zips. Node built-ins only.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { execFileSync } from 'node:child_process';
@@ -64,9 +65,9 @@ export function assetsLayoutProblem(root = ROOT) {
 // zips. The bytes on disk, exactly as they would ship, are hashed without any filter (git hash-object
 // --no-filters) and compared with the commit's tree, so no index state (untracked, ignored, renamed,
 // assume-unchanged, skip-worktree) can hide a difference. A file matches when its bytes are the committed blob,
-// or are exactly what a checkout of that blob writes on this machine (git cat-file --filters applies the smudge
-// and end-of-line conversion from .gitattributes and core.autocrlf), so a checkout with clean filters is not
-// refused for its own conversion, while bytes a clean filter would merely normalize are still refused.
+// or are exactly what any checkout of that commit writes for it (committedCheckout below), so a checkout with
+// clean filters is not refused for its own conversion, while bytes a clean filter would merely normalize, or
+// that only this machine's configuration would write, are still refused.
 // Returns a plain problem, or null.
 export function assetsProblem({ root = ROOT, commit = 'HEAD' } = {}) {
   const run = (args, options = {}) => execFileSync('git', args, { cwd: root, maxBuffer: 64 * 1024 * 1024, ...options });
@@ -74,8 +75,10 @@ export function assetsProblem({ root = ROOT, commit = 'HEAD' } = {}) {
   let tree;
   try { tree = git('ls-tree', '-z', commit, '--', 'assets/'); }
   catch { return `assets/ could not be read from commit ${commit}. Release from a git checkout of the release commit.`; }
+  const modes = new Map();
   const committed = new Map(tree.split('\0').filter(Boolean).map(entry => {
-    const [meta, name] = entry.split('\t'), [, type, hash] = meta.split(' ');
+    const [meta, name] = entry.split('\t'), [mode, type, hash] = meta.split(' ');
+    modes.set(name, mode);
     return [name, type === 'blob' ? hash : type];
   }).filter(([name]) => !path.basename(name).startsWith('.')));
   const layout = assetsLayoutProblem(root);
@@ -83,13 +86,56 @@ export function assetsProblem({ root = ROOT, commit = 'HEAD' } = {}) {
   const packaged = manifest('production', root).slice(1).map(([, inTree]) => inTree);
   const hashes = packaged.length ? git('hash-object', '--no-filters', '--', ...packaged).trim().split('\n') : [];
   const onDisk = new Map(packaged.map((name, i) => [name, hashes[i]]));
-  for (const [name, hash] of onDisk) {
-    const blob = committed.get(name);
-    if (!blob || blob === hash || !/^[0-9a-f]{40,64}$/.test(blob)) continue;
-    const checkout = run(['cat-file', '--filters', `${commit}:${name}`]);
-    if (run(['hash-object', '--no-filters', '--stdin'], { input: checkout, encoding: 'utf8' }).trim() === hash) onDisk.set(name, blob);
-  }
+  let isolated = null;
+  try {
+    for (const [name, hash] of onDisk) {
+      const blob = committed.get(name);
+      if (!blob || blob === hash || !/^[0-9a-f]{40,64}$/.test(blob)) continue;
+      // Only a regular file is ever converted on checkout; a symlink (120000) is written as its blob.
+      if (!/^100(644|755)$/.test(modes.get(name) || '')) continue;
+      isolated ??= isolatedGit(run, commit);
+      const checkout = committedCheckout(run, isolated, commit, name, blob);
+      if (checkout && run(['hash-object', '--no-filters', '--stdin'], { input: checkout, encoding: 'utf8' }).trim() === hash) onDisk.set(name, blob);
+    }
+  } finally { if (isolated) fs.rmSync(isolated.dir, { recursive: true, force: true }); }
   return assetsDiff(committed, onDisk, commit);
+}
+
+// A git with none of this machine's configuration: an empty bare repository that borrows the objects of this one,
+// with no system, global or repository config, no attributes file, no info/attributes and no filter drivers, and
+// core.autocrlf off with core.eol lf. Attributes come only from the release commit (--attr-source), so the bytes it
+// writes are what git itself writes for that commit, including git's own text=auto test, instead of a copy of it.
+function isolatedGit(run, commit) {
+  const sha = run(['rev-parse', '--verify', `${commit}^{commit}`], { encoding: 'utf8' }).trim();
+  const objects = path.join(run(['rev-parse', '--path-format=absolute', '--git-common-dir'], { encoding: 'utf8' }).trim(), 'objects');
+  const format = run(['rev-parse', '--show-object-format'], { encoding: 'utf8' }).trim();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flight-release-git-'));
+  const env = { PATH: process.env.PATH, HOME: dir, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: os.devNull, GIT_ATTR_NOSYSTEM: '1' };
+  execFileSync('git', ['init', '-q', '--bare', `--object-format=${format}`, path.join(dir, 'repo.git')], { env });
+  const gitEnv = { ...env, GIT_DIR: path.join(dir, 'repo.git'), GIT_ALTERNATE_OBJECT_DIRECTORIES: objects };
+  const git = args => execFileSync('git', ['-c', 'core.autocrlf=false', '-c', 'core.eol=lf', '-c', `core.attributesFile=${os.devNull}`, `--attr-source=${sha}`, ...args], { env: gitEnv, maxBuffer: 64 * 1024 * 1024 });
+  return { dir, sha, git };
+}
+
+// The bytes every checkout of the commit writes for name, decided by that commit's own .gitattributes alone: the
+// committed blob, or git's own CRLF checkout of it when the commit marks the file text with eol=crlf. A conversion
+// that depends on this machine (core.autocrlf or core.eol, info/attributes, a global or system attributes file, a
+// filter driver from config, ident, working-tree-encoding) would not be reproduced by another checkout of the
+// commit, so no conversion is accepted then and the function returns null. The converted bytes come from git
+// itself, run with no local configuration (isolatedGit), so git's text=auto test decides, not a copy of it.
+function committedCheckout(run, isolated, commit, name, blob) {
+  const names = ['text', 'eol', 'filter', 'ident', 'working-tree-encoding'];
+  const parse = out => { const a = {}; const f = out.toString('utf8').split('\0'); for (let i = 0; i + 2 < f.length; i += 3) a[f[i + 1]] = f[i + 2]; return a; };
+  // The attributes the commit alone sets for this path, and the ones this checkout would apply (the commit plus
+  // info/attributes; global and system files are already excluded). A local rule that changes any of them for this
+  // path means another checkout of the commit would not write these bytes; a local rule for other paths is ignored.
+  const attr = parse(isolated.git(['check-attr', '-z', `--source=${isolated.sha}`, ...names, '--', name]));
+  const here = parse(run(['-c', `core.attributesFile=${os.devNull}`, 'check-attr', '-z', `--source=${commit}`, ...names, '--', name],
+    { encoding: 'utf8', env: { ...process.env, GIT_ATTR_NOSYSTEM: '1' } }));
+  if (names.some(n => attr[n] !== here[n])) return null;
+  if (['filter', 'ident', 'working-tree-encoding'].some(a => attr[a] !== 'unspecified' && attr[a] !== 'unset')) return null;
+  if (attr.eol !== 'crlf' || attr.text === 'unset') return null;
+  return isolated.git(['cat-file', '--filters', `--path=${name}`, blob]);
 }
 
 // The comparison behind assetsProblem: committed and packaged map assets/<name> to its git blob hash.

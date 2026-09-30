@@ -147,6 +147,57 @@ try{
    ok('the asset check refuses a changed text asset under a clean filter',/assets\/n\.txt differs from HEAD/.test(assetsProblem({root:s.dir})||''));
    fs.writeFileSync(s.at('assets/n.txt'),'a\r\nb\n');
    ok('the asset check refuses bytes a clean filter would normalize but a checkout would not write',/assets\/n\.txt differs from HEAD/.test(assetsProblem({root:s.dir})||''));}
+  // #96 review: only a conversion the named commit's own .gitattributes asks for is accepted. A conversion that
+  // comes from this machine (core.autocrlf, info/attributes, a filter driver in local config) would not be
+  // reproduced by another checkout of the commit, so those bytes are refused.
+  {const s=sandbox();fs.writeFileSync(s.at('assets/n.txt'),'a\nb\n');s.g('add','.');s.g('commit','-q','-m','text asset');
+   s.g('config','core.autocrlf','true');fs.writeFileSync(s.at('assets/n.txt'),'a\r\nb\r\n');
+   ok('the asset check refuses a line-ending conversion that comes only from local core.autocrlf',/assets\/n\.txt differs from HEAD/.test(assetsProblem({root:s.dir})||''),assetsProblem({root:s.dir}));
+   s.g('config','--unset','core.autocrlf');fs.mkdirSync(path.join(s.dir,'.git/info'),{recursive:true});fs.writeFileSync(path.join(s.dir,'.git/info/attributes'),'*.txt text eol=crlf\n');
+   ok('the asset check refuses a line-ending conversion that comes only from info/attributes',/assets\/n\.txt differs from HEAD/.test(assetsProblem({root:s.dir})||''),assetsProblem({root:s.dir}));
+   fs.rmSync(path.join(s.dir,'.git/info/attributes'));fs.writeFileSync(s.at('.gitattributes'),'*.txt filter=up\n');s.g('add','.gitattributes');s.g('commit','-q','-m','filter attr');
+   s.g('config','filter.up.smudge','tr a-z A-Z');s.g('config','filter.up.clean','cat');fs.writeFileSync(s.at('assets/n.txt'),'A\nB\n');
+   ok('the asset check refuses bytes written by a filter driver defined in local config',/assets\/n\.txt differs from HEAD/.test(assetsProblem({root:s.dir})||''),assetsProblem({root:s.dir}));
+   s.g('rm','-q','.gitattributes');s.g('commit','-q','-m','no filter attr');fs.writeFileSync(s.at('.gitattributes'),'*.txt filter=up\n');
+   ok('the asset check refuses bytes from a filter assigned only in an uncommitted .gitattributes',/assets\/n\.txt differs from HEAD/.test(assetsProblem({root:s.dir})||''),assetsProblem({root:s.dir}));
+   s.g('add','.gitattributes');s.g('commit','-q','-m','filter attr again');
+   fs.writeFileSync(s.at('assets/n.txt'),'a\nb\n');
+   ok('the asset check still accepts the committed blob bytes under a filter attribute',assetsProblem({root:s.dir})===null,assetsProblem({root:s.dir}));
+   fs.writeFileSync(s.at('.gitattributes'),'*.txt text=auto eol=crlf\n');s.g('add','.gitattributes');s.g('commit','-q','-m','auto');fs.writeFileSync(s.at('assets/n.txt'),'a\r\nb\r\n');
+   ok('the asset check accepts the CRLF checkout of a text=auto eol=crlf asset the commit declares',assetsProblem({root:s.dir})===null,assetsProblem({root:s.dir}));
+   // #135 review: git itself writes the accepted checkout bytes, so its own text=auto test decides, not a copy of it.
+   const fresh=f=>{fs.rmSync(s.at(f));s.g('checkout','-q','--',f);return fs.readFileSync(s.at(f));};
+   fs.writeFileSync(s.at('assets/m.txt'),Buffer.concat([Buffer.alloc(127,'x'),Buffer.from('\n\x01','latin1')]));s.g('add','assets/m.txt');s.g('commit','-q','-m','mostly printable');
+   const m=fresh('assets/m.txt');fs.writeFileSync(s.at('assets/m.txt'),Buffer.from(m.toString('latin1').replace('\n','\r\n'),'latin1'));
+   ok('the asset check refuses a CRLF form git would not write for a text=auto blob it treats as binary',!m.includes('\r')&&/assets\/m\.txt differs from HEAD/.test(assetsProblem({root:s.dir})||''),assetsProblem({root:s.dir}));
+   fresh('assets/m.txt');
+   fs.writeFileSync(s.at('assets/d.txt'),Buffer.from('a\n\x1a','latin1'));s.g('add','assets/d.txt');s.g('commit','-q','-m','dos eof');
+   const d=fresh('assets/d.txt');
+   ok('the asset check accepts git\'s CRLF checkout of a text=auto asset ending in a DOS EOF byte',d.toString('latin1')==='a\r\n\x1a'&&assetsProblem({root:s.dir})===null,assetsProblem({root:s.dir}));
+   fs.writeFileSync(s.at('assets/c.txt'),Buffer.from('a\rb\nc\n','latin1'));s.g('add','assets/c.txt');s.g('commit','-q','-m','lone cr');
+   fresh('assets/c.txt');
+   ok('the asset check accepts exactly what a clean checkout writes for a text=auto asset with a lone CR',assetsProblem({root:s.dir})===null,assetsProblem({root:s.dir}));
+   fs.symlinkSync('a\nb',s.at('assets/l.txt'));s.g('add','assets/l.txt');s.g('commit','-q','-m','symlink');
+   fs.rmSync(s.at('assets/l.txt'));fs.writeFileSync(s.at('assets/l.txt'),'a\r\nb');
+   ok('the asset check never applies a text conversion to a committed symlink',/assets\/l\.txt differs from HEAD/.test(assetsProblem({root:s.dir})||''),assetsProblem({root:s.dir}));
+   s.g('rm','-q','-f','assets/l.txt');s.g('commit','-q','-m','no symlink');
+   fs.writeFileSync(s.at('assets/e.txt'),'a\nb\n');fs.chmodSync(s.at('assets/e.txt'),0o755);s.g('add','assets/e.txt');s.g('commit','-q','-m','executable');
+   const e=fresh('assets/e.txt');
+   ok('the asset check accepts the CRLF checkout of an executable text asset',/^100755 /.test(s.g('ls-tree','HEAD','assets/e.txt'))&&e.toString()==='a\r\nb\r\n'&&assetsProblem({root:s.dir})===null,assetsProblem({root:s.dir}));
+   fs.mkdirSync(path.join(s.dir,'.git/info'),{recursive:true});fs.writeFileSync(path.join(s.dir,'.git/info/attributes'),'docs/** text\n');
+   ok('the asset check ignores a local attributes rule that does not apply to the asset',assetsProblem({root:s.dir})===null,assetsProblem({root:s.dir}));
+   fs.writeFileSync(path.join(s.dir,'.git/info/attributes'),'assets/e.txt -text\n');
+   ok('the asset check refuses when a local attributes rule changes the asset\'s own attributes',/assets\/e\.txt differs from HEAD/.test(assetsProblem({root:s.dir})||''),assetsProblem({root:s.dir}));
+   fs.rmSync(path.join(s.dir,'.git/info/attributes'));}
+  // #135 review: the isolated git uses the source repository's object format, so a SHA-256 repository works too.
+  {const s=sandbox(),dir=fs.mkdtempSync(path.join(os.tmpdir(),'flight-release-sha256-'));sandboxes.push(dir);
+   fs.cpSync(s.dir,dir,{recursive:true,filter:src=>path.basename(src)!=='.git'});
+   const g=(...a)=>execFileSync('git',['-c','user.name=Test','-c','user.email=test@example.com','-c','commit.gpgsign=false',...a],{cwd:dir,encoding:'utf8'}).trim();
+   fs.writeFileSync(path.join(dir,'.gitattributes'),'*.txt text eol=crlf\n');fs.writeFileSync(path.join(dir,'assets/n.txt'),'a\nb\n');
+   g('init','-q','--object-format=sha256');g('add','.');g('commit','-q','-m','sha256 release');
+   fs.rmSync(path.join(dir,'assets/n.txt'));g('checkout','-q','--','assets/n.txt');
+   let r;try{r=assetsProblem({root:dir});}catch(e){r='threw '+e.message;}
+   ok('the asset check accepts a committed CRLF conversion in a SHA-256 repository',g('rev-parse','--show-object-format')==='sha256'&&fs.readFileSync(path.join(dir,'assets/n.txt'),'utf8')==='a\r\nb\r\n'&&r===null,r);}
   // #86 (fixed in PR #82): no git status call remains; a git failure is a plain refusal, not a stack trace.
   {const dir=fs.mkdtempSync(path.join(os.tmpdir(),'flight-nogit-'));sandboxes.push(dir);fs.mkdirSync(path.join(dir,'assets'));fs.writeFileSync(path.join(dir,'assets/a.js'),'one');
    let r;try{r=assetsProblem({root:dir});}catch(e){r='threw '+e.message;}
@@ -174,7 +225,10 @@ try{
    s.results();const a=s.node(['tools/release-report.mjs','--dry-run'],{FLIGHT_SOURCE_COMMIT:head.slice(0,12)});
    ok('the release record accepts a FLIGHT_SOURCE_COMMIT naming HEAD and records it in full',a.code===0&&a.out.includes('| Stamp generated from commit | `'+head+'` |'),a.out);
    const ci=fs.readFileSync(path.join(ROOT,'.github/workflows/ci.yml'),'utf8');
-   ok('CI checks out the pull request head that its dry-run record names',/uses: actions\/checkout@v4\n\s+with:\n\s+ref: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}/.test(ci)&&/FLIGHT_SOURCE_COMMIT: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}/.test(ci));}
+   const job=n=>(ci.split(/\n  (?=[\w-]+:\n)/).find(b=>b.startsWith(n+':'))||'');
+   const headCheckout=/uses: actions\/checkout@v4\n\s+with:\n\s+ref: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}/;
+   ok('CI runs the suites on the merge ref, not a pinned head',/uses: actions\/checkout@v4\n/.test(job('suites'))&&!/\bref:/.test(job('suites'))&&!/release-report/.test(job('suites')),job('suites').slice(0,80));
+   ok('CI builds the dry-run record in a separate job on the pull request head that the record names',headCheckout.test(job('release-record'))&&/FLIGHT_SOURCE_COMMIT: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}\n\s+run: node tools\/release-report\.mjs --dry-run/.test(job('release-record'))&&/run-suites\.mjs --mirror/.test(job('release-record')));}
   // #63: the source package is named from VERSION.md, so both pages must identify as that build.
   {const s=sandbox();const {packageSource}=await s.tool('package-source.mjs');const out=fs.mkdtempSync(path.join(os.tmpdir(),'flight-source-'));sandboxes.push(out);
    const tryPack=()=>{try{return 'ok '+path.basename(packageSource(out).file);}catch(e){return e.message;}};
