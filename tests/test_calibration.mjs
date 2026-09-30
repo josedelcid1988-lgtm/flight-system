@@ -327,6 +327,15 @@ const protoRepair = MES.repair(structuredClone(protoTampered));
 check('MES.repair does not report a __proto__ workspace as fixed, so save() refuses to write it', protoRepair.ok === false && /__proto__/.test(protoRepair.blocker?.detail || ''));
 const oldVersion = structuredClone(protoTampered); oldVersion.version = 2;
 check('an older-version workspace holding a __proto__ key is not upgraded either', !MES.upgrade(oldVersion));
+// Codex review on #168 (4145767754): the diagnostic path walk must not overflow the stack on deeply nested input.
+{ let deep = '{"__proto__":1}'; for (let n = 0; n < 5000; n += 1) deep = `{"a":${deep}}`; const d = JSON.parse(JSON.stringify(hist)); d._probe = JSON.parse(deep);
+  let found = null, threw = null; try { found = MES.diagnose(d); } catch (e) { threw = e; }
+  check('diagnose names a __proto__ key nested 5000 levels deep instead of overflowing the stack', !threw && !MES.validate(d) && !!found && found.where.startsWith('workspace._probe.a.a') && found.where.endsWith('.a') && /__proto__/.test(found.detail)); }
+// Codex review on #168 (4145767770): a closed order holding a __proto__ key must not move into the archive, where the
+// live-workspace check no longer sees it. Every archive candidate passes archivedOrderValid (server commitState, archiveOrders).
+const closedEntry = { order: { id: 'WO-ARCH-1', status: 'Closed', operations: [], tickets: [] }, activity: [] };
+const taintedEntry = { order: { id: 'WO-ARCH-2', status: 'Closed', operations: [JSON.parse('{"__proto__":{"note":"hidden"}}')], tickets: [] }, activity: [] };
+check('an archive candidate holding a __proto__ key is refused, while a clean closed order still archives', MES.archivedOrderValid(closedEntry) && !MES.archivedOrderValid(taintedEntry));
 // #64: the calibration log is append-only. Retirement, not deletion, removes a tool from use: a retired
 // tool reads unusable at point of use and its entries stay in the signed log.
 check('there is no calibration delete command', MES.deleteCalibration === undefined && MES.removeCalibration === undefined && host.resolveAction('MES.deleteCalibration') === null);

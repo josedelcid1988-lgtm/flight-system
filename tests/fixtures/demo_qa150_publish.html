@@ -2967,7 +2967,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // Saved data is JSON, so a native serialize is the fast first pass: a real key reads "__proto__": while the
   // same text inside a string value is escaped. Only a hit pays for the exact walk.
   const hasProtoKey = root => { let text; try { text = JSON.stringify(root); } catch (e) { return hasProtoKeyWalk(root); } return typeof text === 'string' && text.includes('"__proto__":') && hasProtoKeyWalk(root); };
-  const findProtoKeyPath = (value, path) => { if (Array.isArray(value)) { for (let i = 0; i < value.length; i += 1) { const found = findProtoKeyPath(value[i], `${path}[${i}]`); if (found) return found; } return null; } if (!value || typeof value !== 'object') return null; for (const k of Object.keys(value)) { if (k === '__proto__') return path; const found = findProtoKeyPath(value[k], `${path}.${k}`); if (found) return found; } return null; };
+  const findProtoKeyPath = (root, rootPath) => { const stack = [[root, rootPath]]; while (stack.length) { const [value, path] = stack.pop(); if (!value || typeof value !== 'object') continue; if (Array.isArray(value)) { for (let i = value.length - 1; i >= 0; i -= 1) stack.push([value[i], `${path}[${i}]`]); continue; } const keys = Object.keys(value); if (keys.includes('__proto__')) return path; for (let i = keys.length - 1; i >= 0; i -= 1) stack.push([value[keys[i]], `${path}.${keys[i]}`]); } return null; };
   const protoKeyPath = (value, path = 'workspace') => hasProtoKey(value) ? findProtoKeyPath(value, path) : null;
   const hasManifestKey = value => Array.isArray(value) ? value.some(hasManifestKey) : !!value && typeof value === 'object' && Object.keys(value).some(k => k === 'manifest' || hasManifestKey(value[k]));
   // A signature manifest binds who signed, what it meant, when, and a hash of the record content
@@ -7646,7 +7646,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   }
   function archivedOrderValid(entry) {
     const order = entry && entry.order;
-    return !!(order && typeof order.id === 'string' && order.id && order.status === 'Closed' && Array.isArray(order.operations) && Array.isArray(order.tickets));
+    return !!(order && typeof order.id === 'string' && order.id && order.status === 'Closed' && Array.isArray(order.operations) && Array.isArray(order.tickets)) && !hasProtoKey(entry);
   }
   function archiveOrders(state) {
     if (!state || !Array.isArray(state.orders)) return { ok: false, message: 'The workspace has no work-order list.' };
