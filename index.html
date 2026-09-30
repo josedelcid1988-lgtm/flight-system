@@ -4358,7 +4358,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const { wi, error } = editableWI(state, id, revision); if (error) return fail(error);
     const row = plain(wi.pfmea) ? wi.pfmea.rows.find(r => r.id === rowId) : null; if (!row) return fail('PFMEA row not found.');
     if (Object.hasOwn(patch || {}, 'done')) { const done = patch.done === true || patch.done === 'on' || patch.done === 'yes'; if (done && !(row.action && row.owner && row.due)) return fail('Add the action, owner and due date before marking it done.'); row.done = done; }
-    if (Object.hasOwn(patch || {}, 'remove') && patch.remove) { wi.pfmea.rows = wi.pfmea.rows.filter(r => r.id !== rowId); wiLog(state, wi, `PFMEA ${rowId} removed.`); return { ok: true, message: `${rowId} removed.` }; }
+    if (Object.hasOwn(patch || {}, 'remove') && patch.remove) { const what = `PFMEA ${rowId} removed from ${wi.id} Rev ${wi.revision}: ${row.mode || 'failure mode'} (S${row.s} O${row.o} D${row.d}, RPN ${row.rpn}).`; wi.pfmea.rows = wi.pfmea.rows.filter(r => r.id !== rowId); wiLog(state, wi, what); return { ok: true, message: what }; }
     wiLog(state, wi, `PFMEA ${row.id} ${row.done ? 'action done' : 'action reopened'}.`);
     return { ok: true, message: `${row.id} ${row.done ? 'action done' : 'reopened'}.` };
   }
@@ -8508,8 +8508,9 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (!can('edit-wi')) return fail('Your role cannot remove failure modes.');
     if (t.status !== 'Analysis') return fail('Rows are removed during analysis only.');
     if (!t.rows.some(r => r.id === rowId)) return fail('Row not found.');
-    t.rows = t.rows.filter(r => r.id !== rowId); log(state, t, `${rowId} removed.`);
-    return { ok: true, message: `${rowId} removed.` };
+    const row = t.rows.find(r => r.id === rowId), what = `${t.id} (${t.wiId} Rev ${t.wiRevision}): ${rowId} removed, ${row.mode} (S${row.s} O${row.o} D${row.d}, RPN ${row.rpn}).`;
+    t.rows = t.rows.filter(r => r.id !== rowId); log(state, t, what);
+    return { ok: true, message: what };
   }
   function markOpNoRisk(state, id, opId, note) {
     const { t, wi, error } = openPfmea(state, id); if (error) return fail(error);
