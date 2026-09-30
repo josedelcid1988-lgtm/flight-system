@@ -182,6 +182,60 @@ try {
     for (const id of [named, copied, archived]) assert.equal((await api('GET', `/evidence/${id}`, { token: other })).status, 200, `${id} is named by a record, so any signed-in account reads it`);
     assert.equal((await api('GET', `/evidence/${loose}`, { token: other })).status, 403, 'the unnamed recording stays refused');
   });
+
+  // #103, #104: the read decision is the same for every role before and after the workspace changes, the refusal
+  // names everyone who can open the recording, and repeated reads of an unchanged workspace do not parse it again.
+  await check('evidence read decisions match every role across workspace writes, without reparsing an unchanged workspace', async () => {
+    const roles = ['admin', 'general', 'technician', 'operator', 'ops', 'me', 'swe', 'qe', 'safety', 'cert', 'qs', 'qm'];
+    const tokens = {};
+    // Each account is created as a technician and then given its role in the store, so the inspection and MRB
+    // roles do not need the training records account creation asks for; this check is about the read decision.
+    for (const role of roles) {
+      const name = `sec-role-${role}`;
+      await addUser(name, 'technician', `${name}-pass-1`);
+      await server.store.upsertAccount({ ...await server.store.account(name), role, roles: [role] });
+    }
+    for (const role of roles) tokens[role] = await signIn(`sec-role-${role}`, `sec-role-${role}-pass-1`);
+    const uploader = await signIn('sec-tech', 'sec-tech-pass-1');
+    const id = 'EV-00000000-0000-4000-8000-0000000c0105';
+    const bytes = Buffer.from(`evidence ${id}`);
+    assert.equal((await api('POST', `/evidence/${id}`, { token: uploader, raw: true, body: bytes, headers: { 'Content-Type': 'video/webm', 'X-Evidence-Sha256': createHash('sha256').update(bytes).digest('hex') } })).status, 201);
+    const managers = new Set(['admin', 'qm']);
+    const expectDecisions = async (named, stage) => {
+      for (const role of roles) for (const suffix of ['', '/meta']) {
+        const r = await api('GET', `/evidence/${id}${suffix}`, { token: tokens[role] });
+        const allowed = named || managers.has(role);
+        assert.equal(r.status, allowed ? 200 : 403, `${stage}: ${role} ${allowed ? 'reads' : 'is refused'} ${suffix || 'the bytes'}`);
+        if (!allowed) {
+          assert.ok(!r.bytes.includes(bytes), `${stage}: no bytes reach ${role}`);
+          assert.match(r.json.error, /the account that uploaded it, a QA Manager, or a Master Access account can open it/, 'the refusal names every account that can open it');
+          assert.match(r.json.error, /Ask the uploader to save it on its operation/, 'the refusal says what to do next');
+          assert.ok(!/\u2014/.test(r.json.error), 'no em dash in product text');
+        }
+      }
+      assert.equal((await api('GET', `/evidence/${id}`, { token: uploader })).status, 200, `${stage}: the uploader reads its own recording`);
+    };
+    const write = async doc => { const cur = await server.store.getDoc('default'); assert.ok(await server.store.putDoc('default', JSON.stringify(doc), cur ? cur.etag : null, 'security-test')); };
+    const unnamed = { orders: [{ id: 'WO-SEC-105', operations: [{ id: 'op-010', evidence: [{ id: 'EV-00000000-0000-4000-8000-0000000c0199' }] }] }] };
+    await write(unnamed);
+    await expectDecisions(false, 'before any record names it');
+    // Repeated reads of an unchanged workspace reuse the parsed result: the stored workspace JSON is parsed at most
+    // once across these reads, where before this change every read parsed it.
+    const stored = (await server.store.getDoc('default')).json;
+    const parse = JSON.parse; let parses = 0;
+    JSON.parse = function (text, ...rest) { if (text === stored) parses++; return parse.call(this, text, ...rest); };
+    try { for (let i = 0; i < 5; i++) assert.equal((await api('GET', `/evidence/${id}`, { token: tokens.technician })).status, 403); }
+    finally { JSON.parse = parse; }
+    assert.ok(parses <= 1, `the unchanged workspace was parsed ${parses} times over five reads`);
+    await write({ orders: [{ id: 'WO-SEC-105', operations: [{ id: 'op-010', evidence: [{ id }] }] }] });
+    await expectDecisions(true, 'after a write names it on an operation');
+    await write(unnamed);
+    await expectDecisions(false, 'after a write removes it again');
+    await write({ orders: [{ id: 'WO-SEC-105', operations: [{ id: 'op-010', quarantinedEvidence: [{ id: 'EV-00000000-0000-4000-8000-0000000c0198', copyOf: id }] }] }] });
+    await expectDecisions(true, 'after a write names it as the stored copy behind quarantined evidence');
+    await write(unnamed);
+    await expectDecisions(false, 'after the copy is removed');
+  });
 } finally {
   await server.closeAsync().catch(() => {});
 }

@@ -692,7 +692,7 @@ function ActivityLog({ events, onOpenOrder }) {
         <div className="fr-controls"><button className="fr-density" type="button" aria-pressed={compact} onClick={setDensity}><SlidersHorizontal size={15}/>{compact ? 'Comfortable' : 'Compact'}</button><button className="fr-density" type="button" onClick={clear}>Clear filters</button></div>
       </div>
       <div className="fr-table-scroll" role="region" aria-label="Filtered activity events" tabIndex="0"><table className={compact ? 'fr-compact' : ''}><thead><tr><th>Date and time</th><th>Activity</th><th>Record</th><th>Person</th><th><span className="fr-visually-hidden">Details</span></th></tr></thead><tbody>
-        {rows.map(event => <tr key={event.id}><td><time dateTime={event.at}>{event.date}</time></td><td><span className="fr-activity-kind">{event.kind}</span></td><td><span dangerouslySetInnerHTML={{ __html: event.actionHtml }}/>{event.orderId && <small className="fr-activity-order">Work order · <span dangerouslySetInnerHTML={{ __html: event.orderHtml }}/></small>}</td><td>{event.actor}</td><td><button className="fr-open-button" aria-label={`Details for ${event.kind} at ${event.date}`} onClick={click => { returnFocus.current = click.currentTarget; setSelected(event); }}><ArrowUpRight size={18}/></button></td></tr>)}
+        {rows.map(event => <tr key={event.id}><td><time dateTime={event.at}>{event.date}</time></td><td><span className="fr-activity-kind">{event.kind}</span></td><td><span><RecordLinks text={event.action} orderId={event.orderId}/></span>{event.orderId && <small className="fr-activity-order">Work order · <span><RecordLinks text={event.orderId} orderId={event.orderId}/></span></small>}</td><td>{event.actor}</td><td><button className="fr-open-button" aria-label={`Details for ${event.kind} at ${event.date}`} onClick={click => { returnFocus.current = click.currentTarget; setSelected(event); }}><ArrowUpRight size={18}/></button></td></tr>)}
       </tbody></table>{!rows.length && <div className="fr-empty">No activity matches the current filters.</div>}</div>
       <footer><span aria-live="polite">{rows.length} of {events.length} activity events</span><span><Check size={13}/> Read-only record view</span></footer>
     </section>
@@ -730,7 +730,6 @@ const wiOrderSummaryText = orders => {
 /* ------------------------------------------------------------------
  * v2 order-screen shared helpers (ported from legacy module scope).
  * ------------------------------------------------------------------ */
-const escHtml = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const RECORD_PATTERNS = [
   [/\b(WO-\d{3,6})\b/g, 'order'],
   [/\b((?:IDR|NC)-\d{4,8})\b/g, 'ticket'],
@@ -816,7 +815,7 @@ function TraceReport({ state, MES, query }) {
       {n.tickets.length ? <Sec title="NC on this order" count={n.tickets.length}><Tbl label="Tickets" head={['Ticket', 'Title', 'Disposition', 'Defect', 'Status', 'Closed by']} empty="" rows={n.tickets.map(t => [<button className="order-link" data-action="mnv-open-ticket" data-order={n.id} data-ticket={t.id}>{t.id}</button>, t.title, t.dispo || '', t.defect || '', t.status, t.resolvedBy ? <>{t.resolvedBy}<small>{legacyDateTime(t.resolvedAt)}</small></> : ''])}/></Sec> : null}
       {n.reports.length ? <Sec title="ATP records" count={n.reports.length}><Tbl label="ATP" head={['Record', 'Result', 'When', 'Link']} empty="" rows={n.reports.map(r => [r.title || r.id, r.result, r.at ? legacyDateTime(r.at) : '', r.link ? <a href={r.link} target="_blank" rel="noopener">Open</a> : ''])}/></Sec> : null}
       {n.revisions.length > 1 ? <Sec title="Work order revisions and redlines" count={n.revisions.length}><Tbl label="Revisions" head={['Rev', 'Summary', 'Changes', 'Approved by', 'When']} empty="" rows={n.revisions.map(r => [<span className="mono">{r.rev}</span>, r.summary || '', r.changes.join(', '), r.approvedBy || '', legacyDateTime(r.at)])}/></Sec> : null}
-      <details className="resolve-details tr-history"><summary>Full record history for {n.id} ({n.history.length})</summary><ol className="task-list">{n.history.map((h, i) => <li key={i}><span className="task-main"><strong>{h.action}</strong><small>{h.actor} · {legacyDateTime(h.at)}</small></span></li>)}</ol></details>
+      <HistoryList layout="disclosure" events={n.history} when={legacyDateTime} chronological className="tr-history" summary={`Full record history for ${asText(n.id)}`}/>
       {n.children.map(c => <div className="tr-child" key={c.node.id}><p className="small"><strong>{c.via}</strong> issued from {wo(c.node.id)} · lot {q(c.lot)}{c.serials.length ? <> · {c.serials.map((s, i) => <span key={s}>{i > 0 ? ', ' : null}{q(s)}</span>)}</> : null}</p><Node n={c.node} level={level + 1}/></div>)}
     </div>;
   };
@@ -878,7 +877,7 @@ function WIDetail({ state, MES, FM, wi, perms, peerOptionsHtml, qaOptionsHtml, p
         {derived.length ? <ul className="wi-plain-list">{derived.map(o => <li key={o.id}><button className="order-link" data-action="open-order" data-order={o.id}>{o.id}</button> <Pill status={o.status}/></li>)}</ul> : <p className="small muted">{wi.status === 'Released' ? 'No work orders yet.' : 'None until QA releases this revision.'}</p>}
         {derived.length || derivedAll.length ? <p className="wi-order-actions">{derived.length ? <button className="btn" data-action="wi-orders" data-wi={wi.id} data-rev={wi.revision}>Open these work orders <ArrowUpRight size={16}/></button> : null}<button className="btn quiet" data-action="wi-orders" data-wi={wi.id} data-rev="">All revisions of {wi.id}</button></p> : null}
         <h3 className="wi-subhead">Revisions</h3><ul className="wi-plain-list wi-rev-list">{revisions.map(x => <li key={x.revision} className={x === wi ? 'is-current' : ''} aria-current={x === wi ? 'true' : undefined}>{x === wi ? <span className="wi-rev-name">Rev {x.revision}</span> : <button className="order-link wi-rev-name" data-action="wi-open" data-wi={x.id} data-rev={x.revision}>Rev {x.revision}</button>} <Pill status={x.status}/>{x === wi ? <span className="wi-rev-note">This revision</span> : null}</li>)}</ul>
-        <h3 className="wi-subhead">History</h3><ol className="wi-history">{(wi.history || []).slice(-5).reverse().map((h, i) => <li key={i}><span>{h.action}</span><small>{legacyDate(h.at)} · {h.actor}</small></li>)}{!(wi.history || []).length ? <li><small>No history yet.</small></li> : null}</ol>
+        <h3 className="wi-subhead">History</h3><HistoryList layout="recent" events={wi.history || []} when={legacyDateTime}/>
       </div></section>
     </div>
     <section className="panel" aria-labelledby="wi-form3-heading"><div className="panel-head"><h2 id="wi-form3-heading">AS9102 Form 3 plan</h2><span className="pill">{wi.form3Plan ? `${wi.form3Plan.balloonCount} planned characteristics` : 'No plan'}</span></div><div className="panel-body">{draft ? <form data-form3-plan data-wi={wi.id} data-revision={wi.revision}><p className="small muted">Define balloon number, characteristic and drawing requirement for this WI draft. The signed plan hash follows the released revision into its FAIR.</p><label className="field">Planned characteristics JSON<textarea name="characteristics" rows="5" required placeholder='[{"balloon":1,"characteristic":"Bore diameter","requirement":"10.00 ±0.05 mm"}]' defaultValue={wi.form3Plan ? JSON.stringify(wi.form3Plan.characteristics, null, 2) : ''}></textarea></label><button className="btn" type="submit">Save Form 3 plan</button></form> : wi.form3Plan ? <p>Plan SHA-256 <span className="mono">{wi.form3Plan.sha256}</span> · {wi.form3Plan.characteristics.map(c => `#${c.balloon} ${c.characteristic}`).join(' · ')}</p> : <p className="muted">No Form 3 plan was released with this revision.</p>}</div></section>
@@ -1020,8 +1019,8 @@ function ManeuverDetail({ state, MES, FM, sel, skCan, helpers, view }) {
   const { dt } = helpers;
   const who = mnvWho;
   // A record's history, newest first, as the legacy Flight Maneuver view shows it. helpers.historyList is that view's
-  // HTML string, which React would print as text, so the same markup is built here.
-  const historyList = h => <details className="resolve-details"><summary>History ({h.length})</summary><ol className="task-list mnv-history">{h.slice().reverse().map((e, i) => <li key={i}><span className="task-main"><strong>{e.action}</strong><small>{e.actor} · {dt(e.at)}</small></span></li>)}</ol></details>;
+  // HTML string, which React would print as text, so the shared React HistoryList renders it from the record data.
+  const historyList = h => <HistoryList layout="disclosure" events={h} when={dt} listClassName="task-list mnv-history"/>;
   const carLink = id => id ? <button className="order-link" data-action="mnv-open-car" data-car={id}>{id}</button> : <span className="muted">None</span>;
   const waitNote = m => <MnvWait>{m}</MnvWait>;
   const pfmeaEditorCan = () => skCan('edit-wi') || skCan('approve-wi');
@@ -1515,16 +1514,62 @@ function historyKind(a) { a = String(a || ''); return /\b(NC|IDR)-\d/.test(a) ? 
 
 function orderCreatedOn(o) { const h = (Array.isArray(o.historyArchive) && o.historyArchive[0]) || (o.history || [])[0]; const r = (o.revisions || [])[0]; return String((h && h.at) || (r && r.at) || o.start || '').slice(0, 10); }
 
-function recordLinks(text, orderId) {
-  let html = escHtml(text);
+/* ------------------------------------------------------------------
+ * Record history. Every React view that shows a record's history renders it here, from the record data, as React
+ * elements: no HTML strings, so action and actor text always prints as text. Each layout mirrors one legacy
+ * template entry for entry (action, actor with credential, time) and in the same order:
+ *   disclosure  Flight Maneuver records and the trace report: a History disclosure, newest first unless chronological.
+ *   timeline    Work-order activity record: filters, then every entry newest first, record numbers as links.
+ *   recent      Master WI detail: the last five entries, newest first.
+ * tests/test_react_history_ui.mjs renders each legacy template beside its React view and fails if they differ.
+ * ------------------------------------------------------------------ */
+// Record numbers in a history line as links, the React form of the legacy recordLinks(): the same patterns, the same targets and
+// the same rule that a ticket, report, revision or lot number links only when the entry names its work order.
+function recordLinkParts(text, orderId) {
+  const source = asText(text), hits = [];
   for (const [pattern, kind] of RECORD_PATTERNS) {
-    html = html.replace(pattern, (match, id) => {
-      const target = kind === 'order' ? id : (orderId || '');
-      if (kind !== 'order' && kind !== 'serial' && !target) return match;
-      return `<button type="button" class="record-link" data-action="record-link" data-kind="${kind}" data-order="${escHtml(target)}" data-record="${escHtml(id)}" title="Open ${escHtml(id)}">${escHtml(id)}</button>`;
-    });
+    for (const match of source.matchAll(pattern)) {
+      const target = kind === 'order' ? match[1] : (orderId || '');
+      if (kind !== 'order' && kind !== 'serial' && !target) continue;
+      hits.push({ start: match.index, end: match.index + match[0].length, id: match[1], kind, target });
+    }
   }
-  return html;
+  hits.sort((a, b) => a.start - b.start);
+  const parts = [];
+  let at = 0;
+  for (const hit of hits) {
+    if (hit.start < at) continue;
+    if (hit.start > at) parts.push(source.slice(at, hit.start));
+    parts.push(hit);
+    at = hit.end;
+  }
+  if (at < source.length) parts.push(source.slice(at));
+  return parts;
+}
+
+function RecordLinks({ text, orderId }) {
+  return <>{recordLinkParts(text, orderId).map((part, i) => typeof part === 'string' ? part : <button key={i} type="button" className="record-link" data-action="record-link" data-kind={part.kind} data-order={asText(part.target)} data-record={asText(part.id)} title={`Open ${asText(part.id)}`}>{asText(part.id)}</button>)}</>;
+}
+
+const historyActor = e => String(e.actor || '').split(' · ')[0].trim();
+
+function HistoryList({ layout, events, when, summary = 'History', className = '', listClassName = 'task-list', chronological = false }) {
+  const list = Array.isArray(events) ? events : [];
+  if (layout === 'recent') {
+    const recent = list.slice(-5).reverse();
+    return <ol className="wi-history">{recent.map((e, i) => <li key={i}><span>{asText(e.action)}</span><small>{when(e.at)} · {asText(e.actor)}</small></li>)}{recent.length ? null : <li><small>No history yet.</small></li>}</ol>;
+  }
+  if (layout === 'timeline') return <HistoryTimeline events={list} when={when}/>;
+  const shown = chronological ? list : list.slice().reverse();
+  return <details className={`resolve-details${className ? ` ${className}` : ''}`}><summary>{summary} ({list.length})</summary><ol className={listClassName}>{shown.map((e, i) => <li key={i}><span className="task-main"><strong>{asText(e.action)}</strong><small>{asText(e.actor)} · {when(e.at)}</small></span></li>)}</ol></details>;
+}
+
+function HistoryTimeline({ events, when }) {
+  const sorted = [...events].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+  const names = [...new Set(sorted.map(historyActor).filter(Boolean))].sort();
+  const kinds = [...new Set(sorted.map(e => historyKind(e.action)))].sort();
+  const fid = 'hf-' + sorted.length + '-' + Math.random().toString(36).slice(2, 7);
+  return <><div className="history-filter" data-hf-root=""><div className="hf-field"><label htmlFor={`${fid}-from`}>From</label><input type="date" id={`${fid}-from`} data-hf="from"/></div><div className="hf-field"><label htmlFor={`${fid}-to`}>To</label><input type="date" id={`${fid}-to`} data-hf="to"/></div><div className="hf-field"><label htmlFor={`${fid}-kind`}>Activity</label><select id={`${fid}-kind`} data-hf="kind"><option value="">All activity</option>{kinds.map(k => <option key={k}>{asText(k)}</option>)}</select></div><div className="hf-field"><label htmlFor={`${fid}-name`}>Name</label><select id={`${fid}-name`} data-hf="name"><option value="">Everyone</option>{names.map(n => <option key={n}>{asText(n)}</option>)}</select></div><div className="hf-field hf-grow"><label htmlFor={`${fid}-q`}>Contains</label><input type="search" id={`${fid}-q`} data-hf="q" placeholder="Search" autoComplete="off"/></div><div className="hf-meta"><span className="hf-count" aria-live="polite">{sorted.length} of {sorted.length}</span><button type="button" className="btn quiet hf-clear" data-hf-clear="">Clear</button></div></div><ol className="timeline">{sorted.map((e, i) => <li key={i} data-hf-day={asText(historyDay(e.at))} data-hf-kind={asText(historyKind(e.action))} data-hf-name={asText(historyActor(e))} data-hf-text={asText(String(e.action + ' ' + e.actor + ' ' + (e.orderId || '')).toLowerCase())}><time dateTime={asText(e.at)}>{when(e.at)}</time><div><strong><RecordLinks text={e.action} orderId={e.orderId}/></strong><small><span className="hf-kind-tag">{asText(historyKind(e.action))}</span> · {asText(e.actor)}{e.orderId ? <> · <RecordLinks text={e.orderId} orderId={e.orderId}/></> : null}</small></div></li>)}</ol><p className="hf-empty" hidden>No activity matches these filters.</p></>;
 }
 
 function recordFiles(files, { canAdd, key, orderId }) {
@@ -1619,15 +1664,6 @@ function signoffRegister(MES, o) {
   return <section className="panel signoff-panel" aria-labelledby="signoff-title"><div className="panel-head"><h2 id="signoff-title">Operation sequence & sign-off</h2><span className="mono">{doneCount(o)} / {o.operations.length}</span></div><div className="table-wrap" tabIndex="0" role="region" aria-label="Operation sign-off register"><table className="data-table signoff-table"><thead><tr><th scope="col">Op no.</th><th scope="col">Operation / instruction</th><th scope="col">Status</th><th scope="col">Stamp</th><th scope="col">Date</th></tr></thead><tbody>{o.operations.map((op, i) => { const b = op.buyoff; return <tr key={i}><th scope="row" className="mono">{sequence(i)}</th><td><strong>{asText(op.title)}</strong><small>{asText(op.description)}</small></td><td><span className={`report-result ${op.done ? 'pass' : ''}`}>{op.done ? 'Complete' : 'Open'}</span>{openTickets(o, op.id).length ? <small className="op-flag">NC open{MES.blockingTickets(o, op.id).length ? ' · Hold' : null}{opDispoStatus(o, op)}</small> : null}</td><td>{b ? <><strong>{asText(b.name)}</strong><small>{asText(b.role)}</small><small className="mono">{asText(b.credentialId)}</small>{b.override ? <small>Master Access override</small> : null}{Array.isArray(b.tools) ? <small className="mono">Tools: {b.tools.length ? b.tools.map(t => `${asText(t.tag)}${t.torque ? ` @ ${asText(t.torque.value)} ${asText(t.torque.unit)}` : ''}`).join(', ') : 'none logged'}</small> : null}</> : op.done ? <small>Not captured in earlier </small> : <span className="sr-only">Not yet bought off</span>}</td><td>{b ? <time dateTime={asText(b.at)}>{asText(buyoffDate(b.at))}</time> : <span className="sr-only">{op.done ? 'Not captured' : 'Not yet bought off'}</span>}</td></tr>; })}</tbody></table></div></section>;
 }
 
-function historyList(events) {
-  const sorted = [...events].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
-  const who = e => String(e.actor || '').split(' · ')[0].trim();
-  const names = [...new Set(sorted.map(who).filter(Boolean))].sort();
-  const kinds = [...new Set(sorted.map(e => historyKind(e.action)))].sort();
-  const fid = 'hf-' + sorted.length + '-' + Math.random().toString(36).slice(2, 7);
-  return <><div className="history-filter" data-hf-root><div className="hf-field"><label htmlFor={`${fid}-from`}>From</label><input type="date" id={`${fid}-from`} data-hf="from"/></div><div className="hf-field"><label htmlFor={`${fid}-to`}>To</label><input type="date" id={`${fid}-to`} data-hf="to"/></div><div className="hf-field"><label htmlFor={`${fid}-kind`}>Activity</label><select id={`${fid}-kind`} data-hf="kind"><option value="">All activity</option>{kinds.map(k => <option key={k}>{asText(k)}</option>)}</select></div><div className="hf-field"><label htmlFor={`${fid}-name`}>Name</label><select id={`${fid}-name`} data-hf="name"><option value="">Everyone</option>{names.map(n => <option key={n}>{asText(n)}</option>)}</select></div><div className="hf-field hf-grow"><label htmlFor={`${fid}-q`}>Contains</label><input type="search" id={`${fid}-q`} data-hf="q" placeholder="Search" autoComplete="off"/></div><div className="hf-meta"><span className="hf-count" aria-live="polite">{sorted.length} of {sorted.length}</span><button type="button" className="btn quiet hf-clear" data-hf-clear>Clear</button></div></div><ol className="timeline">{sorted.map((e, i) => <li key={i} data-hf-day={asText(historyDay(e.at))} data-hf-kind={asText(historyKind(e.action))} data-hf-name={asText(who(e))} data-hf-text={asText(String(e.action + ' ' + e.actor + ' ' + (e.orderId || '')).toLowerCase())}><time dateTime={asText(e.at)}>{legacyDateTime(e.at)}</time><div><strong dangerouslySetInnerHTML={{ __html: recordLinks(e.action, e.orderId) }}/><small><span className="hf-kind-tag">{asText(historyKind(e.action))}</span> · {asText(e.actor)}{e.orderId ? <span> · <span dangerouslySetInnerHTML={{ __html: recordLinks(e.orderId, e.orderId) }}/></span> : null}</small></div></li>)}</ol><p className="hf-empty" hidden>No activity matches these filters.</p></>;
-}
-
 function MaterialsTab({ state, MES, order, skCan }) {
   const o = order;
   const handoffBlock = handoff(MES, o, 'materials');
@@ -1661,7 +1697,7 @@ function RecordTab({ state, MES, order, skCan }) {
     {o.status === 'Draft' ? engineeringSummary(MES, o) : <>{matReleaseSummary(MES, o)}{engineeringSummary(MES, o)}</>}
     {revisionPanel(state, MES, o)}
     {signoffRegister(MES, o)}
-    <section className="panel"><div className="panel-head"><h2>Work-order activity record</h2><button className="btn" data-action="export"><Download size={16}/> Export internal JSON</button></div>{historyList(o.history)}{o.status === 'Closed' ? null : <form className="note-form" id="record-note-form"><div className="field"><label htmlFor="record-note">Add a record note</label><textarea id="record-note" name="note" maxLength="500" minLength="3" required placeholder="Add a note"/></div><button className="btn" type="submit">Add note</button></form>}</section>
+    <section className="panel"><div className="panel-head"><h2>Work-order activity record</h2><button className="btn" data-action="export"><Download size={16}/> Export internal JSON</button></div><HistoryList layout="timeline" events={o.history} when={legacyDateTime}/>{o.status === 'Closed' ? null : <form className="note-form" id="record-note-form"><div className="field"><label htmlFor="record-note">Add a record note</label><textarea id="record-note" name="note" maxLength="500" minLength="3" required placeholder="Add a note"/></div><button className="btn" type="submit">Add note</button></form>}</section>
   </>;
 }
 
