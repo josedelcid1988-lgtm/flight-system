@@ -280,7 +280,7 @@ check('a retired tool is not offered as usable', !retiredList.some(c => c.ok && 
 check('the retired tool\'s earlier signed entries stay in the log and verify', state.calibrationLog.filter(e => e.tag === 'B2-TOOL').length === 2 && MES.validate(state) && MES.verifyManifests(state).ok);
 check('the record form tells the user that Retired is how a tool leaves service', /record it as Retired/.test(pageSource));
 // The signed subject of a calibration entry (calibrationSubject in index.html), for building imported rows.
-const calSubject = e => ({ id: e.id, tag: e.tag, description: e.description, serial: e.serial, calibratedAt: e.calibratedAt, expires: e.expires, status: e.status, location: e.location, note: e.note, recordedAt: e.recordedAt, recordedBy: e.recordedBy, supersedes: e.supersedes || null, ...(e.torque !== undefined ? { torque: e.torque } : {}) });
+const calSubject = e => ({ id: e.id, tag: e.tag, description: e.description, serial: e.serial, calibratedAt: e.calibratedAt, expires: e.expires, status: e.status, location: e.location, note: e.note, recordedAt: e.recordedAt, recordedBy: e.recordedBy, supersedes: e.supersedes || null, ...(e.torque !== undefined ? { torque: e.torque } : {}), ...(e.signerRole !== undefined ? { signerRole: e.signerRole } : {}) });
 // #35 review: only the current entry for a tag can be corrected. With two independent entries A (usable)
 // then B (Quarantined), correcting A would copy A's usable status into the newest row and re-enable the tool.
 const curA = run(qa, () => MES.recordCalibration(state, { tag: 'CUR-TOOL', description: 'DIAL INDICATOR', torque: false, serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }));
@@ -523,12 +523,48 @@ check('a calibration entry signed by a technician fails manifest verification', 
 check('the server gate rejects a calibration entry signed by a technician', typeof srv.validState(forgedRole) === 'string');
 check('diagnose names the signature of the technician-signed entry', /signature/.test(JSON.stringify(MES.diagnose(forgedRole))));
 // The allowed signer roles are exactly the account roles that hold configure-qms, so the list cannot drift from ROLE_CAPS.
+// Re-signs a workspace's last calibration entry as the same named person holding another role: signerRole and the
+// manifest are rebuilt together, so only the role differs from an entry the mutators would write.
+const resignLastAs = (ws, role) => {
+  const row = ws.calibrationLog[ws.calibrationLog.length - 1], [name, credentialId] = row.recordedBy.split(' \u00b7 ');
+  const saved = ws.profile; ws.profile = { name, role, credentialId };
+  row.signerRole = role;
+  row.calibrationSignature = { manifest: MES.signManifest(ws, row.calibrationSignature.manifest.meaning, calSubject(row), row.recordedAt) };
+  ws.profile = saved;
+  return ws;
+};
 const roleVerdicts = host.roles.ROLES.map(r => {
-  const probe = structuredClone(signerBase);
-  probe.calibrationLog[probe.calibrationLog.length - 1].calibrationSignature.manifest.signer.role = r.profileRole;
+  const probe = resignLastAs(structuredClone(signerBase), r.profileRole);
   return { key: r.key, allowed: (host.roles.ROLE_CAPS[r.key] || host.roles.EVERYONE).includes('configure-qms'), valid: MES.validate(probe) };
 });
 check('every role with configure-qms signs a valid calibration entry and every other role does not', roleVerdicts.length > 5 && roleVerdicts.every(v => v.allowed === v.valid) && roleVerdicts.filter(v => v.valid).map(v => v.key).sort().join() === 'admin,qm');
+// Codex review on #129: the signer role is inside the signed subject (entry.signerRole), so changing only the manifest's
+// signer role, or only the entry's signerRole, no longer turns a technician entry into a valid one.
+const techSigned = resignLastAs(structuredClone(signerBase), 'Assembly technician');
+check('a fully signed technician entry fails validation', !MES.validate(techSigned) && !MES.verifyManifests(techSigned).ok);
+const roleOnlyEdit = structuredClone(techSigned);
+roleOnlyEdit.calibrationLog[roleOnlyEdit.calibrationLog.length - 1].calibrationSignature.manifest.signer.role = 'Quality Manager';
+check('changing only the manifest signer role of a technician entry does not make it valid', !MES.validate(roleOnlyEdit) && !MES.verifyManifests(roleOnlyEdit).ok && typeof srv.validState(roleOnlyEdit) === 'string');
+const bothEdited = structuredClone(roleOnlyEdit);
+bothEdited.calibrationLog[bothEdited.calibrationLog.length - 1].signerRole = 'Quality Manager';
+check('changing the signed signerRole without re-signing breaks the manifest hash', !MES.validate(bothEdited) && !MES.verifyManifests(bothEdited).ok);
+check('entries written by this build carry the signer role in the signed subject', signerBase.calibrationLog.every(e => e.signerRole === e.calibrationSignature.manifest.signer.role && e.calibrationSignature.manifest.subject.signerRole === e.signerRole));
+// Entries from builds before the signer-role gate have no signerRole; one recorded before the cutoff still loads, even
+// signed by a role without calibration authority (a standalone Quality Engineer profile could sign then), so saved
+// workspaces from those builds are not refused. A legacy-shaped entry recorded after the cutoff is refused.
+const resignLegacy = (ws, role, recordedAt) => {
+  const row = ws.calibrationLog[ws.calibrationLog.length - 1], [name, credentialId] = row.recordedBy.split(' · ');
+  const saved = ws.profile; ws.profile = { name, role, credentialId };
+  delete row.signerRole; if (recordedAt) row.recordedAt = recordedAt;
+  row.calibrationSignature = { manifest: MES.signManifest(ws, row.calibrationSignature.manifest.meaning, calSubject(row), row.recordedAt) };
+  ws.profile = saved;
+  return ws;
+};
+const legacyQe = resignLegacy(structuredClone(signerBase), 'Quality Engineer', '2026-09-30T12:00:00.000Z');
+check('a legacy calibration entry signed by a standalone Quality Engineer before the cutoff still validates and verifies', MES.validate(legacyQe) && MES.verifyManifests(legacyQe).ok && srv.validState(structuredClone(legacyQe)) === null);
+check('a saved workspace holding the legacy entry still upgrades and loads', !!MES.upgrade(structuredClone(legacyQe)));
+const legacyLate = resignLegacy(structuredClone(signerBase), 'Quality Engineer', '2026-10-20T12:00:00.000Z');
+check('a legacy-shaped entry recorded after the cutoff is refused', !MES.validate(legacyLate) && !MES.verifyManifests(legacyLate).ok && /signature/.test(JSON.stringify(MES.diagnose(legacyLate))));
 // Standalone use (no account): the profile signs, so a profile without calibration authority cannot record or correct.
 const standalone = structuredClone(state);
 standalone.profile = { name: 'Riley Quality', role: 'Quality Engineer', credentialId: 'SR-QE-001' };

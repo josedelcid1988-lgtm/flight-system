@@ -2534,6 +2534,11 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // as a technician cannot put a tool into service. test_calibration checks this list against ROLE_CAPS.
   const CALIBRATION_SIGNER_ROLES = Object.freeze(['Quality Manager', 'System Administrator']);
   const calibrationSignerRole = role => CALIBRATION_SIGNER_ROLES.includes(role);
+  // The signer role is part of the signed subject (entry.signerRole), so it cannot change without breaking the hash.
+  // Builds before this gate did not record it: an entry without signerRole is accepted only when it was recorded
+  // before CALIBRATION_SIGNER_ROLE_SINCE, so saved workspaces from those builds still load. recordedAt is signed too.
+  const CALIBRATION_SIGNER_ROLE_SINCE = '2026-10-15T00:00:00.000Z';
+  const calibrationSignerOk = (entry, m) => plain(m) && plain(m.signer) && (entry.signerRole !== undefined ? entry.signerRole === m.signer.role && calibrationSignerRole(entry.signerRole) : typeof entry.recordedAt === 'string' && entry.recordedAt < CALIBRATION_SIGNER_ROLE_SINCE);
   const calibrationSignerRefusal = role => `Calibration entries are signed as Quality Manager or System Administrator. Your signing role is ${role}.`;
   // A Retired entry for a tool that was never calibrated carries no dates (#120). Every other status claims a
   // calibration, so it needs both dates, the due date after the calibration date, and a calibration date no
@@ -2552,7 +2557,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const m = entry.calibrationSignature && entry.calibrationSignature.manifest;
     if (!qualityManifestValid(m)) return false;
     // The signer held calibration authority (#112), the same gate recordCalibration and updateCalibration apply.
-    if (!calibrationSignerRole(m.signer.role)) return false;
+    if (!calibrationSignerOk(entry, m)) return false;
     // The meaning is bound to the entry kind (#108): an original entry is recorded, a superseding entry corrects.
     if (m.meaning !== (entry.supersedes === undefined ? 'Calibration recorded' : 'Calibration entry corrected')) return false;
     if (m.at !== entry.recordedAt) return false;
@@ -2583,7 +2588,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (!calibrationManifestValid(entry)) return 'signature';
     return null;
   };
-  const calibrationSubject = e => ({ id: e.id, tag: e.tag, description: e.description, serial: e.serial, calibratedAt: e.calibratedAt, expires: e.expires, status: e.status, location: e.location, note: e.note, recordedAt: e.recordedAt, recordedBy: e.recordedBy, supersedes: e.supersedes || null, ...(e.torque !== undefined ? { torque: e.torque } : {}) });
+  const calibrationSubject = e => ({ id: e.id, tag: e.tag, description: e.description, serial: e.serial, calibratedAt: e.calibratedAt, expires: e.expires, status: e.status, location: e.location, note: e.note, recordedAt: e.recordedAt, recordedBy: e.recordedBy, supersedes: e.supersedes || null, ...(e.torque !== undefined ? { torque: e.torque } : {}), ...(e.signerRole !== undefined ? { signerRole: e.signerRole } : {}) });
   // A retired tool returns to service only through a correction whose note gives the reason (owner decision on #35).
   const CALIBRATION_REASON_MIN = 8;
   const reinstatementReasonMissing = (prior, next) => prior.status === 'Retired' && next.status !== 'Retired' && (next.note.length < CALIBRATION_REASON_MIN || next.note === prior.note);
@@ -2668,7 +2673,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (retired && retired.status === 'Retired') return fail(`${fields.tag} is retired (${retired.id}) and cannot be recorded again. If it was retired by mistake, a QA Manager corrects ${retired.id} and enters the reason in the note.`);
     if (state.calibrationLog.length >= 5000) return fail(calibrationLogFull);
     if (!nextCalibrationId(state.calibrationLog)) return fail(calibrationIdsUsed);
-    const entry = { id: nextCalibrationId(state.calibrationLog), ...fields, ...(torque.torque !== undefined ? { torque: torque.torque } : {}), recordedAt, recordedBy: `${who.name} \u00b7 ${who.credentialId}` };
+    const entry = { id: nextCalibrationId(state.calibrationLog), ...fields, ...(torque.torque !== undefined ? { torque: torque.torque } : {}), recordedAt, recordedBy: `${who.name} \u00b7 ${who.credentialId}`, signerRole: who.role };
     entry.calibrationSignature = { manifest: signManifest(state, 'Calibration recorded', calibrationSubject(entry), entry.recordedAt) };
     state.calibrationLog.push(entry);
     return { ok: true, id: entry.id, message: calibrationUndated(entry) ? `${entry.tag} recorded as Retired with no calibration dates. It cannot be used.` : `Calibration recorded for ${entry.tag}; due ${entry.expires}.` };
@@ -2693,7 +2698,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const who = actor(state);
     if (!snapshotValid(who)) return fail('Sign in with a named credential before correcting a calibration entry.');
     if (!calibrationSignerRole(who.role)) return fail(calibrationSignerRefusal(who.role));
-    const entry = { id: nextCalibrationId(log), ...fields, ...(torque.torque !== undefined ? { torque: torque.torque } : {}), recordedAt, recordedBy: `${who.name} \u00b7 ${who.credentialId}`, supersedes: prior.id };
+    const entry = { id: nextCalibrationId(log), ...fields, ...(torque.torque !== undefined ? { torque: torque.torque } : {}), recordedAt, recordedBy: `${who.name} \u00b7 ${who.credentialId}`, supersedes: prior.id, signerRole: who.role };
     entry.calibrationSignature = { manifest: signManifest(state, 'Calibration entry corrected', calibrationSubject(entry), entry.recordedAt) };
     log.push(entry);
     return { ok: true, id: entry.id, message: `Calibration entry ${prior.id} corrected as ${entry.id}. The original entry stays in the log.` };
@@ -2912,7 +2917,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     (state.qualityVerdicts||[]).forEach(record=>{if(plain(record.manifest))recheck(record.id,record.manifest,{id:record.id,kind:record.kind,valueId:record.valueId,value:record.value,verdict:record.verdict});});
     (state.controlledDocuments||[]).forEach(doc=>{if(!controlledDocumentFileValid(doc.file))failures.push({where:`${doc.id} file`,reason:'stored file SHA-256 does not match'});const verifyDocumentManifest=(label,manifest,subject)=>{if(!plain(manifest))return;if(!shapeOk(manifest))failures.push({where:`${doc.id} ${label}`,reason:'manifest shape is invalid'});else if(manifest.build!==undefined&&!buildStampValid(manifest.build))failures.push({where:`${doc.id} ${label}`,reason:'build stamp is malformed'});recheck(`${doc.id} ${label}`,manifest,subject);};verifyDocumentManifest('author',doc.authorManifest,controlledDocumentSubject(doc));if(doc.reviewManifest)verifyDocumentManifest('review',doc.reviewManifest,controlledDocumentReviewSubject(doc));if(doc.releaseManifest)verifyDocumentManifest('release',doc.releaseManifest,controlledDocumentReleaseSubject(doc));});
     (state.trainingRecords||[]).forEach(record=>{if(record.certificate&&!trainingCertificateValid(record.certificate))failures.push({where:`${record.id} certificate`,reason:'stored file SHA-256 does not match'});});
-    (state.calibrationLog||[]).forEach(record=>{const m=record.calibrationSignature&&record.calibrationSignature.manifest;if(!plain(m))failures.push({where:record.id,reason:'calibration entry is not signed'});else{recheck(record.id,m,calibrationSubject(record));if(!plain(m.signer)||!calibrationSignerRole(m.signer.role))failures.push({where:record.id,reason:'calibration entry is signed by a role without calibration authority'});}});
+    (state.calibrationLog||[]).forEach(record=>{const m=record.calibrationSignature&&record.calibrationSignature.manifest;if(!plain(m))failures.push({where:record.id,reason:'calibration entry is not signed'});else{recheck(record.id,m,calibrationSubject(record));if(!calibrationSignerOk(record,m))failures.push({where:record.id,reason:'calibration entry is signed by a role without calibration authority'});}});
     (state.orders || []).forEach(order => {
       (order.operations || []).forEach(op => {
         const b = op.buyoff; if (!plain(b) || !plain(b.manifest)) return;
