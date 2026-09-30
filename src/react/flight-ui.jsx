@@ -692,7 +692,7 @@ function ActivityLog({ events, onOpenOrder }) {
         <div className="fr-controls"><button className="fr-density" type="button" aria-pressed={compact} onClick={setDensity}><SlidersHorizontal size={15}/>{compact ? 'Comfortable' : 'Compact'}</button><button className="fr-density" type="button" onClick={clear}>Clear filters</button></div>
       </div>
       <div className="fr-table-scroll" role="region" aria-label="Filtered activity events" tabIndex="0"><table className={compact ? 'fr-compact' : ''}><thead><tr><th>Date and time</th><th>Activity</th><th>Record</th><th>Person</th><th><span className="fr-visually-hidden">Details</span></th></tr></thead><tbody>
-        {rows.map(event => <tr key={event.id}><td><time dateTime={event.at}>{event.date}</time></td><td><span className="fr-activity-kind">{event.kind}</span></td><td><span dangerouslySetInnerHTML={{ __html: event.actionHtml }}/>{event.orderId && <small className="fr-activity-order">Work order · <span dangerouslySetInnerHTML={{ __html: event.orderHtml }}/></small>}</td><td>{event.actor}</td><td><button className="fr-open-button" aria-label={`Details for ${event.kind} at ${event.date}`} onClick={click => { returnFocus.current = click.currentTarget; setSelected(event); }}><ArrowUpRight size={18}/></button></td></tr>)}
+        {rows.map(event => <tr key={event.id}><td><time dateTime={event.at}>{event.date}</time></td><td><span className="fr-activity-kind">{event.kind}</span></td><td><span><RecordLinks text={event.action} orderId={event.orderId}/></span>{event.orderId && <small className="fr-activity-order">Work order · <span><RecordLinks text={event.orderId} orderId={event.orderId}/></span></small>}</td><td>{event.actor}</td><td><button className="fr-open-button" aria-label={`Details for ${event.kind} at ${event.date}`} onClick={click => { returnFocus.current = click.currentTarget; setSelected(event); }}><ArrowUpRight size={18}/></button></td></tr>)}
       </tbody></table>{!rows.length && <div className="fr-empty">No activity matches the current filters.</div>}</div>
       <footer><span aria-live="polite">{rows.length} of {events.length} activity events</span><span><Check size={13}/> Read-only record view</span></footer>
     </section>
@@ -1525,6 +1525,37 @@ function recordLinks(text, orderId) {
     });
   }
   return html;
+}
+
+// Splits record text into plain text and record-link parts, in the same
+// order and with the same targets as the legacy recordLinks() template.
+function recordLinkParts(text, orderId) {
+  let parts = [{ text: asText(text) }];
+  for (const [pattern, kind] of RECORD_PATTERNS) {
+    parts = parts.flatMap(part => {
+      if (part.kind) return [part];
+      const out = [];
+      let last = 0;
+      for (const match of part.text.matchAll(pattern)) {
+        const id = match[1], target = kind === 'order' ? id : asText(orderId);
+        if (kind !== 'order' && kind !== 'serial' && !target) continue;
+        if (match.index > last) out.push({ text: part.text.slice(last, match.index) });
+        out.push({ kind, id, target });
+        last = match.index + match[0].length;
+      }
+      if (last < part.text.length) out.push({ text: part.text.slice(last) });
+      return out;
+    });
+  }
+  return parts;
+}
+
+// Record text rendered as React nodes; the text is never parsed as HTML.
+// The buttons carry the attributes the global record-link handler reads.
+function RecordLinks({ text, orderId }) {
+  return <>{recordLinkParts(text, orderId).map((part, i) => part.kind
+    ? <button key={i} type="button" className="record-link" data-action="record-link" data-kind={part.kind} data-order={part.target} data-record={part.id} title={`Open ${part.id}`}>{part.id}</button>
+    : <React.Fragment key={i}>{part.text}</React.Fragment>)}</>;
 }
 
 function recordFiles(files, { canAdd, key, orderId }) {

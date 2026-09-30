@@ -11694,7 +11694,7 @@ function reactOrderQueueProps(){
   }};
 }
 
-function reactActivityRows(){return [...(state.activity||[])].sort((a,b)=>Date.parse(b.at)-Date.parse(a.at)).map((event,index)=>({id:String(event.id||`${event.at||'event'}-${index}`),at:event.at||'',date:date(event.at),day:historyDay(event.at),kind:historyKind(event.action),actorName:String(event.actor||'').split(' · ')[0].trim(),actor:String(event.actor||''),action:String(event.action||''),actionHtml:recordLinks(event.action||'',event.orderId||''),orderId:event.orderId||'',orderHtml:event.orderId?recordLinks(event.orderId,event.orderId):''}));}
+function reactActivityRows(){return [...(state.activity||[])].sort((a,b)=>Date.parse(b.at)-Date.parse(a.at)).map((event,index)=>({id:String(event.id||`${event.at||'event'}-${index}`),at:event.at||'',date:date(event.at),day:historyDay(event.at),kind:historyKind(event.action),actorName:String(event.actor||'').split(' · ')[0].trim(),actor:String(event.actor||''),action:String(event.action||''),orderId:event.orderId||''}));}
 const renderBeforeReactActivity=render;
 render=function(options){renderBeforeReactActivity(options);if(view!=='activity'||!window.FlightReact)return;const main=$('#main');if(!main)return;const island=main.querySelector('#flight-react-island');if(island)window.FlightReact.renderActivity(island,reactActivityRows(),openOrder);};
 
