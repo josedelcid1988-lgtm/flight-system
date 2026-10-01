@@ -15259,7 +15259,14 @@ function fsTicketMrbLine(order,ticket){
   else{
     if(!ticket.dispo||(!FM.needsMRB(order,ticket)&&m.proposed!==ticket.dispo.decision))return '';
     const gate=FM.gateResolve(state,order.id,ticket.id);
-    if(m.status==='Open'){const waiting=FM.seatsOf(m).filter(seat=>!(m.votes||[]).some(v=>v.seat===seat));next=waiting.length?`Waiting on votes from ${waiting.join(', ')}. Quality records the decision in Flight Maneuver once every seat has voted.`:`Every seat has voted. Quality records the board decision in Flight Maneuver next.`;}
+    if(m.status==='Open'){const waiting=FM.seatsOf(m).filter(seat=>!(m.votes||[]).some(v=>v.seat===seat)),d=ticket.dispo.decision;
+      // A board still open on a disposition that was returned and replaced: it must be decided first. Unanimous approval
+      // decides it on the final vote and a new board convenes; any rejection returns the ticket to ME (decideMRBCore clears the disposition).
+      if(m.proposed!==d){const head=`This board reviews ${m.proposed}, but ${ticket.id} now proposes ${d}.`,rejected=(m.votes||[]).some(v=>v.vote==='Reject');
+        next=!waiting.length?`${head} Every seat has voted and a seat rejected. Quality records the decision next, and ${ticket.id} returns to ME for a new disposition.`
+          :rejected?`${head} Waiting on votes from ${waiting.join(', ')}, then Quality records the decision. A seat rejected, so ${ticket.id} returns to ME for a new disposition.`
+          :`${head} Waiting on votes from ${waiting.join(', ')}. If every seat approves, a new board for ${d} convenes next; a rejection means ${ticket.id} returns to ME for a new disposition.`;}
+      else next=waiting.length?`Waiting on votes from ${waiting.join(', ')}. Quality records the decision in Flight Maneuver once every seat has voted.`:`Every seat has voted. Quality records the board decision in Flight Maneuver next.`;}
     else if(gate&&gate.message)next=gate.message;
     else if(m.status==='Approved')next=`Board approved ${m.proposed}. Quality approves ${ticket.id} next.`;
     else return '';
