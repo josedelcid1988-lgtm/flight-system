@@ -202,6 +202,13 @@ try {
     const noop = await api('PUT', '/workspace', { token, body: loaded.json, headers: { 'If-Match': loaded.etag } });
     assert.equal(noop.status, 204, 'an identical snapshot with the current ETag is a no-op');
     assert.equal((await refusals()).length, before + 1, 'the no-op is not recorded as a refusal');
+    const notJson = await api('PUT', '/workspace', { token, raw: true, body: 'not json', headers: { 'Content-Type': 'application/json', 'If-Match': loaded.etag } });
+    assert.equal(notJson.status, 400, 'a body that is not JSON is refused');
+    assert.deepEqual([(await refusals())[0].status, (await refusals())[0].reason], [400, 'request body is not JSON'], 'the unreadable body (400) is audited');
+    const tooLarge = await api('PUT', '/workspace', { token, headers: { 'Content-Length': String(MAX_REQUEST_BYTES + 1), 'If-Match': loaded.etag } });
+    assert.equal(tooLarge.status, 413, 'an oversized body is refused');
+    assert.deepEqual([(await refusals())[0].status, (await refusals())[0].reason], [413, 'request body over the size limit'], 'the oversized body (413) is audited');
+    assert.equal((await refusals()).length, before + 3, 'each parse refusal adds exactly one entry');
   });
   await check('operator accounts cannot replace the shared workspace snapshot', async () => {
     const currentAccounts = await api('GET', '/auth/accounts', { token });

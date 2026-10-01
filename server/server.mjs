@@ -874,10 +874,12 @@ export function createServer(options = {}) {
         // a preflighted migration. Existing shared records can only change through MES actions.
         // This closes the authorization bypass where a manager could replace records wholesale.
         const currentWorkspace = await store.getDoc(TENANT);
-        const doc = await readJson(req), ifMatch = req.headers['if-match'] || null;
         // Every refused snapshot write is audited with its status, so the audit shows refusal patterns
-        // (a stale client, a client without If-Match, an invalid initialization), not only the 403s.
+        // (a stale client, a client without If-Match, an unreadable body, an invalid initialization), not only the 403s.
         const auditRefusal = async (status, reason, extra = {}) => { await store.audit(session.username, 'workspace-put-refused', { status, reason: String(reason).slice(0, 500), ...extra }); };
+        let doc;
+        try { doc = await readJson(req); } catch (e) { if (e.status === 400 || e.status === 413) await auditRefusal(e.status, e.status === 413 ? 'request body over the size limit' : 'request body is not JSON'); throw e; }
+        const ifMatch = req.headers['if-match'] || null;
         if (!manages(session.account)) { await store.audit(session.username, 'workspace-put-refused', { status: 403, reason: currentWorkspace ? 'initialized workspace is action-only' : 'only QA Manager or Master Access may initialize' }); send(res, 403, { error: currentWorkspace ? 'The shared workspace is initialized and cannot be replaced as a snapshot. Use a server-authorized record action or the approved migration procedure.' : 'Only QA Manager or Master Access can initialize the shared workspace.' }); return; }
         if (currentWorkspace) {
           if (!ifMatch) { await auditRefusal(428, 'missing If-Match', { etag: currentWorkspace.etag }); send(res, 428, { error: 'Include the current workspace ETag in If-Match.' }); return; }
