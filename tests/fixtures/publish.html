@@ -14498,6 +14498,9 @@ window.SK_INTEGRATIONS = window.SK_INTEGRATIONS || {
 
   // ---- stamp register administration (QA Manager) -------------------------------------------------
   var esc = function (v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); };
+  // One reading of a stamp's state, shared by the register and Your stamps.
+  function stampFlag(s, today, soon) { return s.status !== 'Active' ? s.status : (s.expires && s.expires < today) ? 'Expired' : (s.expires && s.expires <= soon) ? 'Expires soon' : (!s.account ? 'Unassigned' : 'OK'); }
+  function stampFlagClass(flag) { return flag === 'OK' ? 'closed' : flag === 'Expires soon' || flag === 'Unassigned' ? 'kitting' : 'high'; }
   function registerHtml() {
     var M = window.MES; if (!M || typeof state === 'undefined') return '';
     var isQM = window.skAuth && window.skAuth.role && ['qm','admin'].includes(window.skAuth.role());
@@ -14505,8 +14508,7 @@ window.SK_INTEGRATIONS = window.SK_INTEGRATIONS || {
     var today = new Date().toISOString().slice(0, 10);
     var soon = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
     var rows = M.stampRegister(state).map(function (s) {
-      var flag = s.status !== 'Active' ? s.status : (s.expires && s.expires < today) ? 'Expired' : (s.expires && s.expires <= soon) ? 'Expires soon' : (!s.account ? 'Unassigned' : 'OK');
-      var cls = flag === 'OK' ? 'closed' : flag === 'Expires soon' || flag === 'Unassigned' ? 'kitting' : 'high';
+      var flag = stampFlag(s, today, soon), cls = stampFlagClass(flag);
       var accountCell = isQM ? '<select data-stamp-account="' + esc(s.id) + '" aria-label="Account for stamp ' + esc(s.number) + '"><option value="">Unassigned</option>' + accounts.map(function (u) { return '<option value="' + esc(u.username) + '"' + (u.username === s.account ? ' selected' : '') + '>' + esc(u.name) + ' (' + esc(u.username) + ')</option>'; }).join('') + '</select>' : esc(s.account || 'Unassigned');
       var statusCell = isQM ? '<select data-stamp-status="' + esc(s.id) + '" aria-label="Status for stamp ' + esc(s.number) + '">' + M.STAMP_STATUSES.map(function (st) { return '<option' + (st === s.status ? ' selected' : '') + '>' + st + '</option>'; }).join('') + '</select>' : esc(s.status);
       var expiresCell = isQM ? '<input type="date" data-stamp-expires="' + esc(s.id) + '" value="' + esc(s.expires || '') + '" aria-label="Expiry for stamp ' + esc(s.number) + '">' : esc(s.expires || 'none');
@@ -14539,8 +14541,7 @@ window.SK_INTEGRATIONS = window.SK_INTEGRATIONS || {
     var today = new Date().toISOString().slice(0, 10), soon = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
     var mine = M.stampRegister(state).filter(function (s) { return s.account && s.account === me.account; });
     var rows = mine.map(function (s) {
-      var flag = s.status !== 'Active' ? s.status : (s.expires && s.expires < today) ? 'Expired' : (s.expires && s.expires <= soon) ? 'Expires soon' : 'OK';
-      var cls = flag === 'OK' ? 'closed' : flag === 'Expires soon' ? 'kitting' : 'high';
+      var flag = stampFlag(s, today, soon), cls = stampFlagClass(flag);
       return '<tr><td class="mono">' + esc(s.number) + '</td><td>' + esc(s.buyoffType) + '</td><td>' + esc(s.expires || 'none') + '</td><td><span class="pill ' + cls + '">' + esc(flag) + '</span></td><td>' + (s.pin ? '<span class="pill closed">Set</span>' : '<span class="pill high">None</span>') + ' <button type="button" class="btn quiet" data-stamp-pin="' + esc(s.id) + '">Set my PIN</button></td></tr>';
     }).join('');
     return '<section class="own-stamps" aria-labelledby="own-stamps-title"><h3 id="own-stamps-title">Your stamps</h3>' + (rows ? '<div class="table-wrap"><table class="data-table own-stamp-table"><thead><tr><th scope="col">Stamp</th><th scope="col">Buy-off type</th><th scope="col">Expires</th><th scope="col">Check</th><th scope="col">PIN</th></tr></thead><tbody>' + rows + '</tbody></table></div>' : '<p class="small muted">No stamp is assigned to your account. A QA Manager issues and assigns stamps.</p>') + '</section>';
