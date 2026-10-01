@@ -100,7 +100,11 @@ first row of the audit chain; it refuses any database that already holds records
 server refuses a database that carries it, and never serves or changes a workspace a training server saved. The
 designation is checked and written in one transaction under the workspace lock, so two servers starting on the same
 new database cannot both claim it. A production server already running on a new database that a training server
-then claims refuses every API request from that moment, archives, prints and exports included. Give the training server its own `--db` file. Setup steps for a laptop rehearsal and an IT machine are in
+then claims refuses every API request from that moment, archives, prints and exports included. These marks stop
+mix-ups. They do not stop a QA Manager or Master Access holder who edits a saved file by hand before initializing an
+empty production workspace: signature manifests are unkeyed SHA-256 hashes until the server countersigns them, so
+that person could equally write signed records from scratch. The audit row of every workspace initialization is
+the control for that case. Give the training server its own `--db` file. Setup steps for a laptop rehearsal and an IT machine are in
 [`TRAINING_SERVER_SETUP.md`](TRAINING_SERVER_SETUP.md).
 
 ## Health check
