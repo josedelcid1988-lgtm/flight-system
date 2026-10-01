@@ -10,6 +10,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { Readable, Writable } from 'node:stream';
 import { createServer, makeHash, DEFAULT_HOST } from '../server/server.mjs';
+import { openDb } from '../server/db.mjs';
 
 const fails = [];
 let checks = 0;
@@ -181,6 +182,112 @@ try {
     await server.store.putArchived({ id: 'WO-SEC-ARC', json, sha256: createHash('sha256').update(json).digest('hex'), schema: 1, keys: { partNumber: 'P', serials: [], lots: [], parts: ['P'], title: 'Security', closedAt: null }, by: 'security-test' });
     for (const id of [named, copied, archived]) assert.equal((await api('GET', `/evidence/${id}`, { token: other })).status, 200, `${id} is named by a record, so any signed-in account reads it`);
     assert.equal((await api('GET', `/evidence/${loose}`, { token: other })).status, 403, 'the unnamed recording stays refused');
+  });
+
+  // Codex review of #96: an archived order authorizes a recording only through an operation's evidence or
+  // quarantinedEvidence entry (id or copyOf, exact). An ID planted in any other archived string names nothing.
+  await check('an evidence ID planted in an unrelated archived string does not authorize reading it', async () => {
+    const uploader = await signIn('sec-tech', 'sec-tech-pass-1'), other = await signIn('sec-tech2', 'sec-tech2-pass-1');
+    const planted = 'EV-00000000-0000-4000-8000-0000000c0201', viaCopy = 'EV-00000000-0000-4000-8000-0000000c0202';
+    for (const id of [planted, viaCopy]) { const bytes = Buffer.from(`evidence ${id}`); assert.equal((await api('POST', `/evidence/${id}`, { token: uploader, raw: true, body: bytes, headers: { 'Content-Type': 'video/webm', 'X-Evidence-Sha256': createHash('sha256').update(bytes).digest('hex') } })).status, 201); }
+    const archive = async (orderId, entry) => { const json = JSON.stringify(entry); await server.store.putArchived({ id: orderId, json, sha256: createHash('sha256').update(json).digest('hex'), schema: 1, keys: { partNumber: 'P', serials: [], lots: [], parts: ['P'], title: 'Planted', closedAt: null }, by: 'security-test' }); };
+    // The ID as a whole quoted JSON string in every place that is not an evidence reference.
+    await archive('WO-SEC-PLANT', { order: { id: 'WO-SEC-PLANT', status: 'Closed', title: planted, notes: [{ text: planted, evidence: [{ id: planted }] }],
+      operations: [{ id: 'op-010', title: planted, evidence: { id: planted }, attachments: [{ id: planted }], buyoff: { evidenceId: planted, evidence: [{ id: planted }] }, quarantinedEvidence: [planted, { name: planted, ref: { id: planted } }] }, planted] },
+      activity: [{ orderId: 'WO-SEC-PLANT', action: planted, evidence: [{ id: planted }] }], [planted]: { id: planted } });
+    assert.equal(await server.store.archiveNamesEvidence(planted), false, 'the store finds no evidence reference to the planted ID');
+    for (const suffix of ['', '/meta']) {
+      const refused = await api('GET', `/evidence/${planted}${suffix}`, { token: other });
+      assert.equal(refused.status, 403, `a planted ID does not open ${suffix || 'the bytes'}`);
+      assert.match(refused.json.error, new RegExp(`^${planted} is not attached to a record yet\\. Until it is saved on an operation, only the account that uploaded it, a QA Manager, or a Master Access account can open it\\.`));
+    }
+    // The legitimate reference still authorizes: the stored copy behind another ID on an archived operation.
+    await archive('WO-SEC-COPY', { order: { id: 'WO-SEC-COPY', status: 'Closed', operations: [{ id: 'op-010', evidence: [{ id: 'EV-00000000-0000-4000-8000-0000000c0299', copyOf: viaCopy }] }] }, activity: [] });
+    assert.equal(await server.store.archiveNamesEvidence(viaCopy), true);
+    assert.equal((await api('GET', `/evidence/${viaCopy}`, { token: other })).status, 200, 'an archived copyOf reference still authorizes');
+    assert.equal((await api('GET', `/evidence/${planted}`, { token: other })).status, 403, 'the planted ID stays refused');
+  });
+
+  // Codex review of #242: archived evidence references are recorded when an order is archived and looked up by index,
+  // so an ID planted in many archived strings costs one lookup, not a parse of every matching row. A database from
+  // before the reference table gets it once, filled from every archived order.
+  await check('archived evidence references are indexed at archive time and backfilled once for an older database', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flight-archive-refs-'));
+    try {
+      const file = path.join(dir, 'flight.db');
+      const legit = 'EV-00000000-0000-4000-8000-0000000c0401', copied = 'EV-00000000-0000-4000-8000-0000000c0402', planted = 'EV-00000000-0000-4000-8000-0000000c0403';
+      const put = (store, id, entry) => { const json = JSON.stringify(entry); store.putArchived({ id, json, sha256: createHash('sha256').update(json).digest('hex'), schema: 1, keys: { partNumber: 'P', serials: [], lots: [], parts: ['P'], title: 'Refs', closedAt: null }, by: 'security-test' }); };
+      const first = openDb(file);
+      put(first, 'WO-REF-1', { order: { id: 'WO-REF-1', status: 'Closed', operations: [{ id: 'op-010', evidence: [{ id: legit }], quarantinedEvidence: [{ id: 'EV-00000000-0000-4000-8000-0000000c04ff', copyOf: copied }] }] }, activity: [] });
+      for (let i = 0; i < 50; i++) put(first, `WO-REF-P${i}`, { order: { id: `WO-REF-P${i}`, status: 'Closed', title: planted, operations: [{ id: 'op-010', title: planted, evidence: { id: planted } }] }, activity: [{ action: planted }] });
+      const rows = db => db.prepare('SELECT evidence_id, order_id FROM archive_evidence ORDER BY evidence_id').all().map(r => `${r.evidence_id}@${r.order_id}`);
+      const raw = new DatabaseSync(file);
+      const expected = [`EV-00000000-0000-4000-8000-0000000c0401@WO-REF-1`, `EV-00000000-0000-4000-8000-0000000c0402@WO-REF-1`, `EV-00000000-0000-4000-8000-0000000c04ff@WO-REF-1`];
+      assert.deepEqual(rows(raw), expected, 'only structural references are recorded, at archive time');
+      assert.equal(first.archiveNamesEvidence(legit), true); assert.equal(first.archiveNamesEvidence(copied), true); assert.equal(first.archiveNamesEvidence(planted), false);
+      first.close?.();
+      // An older database: the archive rows are there, the reference tables are not.
+      raw.exec('DROP TABLE archive_evidence; DROP TABLE archive_evidence_indexed'); raw.close();
+      const reopened = openDb(file);
+      const check2 = new DatabaseSync(file);
+      assert.deepEqual(rows(check2), expected, 'the reference table is rebuilt from every archived order');
+      assert.equal(reopened.archiveNamesEvidence(legit), true); assert.equal(reopened.archiveNamesEvidence(planted), false);
+      // A server still on the previous release, sharing the database, archives an order without recording its
+      // references. The next lookup that misses records it first, so the recording is never left unreadable.
+      const late = 'EV-00000000-0000-4000-8000-0000000c0404', lateJson = JSON.stringify({ order: { id: 'WO-REF-OLD', status: 'Closed', operations: [{ id: 'op-010', evidence: [{ id: late }] }] }, activity: [] });
+      check2.prepare("INSERT INTO archive (order_id, json, sha256, schema, part_number, serials, lots, parts, title, closed_at, archived_at, archived_by) VALUES ('WO-REF-OLD', ?, ?, 1, 'P', '[]', '[]', '[\"P\"]', 'Old writer', NULL, '2026-10-01T00:00:00.000Z', 'old-release')").run(lateJson, createHash('sha256').update(lateJson).digest('hex'));
+      assert.equal(reopened.archiveNamesEvidence(late), true, 'an order archived by a previous-release server is indexed on the next lookup');
+      assert.equal(reopened.archiveNamesEvidence(planted), false);
+      assert.ok(rows(check2).includes(`${late}@WO-REF-OLD`));
+      check2.close();
+      reopened.close?.();
+      // The same order, archived by an old writer after this server stopped, is indexed at the next startup too.
+      const raw2 = new DatabaseSync(file); const late2 = 'EV-00000000-0000-4000-8000-0000000c0405', late2Json = JSON.stringify({ order: { id: 'WO-REF-OLD2', status: 'Closed', operations: [{ id: 'op-010', quarantinedEvidence: [{ id: late2 }] }] }, activity: [] });
+      raw2.prepare("INSERT INTO archive (order_id, json, sha256, schema, part_number, serials, lots, parts, title, closed_at, archived_at, archived_by) VALUES ('WO-REF-OLD2', ?, ?, 1, 'P', '[]', '[]', '[\"P\"]', 'Old writer', NULL, '2026-10-01T00:00:00.000Z', 'old-release')").run(late2Json, createHash('sha256').update(late2Json).digest('hex'));
+      raw2.close();
+      const third = openDb(file); const raw3 = new DatabaseSync(file);
+      assert.ok(rows(raw3).includes(`${late2}@WO-REF-OLD2`), 'startup records references for every archived order it has not indexed');
+      raw3.close(); assert.equal(third.archiveNamesEvidence(late2), true); third.close?.();
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  // Codex review of #242: a reference to a recording on the server is trusted only when the account that adds it to
+  // the workspace uploaded that recording (or manages access). Otherwise anyone who learned an unattached evidence ID
+  // could attach it to an operation and then read it as a record-named recording.
+  await check('only the uploader can add a reference to a stored recording; a forged attach is refused', async () => {
+    const uploader = await signIn('sec-tech', 'sec-tech-pass-1'), other = await signIn('sec-tech2', 'sec-tech2-pass-1');
+    const victim = 'EV-00000000-0000-4000-8000-0000000c0301';
+    const bytes = Buffer.from(`evidence ${victim}`);
+    assert.equal((await api('POST', `/evidence/${victim}`, { token: uploader, raw: true, body: bytes, headers: { 'Content-Type': 'video/webm', 'X-Evidence-Sha256': createHash('sha256').update(bytes).digest('hex') } })).status, 201);
+    const fixture = JSON.parse(fs.readFileSync(new URL('./fixtures/demo_publish.html', import.meta.url), 'utf8').match(/window\.__DEMO_SEED=(\{[\s\S]*?\});/)[1]);
+    const input = id => ({ id, fileName: 'capture.webm', mimeType: 'video/webm', size: bytes.length, source: 'upload', description: 'Operation capture' });
+    const probe = server.host.MES.upgrade(structuredClone(fixture));
+    const order = probe.orders.find(o => o.status === 'Building' && o.operations.some(op => !op.done) && server.host.MES.attachEvidence(structuredClone(probe), o.id, o.operations.find(op => !op.done).id, input('EV-00000000-0000-4000-8000-0000000c03ff')).ok);
+    assert.ok(order, 'the fixture has a Building operation that takes video evidence');
+    const opId = order.operations.find(op => !op.done).id;
+    const current = await server.store.getDoc('default');
+    assert.ok(await server.store.putDoc('default', JSON.stringify(fixture), current ? current.etag : null, 'security-test'));
+    const before = await server.store.getDoc('default');
+    const forged = await api('POST', '/workspace/actions/MES.attachEvidence', { token: other, body: { args: [order.id, opId, input(victim)] }, headers: { 'If-Match': before.etag } });
+    assert.equal(forged.status, 422, JSON.stringify(forged.json));
+    assert.match(forged.json.error, new RegExp(`^${victim} was uploaded by another account\\. Only the account that uploaded a recording, a QA Manager, or a Master Access account can attach it to a record\\.`));
+    assert.equal((await server.store.getDoc('default')).etag, before.etag, 'the forged attach stores nothing');
+    assert.ok((await server.store.auditRows(500)).some(row => row.action === 'evidence-refused' && row.username === 'sec-tech2'), 'the refusal is audited');
+    assert.equal((await api('GET', `/evidence/${victim}`, { token: other })).status, 403, 'the recording stays unreadable to the other account');
+    // An ID whose upload has not reached the server yet (still in flight, or never sent) cannot be referenced either:
+    // otherwise the reference would authorize everyone the moment the owner's upload lands. The browser uploads before
+    // it saves the reference, so a real attach never names a recording the server does not hold.
+    const pending = 'EV-00000000-0000-4000-8000-0000000c0302';
+    const early = await api('POST', '/workspace/actions/MES.attachEvidence', { token: other, body: { args: [order.id, opId, input(pending)] }, headers: { 'If-Match': before.etag } });
+    assert.equal(early.status, 422, JSON.stringify(early.json));
+    assert.match(early.json.error, new RegExp(`^${pending} is not on the server yet\\. Upload the recording from the device that captured it, then attach it\\.`));
+    assert.equal((await server.store.getDoc('default')).etag, before.etag, 'the early reference stores nothing');
+    const lateBytes = Buffer.from(`evidence ${pending}`);
+    assert.equal((await api('POST', `/evidence/${pending}`, { token: uploader, raw: true, body: lateBytes, headers: { 'Content-Type': 'video/webm', 'X-Evidence-Sha256': createHash('sha256').update(lateBytes).digest('hex') } })).status, 201);
+    assert.equal((await api('GET', `/evidence/${pending}`, { token: other })).status, 403, 'once the upload lands, the refused reference authorizes nothing');
+    const own = await api('POST', '/workspace/actions/MES.attachEvidence', { token: uploader, body: { args: [order.id, opId, input(victim)] }, headers: { 'If-Match': before.etag } });
+    assert.equal(own.status, 200, JSON.stringify(own.json));
+    assert.equal((await api('GET', `/evidence/${victim}`, { token: other })).status, 200, 'once its uploader attaches it, the record names it for everyone');
   });
 
   // #103, #104: the read decision is the same for every role before and after the workspace changes, the refusal

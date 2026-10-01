@@ -165,6 +165,54 @@ try {
   assert.equal(await server.store.archiveNamesEvidence(evidenceId), false, 'no archived order names the new recording yet');
   await server.store.putArchived({ id: 'WO-PG-EVIDENCE', json: arcJson, sha256: createHash('sha256').update(arcJson).digest('hex'), schema: 1, keys: { partNumber: 'P', serials: [], lots: [], parts: ['P'], title: 'Evidence', closedAt: null }, by: 'postgres-test' });
   assert.equal(await server.store.archiveNamesEvidence(evidenceId), true, 'an archived order that names the recording is found');
+  // The archive check is structural, as in SQLite: the ID planted in unrelated archived strings names nothing.
+  const plantedId = `EV-${randomUUID()}`, plantedJson = JSON.stringify({ order: { id: 'WO-PG-PLANT', status: 'Closed', title: plantedId, notes: [{ evidence: [{ id: plantedId }] }], operations: [{ id: 'op-010', title: plantedId, evidence: { id: plantedId }, quarantinedEvidence: [plantedId, { ref: { id: plantedId } }] }] }, activity: [{ action: plantedId, evidence: [{ id: plantedId }] }] });
+  await server.store.putArchived({ id: 'WO-PG-PLANT', json: plantedJson, sha256: createHash('sha256').update(plantedJson).digest('hex'), schema: 1, keys: { partNumber: 'P', serials: [], lots: [], parts: ['P'], title: 'Planted', closedAt: null }, by: 'postgres-test' });
+  assert.equal(await server.store.archiveNamesEvidence(plantedId), false, 'an ID planted in unrelated archived strings is not an evidence reference');
+  const copiedId = `EV-${randomUUID()}`, copyJson = JSON.stringify({ order: { id: 'WO-PG-COPY', status: 'Closed', operations: [{ id: 'op-010', quarantinedEvidence: [{ id: `EV-${randomUUID()}`, copyOf: copiedId }] }] }, activity: [] });
+  await server.store.putArchived({ id: 'WO-PG-COPY', json: copyJson, sha256: createHash('sha256').update(copyJson).digest('hex'), schema: 1, keys: { partNumber: 'P', serials: [], lots: [], parts: ['P'], title: 'Copy', closedAt: null }, by: 'postgres-test' });
+  assert.equal(await server.store.archiveNamesEvidence(copiedId), true, 'a quarantined copyOf reference on an archived operation is found');
+  // References are recorded at archive time and looked up by index; a database from before the table is backfilled once.
+  const refPool = new (await import('pg')).Pool({ connectionString, max: 1 });
+  const refRows = async () => (await refPool.query("SELECT evidence_id, order_id FROM archive_evidence WHERE order_id IN ('WO-PG-PLANT','WO-PG-COPY') ORDER BY order_id, evidence_id")).rows.map(r => `${r.evidence_id}@${r.order_id}`);
+  const recorded = await refRows();
+  assert.ok(recorded.includes(`${copiedId}@WO-PG-COPY`) && !recorded.some(row => row.endsWith('@WO-PG-PLANT')), 'only structural references are recorded');
+  await refPool.query('DROP TABLE archive_evidence; DROP TABLE archive_evidence_indexed');
+  const { openPostgres } = await import('../../server/db-postgres.mjs');
+  const reopened = await openPostgres(connectionString);
+  assert.equal(await reopened.archiveNamesEvidence(copiedId), true, 'the reference table is rebuilt from every archived order');
+  assert.equal(await reopened.archiveNamesEvidence(plantedId), false);
+  assert.equal(await reopened.archiveNamesEvidence(evidenceId), true);
+  // A previous-release server sharing the database archives an order without recording its references, during or
+  // after this server's start: the next lookup that misses records it, so the recording is never left unreadable.
+  const lateId = `EV-${randomUUID()}`, lateJson = JSON.stringify({ order: { id: 'WO-PG-OLD', status: 'Closed', operations: [{ id: 'op-010', evidence: [{ id: lateId }] }] }, activity: [] });
+  await refPool.query("INSERT INTO archive (order_id,json,sha256,schema,part_number,serials,lots,parts,title,closed_at,archived_at,archived_by) VALUES ('WO-PG-OLD',$1,$2,1,'P','[]','[]','[\"P\"]','Old writer',NULL,'2026-10-01T00:00:00.000Z','old-release')", [lateJson, createHash('sha256').update(lateJson).digest('hex')]);
+  assert.equal(await reopened.archiveNamesEvidence(lateId), true, 'an order archived by a previous-release server is indexed on the next lookup');
+  assert.equal(await reopened.archiveNamesEvidence(plantedId), false);
+  // A previous-release server that keeps archiving while this one reconciles must not keep reconciliation (and so a
+  // missed lookup or a server start) running forever: each pass covers the rows present when it started.
+  const writerPool = new (await import('pg')).Pool({ connectionString, max: 2 });
+  // 2,000 unmarked rows already waiting give the pass real work; the writer then keeps adding more while it runs.
+  await writerPool.query("INSERT INTO archive (order_id,json,sha256,schema,part_number,serials,lots,parts,title,closed_at,archived_at,archived_by) SELECT 'WO-PG-ZY-' || lpad(g::text, 9, '0'), '{\"order\":{\"id\":\"x\",\"status\":\"Closed\",\"operations\":[]},\"activity\":[]}', repeat('0', 64), 1, 'P', '[]', '[]', '[\"P\"]', 'Old writer', NULL, '2026-10-01T00:00:00.000Z', 'old-release' FROM generate_series(1, 2000) AS g");
+  let writing = true, written = 0;
+  const writer = (async () => {
+    // 1,000 unmarked rows per statement, faster than any reconciler can index them.
+    while (writing) {
+      await writerPool.query("INSERT INTO archive (order_id,json,sha256,schema,part_number,serials,lots,parts,title,closed_at,archived_at,archived_by) SELECT 'WO-PG-ZZ-' || lpad((g + $1)::text, 9, '0'), '{\"order\":{\"id\":\"x\",\"status\":\"Closed\",\"operations\":[]},\"activity\":[]}', repeat('0', 64), 1, 'P', '[]', '[]', '[\"P\"]', 'Old writer', NULL, '2026-10-01T00:00:00.000Z', 'old-release' FROM generate_series(1, 1000) AS g", [written]);
+      written += 1000;
+    }
+  })();
+  const missing = `EV-${randomUUID()}`, started = Date.now();
+  const outcome = await Promise.race([reopened.archiveNamesEvidence(missing).then(found => ({ found })), new Promise(resolve => setTimeout(() => resolve({ timedOut: true }), 15000))]);
+  writing = false; await writer; await writerPool.end();
+  assert.ok(!outcome.timedOut, `a missed lookup finishes while an older server keeps archiving (${written} rows written)`);
+  assert.equal(outcome.found, false);
+  assert.ok(Date.now() - started < 15000);
+  // The writer's rows stand in for another release's archive; remove them so the backup checks below stay small.
+  await refPool.query("DELETE FROM archive_evidence_indexed WHERE order_id LIKE 'WO-PG-Z_-%'");
+  await refPool.query("DELETE FROM archive WHERE order_id LIKE 'WO-PG-Z_-%'");
+  await reopened.close?.();
+  await refPool.end();
   console.log('ok PostgreSQL evidence bytes round-trip with SHA-256');
 
   const backupPath = path.join(exportDir, 'flight-postgres.dump');
