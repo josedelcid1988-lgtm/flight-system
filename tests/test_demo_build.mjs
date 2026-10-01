@@ -131,6 +131,25 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  const tok=await p.evaluate(()=>sessionStorage.getItem('skyryse-mes-server-token-v1'));
  ok('signing out of the demo leaves the production server session token in place',tok==='production-server-session',String(tok));
  await ctx.close();}
+// A browser that opened an older demo build, then opens production first: production removes the demo's
+// known-password accounts and its queued workspace records once, keeps its own, and records that it did.
+{const ctx=await b.newContext({viewport:{width:1440,height:1000}});const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));
+ const demoUsers=JSON.parse(fs.readFileSync(path.join(ROOT,'tools/demo/accounts.json'),'utf8')).users;
+ await ctx.addInitScript(users=>{if(sessionStorage.getItem('seeded'))return;sessionStorage.setItem('seeded','1');
+  localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify({users:[{username:'mlee',displayName:'Morgan Lee',salt:'00',hash:'f'.repeat(64),role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},...users]}));
+  localStorage.setItem('skyryse-mes-sync-queue-v1',JSON.stringify([{clientWriteId:'old-demo-1',storeKey:'skyryse-mes-work-order-qa100-v1'},{clientWriteId:'prod-1',storeKey:'skyryse-mes-work-order-v1'}]));},demoUsers);
+ await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(1200);
+ const r=await p.evaluate(()=>({users:JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.map(u=>u.username),queue:JSON.parse(localStorage.getItem('skyryse-mes-sync-queue-v1')).map(x=>x.clientWriteId),log:localStorage.getItem('skyryse-mes-security-v1')||''}));
+ ok('the refusal case is real: the older demo accounts include master',demoUsers.some(u=>u.username==='master'&&u.createdBy==='demo build'));
+ ok('production opened first removes every account an older demo build created and keeps its own',JSON.stringify(r.users)==='["mlee"]',JSON.stringify(r.users));
+ ok('production opened first drops the older demo\'s queued workspace records before its mirror can send them',JSON.stringify(r.queue)==='["prod-1"]',JSON.stringify(r.queue));
+ ok('the removal is recorded in the production security log',/legacy-demo-removed/.test(r.log)&&/master/.test(r.log),r.log.slice(0,300));
+ await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(600);
+ const signIn=await p.evaluate(async()=>{const r=await skAuth.switchAccount('master','demo1234');return r.ok;});
+ ok('master with demo1234 no longer signs in to production',signIn===false,String(signIn));
+ await ctx.close();}
+// The demo build itself never runs that cleanup on its own accounts.
+ok('the cleanup is switched off in the demo build and active in production',/purgeLegacyDemoState\(\)\{return;\/\* DEMO D-\d+ \*\//.test(curated)&&/ function purgeLegacyDemoState\(\)\{var removed/.test(prod));
 ok('no page errors',errs.length===0,errs.join(' | '));
 await b.close();
 console.log('errors',errs,'FAILS',JSON.stringify(fails));

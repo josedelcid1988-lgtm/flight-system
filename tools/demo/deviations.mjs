@@ -179,7 +179,7 @@ const LIST = [
     replace: (ctx, m, id) => `/* DEMO ${id} */ window.SK_MIRROR = window.__demoMirrorPreset || { url: '', token: '', batchSize: 50 };` },
   { area: 'Data', title: 'Separate mirror queue keys',
     why: 'Records the demo queues for a mirror are kept under skyryse-mes-demo-sync-*, so a production page in the same browser never sends a demo record to its mirror.',
-    find: /(['"])skyryse-mes-sync-(?:queue|sent|client)-v1\1/g, count: 3,
+    find: /(['"])skyryse-mes-sync-(?:queue|sent|client)-v1\1/g, count: 4,
     replace: (ctx, m, id) => `${m.replace('skyryse-mes-sync-', 'skyryse-mes-demo-sync-')}/* DEMO ${id} */` },
   { area: 'Accounts', title: 'Separate session, lockout, security log, sign-in tokens, drafts and evidence storage',
     why: 'Signing in to the demo never signs anyone in to the production page in the same tab, and signing out of the demo never removes the production server session token when the server also serves the demo. Failed or successful demo sign-ins never lock or unlock a production account of the same name, demo sign-ins and role changes never appear in the production security log or its export, and demo drafts and evidence stay out of production. Each key gains -demo- in the demo build; the production keys are unchanged.',
@@ -193,6 +193,10 @@ const LIST = [
     why: 'D-41 gives the demo its own evidence database. A demo record made before that still names a recording kept in the old shared database, so when the demo database does not hold a recording the demo reads that one recording, by the ID its own record names, from the old database (never creating it) and copies it into the demo database. Production recordings are never listed or copied: only an ID a demo record names is read.',
     find: "get: async id => { if (!serverMode()) return transact('get', id);", count: 1,
     replace: (ctx, m, id) => `get: async id => { if (!serverMode()) { /* DEMO ${id} */ const own = await transact('get', id); if (own !== null) return own; const old = await new Promise(done => { try { let fresh = false; const r = root.indexedDB.open('skyryse-mes-' + 'evidence-v1'); r.onupgradeneeded = () => { fresh = true; r.transaction.abort(); }; r.onerror = () => done(null); r.onsuccess = () => { const d = r.result; if (fresh || !d.objectStoreNames.contains(STORE)) { d.close(); done(null); return; } try { const g = d.transaction(STORE, 'readonly').objectStore(STORE).get(id); g.onsuccess = () => { d.close(); done(g.result instanceof Blob ? g.result : null); }; g.onerror = () => { d.close(); done(null); }; } catch (e) { d.close(); done(null); } }; } catch (e) { done(null); } }); if (old) await transact('put', id, old).catch(() => {}); return old; }` },
+  { area: 'Accounts', title: 'Production cleanup of older demo leftovers switched off',
+    why: 'Production removes, once, the known-password accounts and queued mirror records an older demo build left in its storage. The demo keeps its accounts under its own keys (D-38, D-41) and must not remove them, so the cleanup returns at once in the demo build.',
+    find: ' function purgeLegacyDemoState(){', count: 1,
+    replace: (ctx, m, id) => ` function purgeLegacyDemoState(){return;/* DEMO ${id} */` },
 ];
 
 export const DEVIATIONS = LIST.map((d, i) => Object.freeze({ ...d, id: `D-${i + 1}` }));
