@@ -96,6 +96,15 @@ or its `copyOf`, matched exactly. The live check and the archive check use the s
 (`server/evidence-refs.mjs`) in both the SQLite and the PostgreSQL store. A recording ID written anywhere else in
 an order, such as a title, a note or an activity line, names nothing and does not open the recording.
 
+Each archived order's references are recorded in `archive_evidence` when the order is archived, so the archive check
+is one indexed lookup. A database from before that table gets it once at startup, filled from every archived order in
+one transaction.
+
+A reference is also authority, so adding one is checked: a write (a record action or a workspace save) that adds a
+new reference to a recording the server holds is refused with 422 and recorded as `evidence-refused` unless the
+account uploaded that recording or is a QA Manager or Master Access account. A recording the workspace already
+names stays usable as before.
+
 ## First-run setup code
 
 The first account on a new server becomes Master Access, so creating it needs a setup code that only

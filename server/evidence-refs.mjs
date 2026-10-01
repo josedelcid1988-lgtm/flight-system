@@ -24,12 +24,3 @@ export function evidenceIdsInWorkspace(doc) {
   for (const order of list(doc?.orders)) evidenceIdsInOrder(order, ids);
   return ids;
 }
-
-// Whether one archived entry ({ order, activity }) names the recording. Accepts the stored JSON text or the parsed
-// entry; unreadable JSON names nothing.
-export function archivedEntryNamesEvidence(entry, id) {
-  if (typeof id !== 'string' || !id) return false;
-  let parsed = entry;
-  if (typeof entry === 'string') { try { parsed = JSON.parse(entry); } catch { return false; } }
-  return isRecord(parsed) && evidenceIdsInOrder(parsed.order).has(id);
-}

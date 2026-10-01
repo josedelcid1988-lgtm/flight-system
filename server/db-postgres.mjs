@@ -2,7 +2,7 @@
 // use one checked-out client so the statements share the same database session.
 import { createHash, randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { archivedEntryNamesEvidence } from './evidence-refs.mjs';
+import { evidenceIdsInOrder } from './evidence-refs.mjs';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS documents (tenant TEXT PRIMARY KEY, json TEXT NOT NULL, etag TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, updated_by TEXT);
@@ -52,12 +52,37 @@ const hashAudit = row => createHash('sha256').update(JSON.stringify({ id: Number
 const tokenHash = token => createHash('sha256').update(String(token)).digest('hex');
 const etagFor = (value, revision) => `"${revision}-${createHash('sha256').update(value).digest('hex').slice(0, 16)}"`;
 
+const archivedEvidenceIds = json => { try { return evidenceIdsInOrder(parsed(json)?.order); } catch { return new Set(); } };
+
+// The evidence references of each archived order (see server/evidence-refs.mjs), recorded when the order is archived so
+// the read check is one indexed lookup. A database from before this table gets it once, filled from every archived
+// order in the same transaction, so the table is never present but incomplete. The advisory lock keeps two servers
+// starting together from both filling it.
+async function ensureArchiveEvidence(pool) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('flight_archive_evidence'))");
+    if (!(await client.query("SELECT to_regclass('archive_evidence') AS t")).rows[0].t) {
+      await client.query('CREATE TABLE archive_evidence (evidence_id TEXT NOT NULL, order_id TEXT NOT NULL, PRIMARY KEY (evidence_id, order_id))');
+      for (let after = '', rows; (rows = (await client.query('SELECT order_id, json FROM archive WHERE order_id > $1 ORDER BY order_id LIMIT 200', [after])).rows).length; after = rows[rows.length - 1].order_id) {
+        for (const row of rows) for (const id of archivedEvidenceIds(row.json)) await client.query('INSERT INTO archive_evidence (evidence_id, order_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [id, row.order_id]);
+      }
+    }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally { client.release(); }
+}
+
 export async function openPostgres(connectionString, options = {}) {
   if (!connectionString) throw new Error('Set FLIGHT_DATABASE_URL to enable PostgreSQL storage.');
   const { Pool } = await import('pg');
   const pool = new Pool({ connectionString, max: Number(options.maxConnections) || 10, application_name: 'Flight System' });
   try {
     await pool.query(SCHEMA);
+    await ensureArchiveEvidence(pool);
     const store = makeStore(pool, pool.query.bind(pool), false, connectionString);
     // Refuse to start on a tampered audit trail, as the SQLite store does: a server that kept running would append new
     // entries to a chain that no longer verifies.
@@ -215,12 +240,9 @@ function makeStore(pool, query, inTransaction, connectionString) {
     async lockouts(at = Date.now()) { return (await query('SELECT username,fails,locked_until,last_failed_at FROM lockouts WHERE locked_until>$1 ORDER BY locked_until DESC', [at])).rows.map(r => ({ username: r.username, until: new Date(Number(r.locked_until)).toISOString(), lastFailedAt: r.last_failed_at })); },
     async archived(id) { const r = (await query('SELECT order_id,json,sha256,schema,archived_at,archived_by FROM archive WHERE order_id=$1', [id])).rows[0]; return r ? { id: r.order_id, entry: parsed(r.json), sha256: r.sha256, schema: Number(r.schema), archivedAt: r.archived_at, archivedBy: r.archived_by } : null; },
     async archivedSha(id) { return (await query('SELECT sha256 FROM archive WHERE order_id=$1', [id])).rows[0]?.sha256 || null; },
-    async putArchived(e) { await query('INSERT INTO archive (order_id,json,sha256,schema,part_number,serials,lots,parts,title,closed_at,archived_at,archived_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)', [e.id,e.json,e.sha256,e.schema,e.keys.partNumber||null,json(e.keys.serials),json(e.keys.lots),json(e.keys.parts),e.keys.title||null,e.keys.closedAt||null,now(),e.by||null]); },
-    // Same rule as the SQLite store: the text search narrows, the structural check on the parsed entry decides.
-    async archiveNamesEvidence(id) {
-      const key = String(id);
-      return (await query('SELECT json FROM archive WHERE position($1 in json) > 0', [JSON.stringify(key)])).rows.some(row => archivedEntryNamesEvidence(row.json, key));
-    },
+    async putArchived(e) { await query('INSERT INTO archive (order_id,json,sha256,schema,part_number,serials,lots,parts,title,closed_at,archived_at,archived_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)', [e.id,e.json,e.sha256,e.schema,e.keys.partNumber||null,json(e.keys.serials),json(e.keys.lots),json(e.keys.parts),e.keys.title||null,e.keys.closedAt||null,now(),e.by||null]); for (const id of archivedEvidenceIds(e.json)) await query('INSERT INTO archive_evidence (evidence_id,order_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [id, e.id]); },
+    // Same rule as the SQLite store: the references recorded at archive time, one indexed lookup.
+    async archiveNamesEvidence(id) { return (await query('SELECT 1 AS found FROM archive_evidence WHERE evidence_id=$1 LIMIT 1', [String(id)])).rows.length > 0; },
     async archiveCount() { return Number((await query('SELECT COUNT(*) AS c FROM archive')).rows[0].c); },
     async archiveSearch(term, limit = 200) {
       const q = String(term || '').trim().toUpperCase();

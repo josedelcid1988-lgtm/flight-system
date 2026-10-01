@@ -146,6 +146,19 @@ try {
   const copiedId = `EV-${randomUUID()}`, copyJson = JSON.stringify({ order: { id: 'WO-PG-COPY', status: 'Closed', operations: [{ id: 'op-010', quarantinedEvidence: [{ id: `EV-${randomUUID()}`, copyOf: copiedId }] }] }, activity: [] });
   await server.store.putArchived({ id: 'WO-PG-COPY', json: copyJson, sha256: createHash('sha256').update(copyJson).digest('hex'), schema: 1, keys: { partNumber: 'P', serials: [], lots: [], parts: ['P'], title: 'Copy', closedAt: null }, by: 'postgres-test' });
   assert.equal(await server.store.archiveNamesEvidence(copiedId), true, 'a quarantined copyOf reference on an archived operation is found');
+  // References are recorded at archive time and looked up by index; a database from before the table is backfilled once.
+  const refPool = new (await import('pg')).Pool({ connectionString, max: 1 });
+  const refRows = async () => (await refPool.query("SELECT evidence_id, order_id FROM archive_evidence WHERE order_id IN ('WO-PG-PLANT','WO-PG-COPY') ORDER BY order_id, evidence_id")).rows.map(r => `${r.evidence_id}@${r.order_id}`);
+  const recorded = await refRows();
+  assert.ok(recorded.includes(`${copiedId}@WO-PG-COPY`) && !recorded.some(row => row.endsWith('@WO-PG-PLANT')), 'only structural references are recorded');
+  await refPool.query('DROP TABLE archive_evidence');
+  const { openPostgres } = await import('../../server/db-postgres.mjs');
+  const reopened = await openPostgres(connectionString);
+  assert.equal(await reopened.archiveNamesEvidence(copiedId), true, 'the reference table is rebuilt from every archived order');
+  assert.equal(await reopened.archiveNamesEvidence(plantedId), false);
+  assert.equal(await reopened.archiveNamesEvidence(evidenceId), true);
+  await reopened.close?.();
+  await refPool.end();
   console.log('ok PostgreSQL evidence bytes round-trip with SHA-256');
 
   const backupPath = path.join(exportDir, 'flight-postgres.dump');
