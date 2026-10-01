@@ -48,10 +48,13 @@ holds keeps the demo's account and the older one is set aside under `skyryse-mes
 An account a person created while signed in to such a demo cannot be told apart from a production account, so
 a standalone page then opens on an account review and nothing else, across reloads and identity provider
 redirects. Only a QA Manager or Master Access account signs in to it (anyone else's session is ended and
-switching account is refused); they confirm each account they recognize, and nobody confirms their own account
-while another QA Manager or Master Access account exists to do it (the only such account confirming itself is
-recorded as such). An account nobody recognizes is never confirmed: clear the browser's site data, or use the
-server, before production use. Each step counts only once its security log entry is stored
+switching account is refused); they confirm each account they recognize, and nobody confirms their own account,
+so a browser with a single QA Manager or Master Access account cannot finish the review: move its workspace to
+the server (`docs/MIGRATION.md`) or clear its site data. A tab already open when the review is found reloads onto
+it, and if browser storage refuses the review record the page that found the leftovers still requires it. Queued
+account records wait outside the mirror queue under `skyryse-mes-legacy-demo-account-queue-v1` until the review
+closes, which queues the reviewed account list instead. An account nobody recognizes is never confirmed: clear
+the browser's site data, or use the server, before production use. Each step counts only once its security log entry is stored
 (`legacy-demo-accounts-confirmed`, then `legacy-demo-reviewed` when every account is confirmed). With the server,
 sign-in and accounts are the server's, so a notice stays on every page until a QA Manager or Master Access account
 signed in to the server marks the review done, again only once that is logged. Drafts and partial sign-in failure

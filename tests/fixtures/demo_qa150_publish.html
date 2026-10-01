@@ -22,8 +22,8 @@
 // deletions, which would turn the demo's entities into false production deletes) is cleared, and operation drafts,
 // which may hold rehearsal values, move to the demo drafts store.
 function purgeLegacyDemoState(){return;/* DEMO D-44 */
- var REVIEW='skyryse-mes-legacy-demo-review-v1',DEMO_AUTH='skyryse-mes-demo-auth-v1',LEGACY_ACCOUNTS='skyryse-mes-legacy-demo-accounts-v1',AUTH='skyryse-mes-demo-auth-v1'/* DEMO D-38 */,QK='skyryse-mes-demo-sync-queue-v1'/* DEMO D-40 */,SENT='skyryse-mes-demo-sync-sent-v1'/* DEMO D-40 */,SK='skyryse-mes-demo-security-v1'/* DEMO D-41 */,DR='skyryse-mes-demo-drafts-v1'/* DEMO D-41 */,DSK='skyryse-mes-demo-security-v1',LK='skyryse-mes-demo-lockout-v1'/* DEMO D-41 */,LEGACY_DRAFTS='skyryse-mes-legacy-demo-drafts-v1',LEGACY_LOCKS='skyryse-mes-legacy-demo-lockout-v1';
- var demo=new Set(),grew=true,removed=[],dropped=0,moved=0,draftsMoved=0,locksReset=0,sentCleared=false;
+ var REVIEW='skyryse-mes-legacy-demo-review-v1',DEMO_AUTH='skyryse-mes-demo-auth-v1',LEGACY_ACCOUNTS='skyryse-mes-legacy-demo-accounts-v1',LEGACY_ACCOUNT_QUEUE='skyryse-mes-legacy-demo-account-queue-v1',AUTH='skyryse-mes-demo-auth-v1'/* DEMO D-38 */,QK='skyryse-mes-demo-sync-queue-v1'/* DEMO D-40 */,SENT='skyryse-mes-demo-sync-sent-v1'/* DEMO D-40 */,SK='skyryse-mes-demo-security-v1'/* DEMO D-41 */,DR='skyryse-mes-demo-drafts-v1'/* DEMO D-41 */,DSK='skyryse-mes-demo-security-v1',LK='skyryse-mes-demo-lockout-v1'/* DEMO D-41 */,LEGACY_DRAFTS='skyryse-mes-legacy-demo-drafts-v1',LEGACY_LOCKS='skyryse-mes-legacy-demo-lockout-v1';
+ var demo=new Set(),grew=true,removed=[],dropped=0,moved=0,draftsMoved=0,locksReset=0,sentCleared=false,accountRowsHeld=0;
  function get(k){try{return JSON.parse(localStorage.getItem(k)||'null');}catch(e){return null;}}
  function put(k,v){localStorage.setItem(k,JSON.stringify(v));}
  var a=get(AUTH),q=get(QK),log=get(SK);
@@ -46,19 +46,27 @@ function purgeLegacyDemoState(){return;/* DEMO D-44 */
  var copied=false;if(gone.length){try{copyToDemo();copied=true;}catch(e){}}
  try{removed=gone.map(function(u){return u.username;});if(removed.length){a.users=users.filter(function(u){return !(u&&demoMade(u.createdBy));});put(AUTH,a);}}catch(e){}
  if(gone.length&&!copied){try{copyToDemo();}catch(e){notCopied=gone.length;}}
- try{var keep=queued.filter(function(r){return !(r&&(r.storeKey==='skyryse-mes-work-order-qa100-v1'||demoAccountRecord(r)));});dropped=queued.length-keep.length;if(dropped)put(QK,keep);}catch(e){}
+ try{var keep=queued.filter(function(r){return !(r&&(r.storeKey==='skyryse-mes-work-order-qa100-v1'||demoAccountRecord(r)));});dropped=queued.length-keep.length;if(dropped)put(QK,keep);queued=keep;}catch(e){}
  try{if(Array.isArray(log)){var fromDemo=function(e){return !!e&&typeof e.page==='string'&&/(^|\/)demo[^\/]*\.html?$/i.test(e.page);},out=log.filter(fromDemo);moved=out.length;if(moved){var dl=get(DSK);put(DSK,out.concat(Array.isArray(dl)?dl:[]).slice(-5000));put(SK,log.filter(function(e){return !fromDemo(e);}));}}}catch(e){}
  if(removed.length||dropped||moved){
   try{var sent=get(SENT);if(sent&&typeof sent==='object'&&Object.keys(sent).length){localStorage.removeItem(SENT);sentCleared=true;}}catch(e){}
   // Drafts and partial sign-in failure counts the older demo could have written are set aside under their own keys,
   // never merged into the demo's current ones. A lockout still in force is kept.
   try{var dr=get(DR);if(Array.isArray(dr)&&dr.length){var kept=get(LEGACY_DRAFTS);put(LEGACY_DRAFTS,(Array.isArray(kept)?kept:[]).concat(dr));localStorage.removeItem(DR);draftsMoved=dr.length;}}catch(e){}
+  // Every other queued account record waits outside the queue: an account the older demo changed or made under a
+  // production name cannot be told apart, so none is mirrored before the review. Closing the review queues the
+  // reviewed account list instead (the sent index is cleared, so every account is sent again).
+  try{var acctRows=queued.filter(accountRecord);if(acctRows.length){var held=get(LEGACY_ACCOUNT_QUEUE);put(LEGACY_ACCOUNT_QUEUE,(Array.isArray(held)?held:[]).concat(acctRows));put(QK,queued.filter(function(r){return !accountRecord(r);}));accountRowsHeld=acctRows.length;}}catch(e){}
   try{var lk=get(LK);if(lk&&typeof lk==='object'&&Object.keys(lk).length){put(LEGACY_LOCKS,lk);var active={};Object.keys(lk).forEach(function(n){if(lk[n]&&Number(lk[n].until)>Date.now())active[n]={fails:0,until:lk[n].until};});put(LK,active);locksReset=Object.keys(lk).length-Object.keys(active).length;}}catch(e){}
   // Accounts a production user created while a demo page was open carry no mark the cleanup can find, so a QA
   // Manager reviews the account list. The review stays required, across reloads and sign-in, until it is done and
   // logged: on a standalone page every account is confirmed on the sign-in screen first (skBoot).
-  try{put(REVIEW,{foundAt:new Date().toISOString(),accounts:removed,queuedRecords:dropped,securityEvents:moved,draftsMoved:draftsMoved,mirrorSentIndexCleared:sentCleared});}catch(e){}
-  window.addEventListener('DOMContentLoaded',function(){try{window.dispatchEvent(new CustomEvent('sk-security',{detail:{type:'legacy-demo-removed',at:new Date().toISOString(),accounts:removed,queuedRecords:dropped,securityEvents:moved,draftsMoved:draftsMoved,lockoutsReset:locksReset,mirrorSentIndexCleared:sentCleared,accountsMovedToDemo:toDemo,accountsSetAside:setAside,accountsNotCopied:notCopied}}));}catch(e){}});}
+  // If browser storage refuses the review record, this page holds it in memory and in this tab's session storage,
+  // so the review is still required here and nothing can be confirmed until storage is freed.
+  var reviewRecord={foundAt:new Date().toISOString(),accounts:removed,queuedRecords:dropped,securityEvents:moved,draftsMoved:draftsMoved,mirrorSentIndexCleared:sentCleared},reviewSaved=false;
+  try{put(REVIEW,reviewRecord);reviewSaved=!!get(REVIEW);}catch(e){}
+  if(!reviewSaved){window.__skLegacyReviewUnsaved=reviewRecord;try{sessionStorage.setItem(REVIEW,JSON.stringify(reviewRecord));}catch(e){}}
+  window.addEventListener('DOMContentLoaded',function(){try{window.dispatchEvent(new CustomEvent('sk-security',{detail:{type:'legacy-demo-removed',at:new Date().toISOString(),accounts:removed,queuedRecords:dropped,securityEvents:moved,draftsMoved:draftsMoved,lockoutsReset:locksReset,mirrorSentIndexCleared:sentCleared,accountsMovedToDemo:toDemo,accountsSetAside:setAside,accountsNotCopied:notCopied,accountRecordsHeld:accountRowsHeld,reviewSaved:reviewSaved}}));}catch(e){}});}
   showLegacyDemoReview();
 }
 // The review record and its audit. A step of the review counts only once its security log entry is stored, so a full
@@ -66,12 +74,14 @@ function purgeLegacyDemoState(){return;/* DEMO D-44 */
 function legacyDemoReviewApi(){
  var REVIEW='skyryse-mes-legacy-demo-review-v1';
  return {
-  pending:function(){try{return JSON.parse(localStorage.getItem(REVIEW)||'null');}catch(e){return null;}},
+  pending:function(){var v=null;try{v=JSON.parse(localStorage.getItem(REVIEW)||'null');}catch(e){}if(!v){try{v=JSON.parse(sessionStorage.getItem(REVIEW)||'null');}catch(e){}}return v||window.__skLegacyReviewUnsaved||null;},
   audit:function(detail){var at=new Date().toISOString(),d={at:at};Object.keys(detail).forEach(function(k){d[k]=detail[k];});try{window.dispatchEvent(new CustomEvent('sk-security',{detail:d}));}catch(e){}
    var log=[];try{log=window.skSecurityLog&&window.skSecurityLog.read?window.skSecurityLog.read():[];}catch(e){}
    return Array.isArray(log)&&log.some(function(e){return !!e&&e.type===d.type&&e.at===at&&e.by===d.by;});},
   save:function(v){try{localStorage.setItem(REVIEW,JSON.stringify(v));return true;}catch(e){return false;}},
-  done:function(){try{localStorage.removeItem(REVIEW);return !localStorage.getItem(REVIEW);}catch(e){return false;}}
+  done:function(){try{localStorage.removeItem(REVIEW);sessionStorage.removeItem(REVIEW);window.__skLegacyReviewUnsaved=null;return !localStorage.getItem(REVIEW)&&!sessionStorage.getItem(REVIEW);}catch(e){return false;}},
+  // Queue the reviewed account list for the mirror, when one is configured.
+  release:function(){try{window.dispatchEvent(new CustomEvent('sk-auth-saved'));}catch(e){}}
  };
 }
 // With the server, a notice on every page until a QA Manager or Master Access account signed in to the server marks the
@@ -79,6 +89,8 @@ function legacyDemoReviewApi(){
 // own account list is what signs people in.
 function showLegacyDemoReview(){
  var R=window.skLegacyDemoReview=legacyDemoReviewApi(),pending=R.pending();
+ // A standalone tab that was already open when another tab found an older demo's leftovers reloads onto the review.
+ window.addEventListener('storage',function(e){if(e.key==='skyryse-mes-legacy-demo-review-v1'&&e.newValue&&!(window.FLIGHT_SERVER&&window.FLIGHT_SERVER.api))location.reload();});
  if(!pending)return;
  window.addEventListener('DOMContentLoaded',function(){try{
   if(!(window.FLIGHT_SERVER&&window.FLIGHT_SERVER.api))return;
@@ -2084,7 +2096,7 @@ function skBoot(){
  // account in this browser, and an account a person created while a demo page was open looks like a production account,
  // so the page opens on the account review and nothing else, across reloads and identity provider redirects, until
  // every account on this browser is confirmed. Only a QA Manager or Master Access account reviews, a session of anyone
- // else is ended, and nobody confirms their own account while another QA Manager or Master Access account can. Each
+ // else is ended, and nobody confirms their own account, so a retained account can never clear the review alone. Each
  // confirmation is written to the security log before it counts. With the server, sign-in and accounts are the
  // server's and this browser's list is not used, so the notice there is enough.
  var legacyReview=!SERVER&&window.skLegacyDemoReview&&window.skLegacyDemoReview.pending();
@@ -2096,7 +2108,7 @@ function skBoot(){
   function add(tag,text,parent){var e=document.createElement(tag);if(text!=null)e.textContent=text;(parent||box).appendChild(e);return e;}
   var title=add('p','Review the accounts on this browser');title.className='sk-login-title';title.id='sk-legacy-review-title';
   add('p','This browser opened an older demo build that shared production storage. Its demo accounts were moved to the demo, but an account a person created while a demo page was open looks like a production account. A QA Manager or Master Access account confirms each account below before anyone works in Flight System on this browser. Do not confirm an account you do not recognize: clear this browser\'s site data for Flight System, or use the Flight System server, before production use.');
-  var a=loadAuth(),me=currentUser(),conf=pend.confirmed&&typeof pend.confirmed==='object'?pend.confirmed:{};
+  var a=loadAuth(),me=currentUser(),conf=Object.create(null);if(pend.confirmed&&typeof pend.confirmed==='object')Object.keys(pend.confirmed).forEach(function(k){conf[k]=pend.confirmed[k];});
   function has(n){return Object.prototype.hasOwnProperty.call(conf,n);}
   if(me&&!isReviewer(me)){try{sessionStorage.removeItem(SESSION_KEY);}catch(e){}secEvent('signout',{username:me.username,reason:'legacy demo account review pending'});me=null;note=note||'Only a QA Manager or Master Access account can review the account list. Nobody else signs in on this browser until the review is done.';}
   var msg;
@@ -2116,29 +2128,35 @@ function skBoot(){
      if(!isReviewer(u)){msg.textContent='Only a QA Manager or Master Access account can review the account list. Nobody else signs in on this browser until the review is done.';secEvent('signin-blocked',{username:username,reason:'legacy demo account review pending'});return;}
      sessionStorage.setItem(SESSION_KEY,username);secEvent('signin',{username:username,provider:'local',purpose:'legacy demo account review'});legacyReviewGate();}).catch(function(e){go.disabled=false;msg.textContent=e.message;});});
    setTimeout(function(){un.focus();},50);return;}
-  var others=a.users.filter(function(u){return u.username!==me.username&&isReviewer(u);});
   add('p','Signed in as '+me.displayName+' ('+me.username+'). Select each account you recognize as a production account, then record your confirmations.');
   var list=add('ul'),boxes=[];
   a.users.forEach(function(u){var li=add('li',null,list),l=add('label',null,li),info=u.displayName+' ('+u.username+') · '+roleLabel(primaryRole(u))+' · created by '+(u.createdBy||'unknown')+(u.createdAt?' on '+String(u.createdAt).slice(0,10):'');
    if(has(u.username)){add('span',info+' · confirmed by '+conf[u.username].by,l);return;}
-   if(u.username===me.username&&others.length){add('span',info+' · your account: another QA Manager or Master Access account confirms it',l);return;}
+   if(u.username===me.username){add('span',info+' · your account: another QA Manager or Master Access account confirms it',l);return;}
    var c=document.createElement('input');c.type='checkbox';c.value=u.username;l.appendChild(c);boxes.push(c);
-   add('span',info+(u.username===me.username?' · your account: you are the only QA Manager or Master Access account on this browser, and that is recorded':''),l);});
+   add('span',info,l);});
+  if(!a.users.some(function(u){return u.username!==me.username&&isReviewer(u);})&&!has(me.username))add('p','No other QA Manager or Master Access account on this browser can confirm yours, so the review cannot finish here. Move this workspace to the Flight System server (docs/MIGRATION.md), where accounts are the server\'s, or clear this browser\'s site data for Flight System.');
   msg=add('p',note||'');msg.className='sk-login-error';msg.setAttribute('role','alert');
   var rec=add('button','Record confirmations');rec.type='button';var out=add('button','Sign out');out.type='button';out.className='quiet';
   out.onclick=function(){try{sessionStorage.removeItem(SESSION_KEY);}catch(e){}secEvent('signout',{username:me.username,reason:'user'});legacyReviewGate();};
   rec.onclick=function(){var picks=boxes.filter(function(c){return c.checked;}).map(function(c){return c.value;});
    if(!picks.length){msg.textContent='Select the accounts you recognize as production accounts.';return;}
-   var self=picks.indexOf(me.username)>=0;if(self&&others.length){msg.textContent='Another QA Manager or Master Access account confirms your account.';return;}
-   if(!R.audit({type:'legacy-demo-accounts-confirmed',by:me.username,accounts:picks,selfConfirmed:self})){msg.textContent='Nothing was recorded: browser storage refused the security log entry. Free browser storage and try again.';return;}
-   var next={},at=new Date().toISOString();Object.keys(pend).forEach(function(k){next[k]=pend[k];});next.confirmed={};Object.keys(conf).forEach(function(k){next.confirmed[k]=conf[k];});
-   picks.forEach(function(n){next.confirmed[n]={by:me.username,at:at,self:n===me.username};});
+   if(picks.indexOf(me.username)>=0){msg.textContent='Another QA Manager or Master Access account confirms your account.';return;}
+   if(!R.audit({type:'legacy-demo-accounts-confirmed',by:me.username,accounts:picks})){msg.textContent='Nothing was recorded: browser storage refused the security log entry. Free browser storage and try again.';return;}
+   var next={},at=new Date().toISOString();Object.keys(pend).forEach(function(k){next[k]=pend[k];});next.confirmed=Object.create(null);Object.keys(conf).forEach(function(k){next.confirmed[k]=conf[k];});
+   picks.forEach(function(n){next.confirmed[n]={by:me.username,at:at};});
    if(!R.save(next)){legacyReviewGate('The confirmations are in the security log but browser storage refused to keep them. Free browser storage and record them again.');return;}
    var left=loadAuth().users.filter(function(u){return !Object.prototype.hasOwnProperty.call(next.confirmed,u.username);});
    if(left.length){legacyReviewGate('Recorded. '+left.length+' account'+(left.length===1?'':'s')+' still to confirm.');return;}
-   if(!R.audit({type:'legacy-demo-reviewed',by:me.username,accounts:pend.accounts||[],foundAt:pend.foundAt||null,confirmedAccounts:Object.keys(next.confirmed)})){legacyReviewGate('Every account is confirmed, but browser storage refused the security log entry that closes the review. Free browser storage and record again.');return;}
-   if(!R.done()){legacyReviewGate('The review is logged as done, but browser storage refused to clear it. Free browser storage and reload.');return;}
-   location.reload();};}
+   finish(next);};
+  // Every account confirmed: the review closes once its closing entry is logged and the record cleared. If storage
+  // refused either, the same step is offered again here once storage is freed.
+  function finish(record){
+   if(!R.audit({type:'legacy-demo-reviewed',by:me.username,accounts:record.accounts||[],foundAt:record.foundAt||null,confirmedAccounts:Object.keys(record.confirmed||{})})){legacyReviewGate('Every account is confirmed, but browser storage refused the security log entry that closes the review. Free browser storage, then close the review.');return;}
+   if(!R.done()){legacyReviewGate('The review is logged as done, but browser storage refused to clear it. Free browser storage, then close the review.');return;}
+   R.release();
+   location.reload();}
+  if(a.users.length&&a.users.every(function(u){return has(u.username);})){rec.hidden=true;var close=add('button','Close the review');close.type='button';box.insertBefore(close,out);close.onclick=function(){finish(pend);};}}
  if(legacyReview){legacyReviewGate();return;}
  if(user)startGreeting(user.displayName);else if(SERVER&&serverToken()&&(function(){try{return !!sessionStorage.getItem(SESSION_KEY);}catch(e){return false;}})())restoreServerSession();else showLogin();
  function deco(){var ph=document.querySelector('.page-heading');if(!ph||ph.querySelector('.sk-ticker'))return;var t=document.createElement('div');t.className='sk-ticker';t.innerHTML='<i>Live</i><span>El Segundo <b id="sk-site">Floor</b></span><span id="sk-clock"></span>';ph.appendChild(t);}
