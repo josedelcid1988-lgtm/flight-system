@@ -59,7 +59,7 @@ ok('production keeps the NC review hand-off',prod.includes('if(t.dispo?.credenti
  ok('the demo takes a mirror only from the suite runner\'s own setting, recorded before any of the file runs',curated.indexOf('window.__demoMirrorPreset=window.__FS_SUITE_DEMO_MIRROR__||null;')>0&&curated.indexOf('window.__demoMirrorPreset=window.__FS_SUITE_DEMO_MIRROR__||null;')<curated.indexOf('<script id="sk-mirror">'));
  ok('the demo keeps its mirror queue under separate keys',!/['"]skyryse-mes-sync-(queue|sent|client)-v1['"]/.test(curated)&&/'skyryse-mes-demo-sync-queue-v1'/.test(curated));
  ok('production keeps its frozen mirror queue keys',/'skyryse-mes-sync-queue-v1'/.test(prod));}
-ok('the demo reads and writes accounts only under skyryse-mes-demo-auth-v1',!/['"]skyryse-mes-auth-v1['"]/.test(curated)&&(curated.match(/['"]skyryse-mes-demo-auth-v1['"]/g)||[]).length===5);
+ok('the demo reads and writes accounts only under skyryse-mes-demo-auth-v1',!/['"]skyryse-mes-auth-v1['"]/.test(curated)&&(curated.match(/['"]skyryse-mes-demo-auth-v1['"]\/\* DEMO D-\d+ \*\//g)||[]).length===5);
 {const shared=['session','lockout','security','oidc','server-token','drafts','evidence'];
  ok('the demo keeps its session, lockout, security log, sign-in tokens, drafts and evidence under demo keys',shared.every(k=>!new RegExp(`['"]skyryse-mes-${k}-v1['"]`).test(curated)&&new RegExp(`['"]skyryse-mes-demo-${k}-v1['"]`).test(curated)),shared.filter(k=>new RegExp(`['"]skyryse-mes-${k}-v1['"]`).test(curated)).join(','));
  ok('production keeps those keys unchanged',shared.every(k=>new RegExp(`['"]skyryse-mes-${k}-v1['"]`).test(prod)));}
@@ -137,44 +137,80 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  const demoUsers=JSON.parse(fs.readFileSync(path.join(ROOT,'tools/demo/accounts.json'),'utf8')).users;
  await ctx.addInitScript(users=>{if(sessionStorage.getItem('seeded'))return;sessionStorage.setItem('seeded','1');
   // qa.boss was added in the older demo by its master with a chosen password and Master Access; tech.two by qa.boss.
-  localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify({users:[{username:'mlee',displayName:'Morgan Lee',salt:'00',hash:'f'.repeat(64),role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'ops1',displayName:'Ops One',salt:'00',hash:'f'.repeat(64),role:'ops',createdAt:'2026-09-02T00:00:00.000Z',createdBy:'mlee'},...users,{username:'qa.boss',displayName:'QA Boss',salt:'01',hash:'ecad7597c83a96d133e45f9e9d271cbb0d1815dbae29b38b5148be7822799576',role:'admin',createdAt:'2026-09-03T00:00:00.000Z',createdBy:'master'},{username:'tech.two',displayName:'Tech Two',salt:'00',hash:'f'.repeat(64),role:'technician',createdAt:'2026-09-04T00:00:00.000Z',createdBy:'qa.boss'},{username:'__proto__',displayName:'Proto',salt:'00',hash:'f'.repeat(64),role:'admin',createdAt:'2026-09-05T00:00:00.000Z',createdBy:'master'}]}));
+  // qa2 is a Master Access account a production user created; it could have been made while a demo page was open.
+  localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify({users:[{username:'mlee',displayName:'Morgan Lee',salt:'01',hash:'ecad7597c83a96d133e45f9e9d271cbb0d1815dbae29b38b5148be7822799576',role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'ops1',displayName:'Ops One',salt:'01',hash:'ecad7597c83a96d133e45f9e9d271cbb0d1815dbae29b38b5148be7822799576',role:'ops',createdAt:'2026-09-02T00:00:00.000Z',createdBy:'mlee'},{username:'qa2',displayName:'QA Two',salt:'01',hash:'ecad7597c83a96d133e45f9e9d271cbb0d1815dbae29b38b5148be7822799576',role:'admin',createdAt:'2026-09-02T00:00:00.000Z',createdBy:'mlee'},...users,{username:'qa.boss',displayName:'QA Boss',salt:'01',hash:'ecad7597c83a96d133e45f9e9d271cbb0d1815dbae29b38b5148be7822799576',role:'admin',createdAt:'2026-09-03T00:00:00.000Z',createdBy:'master'},{username:'tech.two',displayName:'Tech Two',salt:'00',hash:'f'.repeat(64),role:'technician',createdAt:'2026-09-04T00:00:00.000Z',createdBy:'qa.boss'},{username:'__proto__',displayName:'Proto',salt:'00',hash:'f'.repeat(64),role:'admin',createdAt:'2026-09-05T00:00:00.000Z',createdBy:'master'}]}));
   localStorage.setItem('skyryse-mes-sync-sent-v1',JSON.stringify({'order|WO-10009':'a'.repeat(64),'account|master':'b'.repeat(64)}));
   localStorage.setItem('skyryse-mes-drafts-v1',JSON.stringify([['WO-10009|OP-10',{note:'rehearsal note',torque:'25 in-lb',stampNumber:''}]]));
+  // The demo store already holds a tech.two of its own: the demo's account is kept, the older one set aside.
+  localStorage.setItem('skyryse-mes-demo-auth-v1',JSON.stringify({users:[{username:'tech.two',displayName:'Current Demo Tech',salt:'00',hash:'e'.repeat(64),role:'technician',createdAt:'2026-09-20T00:00:00.000Z',createdBy:'demo build'}]}));
   localStorage.setItem('skyryse-mes-demo-drafts-v1',JSON.stringify([['WO-10009|OP-10',{note:'current demo note',stampNumber:''}]]));
   localStorage.setItem('skyryse-mes-lockout-v1',JSON.stringify({master:{fails:3,until:0},mlee:{fails:4,until:0},locked1:{fails:0,until:Date.now()+3600e3}}));
   const acct=(id,cw,createdBy,op)=>({clientWriteId:cw,storeKey:'skyryse-mes-auth-v1',entityType:'account',entityId:id,operation:op||'upsert',payloadJson:JSON.stringify(op==='delete'?{entityType:'account',entityId:id,deleted:true}:{username:id,role:'admin',createdBy})});
   localStorage.setItem('skyryse-mes-sync-queue-v1',JSON.stringify([{clientWriteId:'old-demo-1',storeKey:'skyryse-mes-work-order-qa100-v1'},{clientWriteId:'prod-1',storeKey:'skyryse-mes-work-order-v1'},acct('master','old-demo-acct-1','demo build'),acct('qa.boss','old-demo-acct-2','master'),acct('ghost','old-demo-acct-3','qa.boss'),acct('tech.two','old-demo-acct-4',null,'delete'),acct('mlee','prod-acct-1','mlee'),acct('retired1','prod-acct-2',null,'delete')]));
   localStorage.setItem('skyryse-mes-security-v1',JSON.stringify([{at:'2026-09-03T00:00:00.000Z',page:'/srv/flight/demo.html',type:'signin',username:'master'},{at:'2026-09-03T00:01:00.000Z',page:'/srv/flight/demo.html',type:'role-change',username:'qa.boss',by:'master'},{at:'2026-09-03T00:02:00.000Z',page:'/srv/flight/index.html',type:'signin',username:'mlee'}]));},demoUsers);
  await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(1200);
- const r=await p.evaluate(()=>({users:JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.map(u=>u.username),queue:JSON.parse(localStorage.getItem('skyryse-mes-sync-queue-v1')).map(x=>x.clientWriteId),notice:(document.getElementById('sk-legacy-demo-notice')||{}).textContent||null,queueRaw:localStorage.getItem('skyryse-mes-sync-queue-v1'),sent:localStorage.getItem('skyryse-mes-sync-sent-v1'),drafts:localStorage.getItem('skyryse-mes-drafts-v1'),demoDrafts:JSON.parse(localStorage.getItem('skyryse-mes-demo-drafts-v1')||'[]'),legacyDrafts:JSON.parse(localStorage.getItem('skyryse-mes-legacy-demo-drafts-v1')||'[]'),locks:JSON.parse(localStorage.getItem('skyryse-mes-lockout-v1')||'{}'),legacyLocks:JSON.parse(localStorage.getItem('skyryse-mes-legacy-demo-lockout-v1')||'{}'),log:localStorage.getItem('skyryse-mes-security-v1')||'',demoLog:JSON.parse(localStorage.getItem('skyryse-mes-demo-security-v1')||'[]')}));
+ const r=await p.evaluate(()=>({users:JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.map(u=>u.username),queue:JSON.parse(localStorage.getItem('skyryse-mes-sync-queue-v1')).map(x=>x.clientWriteId),notice:(document.getElementById('sk-legacy-demo-notice')||{}).textContent||null,gate:(document.getElementById('sk-legacy-review')||{}).textContent||null,demoAuth:JSON.parse(localStorage.getItem('skyryse-mes-demo-auth-v1')||'{"users":[]}').users,legacyAccounts:JSON.parse(localStorage.getItem('skyryse-mes-legacy-demo-accounts-v1')||'[]'),queueRaw:localStorage.getItem('skyryse-mes-sync-queue-v1'),sent:localStorage.getItem('skyryse-mes-sync-sent-v1'),drafts:localStorage.getItem('skyryse-mes-drafts-v1'),demoDrafts:JSON.parse(localStorage.getItem('skyryse-mes-demo-drafts-v1')||'[]'),legacyDrafts:JSON.parse(localStorage.getItem('skyryse-mes-legacy-demo-drafts-v1')||'[]'),locks:JSON.parse(localStorage.getItem('skyryse-mes-lockout-v1')||'{}'),legacyLocks:JSON.parse(localStorage.getItem('skyryse-mes-legacy-demo-lockout-v1')||'{}'),log:localStorage.getItem('skyryse-mes-security-v1')||'',demoLog:JSON.parse(localStorage.getItem('skyryse-mes-demo-security-v1')||'[]')}));
  ok('the refusal case is real: the older demo accounts include master',demoUsers.some(u=>u.username==='master'&&u.createdBy==='demo build'));
- ok('production opened first removes every account an older demo build created, and every account those created, and keeps its own',JSON.stringify(r.users)==='["mlee","ops1"]',JSON.stringify(r.users));
+ ok('production opened first removes every account an older demo build created, and every account those created, and keeps its own',JSON.stringify(r.users)==='["mlee","ops1","qa2"]',JSON.stringify(r.users));
  ok('production opened first drops the older demo\'s queued workspace and account records before its mirror can send them, and keeps its own',JSON.stringify(r.queue)==='["prod-1","prod-acct-1","prod-acct-2"]',JSON.stringify(r.queue));
  const prodLog=JSON.parse(r.log||'[]');
  ok('security events a demo page wrote leave the production security log; production events stay',!prodLog.some(e=>/demo\.html$/.test(e.page||''))&&prodLog.some(e=>e.type==='signin'&&e.username==='mlee'),r.log.slice(0,400));
  ok('those demo events are kept in the demo security log, not deleted',r.demoLog.length===2&&r.demoLog.every(e=>e.page==='/srv/flight/demo.html'),JSON.stringify(r.demoLog));
- {const ev=prodLog.find(e=>e.type==='legacy-demo-removed')||{};ok('the removal is recorded in the production security log',(ev.accounts||[]).includes('master')&&(ev.accounts||[]).includes('qa.boss')&&ev.queuedRecords===5&&ev.securityEvents===2&&ev.draftsMoved===1&&ev.mirrorSentIndexCleared===true,JSON.stringify(ev));}
- ok('production shows a notice that asks for the account list to be reviewed',r.notice&&/review the account list/.test(r.notice),String(r.notice));
+ {const ev=prodLog.find(e=>e.type==='legacy-demo-removed')||{};ok('the removal is recorded in the production security log',(ev.accounts||[]).includes('master')&&(ev.accounts||[]).includes('qa.boss')&&ev.queuedRecords===5&&ev.securityEvents===2&&ev.draftsMoved===1&&ev.mirrorSentIndexCleared===true&&ev.accountsMovedToDemo===demoUsers.length+2&&ev.accountsSetAside===1&&ev.accountsNotCopied===0,JSON.stringify(ev));}
+ {const da=Object.fromEntries(r.demoAuth.map(u=>[u.username,u]));
+ ok('the accounts an older demo made move to the demo account store with their passwords and roles',!!da['qa.boss']&&da['qa.boss'].role==='admin'&&da['qa.boss'].hash.startsWith('ecad')&&!!da['__proto__']&&demoUsers.every(u=>!!da[u.username]),JSON.stringify(Object.keys(da)));
+ ok('where the demo store already holds that name, the demo\'s account is kept and the older one is set aside',da['tech.two']&&da['tech.two'].displayName==='Current Demo Tech'&&r.legacyAccounts.length===1&&r.legacyAccounts[0].username==='tech.two'&&r.legacyAccounts[0].createdBy==='qa.boss',JSON.stringify({tech:da['tech.two'],aside:r.legacyAccounts}));
+ ok('no production account moves to the demo store',!da.mlee&&!da.ops1&&!da.qa2);}
+ ok('a standalone production page opens on the account review, not on sign-in',r.gate&&/Review the accounts on this browser/.test(r.gate)&&!r.notice,JSON.stringify({gate:r.gate&&r.gate.slice(0,80),notice:r.notice}));
  ok('an account named __proto__ made by a demo account is removed, and the cleanup finishes',!r.users.includes('__proto__'),JSON.stringify(r.users));
  {const sent=JSON.parse(r.sent||'{}'),dels=JSON.parse(r.queueRaw||'[]').filter(x=>x&&x.operation==='delete').map(x=>x.entityId);
  ok('the mirror sent index the older demo shared is cleared, so its entities are never sent as production deletes',sent['order|WO-10009']!=='a'.repeat(64)&&sent['account|master']!=='b'.repeat(64)&&!dels.includes('WO-10009')&&!dels.includes('master'),JSON.stringify({sent:Object.keys(sent).slice(0,5),dels}));}
  ok('operation drafts are set aside under their own key, not deleted, and the demo\'s current drafts are untouched',r.drafts===null&&r.legacyDrafts.length===1&&r.legacyDrafts[0][1].note==='rehearsal note'&&r.demoDrafts.length===1&&r.demoDrafts[0][1].note==='current demo note',JSON.stringify({drafts:r.drafts,legacyDrafts:r.legacyDrafts,demoDrafts:r.demoDrafts}));
  ok('partial sign-in failure counts are set aside; a lockout in force is kept',JSON.stringify(Object.keys(r.locks))==='["locked1"]'&&r.locks.locked1.until>Date.now()&&r.legacyLocks.master.fails===3&&r.legacyLocks.mlee.fails===4,JSON.stringify({locks:r.locks,legacyLocks:r.legacyLocks}));
- // The review stays required across reloads and over the sign-in screen until a QA Manager marks it done.
+ // The review stays required across reloads, and nobody works on this browser until every account is confirmed.
+ const gateState=()=>p.evaluate(()=>{const g=document.getElementById('sk-legacy-review');return {gate:!!g,text:g&&g.textContent,boot:!!document.getElementById('sk-boot'),login:!document.getElementById('sk-login').hidden,flag:JSON.parse(localStorage.getItem('skyryse-mes-legacy-demo-review-v1')||'null'),session:sessionStorage.getItem('skyryse-mes-session-v1'),user:window.skAuth&&skAuth.user()&&skAuth.user().username,boxes:g?[...g.querySelectorAll('input[type=checkbox]')].map(c=>c.value):[],log:JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').filter(e=>/^legacy-demo-(accounts-confirmed|reviewed)$/.test(e.type))};});
+ const gateSignIn=async(un,pw)=>{await p.evaluate(([un,pw])=>{const f=document.querySelector('#sk-legacy-review form');f.elements.username.value=un;f.elements.password.value=pw;f.requestSubmit();},[un,pw]);await p.waitForTimeout(600);return gateState();};
+ const record=async picks=>{await p.evaluate(picks=>{const g=document.getElementById('sk-legacy-review');g.querySelectorAll('input[type=checkbox]').forEach(c=>{c.checked=picks.includes(c.value);});[...g.querySelectorAll('button')].find(b=>b.textContent==='Record confirmations').click();},picks);await p.waitForTimeout(500);return gateState();};
+ const gateSignOut=async()=>{await p.evaluate(()=>[...document.querySelectorAll('#sk-legacy-review button')].find(b=>b.textContent==='Sign out').click());await p.waitForTimeout(200);};
  await p.reload();await p.waitForTimeout(700);
- const again1=await p.evaluate(()=>{const n=document.getElementById('sk-legacy-demo-notice');return {notice:!!n,z:n&&n.style.zIndex,boot:!!document.getElementById('sk-boot'),flag:!!localStorage.getItem('skyryse-mes-legacy-demo-review-v1')};});
- ok('the account review notice is shown again after a reload, above the sign-in screen',again1.notice&&again1.boot&&Number(again1.z)>1000&&again1.flag,JSON.stringify(again1));
- const clickReview=()=>p.evaluate(async()=>{const n=document.getElementById('sk-legacy-demo-notice');n.querySelector('button').click();await new Promise(r=>setTimeout(r,200));return {notice:!!document.getElementById('sk-legacy-demo-notice'),text:n.textContent,flag:!!localStorage.getItem('skyryse-mes-legacy-demo-review-v1'),log:JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').filter(e=>e.type==='legacy-demo-reviewed')};});
- let rv=await clickReview();
- ok('nobody signed in cannot mark the review done',rv.notice&&rv.flag&&/Sign in as a QA Manager/.test(rv.text)&&rv.log.length===0,JSON.stringify(rv));
+ let g=await gateState();
+ ok('the account review is shown again after a reload and the sign-in form is not offered',g.gate&&g.boot&&!g.login&&!!g.flag,JSON.stringify(g));
  await p.evaluate(()=>sessionStorage.setItem('skyryse-mes-session-v1','ops1'));await p.reload();await p.waitForTimeout(900);
- rv=await clickReview();
- ok('an Operations Manager cannot mark the review done',rv.notice&&rv.flag&&rv.log.length===0,JSON.stringify(rv));
- await p.evaluate(()=>sessionStorage.setItem('skyryse-mes-session-v1','mlee'));await p.reload();await p.waitForTimeout(900);
- rv=await clickReview();
- ok('a QA Manager marks the review done, and it is logged with who did it',!rv.notice&&!rv.flag&&rv.log.length===1&&rv.log[0].by==='mlee'&&rv.log[0].accounts.includes('qa.boss'),JSON.stringify(rv));
+ g=await gateState();
+ ok('a session of an account that cannot review is ended while the review is pending',g.gate&&g.boot&&g.session===null&&g.user===null&&/Only a QA Manager or Master Access account/.test(g.text),JSON.stringify(g));
+ const sw=await p.evaluate(async()=>(await skAuth.switchAccount('mlee','chosen-pass-1')));
+ ok('switching account is refused while the review is pending',sw.ok===false&&/Finish the account review/.test(sw.message),JSON.stringify(sw));
+ g=await gateSignIn('ops1','chosen-pass-1');
+ ok('an Operations account with the right password cannot sign in while the review is pending',g.session===null&&/Only a QA Manager or Master Access account/.test(g.text),JSON.stringify(g));
+ g=await gateSignIn('mlee','wrong-pass-1');
+ ok('a wrong password on the review sign-in is refused',g.session===null&&/Incorrect password/.test(g.text),JSON.stringify(g.text));
+ g=await gateSignIn('mlee','chosen-pass-1');
+ ok('a QA Manager signs in to the review; their own account has no box while another Master Access account exists',g.session==='mlee'&&g.boot&&JSON.stringify(g.boxes)==='["ops1","qa2"]',JSON.stringify(g));
+ g=await record([]);
+ ok('recording nothing is refused with what to do',/Select the accounts/.test(g.text)&&g.log.length===0,JSON.stringify(g.text));
+ g=await record(['ops1','qa2']);
+ {const c=g.log.find(e=>e.type==='legacy-demo-accounts-confirmed')||{};
+ ok('confirmations are logged with who made them, and the review stays open until every account is confirmed',c.by==='mlee'&&JSON.stringify(c.accounts)==='["ops1","qa2"]'&&!!g.flag&&g.flag.confirmed.qa2.by==='mlee'&&!g.flag.confirmed.mlee&&g.boot&&/1 account still to confirm/.test(g.text),JSON.stringify(g));}
+ await gateSignOut();g=await gateSignIn('qa2','chosen-pass-1');
+ ok('the other Master Access account can confirm the QA Manager, never itself',g.session==='qa2'&&JSON.stringify(g.boxes)==='["mlee"]',JSON.stringify(g.boxes));
+ // Browser storage refuses the security log entry: nothing is recorded and the review stays open.
+ g=await p.evaluate(async()=>{const real=Storage.prototype.setItem;Storage.prototype.setItem=function(k,v){if(k==='skyryse-mes-security-v1')throw new Error('storage full');return real.call(this,k,v);};
+  try{const gt=document.getElementById('sk-legacy-review');gt.querySelector('input[type=checkbox]').checked=true;[...gt.querySelectorAll('button')].find(b=>b.textContent==='Record confirmations').click();await new Promise(r=>setTimeout(r,300));}finally{Storage.prototype.setItem=real;}
+  return {text:document.getElementById('sk-legacy-review').textContent,flag:JSON.parse(localStorage.getItem('skyryse-mes-legacy-demo-review-v1')||'null')};});
+ ok('a confirmation whose security log entry cannot be stored is not recorded',/Nothing was recorded/.test(g.text)&&!!g.flag&&!g.flag.confirmed.mlee,JSON.stringify(g));
+ await Promise.all([p.waitForNavigation(),p.evaluate(()=>{const gt=document.getElementById('sk-legacy-review');gt.querySelector('input[type=checkbox]').checked=true;[...gt.querySelectorAll('button')].find(b=>b.textContent==='Record confirmations').click();})]);await p.waitForTimeout(900);
+ g=await gateState();
+ {const done=g.log.filter(e=>e.type==='legacy-demo-reviewed');
+ ok('once every account is confirmed the review closes, is logged with who closed it, and the page opens normally',!g.flag&&!g.gate&&done.length===1&&done[0].by==='qa2'&&done[0].accounts.includes('qa.boss')&&JSON.stringify(done[0].confirmedAccounts.sort())==='["mlee","ops1","qa2"]',JSON.stringify({g,done}));}
  await p.reload();await p.waitForTimeout(700);
- ok('once reviewed, the notice is gone after a reload',await p.evaluate(()=>!document.getElementById('sk-legacy-demo-notice')));
+ ok('once reviewed, no review is shown after a reload',await p.evaluate(()=>!document.getElementById('sk-legacy-review')&&!document.getElementById('sk-legacy-demo-notice')));
+ // The accounts the older demo made still work in the demo itself.
+ await p.evaluate(()=>sessionStorage.removeItem('skyryse-mes-session-v1'));
+ await p.goto('file://'+FIXTURES+'demo_publish.html');await p.waitForFunction(()=>!!document.querySelector('#sk-boot input[name=username]'));
+ await p.locator('#sk-boot input[name=username]').fill('qa.boss');await p.locator('#sk-boot input[name=password]').fill('chosen-pass-1');
+ await p.locator('#sk-boot form').evaluate(f=>f.requestSubmit());await p.waitForFunction(()=>!document.getElementById('sk-boot'),null,{timeout:20000});
+ ok('an account made in the older demo signs in to the demo with its chosen password',await p.evaluate(()=>skAuth.user()&&skAuth.user().username)==='qa.boss');
+ await p.evaluate(()=>sessionStorage.removeItem('skyryse-mes-demo-session-v1'));
  await p.evaluate(()=>sessionStorage.removeItem('skyryse-mes-session-v1'));
  await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(600);
  const signIn=await p.evaluate(async()=>{const r=await skAuth.switchAccount('master','demo1234');return r.ok;});
@@ -198,6 +234,51 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  await p.locator('#sk-boot input[name=username]').fill('master');await p.locator('#sk-boot input[name=password]').fill('demo1234');
  await p.locator('#sk-boot form').evaluate(f=>f.requestSubmit());await p.waitForFunction(()=>!document.getElementById('sk-boot'),null,{timeout:20000});
  ok('a demo account signs in with demo1234 although production names a provider',await p.evaluate(()=>skAuth.user()&&skAuth.user().username)==='master');
+ await ctx.close();}
+// The only QA Manager or Master Access account on a standalone browser confirms its own account, and that is recorded.
+{const ctx=await b.newContext({viewport:{width:1440,height:1000}});const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));
+ const H={salt:'01',hash:'ecad7597c83a96d133e45f9e9d271cbb0d1815dbae29b38b5148be7822799576'};
+ await ctx.addInitScript(H=>{if(sessionStorage.getItem('seeded'))return;sessionStorage.setItem('seeded','1');
+  localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify({users:[{username:'solo',displayName:'Solo Manager',...H,role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'solo'},{username:'tech1',displayName:'Tech One',...H,role:'technician',createdAt:'2026-09-02T00:00:00.000Z',createdBy:'solo'}]}));
+  localStorage.setItem('skyryse-mes-legacy-demo-review-v1',JSON.stringify({foundAt:'2026-09-30T00:00:00.000Z',accounts:['master']}));},H);
+ await p.goto('file://'+FIXTURES+'publish.html');await p.waitForFunction(()=>!!document.querySelector('#sk-legacy-review form'));
+ await p.evaluate(()=>{const f=document.querySelector('#sk-legacy-review form');f.elements.username.value='solo';f.elements.password.value='chosen-pass-1';f.requestSubmit();});await p.waitForTimeout(600);
+ const boxes=await p.evaluate(()=>({boxes:[...document.querySelectorAll('#sk-legacy-review input[type=checkbox]')].map(c=>c.value),text:document.getElementById('sk-legacy-review').textContent}));
+ ok('with no other QA Manager or Master Access account, the reviewer may confirm their own account and is told it is recorded',JSON.stringify(boxes.boxes)==='["solo","tech1"]'&&/you are the only QA Manager or Master Access account/.test(boxes.text),JSON.stringify(boxes));
+ await Promise.all([p.waitForNavigation(),p.evaluate(()=>{const gt=document.getElementById('sk-legacy-review');gt.querySelectorAll('input[type=checkbox]').forEach(c=>{c.checked=true;});[...gt.querySelectorAll('button')].find(b=>b.textContent==='Record confirmations').click();})]);await p.waitForTimeout(900);
+ const after=await p.evaluate(()=>({flag:localStorage.getItem('skyryse-mes-legacy-demo-review-v1'),gate:!!document.getElementById('sk-legacy-review'),log:JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').filter(e=>/^legacy-demo-/.test(e.type))}));
+ const c=after.log.find(e=>e.type==='legacy-demo-accounts-confirmed')||{};
+ ok('the self-confirmation is logged as such and closes the review',after.flag===null&&!after.gate&&c.by==='solo'&&c.selfConfirmed===true&&after.log.some(e=>e.type==='legacy-demo-reviewed'&&e.by==='solo'),JSON.stringify(after));
+ await ctx.close();}
+// With the server, the notice is shown and a QA Manager signed in to the server marks the review done, but only once
+// its security log entry is stored.
+{const ctx=await b.newContext({viewport:{width:1440,height:1000}});const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));
+ const mlee={username:'mlee',displayName:'Morgan Lee',role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'};
+ await ctx.route(/^http:\/\/flight\.test\//,route=>{const u=new URL(route.request().url());if(u.pathname==='/api/auth/session')return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({ok:true,idleMinutes:15,maxHours:12})});return route.fulfill({status:404,contentType:'application/json',body:'{"error":"not here"}'});});
+ await ctx.addInitScript(u=>{window.FLIGHT_SERVER={api:'http://flight.test/api',auth:{users:[u]}};sessionStorage.setItem('skyryse-mes-server-token-v1','tok');sessionStorage.setItem('skyryse-mes-session-v1','mlee');if(!sessionStorage.getItem('seeded')){sessionStorage.setItem('seeded','1');localStorage.setItem('skyryse-mes-legacy-demo-review-v1',JSON.stringify({foundAt:'2026-09-30T00:00:00.000Z',accounts:['master']}));}},mlee);
+ await p.goto('file://'+FIXTURES+'publish.html');await p.waitForFunction(()=>window.skAuth&&skAuth.user()&&skAuth.user().username==='mlee'&&!!document.getElementById('sk-legacy-demo-notice'),null,{timeout:20000});
+ ok('with the server, the review is a notice and the standalone review screen is not shown',await p.evaluate(()=>!document.getElementById('sk-legacy-review')));
+ const full=await p.evaluate(async()=>{const real=Storage.prototype.setItem;Storage.prototype.setItem=function(k,v){if(k==='skyryse-mes-security-v1')throw new Error('storage full');return real.call(this,k,v);};
+  try{document.querySelector('#sk-legacy-demo-notice button').click();await new Promise(r=>setTimeout(r,200));}finally{Storage.prototype.setItem=real;}
+  const n=document.getElementById('sk-legacy-demo-notice');return {notice:!!n,text:n&&n.textContent,flag:!!localStorage.getItem('skyryse-mes-legacy-demo-review-v1')};});
+ ok('when the security log entry cannot be stored, the review flag and notice stay and say why',full.notice&&full.flag&&/was not recorded/.test(full.text),JSON.stringify(full));
+ const done=await p.evaluate(async()=>{document.querySelector('#sk-legacy-demo-notice button').click();await new Promise(r=>setTimeout(r,200));return {notice:!!document.getElementById('sk-legacy-demo-notice'),flag:!!localStorage.getItem('skyryse-mes-legacy-demo-review-v1'),log:JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').filter(e=>e.type==='legacy-demo-reviewed')};});
+ ok('a QA Manager signed in to the server marks the review done, logged with who did it',!done.notice&&!done.flag&&done.log.length===1&&done.log[0].by==='mlee',JSON.stringify(done));
+ await ctx.close();}
+// Saved table filters: a filter saved or removed in the demo never changes production's.
+ok('the demo keeps saved table filters under its own key',/'skyryse-mes-demo-tablefilters-v1'\/\* DEMO D-\d+ \*\//.test(curated)&&!curated.includes("'skyryse-mes-tablefilters-v1'")&&prod.includes("var KEY='skyryse-mes-tablefilters-v1';"));
+{const ctx=await b.newContext({viewport:{width:1440,height:1000}});const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));
+ const prodFilters=JSON.stringify({orders:[{name:'Prod view',sort:{col:null,dir:'asc'},filters:{}}]});
+ await ctx.addInitScript(f=>{if(sessionStorage.getItem('seeded'))return;sessionStorage.setItem('seeded','1');localStorage.setItem('skyryse-mes-tablefilters-v1',f);},prodFilters);
+ await p.goto('file://'+FIXTURES+'demo_publish.html');await p.waitForFunction(()=>!!document.querySelector('#sk-boot input[name=username]'));
+ await p.locator('#sk-boot input[name=username]').fill('master');await p.locator('#sk-boot input[name=password]').fill('demo1234');
+ await p.locator('#sk-boot form').evaluate(f=>f.requestSubmit());await p.waitForFunction(()=>!document.getElementById('sk-boot'),null,{timeout:20000});
+ const r=await p.evaluate(async()=>{const click=attrs=>{const e=document.createElement('span');Object.entries(attrs).forEach(([k,v])=>e.setAttribute(k,v));document.body.appendChild(e);e.click();e.remove();};
+  const real=window.prompt;window.prompt=()=>'Prod view';try{click({'data-tbl-save':'orders'});}finally{window.prompt=real;}
+  const saved=localStorage.getItem('skyryse-mes-demo-tablefilters-v1');
+  click({'data-tbl-del':'orders','data-idx':'0'});await new Promise(r=>setTimeout(r,100));
+  return {saved,afterDel:localStorage.getItem('skyryse-mes-demo-tablefilters-v1'),prod:localStorage.getItem('skyryse-mes-tablefilters-v1')};});
+ ok('a filter saved and removed in the demo is kept under the demo key and leaves the production filter of the same name unchanged',/Prod view/.test(r.saved||'')&&!/Prod view/.test(r.afterDel||'')&&r.prod===prodFilters,JSON.stringify(r));
  await ctx.close();}
 // A browser with nothing from an older demo shows no notice and logs nothing; an account created now is logged.
 {const ctx=await b.newContext({viewport:{width:1440,height:1000}});const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));
