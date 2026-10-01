@@ -6,7 +6,8 @@ fixture `publish.html`) and the demo build (`demo.html`, fixtures
 demo-versus-production comparison, and a ranked list of changes worth making
 next.
 
-Build under test: v81 (`VERSION.md`), commit `72ffbc7`. Browser: Chromium 1194
+Build under test: commit `72ffbc7`. The build id for any commit is set in
+[`VERSION.md`](../VERSION.md); this report does not repeat it. Browser: Chromium 1194
 through Playwright, `CHROME_PATH` set.
 
 ## 1. Are the fixtures the builds?
@@ -108,9 +109,10 @@ They are tracked in `KNOWN-ISSUES.md` and handled by the handover items.
    replacement of that predicate covers both. Production separation of duties
    is unchanged. Verified: `test_v79` passes on a demo fixture carrying the fix.
 
-Both fixes need the demo build (`demo.html` and the three demo fixtures)
-regenerated from `index.html` before the committed fixtures show them; the
-build chain is outside this repository.
+Both fixes needed the demo build (`demo.html` and the three demo fixtures)
+regenerated from `index.html`. Since this inspection the demo build chain is in
+this repository: `node tools/build-demo.mjs` regenerates them, and `--check`
+fails when they are out of date.
 
 ## 5. Harness defects found and fixed (`tests/`)
 
@@ -138,7 +140,7 @@ build chain is outside this repository.
 | Item | Where | Owner |
 | --- | --- | --- |
 | Demo build grants every pilot seat every capability (7 `qa_full` fails) | demo build chain, outside this repo | rebuild demo with `isShared()` honouring the pilot seat list |
-| `demo.html` and demo fixtures do not yet carry the two `index.html` fixes | demo build chain | regenerate on next release |
+| `demo.html` and demo fixtures do not yet carry the two `index.html` fixes | demo build chain | Closed after this inspection: `node tools/build-demo.mjs` regenerates the demo build from `index.html` |
 | Production engine knows the `demo` username | `index.html` | move the relaxation into a demo build chain (see section 7, item 1) |
 | `Production / Render 1440 / View mnv-board renders` and `Signature manifests verify` report Skip | `qa_full` | pre-existing since the fork; not investigated |
 | `qa_access` and `qa_master` were run against the pre-fix `index.html` only | this inspection | re-run after the demo rebuild; `qa_ui` did run against the fixed file and passed |

@@ -65,7 +65,7 @@ failing suite, `tests/suite_<name>.log`. `--only a,b` runs named suites.
 | `node tests/qa_access.mjs` | Production `index.html`: first-account setup, reload, role functions, invalid stamp refusal, master creation, password reset, unauthorized creation refusal, in-place account switch. |
 | `node tests/qa_master.mjs` | Production `index.html` with the curated sample: all six buy-off types, FAIR and AQI signatures, signed override payload, ordinary-role refusal, holds, persistence. |
 | `node tests/qa_operator.mjs` | `demo.html`: operator cues (current operation, beacon, blocked state, reduced motion, mobile) and unchanged records. |
-| `node tests/qa_ui.mjs` | Production `index.html`: landing photograph, glossary, mobile navigation, search focus, reduced motion, recent-items key. |
+| `node tests/qa_ui.mjs` | Production `index.html`: React Hangar home and Flight Plan, project planning controls, NetSuite assembly build bridge payload, work-center dispatch and capacity, queue search and density, plan filters, record drawer, native order handoff, mobile overflow, reduced motion. |
 | `node tests/test_v74.mjs` … `test_v80i.mjs` | Feature suites: FAIR and conformity (v74), inspection reject and prints (v75), unreleased WIs and standard rework (v76), Certification seat, stock NC source and Use for Dev (v77), record prints (v78), MRB auto-decision and scrap closure (v79), QA-approved rework pairs (v80), FAIR links and revision authority (v80c to v80e), rework entry points and buy-off flow (v80h, v80i). |
 
 | `node tests/test_support_access.mjs` | Support Access: granted only through Master Access, reason required, activity entry, Support Overrides log, a saved account named demo loads as an ordinary account. |

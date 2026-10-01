@@ -45,10 +45,18 @@ End-user workflows are summarized in [`docs/USER_MANUAL.md`](docs/USER_MANUAL.md
 
 Okta, NetSuite, Jira, PDM, LMS, and Slack connections still require external
 configuration or bridge services. Standalone browser mode is available. The
-authenticated server supports local SQLite and PostgreSQL, but whole-workspace
-writes are not yet role-authorized; do not use it as the authoritative
-production system until the blocker in
-[`docs/SECURITY_REVIEW-v82.md`](docs/SECURITY_REVIEW-v82.md) is resolved.
+authenticated server supports local SQLite and PostgreSQL. Whole-workspace
+writes are role-authorized: `PUT /workspace` lets only a QA Manager or Master
+Access account initialize an empty server, and once the workspace exists it
+refuses any changed snapshot from every role with 403 and records the refusal
+in the security audit. Shared records change only through server-authorized
+actions (`POST /workspace/actions/...`), which run the same engine checks as
+the page. The remaining gap is coverage, not authorization: some direct field
+edits and legacy workflows are not yet bridged to a server action. On the
+server those edits are refused rather than saved; the browser keeps an
+unconfirmed recovery copy and reloads the shared workspace. Do not use the
+server as the authoritative production system until that bridge is complete
+(see [`docs/SECURITY_REVIEW-v82.md`](docs/SECURITY_REVIEW-v82.md)).
 
 The older visual inspection is retained at
 [`docs/QA_INSPECTION_2026-09-25.md`](docs/QA_INSPECTION_2026-09-25.md). Current
