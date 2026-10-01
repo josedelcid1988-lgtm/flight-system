@@ -877,6 +877,14 @@ export function createServer(options = {}) {
             await tx.lockAuthority();
             const current = await tx.accounts();
             if (firstRun && current.length) { refusal = { status: 409, error: 'An account was created on this server while you were setting it up. Sign in with it instead.' }; return false; }
+            // A production server's first account is created only if no training server has claimed the database: the
+            // check runs here, under the workspace lock and the audit lock the training claim takes, so a claim that
+            // commits after the per-request check is still seen and nothing is written beside it.
+            if (firstRun && !training && typeof tx.lockAudit === 'function') {
+              await tx.lockAudit();
+              const first = await tx.firstAuditRow();
+              if (first && first.action === TRAINING_DESIGNATION) { claimed = true; refusal = { status: 422, error: claimedRefusal }; return false; }
+            }
             for (const u of incoming) {
               const username = String(u.username || '').trim().toLowerCase();
               if (!/^[a-z0-9._-]{3,40}$/.test(username) || !String(u.displayName || '').trim()) { refusal = { status: 400, error: `Account ${username || '(blank)'}: username is 3 to 40 characters and the name is required.` }; return false; }
@@ -1206,7 +1214,8 @@ export function createServer(options = {}) {
       if (arc && m === 'GET') {
         const a = await store.archived(arc[1]);
         if (!a) { send(res, 404, { error: `${arc[1]} is not in the archive. Search by serial, lot or part to find it.` }); return; }
-        if (!arc[2]) { send(res, 200, { ...a.entry, sha256: a.sha256, schema: a.schema, archivedAt: a.archivedAt, archivedBy: a.archivedBy, readOnly: true, extractHistory: await store.extractHistory('work-order', a.id) }); return; }
+        // On a training server the record itself carries the mark first, so a saved or renamed response is still marked.
+        if (!arc[2]) { send(res, 200, { ...(training ? { training: TRAINING_MARK, trainingNote: TRAINING_PROVENANCE.note } : {}), ...a.entry, ...(training ? { training: TRAINING_MARK } : {}), sha256: a.sha256, schema: a.schema, archivedAt: a.archivedAt, archivedBy: a.archivedBy, readOnly: true, extractHistory: await store.extractHistory('work-order', a.id) }); return; }
         if (arc[2] === '/print') {
           const mode = url.searchParams.get('mode') === 'external' ? 'external' : 'internal';
           let html; try { html = host.MESPrint.document(a.entry.order, mode); } catch (e) { internalError(res, req, e, 'The record could not be printed.'); return; }

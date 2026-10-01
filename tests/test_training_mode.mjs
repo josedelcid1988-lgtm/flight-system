@@ -55,9 +55,10 @@ async function serverCase(training) {
   const printed = await print.text();
   const exported = await fetch(`${base}/api/archive/${closed.id}/export`, auth);
   const exportJson = await exported.json();
+  const detail = await (await fetch(`${base}/api/archive/${closed.id}`, auth)).json();
   const signedInPage = await (await fetch(`${base}/`, auth)).text();
   await server.closeAsync();
-  return { html, signedInPage, created: created.status, print: print.status, printed, exportStatus: exported.status, disposition: exported.headers.get('content-disposition') || '', exportJson };
+  return { html, signedInPage, created: created.status, print: print.status, printed, exportStatus: exported.status, disposition: exported.headers.get('content-disposition') || '', exportJson, detail };
 }
 {
   const on = await serverCase(true);
@@ -72,7 +73,9 @@ async function serverCase(training) {
     const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
     ok('with training on, the extract hash covers the training mark, so removing it breaks the hash', x.extractSha256 === hash(content) && x.extractSha256 !== hash({ ...content, training: undefined }) && /, training$/.test(x.extractHashCovers), x.extractHashCovers);
   }
+  ok('with training on, the raw archived record carries the training mark first, with the record unchanged beside it', Object.keys(on.detail)[0] === 'training' && on.detail.training === TRAINING_MARK && on.detail.trainingNote === 'Saved by a Flight System training server. Not a quality record.' && on.detail.order?.id === closed.id && on.detail.readOnly === true, JSON.stringify(Object.keys(on.detail)));
   const off = await serverCase(false);
+  ok('with training off, the raw archived record carries no training mark', !Object.hasOwn(off.detail, 'training') && !Object.hasOwn(off.detail, 'trainingNote') && off.detail.order?.id === closed.id, JSON.stringify(Object.keys(off.detail)));
   ok('with training off, no page carries the mark', !off.html.includes(TRAINING_MARK) && !off.signedInPage.includes(TRAINING_MARK) && !off.html.includes('training-banner') && !/"training":true/.test(off.html));
   ok('with training off, the archive print and export carry no mark', off.print === 200 && !off.printed.includes(TRAINING_MARK) && off.exportStatus === 200 && !/TRAINING-/.test(off.disposition) && off.exportJson.training === undefined);
   const withoutContext = html => html.replace(/<script id="flight-server">[^<]*<\/script>/, '');

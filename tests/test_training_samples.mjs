@@ -124,7 +124,11 @@ try {
     check('every order is cloned from a training WI', made.length === EXPECT.orders && made.every(o => o && wiIds.includes(o.masterWI?.id)));
     const fai = made.filter(o => o?.fai?.required === true).length;
     check('the first order of four WIs and one chosen order are first articles; the fifth WI records its waiver', fai === 5 && made.some(o => /instructor demo order/.test(o?.fai?.reason || '')), `fai ${fai}`);
-    check('quantities, sites and dates come from the file', made[0]?.quantity === 1 && made[0]?.site === 'HHR' && made[0]?.start === '2026-10-05' && made[0]?.due === '2026-10-09' && made.some(o => o?.site === null) && made.some(o => o?.pedigree === 'Development NFF'));
+    check('quantities, sites and dates come from the file', made[0]?.quantity === 1 && made[0]?.site === 'HHR' && made[0]?.start === '2036-10-05' && made[0]?.due === '2036-10-09' && made.some(o => o?.site === null) && made.some(o => o?.pedigree === 'Development NFF'));
+    // The plan stays ahead of any rehearsal: no order starts or is due before 2036, so a session held next year does not
+    // open with the whole floor already late.
+    const today = new Date().toISOString().slice(0, 10);
+    check('every order starts and is due in 2036 or later, after today, so a rehearsal never opens with the floor late', made.length === EXPECT.orders && made.every(o => o && o.start >= '2036-01-01' && o.due >= '2036-01-01' && o.start > today && o.due > today && o.due >= o.start), JSON.stringify(made.map(o => [o?.start, o?.due]).slice(0, 4)));
     check('the workspace validates after the work order import', MES.validate(state) === true, diag(state));
     check('every manifest verifies at the end', MES.verifyManifests(state).ok === true);
   }

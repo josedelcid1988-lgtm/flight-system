@@ -19,7 +19,7 @@ if (!connectionString) {
 
 const tag = randomUUID().replaceAll('-', '');
 const urlFor = name => { const url = new URL(connectionString); url.pathname = `/${name}`; return url.href; };
-const names = { race: `flight_train_race_${tag}`, fresh: `flight_train_fresh_${tag}`, production: `flight_train_prod_${tag}` };
+const names = { race: `flight_train_race_${tag}`, fresh: `flight_train_fresh_${tag}`, production: `flight_train_prod_${tag}`, setup: `flight_train_setup_${tag}` };
 const { Pool } = await import('pg');
 const adminPool = new Pool({ connectionString: urlFor('postgres') });
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -91,6 +91,34 @@ try {
   assert.ok(trainingOnProduction.refusal && /already holds records/.test(trainingOnProduction.refusal), `a training server refuses a production database: ${trainingOnProduction.refusal}`);
   assert.equal(await fingerprint(urlFor(names.production)), before, 'the refused production database is unchanged: no designation, no password-wrap, no account change');
   console.log('ok PostgreSQL: a training server refuses a production database and leaves it unchanged');
+
+  // 4. A production server is serving a new, empty database when a training server claims it. A first-run setup
+  // request has already passed the per-request check (nothing claimed yet) when the claim commits. The setup
+  // transaction re-reads the first audit row under the same locks the claim holds, so it sees the designation and
+  // refuses: no production account is created in the training database, and the designation stays row 1.
+  const production = createServer({ databaseUrl: urlFor(names.setup), training: false, quiet: true, setupCode: `setup-${tag}` });
+  const port = await production.listenAsync(0, '127.0.0.1');
+  store = await openPostgres(urlFor(names.setup));
+  let releaseClaim = () => {};
+  const claimGate = new Promise(resolve => { releaseClaim = resolve; });
+  const heldClaim = store.transaction(async tx => { await tx.lockDoc('default'); await tx.lockAudit(); await tx.audit(null, 'training-database', { mark: 'TRAINING, NOT THE RECORD' }); await claimGate; return true; });
+  await sleep(300);
+  const setupRequest = fetch(`http://127.0.0.1:${port}/api/auth/accounts`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ setupCode: `setup-${tag}`, users: [{ username: 'prodadmin', displayName: 'Production Admin', role: 'admin', password: 'production-password-1' }] }) });
+  await sleep(1500);
+  releaseClaim();
+  await heldClaim;
+  const setupResponse = await setupRequest, setupBody = await setupResponse.json().catch(() => ({}));
+  const setupRows = await auditActions(urlFor(names.setup));
+  const accountsPool = new Pool({ connectionString: urlFor(names.setup) });
+  const accountCount = Number((await accountsPool.query('SELECT count(*)::int AS n FROM accounts')).rows[0].n);
+  await accountsPool.end();
+  await production.closeAsync();
+  await store.close(); store = null;
+  assert.equal(setupResponse.status, 422, `first-run setup on a database claimed mid-request is refused: ${setupResponse.status} ${JSON.stringify(setupBody)}`);
+  assert.match(setupBody.error || '', /claimed by a training server/, 'the refusal says a training server claimed the database');
+  assert.equal(accountCount, 0, 'no production account is created in the training database');
+  assert.deepEqual(setupRows, ['1:training-database'], `the designation stays row 1 and nothing is written beside it: ${setupRows}`);
+  console.log('ok PostgreSQL: a production first-run setup that races a training claim is refused and writes nothing');
 } finally {
   await store?.close().catch(() => {});
   for (const name of Object.values(names)) await adminPool.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`).catch(() => {});

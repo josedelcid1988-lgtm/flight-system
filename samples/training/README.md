@@ -41,6 +41,8 @@ is expected: release the WIs first.
   rows. These 30 orders fit only if the workspace has 70 or fewer orders.
 - Calibration dates cannot be later than the day of the import. The due
   dates are in 2036 so the tools stay usable for any training session before then.
+- The work orders start and are due in October 2036, so the plan is ahead of any
+  training session before then and no order opens as late.
 - The first order from each WI is a first article (FAI) unless the file
   clears the flag with a reason. One WI's first order clears it, with the
   reason given in the faiWaiver column.
