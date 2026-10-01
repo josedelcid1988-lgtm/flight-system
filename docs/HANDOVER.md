@@ -40,14 +40,22 @@ relaxation is listed in `docs/DEMO_DEVIATIONS.md`. `tests/test_frozen_contract.m
 separation-of-duties rules is removed or reworded.
 
 Demo builds made before the demo had its own storage keys (D-38 to D-41) shared the account list,
-session, security log, drafts and mirror queue with production in the same browser. On first open,
+session, security log, drafts, saved table filters and mirror queue with production in the same browser. On first open,
 production removes what such a demo left (its accounts and every account they created, its queued
-records, its security events, and the drafts and mirror sent index it could have touched) and shows a
-notice. An account a person created while signed in to such a demo cannot be told apart from a
-production account. On any machine that ran an older demo, a QA Manager reviews the account list, or
-the browser's site data is cleared, before production use. The notice stays on every page, the sign-in
-screen included, until a QA Manager or Master Access account marks the review done, which is logged
-(`legacy-demo-reviewed`). Drafts and partial sign-in failure counts the older demo could have written are set
+records, its security events, and the drafts and mirror sent index it could have touched). The accounts the
+older demo made move to the demo's own account store, so they still work in the demo; a name the demo already
+holds keeps the demo's account and the older one is set aside under `skyryse-mes-legacy-demo-accounts-v1`.
+An account a person created while signed in to such a demo cannot be told apart from a production account, so
+a standalone page then opens on an account review and nothing else, across reloads and identity provider
+redirects. Only a QA Manager or Master Access account signs in to it (anyone else's session is ended and
+switching account is refused); they confirm each account they recognize, and nobody confirms their own account
+while another QA Manager or Master Access account exists to do it (the only such account confirming itself is
+recorded as such). An account nobody recognizes is never confirmed: clear the browser's site data, or use the
+server, before production use. Each step counts only once its security log entry is stored
+(`legacy-demo-accounts-confirmed`, then `legacy-demo-reviewed` when every account is confirmed). With the server,
+sign-in and accounts are the server's, so a notice stays on every page until a QA Manager or Master Access account
+signed in to the server marks the review done, again only once that is logged. Drafts and partial sign-in failure
+counts the older demo could have written are set
 aside under `skyryse-mes-legacy-demo-*` keys; a lockout in force is kept. Every account creation is now written to
 the security log (`account-create`), so this cannot recur unnoticed.
 
