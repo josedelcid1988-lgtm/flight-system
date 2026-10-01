@@ -895,16 +895,15 @@ export function createServer(options = {}) {
         { const unconverged = convergeDerivedState(state); if (unconverged) { await auditRefusal(422, unconverged); send(res, 422, { error: unconverged }); return; } }
         const accountProfile = host.withAccount(session.account, () => host.MES.profileOptions(state)?.[0], state);
         if (accountProfile) state.profile = { name: accountProfile.name, role: accountProfile.role, credentialId: accountProfile.credentialId };
+        // The server was empty when this request began. Initialization commits only while it is still empty: a
+        // workspace another request initialized meanwhile is never replaced, whatever ETag this request presents.
         const cur = await store.getDoc(TENANT);
-        if (cur && !ifMatch) { await auditRefusal(428, 'missing If-Match', { etag: cur.etag }); send(res, 428, { error: 'Include the current workspace ETag in If-Match before saving.' }); return; }
-        // Archive counters only move forward: a device that has not seen the latest archiving cannot lower them.
-        if (cur && state.archive) { const was = JSON.parse(cur.json).archive; if (was) { for (const k of ['orders', 'lastOrderNumber', 'lastTicketNumber']) state.archive[k] = Math.max(Number(state.archive[k]) || 0, Number(was[k]) || 0); if (was.lastArchivedAt && (!state.archive.lastArchivedAt || was.lastArchivedAt > state.archive.lastArchivedAt)) state.archive.lastArchivedAt = was.lastArchivedAt; } }
+        if (cur) { await auditRefusal(409, 'workspace initialized by another request', { etag: cur.etag }); res.writeHead(409, { 'Content-Type': MIME['.json'], ETag: cur.etag }); res.end(JSON.stringify({ error: 'The shared workspace was initialized by another request. Reload to continue.', etag: cur.etag })); return; }
         const problem = validState(state); if (problem) { await auditRefusal(422, problem); send(res, 422, { error: problem }); return; }
-        { const bad = await evidenceProblem(cur ? JSON.parse(cur.json) : null, state, session); if (bad) { await store.audit(session.username, 'evidence-refused', { message: bad }); send(res, 422, { error: bad }); return; } }
-        if (cur && ifMatch && cur.etag !== ifMatch) { await auditRefusal(409, 'stale If-Match', { etag: cur.etag }); res.writeHead(409, { 'Content-Type': MIME['.json'], ETag: cur.etag }); res.end(JSON.stringify({ error: 'The workspace changed on another device. Reload to continue.', etag: cur.etag, current: JSON.parse(cur.json) })); return; }
-        const done = await commitState(state, cur ? cur.etag : null, session.username, [{ action: 'workspace-initialize', detail: etag => ({ etag }) }]);
+        { const bad = await evidenceProblem(null, state, session); if (bad) { await store.audit(session.username, 'evidence-refused', { message: bad }); send(res, 422, { error: bad }); return; } }
+        const done = await commitState(state, null, session.username, [{ action: 'workspace-initialize', detail: etag => ({ etag }) }]);
         if (done.problem) { await auditRefusal(422, done.problem); send(res, 422, { error: done.problem }); return; }
-        if (done.conflict) { await auditRefusal(409, 'workspace changed during initialization'); send(res, 409, { error: 'The workspace changed on another device. Reload to continue.' }); return; }
+        if (done.conflict) { await auditRefusal(409, 'workspace initialized by another request'); send(res, 409, { error: 'The shared workspace was initialized by another request. Reload to continue.' }); return; }
         res.writeHead(204, { ETag: done.etag, ...(done.archived.length ? { 'X-Flight-Archived': done.archived.join(',') } : {}) }); res.end(); return;
       }
       // -- actions: run an engine function server-side with the session's authority --
