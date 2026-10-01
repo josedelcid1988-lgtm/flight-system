@@ -1,11 +1,7 @@
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import { chromium } from 'playwright';
 
 // Flight Control sweep (browser): the page-side behavior changes in the claude/sweep-flight-control bundle.
-// #410: the React order view opens the FAIR form the page selected ("Go to the FAIR" and the form tabs set it), not
-//       always Form 1. Production still routes work order detail to the legacy view (TESTING.md), so "Go to the FAIR"
-//       is also driven through the page's own renderer and must open the chosen form there.
 // #197 and #196: the React and legacy QMS records views print the same calibration archive note, built once by the
 //       engine, and the note says only work orders already moved to the server archive stop holding their entries.
 const fixture = new URL('./fixtures/demo_publish.html', import.meta.url).href;
@@ -25,47 +21,6 @@ try {
   page.on('dialog', dialog => { errors.push(`dialog: ${dialog.message()}`); dialog.dismiss(); });
   await page.goto(fixture);
   await page.waitForFunction(() => window.__ready === true);
-
-  // ---- #410 ------------------------------------------------------------------------------------------------------
-  const fair = await page.evaluate(() => {
-    const o = state.orders.find(x => x.fair && Array.isArray(x.fair.chars));
-    if (!o) return null;
-    const host = document.createElement('div'); host.hidden = true; document.body.append(host);
-    const shown = () => ({ tab: host.querySelector('.fair-pages [role=tab][aria-selected="true"]')?.dataset.fairPage || null, visible: [...host.querySelectorAll('.fair-page')].filter(pg => !pg.hidden).map(pg => pg.id) });
-    try {
-      window.FlightReact.renderOrder(host, state, MES, o, 'quality', null, skCan, null, '3');
-      const three = shown();
-      window.FlightReact.renderOrder(host, state, MES, o, 'quality', null, skCan, null, 'sign');
-      const sign = shown();
-      window.FlightReact.renderOrder(host, state, MES, o, 'quality', null, skCan, null, '1');
-      const one = shown();
-      return { three, sign, one };
-    } finally { window.FlightReact.unmount(); host.remove(); }
-  });
-  check('the fixture has an order with a FAIR', !!fair);
-  if (fair) {
-    check('the React order view opens Form 3 when the page selected it', fair.three.tab === '3' && JSON.stringify(fair.three.visible) === '["fair-page-3"]', JSON.stringify(fair.three));
-    check('the React order view opens Review and sign when the page selected it', fair.sign.tab === 'sign' && JSON.stringify(fair.sign.visible) === '["fair-page-sign"]', JSON.stringify(fair.sign));
-    check('the React order view returns to Form 1 when the page selects it', fair.one.tab === '1' && JSON.stringify(fair.one.visible) === '["fair-page-1"]', JSON.stringify(fair.one));
-  }
-  // The production path: the page renders the order through its own renderer, and "Go to the FAIR" picks the form.
-  const viaPage = await page.evaluate(async () => {
-    const o = state.orders.find(x => x.fair && Array.isArray(x.fair.chars));
-    if (!o) return null;
-    selectedId = o.id; view = 'order'; tab = 'quality'; render();
-    const go = async k => {
-      const b = document.createElement('button'); b.dataset.action = 'goto-fair'; b.dataset.fairPage = k; document.body.append(b); b.click(); b.remove();
-      await new Promise(r => setTimeout(r, 100));
-      const main = document.querySelector('#main');
-      return { tab: main.querySelector('.fair-pages [role=tab][aria-selected="true"]')?.dataset.fairPage || null, visible: [...main.querySelectorAll('.fair-page')].filter(pg => !pg.hidden).map(pg => pg.id) };
-    };
-    return { three: await go('3'), sign: await go('sign'), one: await go('1') };
-  });
-  check('through the page renderer, Go to the FAIR opens Form 3', viaPage && viaPage.three.tab === '3' && JSON.stringify(viaPage.three.visible) === '["fair-page-3"]', JSON.stringify(viaPage));
-  check('through the page renderer, Go to the FAIR opens Review and sign', viaPage && viaPage.sign.tab === 'sign' && JSON.stringify(viaPage.sign.visible) === '["fair-page-sign"]', JSON.stringify(viaPage));
-  check('through the page renderer, Go to the FAIR returns to Form 1', viaPage && viaPage.one.tab === '1' && JSON.stringify(viaPage.one.visible) === '["fair-page-1"]', JSON.stringify(viaPage));
-  const routed = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8').includes("window.FlightReact.renderOrder($('#flight-react-island'),state,MES,_ord,tab,selectedOp,skCan,selectedRev,fairPage)");
-  check('the page passes its selected FAIR form to the React order view', routed);
 
   // ---- #197 and #196 ---------------------------------------------------------------------------------------------
   const note = await page.evaluate(() => {

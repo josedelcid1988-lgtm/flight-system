@@ -2264,11 +2264,9 @@ window.FlightReact = {
     }
     flushSync(() => root.render(<QmsRecords state={state} MES={MES}/>));
   },
-  renderOrder(element, state, MES, order, tab, selectedOp, skCan, revision, fair) {
+  renderOrder(element, state, MES, order, tab, selectedOp, skCan, revision) {
     // The page owns the selected work-order revision ([data-rev-select] updates it); mirror it before rendering.
     if (revision) selectedRev = revision;
-    // The page also owns the open FAIR form ("Go to the FAIR" and the form tabs set it); mirror it the same way (#410).
-    if (fair) fairPage = String(fair);
     if (!root || rootElement !== element) {
       if (root) root.unmount();
       root = createRoot(element);
