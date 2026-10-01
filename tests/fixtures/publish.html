@@ -6453,7 +6453,9 @@ const OP_BOM_MAX = 12;
   // removed. The allowance covers the largest removal the engine signs: a 300 character reason, three copies of the
   // remover, the record ids, the time stamps and the build stamp, each at worst escaped.
   const QUARANTINE_GROWTH = 6000;
-  const fileBytes = files => files.reduce((n, file) => { if (!plain(file)) return n; const { dataUrl, ...record } = file; const size = JSON.stringify(record).length; return n + (typeof dataUrl === 'string' ? dataUrl.length : 0) + size + (file.removedAt === undefined ? size + QUARANTINE_GROWTH : 0); }, 0);
+  // Content is charged as it is stored: escaped characters take more room in the saved workspace than in memory.
+  const storedLength = text => typeof text === 'string' ? JSON.stringify(text).length : 0;
+  const fileBytes = files => files.reduce((n, file) => { if (!plain(file)) return n; const { dataUrl, ...record } = file; const size = JSON.stringify(record).length; return n + storedLength(dataUrl) + size + (file.removedAt === undefined ? size + QUARANTINE_GROWTH : 0); }, 0);
   // Every stored file counts, live or quarantined, on work orders (operations, kit list, tickets) and on quality
   // records: a removed file is kept, so it still takes room. Every file adder checks this budget.
   const heldBytes = holder => holder ? fileBytes(listOf(holder.attachments)) + fileBytes(listOf(holder.quarantinedAttachments)) + fileBytes(listOf(holder.evidence)) + fileBytes(listOf(holder.quarantinedEvidence)) : 0;
@@ -6472,7 +6474,7 @@ const OP_BOM_MAX = 12;
   const FILE_RECORD_ALLOWANCE = 2 * 5000 + QUARANTINE_GROWTH, FILE_RECORD_HEADROOM = 500000;
   const fileBudgetError = (state, dataUrl) => {
     const used = attachmentBytes(state);
-    if (dataUrl && used + dataUrl.length > MAX_ATTACHMENTS_TOTAL) return 'This workspace is near its attachment limit, and removed files stay in quarantine. Log this file by name only, or keep it in the controlled document system and reference it here.';
+    if (dataUrl && used + storedLength(dataUrl) > MAX_ATTACHMENTS_TOTAL) return 'This workspace is near its attachment limit, and removed files stay in quarantine. Log this file by name only, or keep it in the controlled document system and reference it here.';
     if (used + FILE_RECORD_ALLOWANCE > MAX_ATTACHMENTS_TOTAL + FILE_RECORD_HEADROOM) return 'This workspace holds as many file records as it can, counting removed files kept in quarantine. Keep further evidence in the controlled document system and reference it in a note on the record.';
     return null;
   };
@@ -6488,7 +6490,7 @@ const OP_BOM_MAX = 12;
   // The signer of a removal is the remover: name, role, credential and the signed-in account (or none), all recorded
   // in the signed subject, and a removal made in the browser is never presented as server authenticated.
   const signingAccount = () => { const acct = accountActor(); return acct && typeof acct.account === 'string' ? acct.account : null; };
-  const signerBound = (m, by) => plain(m.signer) && profileValid(by) && m.authenticated === false && buildStampValid(m.build) && canonical(m.build) === canonical(m.subject.build) && (m.subject.signerAccount === null || (typeof m.subject.signerAccount === 'string' && str(m.subject.signerAccount, 60))) && canonical(m.signer) === canonical({ name: by.name, role: by.role, credentialId: by.credentialId, account: m.subject.signerAccount });
+  const signerBound = (m, by) => plain(m.signer) && profileValid(by) && m.authenticated === false && !Object.hasOwn(m, 'override') && buildStampValid(m.build) && canonical(m.build) === canonical(m.subject.build) && (m.subject.signerAccount === null || (typeof m.subject.signerAccount === 'string' && str(m.subject.signerAccount, 60))) && canonical(m.signer) === canonical({ name: by.name, role: by.role, credentialId: by.credentialId, account: m.subject.signerAccount });
   const laterThan = addedAt => new Date(Math.max(Date.now(), Number.isFinite(Date.parse(addedAt)) ? Date.parse(addedAt) : 0)).toISOString();
   const removedAfterAdded = f => f.addedAt === undefined || f.addedAt === null || Date.parse(f.removedAt) >= Date.parse(f.addedAt);
   function fileQuarantine(state, file, reason, where, held) {

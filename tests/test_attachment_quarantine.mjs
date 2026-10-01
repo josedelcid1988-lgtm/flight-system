@@ -545,6 +545,21 @@ function surfaces(state) {
   }
 }
 
+// ---- engine: content is charged at its stored size, and a removal never claims an override ----
+{
+  const state = curated(); FlightManeuver.ensure(state);
+  const raised = host.withAccount(qm, () => FlightManeuver.raiseNC(state, { sourceType: 'Serial number', type: 'NC', title: 'Escape check', description: 'Escaped content size check.', partNumber: 'SR-IH-040', revision: 'A', serial: 'IH-040-ES1', quantity: 1, foundAt: 'Stock', pedigree: 'Production', escaped: 'no' }), state);
+  const escaped = 'data:,' + '\u0001'.repeat(899000);
+  const results = [0, 1, 2, 3].map(i => host.withAccount(general, () => FlightManeuver.addRecordFile(state, 'ncs', raised.id, { name: `esc-${i}.bin`, type: 'application/octet-stream', size: 1, dataUrl: escaped }), state));
+  check(`escaped content is charged at its stored size, so the workspace refuses it before passing the limit (${results.filter(r => r.ok).length} accepted)`, results.some(r => !r.ok) && MES.workspaceFileBytes(state) <= 3500000 && JSON.stringify(state).length < 3500000 + JSON.stringify(curated()).length);
+  const [first] = surfaces(state);
+  host.withAccount(technician, () => first.add(), state);
+  const fileId = first.live().at(-1).id;
+  host.withAccount(technician, () => first.remove(fileId, REASON), state);
+  const copy = structuredClone(state); surfaces(copy)[0].quarantined().find(f => f.id === fileId).manifest.override = { by: 'Flight Master', reason: 'Master Access' };
+  check('validation refuses a removal manifest that claims an override', !MES.validate(copy) && !MES.verifyManifests(copy).ok);
+}
+
 // ---- engine: a sequence change that would copy files past the workspace limit is refused before anything changes ----
 {
   const state = curated();
