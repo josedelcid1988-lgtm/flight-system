@@ -386,19 +386,30 @@ try {
       const [download] = await Promise.all([page.waitForEvent('download', { timeout: 10000 }), page.evaluate(script)]);
       downloads.push({ label, name: download.suggestedFilename(), text: fs.readFileSync(await download.path(), 'utf8') });
     }
-    // JSON files, on a page of their own: Chromium stops automatic downloads from one page after ten.
-    const jsonPage = await context.newPage();
-    jsonPage.on('pageerror', error => errors.push(`json downloads ${training}: ${error.message}`));
-    await jsonPage.goto(`http://127.0.0.1:${port}/`);
-    await jsonPage.locator('#sk-login').waitFor({ state: 'visible', timeout: 15000 });
+    // JSON and CSV files, on pages of their own: Chromium stops automatic downloads from one page after ten.
+    const openDataPage = async () => {
+      const opened = await context.newPage();
+      opened.on('pageerror', error => errors.push(`data downloads ${training}: ${error.message}`));
+      await opened.goto(`http://127.0.0.1:${port}/`);
+      await opened.locator('#sk-login').waitFor({ state: 'visible', timeout: 15000 });
+      return opened;
+    };
+    let jsonPage = await openDataPage(), onPage = 0;
     for (const [label, script] of [
       ['record export', () => saveFile(new Blob([JSON.stringify({ internal: true, workOrder: { id: 'WO-1' } }, null, 2)], { type: 'application/json' }), 'WO-1-record.json')],
       ['dlFile json', () => dlFile('register.json', '{"tools":[]}', 'application/json')],
       ['json claiming not training', () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['{"training":false,"trainingNote":"production","y":2}'], { type: 'application/json' })); a.download = 'claim.json'; a.click(); }],
       ['already marked json', () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['{"manifest":{"hash":"h"},"training":"TRAINING, NOT THE RECORD","z":3}'], { type: 'application/json' })); a.download = 'governance.json'; a.click(); }],
       ['controlled json document', () => { const b = document.createElement('button'); b.dataset.controlledDocDownload = 'CD-X'; document.body.appendChild(b); b.addEventListener('click', () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['{"approved":true}'], { type: 'application/json' })); a.download = 'spec.json'; a.click(); }); b.click(); b.remove(); }],
+      ['csv anchor', () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['serial,part\nSN-1,PN-1\n'], { type: 'text/csv' })); a.download = 'trace-SN-1.csv'; a.click(); }],
+      ['csv dlFile', () => dlFile('PN-1-AsBuilt-BOM.csv', '"Level","Part"\n"1","PN-2"', 'text/csv')],
+      ['csv saveFile with BOM', () => saveFile(new Blob(['\ufeffmetric,value\r\nescapes,0\r\n'], { type: 'text/csv' }), 'mes-metrics.csv')],
+      ['csv already marked', () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['"TRAINING, NOT THE RECORD","Saved by a Flight System training server. Not a quality record."\nname,buyoffType,expires\n'], { type: 'text/csv' })); a.download = 'stamp-register.csv'; a.click(); }],
+      ['controlled csv document', () => { const b = document.createElement('button'); b.dataset.controlledDocDownload = 'CD-Y'; document.body.appendChild(b); b.addEventListener('click', () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['a,b\n1,2\n'], { type: 'text/csv' })); a.download = 'plan.csv'; a.click(); }); b.click(); b.remove(); }],
       ['json array', () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['[1,2]'], { type: 'application/json' })); a.download = 'list.json'; a.click(); }],
     ]) {
+      if (onPage === 8) { await jsonPage.close(); jsonPage = await openDataPage(); onPage = 0; }
+      onPage += 1;
       const [download] = await Promise.all([jsonPage.waitForEvent('download', { timeout: 10000 }), jsonPage.evaluate(script)]);
       downloads.push({ label, name: download.suggestedFilename(), text: fs.readFileSync(await download.path(), 'utf8') });
     }
@@ -412,6 +423,18 @@ try {
       ok('a saved JSON file keeps its own content beside the mark', jsonOf('anchor').x === 1 && jsonOf('record export').workOrder.id === 'WO-1' && jsonOf('record export').internal === true && Array.isArray(jsonOf('dlFile json').tools) && jsonOf('json claiming not training').y === 2);
       ok('a JSON file that already carries the mark (the governance export) is saved byte for byte, so its manifest still verifies', downloads.find(d => d.label === 'already marked json').text === '{"manifest":{"hash":"h"},"training":"TRAINING, NOT THE RECORD","z":3}');
       ok('a JSON controlled document is saved byte for byte, so it still matches its released SHA-256, under a TRAINING- name', downloads.find(d => d.label === 'controlled json document').text === '{"approved":true}' && downloads.find(d => d.label === 'controlled json document').name === 'TRAINING-spec.json', JSON.stringify(downloads.find(d => d.label === 'controlled json document')));
+      const textOf = label => downloads.find(d => d.label === label).text;
+      const CSV_MARK = '"TRAINING, NOT THE RECORD","Saved by a Flight System training server. Not a quality record."';
+      ok('every saved CSV file starts with a row carrying the training mark, then its own content unchanged', textOf('csv anchor') === `${CSV_MARK}\nserial,part\nSN-1,PN-1\n` && textOf('csv dlFile') === `${CSV_MARK}\n"Level","Part"\n"1","PN-2"` && textOf('csv saveFile with BOM') === `\ufeff${CSV_MARK}\r\nmetric,value\r\nescapes,0\r\n`, JSON.stringify(['csv anchor', 'csv dlFile', 'csv saveFile with BOM'].map(textOf)));
+      ok('a CSV file that already starts with the mark row is saved unchanged', textOf('csv already marked') === `${CSV_MARK}\nname,buyoffType,expires\n`);
+      ok('a CSV controlled document is saved byte for byte, under a TRAINING- name', textOf('controlled csv document') === 'a,b\n1,2\n' && downloads.find(d => d.label === 'controlled csv document').name === 'TRAINING-plan.csv', textOf('controlled csv document'));
+      {
+        const { createHost } = await import('../server/mes-host.mjs');
+        const mes = createHost(path.join(ROOT, 'index.html')).MES, seed = mes.seed();
+        const register = `name,buyoffType,expires\nTraining Tech,Technician,2036-01-01\n`;
+        const marked = `${CSV_MARK}\n${register}`, refused = mes.importStamps(structuredClone(seed), marked), accepted = mes.importStamps(structuredClone(seed), register);
+        ok('a marked stamp register is refused by the stamp import, nothing imported, while the same register without the mark imports', refused.ok === false && /header row needs the columns/.test(refused.message || '') && accepted.ok === true, JSON.stringify({ refused, accepted: accepted.ok }));
+      }
       ok('JSON that is not an object is saved unchanged, under a TRAINING- name', downloads.find(d => d.label === 'json array').text === '[1,2]');
       ok('text that only names the mark class does not count as marked', /Report naming training-print-mark/.test(downloads.find(d => d.label === 'dlFile').text) && count(downloads.find(d => d.label === 'dlFile').text, TRAINING_MARK) === 1);
       const doc = downloads.find(d => d.label === 'controlled document').text;
@@ -443,7 +466,7 @@ try {
       ok('the file saveFile hands to the downloads service still carries the mark once', count(slowSaved, TRAINING_MARK) === 1, slowSaved.slice(0, 160));
       await slow.close();
     } else {
-      ok('production saves files under their own names with no training mark', downloads.map(d => d.name).join() === 'report.html,atp-report.html,export.json,record.html,procedure.html,hostile.html,WO-1-record.json,register.json,claim.json,governance.json,spec.json,list.json' && downloads.filter(d => d.label !== 'already marked json').every(d => !d.text.includes(TRAINING_MARK)) && downloads.find(d => d.label === 'anchor').text === '{"x":1}' && downloads.find(d => d.label === 'dlFile json').text === '{"tools":[]}', downloads.map(d => d.name).join(', '));
+      ok('production saves files under their own names with no training mark', downloads.map(d => d.name).join() === 'report.html,atp-report.html,export.json,record.html,procedure.html,hostile.html,WO-1-record.json,register.json,claim.json,governance.json,spec.json,trace-SN-1.csv,PN-1-AsBuilt-BOM.csv,mes-metrics.csv,stamp-register.csv,plan.csv,list.json' && downloads.filter(d => !['already marked json', 'csv already marked'].includes(d.label)).every(d => !d.text.includes(TRAINING_MARK)) && downloads.find(d => d.label === 'csv anchor').text === 'serial,part\nSN-1,PN-1\n' && downloads.find(d => d.label === 'anchor').text === '{"x":1}' && downloads.find(d => d.label === 'dlFile json').text === '{"tools":[]}', downloads.map(d => d.name).join(', '));
     }
     if (training) {
       ok('signed in, every page keeps the strip', !!marks.banner && marks.banner.text === TRAINING_MARK && marks.banner.visible, JSON.stringify(marks.banner));

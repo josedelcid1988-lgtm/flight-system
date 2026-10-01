@@ -204,6 +204,14 @@ const TRAINING_TAIL = `<script id="flight-training">(function(){var MARK=${JSON.
   + 'var isJson=function(type,name){return /json/i.test(String(type||""))||/\\.json$/i.test(String(name||""));};'
   + 'function markJson(text){var o;try{o=JSON.parse(String(text));}catch(e){return null;}if(!o||typeof o!=="object"||Array.isArray(o))return null;if(o.training===TEXT)return String(text);'
   + 'return JSON.stringify(Object.assign({training:TEXT,trainingNote:NOTE},o,{training:TEXT,trainingNote:NOTE}),null,/\\n/.test(String(text))?2:0);}'
+  // A CSV file the page saves (trace report, As-Built BOM, metrics, stamp register) starts with a row that carries the
+  // mark, so it shows first when the file is opened. A file that already starts with that row is left as it is. An
+  // import that reads a header row refuses a marked file, so a training register is never loaded as a real one.
+  + 'var isCsv=function(type,name){return /csv/i.test(String(type||""))||/\\.csv$/i.test(String(name||""));};'
+  + 'var CSVROW="\\""+TEXT+"\\",\\""+NOTE+"\\"";'
+  + 'function markCsv(text){var t=String(text),bom=t.charAt(0)==="\\ufeff"?"\\ufeff":"",body=bom?t.slice(1):t;if(body.indexOf(CSVROW)===0)return t;return bom+CSVROW+(/\\r\\n/.test(body)?"\\r\\n":"\\n")+body;}'
+  + 'function readText(b){return b.arrayBuffer().then(function(x){return new TextDecoder("utf-8",{ignoreBOM:true}).decode(x);});}'
+  + 'function markData(text,type,name){return isJson(type,name)?markJson(text):isCsv(type,name)?markCsv(text):null;}'
   // Object URLs made while the page synchronously builds an already marked file, and the URL of the exact blob saveFile
   // marked, are trusted; any other HTML file is marked on download. saveFile can wait on a downloads service, so it
   // trusts its own blob only, never every blob made while it waits.
@@ -212,19 +220,19 @@ const TRAINING_TAIL = `<script id="flight-training">(function(){var MARK=${JSON.
   + 'URL.revokeObjectURL=function(u){blobs.delete(u);trusted.delete(u);return revoke.call(URL,u);};'
   + 'function trusting(f){return function(){trust++;try{return f.apply(this,arguments);}finally{trust--;}};}'
   + 'var md=window.markDocument;if(typeof md==="function")window.markDocument=function(html){return mark(md(html));};'
-  + 'var df=window.dlFile;if(typeof df==="function")window.dlFile=trusting(function(name,text,type){return df(name,isJson(type,name)?(markJson(text)||text):isHtml(type)?mark(text):text,type);});'
+  + 'var df=window.dlFile;if(typeof df==="function")window.dlFile=trusting(function(name,text,type){var d=markData(text,type,name);return df(name,d!==null?d:isHtml(type)?mark(text):text,type);});'
   + 'if(typeof window.printRecord==="function")window.printRecord=trusting(window.printRecord);'
   + 'if(typeof window.deliverTraveler==="function")window.deliverTraveler=trusting(window.deliverTraveler);'
-  + 'var sf=window.saveFile;if(typeof sf==="function")window.saveFile=async function(blob,name){var n=/^TRAINING-/.test(String(name))?name:"TRAINING-"+name;if(blob&&/html/i.test(blob.type||"")){try{blob=new Blob([mark(await blob.text())],{type:blob.type});}catch(e){}}else if(blob&&isJson(blob.type,name)){try{var j=markJson(await blob.text());if(j!==null)blob=new Blob([j],{type:blob.type||"application/json"});}catch(e){}}if(blob instanceof Blob)saved.add(blob);return sf(blob,n);};'
+  + 'var sf=window.saveFile;if(typeof sf==="function")window.saveFile=async function(blob,name){var n=/^TRAINING-/.test(String(name))?name:"TRAINING-"+name;if(blob&&/html/i.test(blob.type||"")){try{blob=new Blob([mark(await blob.text())],{type:blob.type});}catch(e){}}else if(blob&&(isJson(blob.type,name)||isCsv(blob.type,name))){try{var j=markData(await readText(blob),blob.type,name);if(j!==null)blob=new Blob([j],{type:blob.type||(isCsv(blob.type,name)?"text/csv":"application/json")});}catch(e){}}if(blob instanceof Blob)saved.add(blob);return sf(blob,n);};'
   // A controlled document is saved as the approved file, byte for byte, so it still matches its released SHA-256:
-  // a JSON file saved from a controlled-document download keeps its bytes (and its TRAINING- name).
+  // a JSON or CSV file saved from a controlled-document download keeps its bytes (and its TRAINING- name).
   + 'var verbatim=0;document.addEventListener("click",function(e){var t=e.target;if(t&&t.closest&&t.closest("[data-controlled-doc-download]")){verbatim++;setTimeout(function(){verbatim--;},0);}},true);'
   + 'var click=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){'
   + 'if(this.hasAttribute("download")){if(this.download&&!/^TRAINING-/.test(this.download))this.download="TRAINING-"+this.download;'
   // Any other HTML file is saved as a wrapper page: the mark, then the original document escaped into a sandboxed
   // frame with no permissions, so its own CSS or script cannot hide or remove the mark.
-  + 'var jb=blobs.get(this.href);if(jb&&!verbatim&&!trusted.has(this.href)&&isJson(jb.type,this.download)){var jname=this.download;'
-  + 'jb.text().then(function(t){var j=markJson(t);var a=document.createElement("a");trust++;try{a.href=URL.createObjectURL(j===null?jb:new Blob([j],{type:jb.type||"application/json"}));}finally{trust--;}a.download=jname;click.call(a);var u=a.href;setTimeout(function(){URL.revokeObjectURL(u);},60000);});return;}'
+  + 'var jb=blobs.get(this.href);if(jb&&!verbatim&&!trusted.has(this.href)&&(isJson(jb.type,this.download)||isCsv(jb.type,this.download))){var jname=this.download;'
+  + 'readText(jb).then(function(t){var j=markData(t,jb.type,jname);var a=document.createElement("a");trust++;try{a.href=URL.createObjectURL(j===null?jb:new Blob([j],{type:jb.type||(isCsv(jb.type,jname)?"text/csv":"application/json")}));}finally{trust--;}a.download=jname;click.call(a);var u=a.href;setTimeout(function(){URL.revokeObjectURL(u);},60000);});return;}'
   + 'var b=blobs.get(this.href);if(b&&!trusted.has(this.href)&&(/html/i.test(b.type||"")||/\\.html?$/i.test(this.download))){var name=this.download;'
   + 'b.text().then(function(t){var src=t.replace(/&/g,"&amp;").replace(/"/g,"&quot;");'
   + 'var page="<!doctype html><html><head><meta charset=\\"utf-8\\"><title>TRAINING, NOT THE RECORD</title><style>html,body{margin:0;height:100%}iframe{display:block;border:0;width:100%;height:calc(100vh - 120px)}</style></head><body>"+MARK+"<iframe sandbox title=\\"Downloaded document\\" srcdoc=\\""+src+"\\"></iframe></body></html>";'
