@@ -93,6 +93,13 @@ ok('an AQI signature or DAR acceptance signed by this build binds who signed: re
 await expectFail('changing who approved the stock NC disposition fails',stock+"t.resolution.by={...t.resolution.by,credentialId:'ACCT-other',name:'Someone Else'};",`${nc} disposition approval`);
 await expectFail('changing when the stock NC disposition was approved fails',stock+"t.resolution.at='2026-01-01T00:00:00.000Z';",`${nc} disposition approval`);
 
+// An Approved PFMEA released its WI on the Safety Team buy-off: the buy-off record and its complete signature must stay.
+r=await run(()=>{const base=structuredClone(state),t0=(base.maneuver.pfmeas||[])[0];if(!t0)return {none:true};const gap=f=>{const s=structuredClone(base),t=s.maneuver.pfmeas.find(x=>x.id===t0.id);f(t,s);return {gap:MES.missingSignatures(s).some(g=>g.where===`${t0.id} Safety Team buy-off`),valid:MES.validate(s)};};const at=new Date().toISOString(),by={...state.profile};const signedSafety=(t,s)=>({decision:'Approved',note:'Safety Team accepts the analysis.',by,at,manifest:MES.signManifest(s,'PFMEA Safety Team buy-off',{pfmea:t.id},at)});return {id:t0.id,missing:gap(t=>{t.status='Approved';t.safety=null;}),empty:gap((t,s)=>{t.status='Approved';t.safety={...signedSafety(t,s),manifest:{}};}),complete:gap((t,s)=>{t.status='Approved';t.safety=signedSafety(t,s);}),open:gap(()=>{})};});
+ok('fixture: a PFMEA in the curated set',!r.none,JSON.stringify(r));
+ok('an Approved PFMEA with no Safety Team buy-off record is a missing signature, and MES.validate refuses it',r.missing&&r.missing.gap===true&&r.missing.valid===false,JSON.stringify(r));
+ok('a Safety Team buy-off whose manifest is empty is a missing signature',r.empty&&r.empty.gap===true&&r.empty.valid===false,JSON.stringify(r));
+ok('a Safety Team buy-off with a complete signature, and an open PFMEA, are not reported as missing',r.complete&&r.complete.gap===false&&r.open&&r.open.gap===false,JSON.stringify(r));
+
 // ---- box 22 is signed, validated and bound into the Skyryse QA approval ----
 const fair=await run(()=>{const o=state.orders.find(o=>o.fair&&o.fair.status==='Approved');if(!o)return null;const s=structuredClone(state),x=s.orders.find(y=>y.id===o.id);x.fair.status='Open';x.fair.verified=null;x.fair.approved=null;delete x.fair.reviewed;
   const vf=MES.verifyFair(s,o.id,{pin:''});if(!vf.ok)return {id:o.id,vf};const rv=MES.reviewFair(s,o.id,{pin:''});const ap=rv.ok?MES.approveFair(s,o.id,{pin:''}):null;if(rv.ok&&ap&&ap.ok)state=s;return {id:o.id,rv,ap,valid:MES.validate(s),subject:x.fair.approved&&x.fair.approved.manifest.subject,reviewedHash:x.fair.reviewed&&x.fair.reviewed.manifest.hash};});
@@ -157,6 +164,9 @@ await expectFail('changing the Skyryse QA approver inspection stamp after signin
 await expectFail('#313 backdating the Skyryse QA approval together with its manifest time fails',F+"const at='2026-09-20T00:00:00.000Z';f.approved.at=at;f.approved.manifest.at=at;",'FAIR approval');
 await expectFail('#314 replacing the Skyryse QA approver together with the manifest signer fails',F+"const o={name:'Someone Else',role:'Quality Engineer',credentialId:'ACCT-other'};f.approved.by={...f.approved.by,...o};f.approved.manifest.signer={...f.approved.manifest.signer,...o};",'FAIR approval');
 await expectFail('changing the FAIR verification time together with its manifest time fails',F+"const at='2026-09-28T00:00:00.000Z';f.verified.at=at;f.verified.manifest.at=at;",'FAIR verification');
+await expectFail('#363 a current FAIR verification made to look older (signed content and build stamp deleted, both times moved back, content edited) fails at box 22 and the approval',F+"const at='2026-09-22T10:00:00.000Z';delete f.verified.manifest.subject;delete f.verified.manifest.build;f.verified.at=at;f.verified.manifest.at=at;f.comments='Edited after verification.';",'FAIR');
+r=await run(([id])=>{const s=structuredClone(state),f=s.orders.find(o=>o.id===id).fair;const at='2026-09-22T10:00:00.000Z';delete f.verified.manifest.subject;delete f.verified.manifest.build;f.verified.at=at;f.verified.manifest.at=at;return MES.verifyManifests(s).failures.map(x=>x.where);},[fair.id]);
+ok('the backdated verification breaks both the box 22 and the Skyryse QA approval signatures, which bind the verification time',r.some(w=>/FAIR box 22$/.test(w))&&r.some(w=>/FAIR approval$/.test(w)),JSON.stringify(r));
 await expectFail('changing the box 22 time together with its manifest time fails',F+"const at='2026-09-28T00:00:00.000Z';f.reviewed.at=at;f.reviewed.manifest.at=at;",'FAIR box 22');
 const fairJson=await run(()=>JSON.stringify(state));
 
