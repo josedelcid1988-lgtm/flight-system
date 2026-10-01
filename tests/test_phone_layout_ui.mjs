@@ -204,6 +204,43 @@ try {
       await show(page, 'home');
       assert.equal(await page.locator(`#main [data-wo-card="${id}"] dd.is-overdue`).count(), 0, 'a due date that has not passed is not marked');
     });
+    await check(`${at} home and orders: cards show FAI, a nonholding open NC, a source-inspection hold and the QA handoff`, async () => {
+      // Each case is set up in memory on a copy of the sample, rendered, checked in both card lists, then put back.
+      const setup = await page.evaluate(() => {
+        const open = state.orders.filter(o => o.status !== 'Closed');
+        const nc = state.orders.find(o => (o.tickets || []).some(t => t.status === 'Open' && t.hold));
+        const ticket = nc.tickets.find(t => t.status === 'Open' && t.hold);
+        const fai = open.find(o => o !== nc);
+        // A Quality order has every operation bought off; set back to Building it is a finished build waiting on the QA handoff.
+        const building = state.orders.find(o => o.status === 'Quality' && o !== nc && o !== fai && o.operations.every(op => op.done) && !MES.blockingTickets(o).length && !MES.engineeringChange(o) && !o.pedigreeChange);
+        const inspect = open.find(o => o !== nc && o !== fai && o !== building && !MES.blockingTickets(o).length && !MES.engineeringChange(o) && (o.operations || []).some(op => !op.done));
+        const op = inspect.operations.find(item => !item.done);
+        window.__restore = { ticket: [ticket, ticket.hold], fai: [fai, fai.fai], building: [building, building.status], op: [op, op.classification, op.sourceInspection] };
+        ticket.hold = false;
+        fai.fai = { ...(fai.fai || {}), required: true };
+        building.status = 'Building';
+        op.classification = MES.SOURCE_INSPECTION_CLASS; delete op.sourceInspection;
+        const hold = MES.sourceInspectionHolds(null, inspect)[0];
+        return { nc: nc.id, open: nc.tickets.filter(t => t.status === 'Open').length, fai: fai.id, building: building.id, buildingAllowed: MES.canAdvance(building).allowed, inspect: inspect.id, holdTitle: hold && hold.title };
+      });
+      try {
+        assert.ok(setup.holdTitle, 'the source-inspection setup produces a hold');
+        assert.ok(setup.buildingAllowed, 'the finished Building order may advance');
+        for (const route of ['home', 'orders']) {
+          await show(page, route);
+          const card = id => page.locator(`#main [data-wo-card="${id}"]`);
+          assert.equal(await card(setup.nc).locator('.fr-order-blocked').count(), 0, `${route}: a card with only a nonholding NC is not Blocked`);
+          assert.equal(await card(setup.nc).locator('.fr-wo-card-nc').innerText(), `${setup.open} open NC`, `${route}: a nonholding open NC is shown on the card`);
+          assert.equal(await card(setup.fai).locator('.fr-wo-card-id .fr-fai-tag').innerText(), 'FAI', `${route}: an FAI order is marked`);
+          assert.equal(await card(setup.inspect).locator('.fr-order-blocked').count(), 1, `${route}: a source-inspection hold blocks the card`);
+          assert.match(await card(setup.inspect).locator('.fr-wo-card-next dd').innerText(), new RegExp(`^Resolve holds before continuing: .*source inspection record for ${setup.holdTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), `${route}: the card names the source inspection`);
+          assert.equal(await card(setup.building).locator('.fr-wo-card-next dd').innerText(), 'All operations recorded. Send to QA.', `${route}: a finished build is sent to QA`);
+        }
+      } finally {
+        await page.evaluate(() => { const r = window.__restore; r.ticket[0].hold = r.ticket[1]; r.fai[0].fai = r.fai[1]; r.building[0].status = r.building[1]; r.op[0].classification = r.op[1]; if (r.op[2]) r.op[0].sourceInspection = r.op[2]; render(); });
+      }
+      assert.equal(await page.evaluate(() => MES.validate(state)), true, 'the restored workspace is valid');
+    });
     await check(`${at} orders: Compact changes the cards`, async () => {
       await show(page, 'orders');
       const padding = () => page.locator('#main .fr-wo-card').first().evaluate(el => parseFloat(getComputedStyle(el).paddingTop));

@@ -59,25 +59,36 @@ const cardGateOf = (order, MES) => {
   const blockers = MES && MES.blockingTickets ? MES.blockingTickets(order) : [];
   const engineering = !!(MES && MES.engineeringChange && MES.engineeringChange(order));
   return {
-    held: blockers.length > 0 || engineering, engineering, openTickets: blockers.length,
+    held: blockers.length > 0 || engineering, engineering,
+    openTickets: (order.tickets || []).filter(ticket => ticket.status === 'Open').length,
     aog: order.priority === 'AOG' || !!(MES && MES.aogActive && MES.aogActive(order)),
     superseded: !!(MES && MES.revisionLabel && MES.revisionLabel(order) === 'Superseded'),
     qaPending: order.status === 'Draft' && !!(MES && MES.requiresReleaseQA && MES.requiresReleaseQA(order)) && !(MES.releaseApproval && MES.releaseApproval(order)),
     overdue: order.status !== 'Closed' && !!order.due && order.due < new Date().toISOString().slice(0, 10)
   };
 };
+// A source-inspection operation with no inspection record holds the order (the Hangar holds panel and the drawer list
+// it, and buy-off is refused until it is recorded). Both card lists add it to the gate here, so the card names it.
+const withSourceInspections = (gate, order, MES) => {
+  const sourceInspections = MES && MES.sourceInspectionHolds ? MES.sourceInspectionHolds(null, order) : [];
+  return sourceInspections.length ? { ...gate, held: true, sourceInspections } : gate;
+};
 // What the card asks for next follows the workflow gates before the operation list: holds first, then release, then
 // whatever MES.canAdvance says blocks the stage (a pending pedigree change, kitting materials or kit list, the quality
-// review). A Building order without a pending pedigree change shows its next open operation instead.
+// review). A Building order without a pending pedigree change shows its next open operation, or, once every operation
+// is recorded, the handoff to QA; a Kitting order that is ready shows the start of the build.
 const cardNextStepOf = (order, gate, MES) => {
   if (gate.held) {
-    const why = [gate.engineering && 'engineering change', gate.openTickets && `${gate.openTickets} open NC`].filter(Boolean);
+    const why = [gate.engineering && 'engineering change', gate.openTickets && `${gate.openTickets} open NC`,
+      ...(gate.sourceInspections || []).map(hold => `source inspection record for ${hold.title}`)].filter(Boolean);
     return `Resolve holds before continuing${why.length ? `: ${why.join(', ')}` : ''}`;
   }
   if (gate.qaPending) return 'QA approval of the release is pending';
   const advance = MES && MES.canAdvance ? MES.canAdvance(order) : null;
   if (advance && !advance.allowed && order.status !== 'Closed' && !(order.status === 'Building' && !order.pedigreeChange)) return advance.reason;
   if (order.status === 'Draft') return 'Release the work order';
+  if (advance && advance.allowed && order.status === 'Kitting') return 'All materials are ready. Start the build.';
+  if (advance && advance.allowed && order.status === 'Building') return 'All operations recorded. Send to QA.';
   return nextStepOf(order);
 };
 
@@ -85,9 +96,9 @@ const cardNextStepOf = (order, gate, MES) => {
 function WorkOrderCards({ orders, onOpen, meta, MES, compact, priority }) {
   if (!orders.length) return null;
   return <ul className={`fr-wo-cards${compact ? ' fr-compact' : ''}`} aria-label="Work orders">{orders.map((order, index) => {
-    const gate = meta ? meta[index] : cardGateOf(order, MES);
+    const gate = withSourceInspections(meta ? meta[index] : cardGateOf(order, MES), order, MES);
     return <li key={order.id} className={`fr-wo-card${gate.held ? ' is-held' : ''}${gate.aog ? ' is-aog' : ''}`} data-wo-card={order.id}>
-      <div className="fr-wo-card-top"><strong className="fr-wo-card-id">{order.id}</strong>{gate.held ? <span className="fr-order-blocked">Blocked</span> : <span className="fr-status"><i/>{order.status || 'Draft'}</span>}</div>
+      <div className="fr-wo-card-top"><strong className="fr-wo-card-id">{order.id}{order.fai?.required && <span className="fr-fai-tag">FAI</span>}</strong>{gate.held ? <span className="fr-order-blocked">Blocked</span> : <span className="fr-wo-card-state"><span className="fr-status"><i/>{order.status || 'Draft'}</span>{gate.openTickets ? <small className="fr-wo-card-nc">{gate.openTickets} open NC</small> : null}</span>}</div>
       <p className="fr-wo-card-title">{titleOf(order)}</p>
       <p className="fr-wo-card-part">{order.partNumber || 'Part not assigned'}{order.revision ? ` / Rev ${order.revision}` : ''}</p>
       {gate.superseded && <p className="fr-wo-card-warning">Superseded revision</p>}
