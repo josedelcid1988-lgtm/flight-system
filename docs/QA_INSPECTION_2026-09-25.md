@@ -135,7 +135,11 @@ fails when they are out of date.
 - `test_v80i`: typed a stamp number into a field the override prompt does not
   render.
 
-## 6. Still open
+## 6. Open at the time of this inspection
+
+This section and section 7 record the status on 25 September 2026. Every item
+below has since closed; current open items are tracked in
+[`KNOWN-ISSUES.md`](../KNOWN-ISSUES.md).
 
 | Item | Where | Owner |
 | --- | --- | --- |
@@ -144,12 +148,23 @@ fails when they are out of date.
 | `Production / Render 1440 / View mnv-board renders` and `Signature manifests verify` report Skip | `qa_full` | pre-existing since the fork; not investigated |
 | `qa_access` and `qa_master` were run against the pre-fix `index.html` only | this inspection | re-run after the demo rebuild; `qa_ui` did run against the fixed file and passed |
 
-Closed since this inspection: at the time, `demo.html` and the demo fixtures
-did not carry the two `index.html` fixes in section 4. The demo build chain is
-now in this repository, and `node tools/build-demo.mjs` regenerates them from
-`index.html`.
+Closed since this inspection:
+
+- The demo build chain is now in this repository (`tools/build-demo.mjs`,
+  `tools/demo/deviations.mjs`). `node tools/build-demo.mjs` regenerates
+  `demo.html` and the demo fixtures from `index.html`, so they carry the two
+  section 4 fixes, and `--check` fails when they are out of date.
+- Pilot seats keep their real role in the demo build (`KNOWN-ISSUES.md` entry
+  3; `tests/test_demo_build.mjs` checks each seat).
+- The production engine compares no username to `demo`
+  (`tests/test_demo_build.mjs`).
+- The two `qa_full` skips are fixed (`KNOWN-ISSUES.md` entry 1).
+- `qa_access` and `qa_master` run against the current builds in
+  `node tools/run-suites.mjs`.
 
 ## 7. Recommended next changes
+
+As ranked on 25 September 2026; item 1 has since been done (see section 6).
 
 Ranked by value against effort, respecting `AGENTS.md` (one file, no external
 scripts, gates never simplified):
