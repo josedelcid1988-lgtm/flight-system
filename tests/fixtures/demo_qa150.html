@@ -5655,7 +5655,7 @@ const OP_BOM_MAX = 12;
     { const over = fileBudgetError(state, dataUrl); if (over) return fail(over); }
     // A removed file keeps its ID in quarantine, so a new file never reuses it.
     let number = files.length + 1; while ([...files, ...listOf(order.quarantinedKitFiles)].some(f => f.id === `KIT-${order.id}-${number}`)) number++;
-    const file = { id: `KIT-${order.id}-${number}`, name, type: String(input?.type ?? '').slice(0, 80), size: Number.isInteger(input?.size) ? input.size : 0, storage: dataUrl ? 'inline' : 'reference', addedAt: new Date().toISOString(), addedBy: profileSnapshot(state.profile), ...(dataUrl ? { dataUrl } : {}) };
+    const file = { id: `KIT-${order.id}-${number}`, name, type: String(input?.type ?? '').slice(0, 80), size: Number.isInteger(input?.size) && input.size >= 0 ? input.size : 0, storage: dataUrl ? 'inline' : 'reference', addedAt: new Date().toISOString(), addedBy: profileSnapshot(state.profile), ...(dataUrl ? { dataUrl } : {}) };
     order.kitFiles = [...files, file];
     record(state, order, `Kit list ${name} attached${file.storage === 'reference' ? ' (logged by name only)' : ''}.`);
     return { ok: true, message: `${name} attached as the kit list for ${order.id}.` };
@@ -6560,6 +6560,9 @@ const OP_BOM_MAX = 12;
     const text = typeof reason === 'string' ? reason.trim() : '';
     if (!str(text, REMOVE_REASON_MAX) || text.length < REMOVE_REASON_MIN) return { error: `Give the reason for removing ${file.name} (${REMOVE_REASON_MIN} to ${REMOVE_REASON_MAX} characters). The file is kept in quarantine on the record with your reason.` };
     const at = laterThan(file.addedAt), by = actor(state);
+    // A file stored before sizes were checked keeps a whole, non-negative size and a storage mode that matches its
+    // content once removed, so a malformed record can always be removed with a reason and is signed as kept.
+    file = { ...file, size: Number.isInteger(file.size) && file.size >= 0 ? file.size : 0, storage: typeof file.dataUrl === 'string' ? 'inline' : 'reference' };
     const subject = { ...where, fileId: file.id, name: file.name, type: String(file.type || ''), size: file.size, storage: file.storage, addedAt: file.addedAt ?? null, addedBy: file.addedBy ?? null, contentSha256: typeof file.dataUrl === 'string' ? sha256(file.dataUrl) : null, removedAt: at, removedBy: by, removeReason: text, signerAccount: signingAccount() };
     return { entry: { ...file, removedAt: at, removedBy: by, removeReason: text, manifest: signManifest(state, QUARANTINE_MEANING, subject, at) } };
   }
@@ -6668,7 +6671,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     { const over = fileBudgetError(state, dataUrl); if (over) return fail(over); }
     let number = files.length + 1;
     while ([...files, ...listOf(ticket.quarantinedAttachments)].some(f => f.id === `ATT-${ticketId}-${number}`)) number++;
-    const file = { id: `ATT-${ticketId}-${number}`, name, type: String(input?.type ?? '').slice(0, 80), size: Number.isInteger(input?.size) ? input.size : 0, storage: dataUrl ? 'inline' : 'reference', addedAt: new Date().toISOString(), addedBy: profileSnapshot(state.profile), ...(dataUrl ? { dataUrl } : {}) };
+    const file = { id: `ATT-${ticketId}-${number}`, name, type: String(input?.type ?? '').slice(0, 80), size: Number.isInteger(input?.size) && input.size >= 0 ? input.size : 0, storage: dataUrl ? 'inline' : 'reference', addedAt: new Date().toISOString(), addedBy: profileSnapshot(state.profile), ...(dataUrl ? { dataUrl } : {}) };
     if (!attachmentValid(file)) return fail('That file could not be attached.');
     ticket.attachments = [...files, file];
     record(state, order, `${ticket.id}: ${name} attached${file.storage === 'reference' ? ' (logged by name only)' : ''}.`);
@@ -9679,7 +9682,7 @@ const ATTACH_KINDS = Object.freeze(['mrb','cars','ncs','sprs']);
     { const over = MES.fileBudgetError(state, dataUrl); if (over) return fail(over); }
     let number = files.length + 1;
     while ([...files, ...recAttachments({ attachments: rec.quarantinedAttachments })].some(f => f.id === `ATT-${id}-${number}`)) number++;
-    const file = { id: `ATT-${id}-${number}`, name, type: String(input?.type ?? '').slice(0, 80), size: Number.isInteger(input?.size) ? input.size : 0, storage: dataUrl ? 'inline' : 'reference', addedAt: now(), addedBy: actor(state), ...(dataUrl ? { dataUrl } : {}) };
+    const file = { id: `ATT-${id}-${number}`, name, type: String(input?.type ?? '').slice(0, 80), size: Number.isInteger(input?.size) && input.size >= 0 ? input.size : 0, storage: dataUrl ? 'inline' : 'reference', addedAt: now(), addedBy: actor(state), ...(dataUrl ? { dataUrl } : {}) };
     rec.attachments = [...files, file];
     log(state, rec, `${name} attached${file.storage === 'reference' ? ' (logged by name only)' : ''}.`);
     return { ok: true, message: `${name} attached to ${rec.id}.` };

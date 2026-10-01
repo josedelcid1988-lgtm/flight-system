@@ -507,6 +507,24 @@ function surfaces(state) {
   { const copy = structuredClone(state); dropRole(clipOf(copy)); check('validation refuses a removed recording whose remover role was erased everywhere, even re-signed', !MES.validate(copy) && !MES.verifyManifests(copy).ok); }
 }
 
+// ---- engine: a file with an impossible size is never stored, and a stored one can still be removed ----
+{
+  const state = curated(); FlightManeuver.ensure(state);
+  const raised = host.withAccount(qm, () => FlightManeuver.raiseNC(state, { sourceType: 'Serial number', type: 'NC', title: 'Size check', description: 'Negative size check.', partNumber: 'SR-IH-040', revision: 'A', serial: 'IH-040-SZ1', quantity: 1, foundAt: 'Stock', pedigree: 'Production', escaped: 'no' }), state);
+  const nc = FlightManeuver.get(state, 'ncs', raised.id);
+  const added = host.withAccount(general, () => FlightManeuver.addRecordFile(state, 'ncs', nc.id, { name: 'crafted.pdf', type: 'application/pdf', size: -1 }), state);
+  check('a quality record file sent with a negative size is stored with size 0', added.ok && nc.attachments.at(-1).size === 0);
+  const kitOrder = state.orders.find(o => ['Kitting', 'Building'].includes(o.status));
+  host.withAccount(operator, () => MES.addKitFile(state, kitOrder.id, { name: 'crafted.pdf', type: 'application/pdf', size: -5 }), state);
+  check('a kit list file sent with a negative size is stored with size 0', kitOrder.kitFiles.at(-1).size === 0);
+  // A record that already holds a malformed file, saved before this check, can still remove it with a reason.
+  nc.attachments.at(-1).size = -1;
+  const id = nc.attachments.at(-1).id;
+  const removed = host.withAccount(qe, () => FlightManeuver.removeRecordFile(state, 'ncs', nc.id, id, REASON), state);
+  const kept = (nc.quarantinedAttachments || []).find(f => f.id === id);
+  check('a stored file with a negative size can still be removed; it is kept with size 0 and the workspace verifies', removed.ok && !!kept && kept.size === 0 && kept.manifest.subject.size === 0 && MES.validate(structuredClone(state)) && MES.verifyManifests(state).ok);
+}
+
 // ---- engine: a sequence change never drops files, and its captured copy is counted, then discarded on release ----
 {
   const state = curated(), qmUser = { username: 'quar-qm', displayName: 'Quincy Manager', role: 'qm' };
