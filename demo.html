@@ -5073,6 +5073,30 @@ const OP_BOM_MAX = 12;
     }
     order.materials = [...kit, ...add];
   }
+  // When QA rejects or withdraws a sequence change, the operations go back to the released sequence and the kit follows
+  // them: each BOM kit line keeps its baseline (what it holds beyond the changed operations' BOM lines) and asks again
+  // for what the restored operations' BOM lines need, a line only the rejected operations asked for goes, and a part
+  // a restored operation needs that no line covers comes back. A line already drawn stays as recorded.
+  function rebuildKitFromOps(order, changedOps) {
+    const share = (ops, id, part) => opBOMShare(ops.find(item => item.id === id), part);
+    const kept = [];
+    for (const m of Array.isArray(order.materials) ? order.materials : []) {
+      if (!Array.isArray(m.forOps) || !m.forOps.length) { kept.push(m); continue; }
+      const base = Math.max(0, m.required - m.forOps.reduce((n, id) => n + share(changedOps, id, m.partNumber), 0));
+      const ops = order.operations.filter(op => opBOMShare(op, m.partNumber) > 0).map(op => op.id);
+      if (m.ready || m.lot) { kept.push(m); continue; }
+      if (!ops.length && !base) continue;
+      if (ops.length) m.forOps = ops.slice(0, 20); else delete m.forOps;
+      m.required = Math.min(999, Math.max(1, base + ops.reduce((n, id) => n + share(order.operations, id, m.partNumber), 0)));
+      kept.push(m);
+    }
+    order.materials = kept;
+    const covered = new Set(kept.map(m => m.partNumber));
+    for (const op of order.operations) {
+      const lines = (Array.isArray(op.materials) ? op.materials : []).filter(line => line && !covered.has(line.partNumber));
+      if (lines.length) mergeBOMIntoKit(order, op.id, lines.map(line => ({ ...line })));
+    }
+  }
   // What an operation's own BOM lines ask for of one part.
   function opBOMShare(op, partNumber) {
     return (Array.isArray(op?.materials) ? op.materials : []).filter(line => line && line.partNumber === partNumber).reduce((n, line) => n + (Number.isInteger(line.required) ? line.required : 0), 0);
@@ -5398,6 +5422,12 @@ const OP_BOM_MAX = 12;
     if (calloutList(input.callouts).includes('MSDS') && msdsLinksFor(input.msdsLinks).error) return fail(msdsLinksFor(input.msdsLinks).error);
     const bom = readBOM(input.bom);
     if (bom.error) return fail(bom.error);
+    { // The kit limits apply to the BOM lines this operation adds, before anything changes.
+      const kit = Array.isArray(order.materials) ? order.materials : [], parts = new Set(kit.map(m => m.partNumber));
+      const fresh = bom.lines.filter(line => !parts.has(line.partNumber));
+      if (kit.length + fresh.length > KIT_MAX) return fail(`This operation's BOM adds ${fresh.length} new part${fresh.length === 1 ? '' : 's'} to a kit of ${kit.length} lines, and a work order kit holds up to ${KIT_MAX}. Take parts off this operation's BOM, or build them on a separate work order.`);
+      for (const line of bom.lines) { const m = kit.find(item => item.partNumber === line.partNumber); if (m && m.required + line.required > KIT_LINE_MAX) return fail(`${line.partNumber} would need ${m.required + line.required} on this kit, and a kit line holds up to ${KIT_LINE_MAX}. Build the extra on a separate work order.`); }
+    }
     if (bom.lines.length) op.materials = bom.lines;
     const reworkLink = ['Rework', 'Repair'].includes(classification) ? String(input?.ticketId ?? '').trim() : '';
     if (['Rework', 'Repair'].includes(classification)) {
@@ -8121,8 +8151,10 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (!Array.isArray(order.sequenceBaseline)) return fail('The original sequence was not captured, so this change cannot be rolled back automatically. Edit the operations back, then release.');
     const text = reasonText(reason); if (!text) return fail('Enter a reason of 5 to 500 characters.');
     const who = actor(state), at = new Date().toISOString();
+    const changed = order.operations;
     order.operations = order.sequenceBaseline;
     delete order.sequenceBaseline;
+    rebuildKitFromOps(order, changed);
     order.sequenceChange = null;
     order.tickets.forEach(t => { if (t.status === 'Open' && plain(t.reworkPlan) && t.reworkPlan.opId && !order.operations.some(op => op.id === t.reworkPlan.opId)) t.reworkPlan = { ...t.reworkPlan, stage: 'Awaiting ME operation', opId: null }; });
     order.sequenceRejections = [...(Array.isArray(order.sequenceRejections) ? order.sequenceRejections : []), { entries: pending.entries, status: withdraw ? 'Withdrawn' : 'Rejected', reason: text, by: who, at }].slice(-20);

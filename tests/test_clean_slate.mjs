@@ -111,6 +111,27 @@ const prod = createHost(here('../index.html'));
     check('a split derives each kit line from the rounded operation shares, so kit and operations agree on both orders', !!c && o.materials[0].required === opSum(o) && c.materials[0].required === opSum(c) && opSum(o) === 3 && opSum(c) === 2 && MES.validate(rs) === true, `${sp.message} ${o && o.materials[0].required}/${o && opSum(o)} ${c && c.materials[0].required}/${c && opSum(c)}`);
   }
   {
+    // QA rejecting a sequence change restores the kit with the operations (Codex review on #331): a removal that took a
+    // shared share off a kit line, and an added operation's BOM line, both roll back.
+    const sq = load(prod, MES.seed());
+    sq.masterWIs = JSON.parse(JSON.stringify(qtyState.masterWIs));
+    const sw = sq.masterWIs.find(w => w.id === qtyWi.id && w.revision === qtyWi.revision);
+    sw.operations[0].materials = [{ partNumber: 'BOM-001', name: 'Bracket', required: 2 }];
+    sw.operations[1].materials = [{ partNumber: 'BOM-001', name: 'Bracket', required: 3 }];
+    const made = prod.withAccount(admin, () => MES.addOrder(sq, { masterWI: `${sw.id}|${sw.revision}`, pedigree: 'Production', subcategory: 'Mfg.', quantity: 2, aircraft: MES.AIRCRAFT[0], site: MES.SITES[0] }), sq);
+    const o = made.ok ? MES.getOrder(sq, made.id) : null, need = part => ((o && o.materials.find(m => m.partNumber === part)) || {}).required;
+    const removed = o ? prod.withAccount(me, () => MES.removeOrderOperation(sq, o.id, o.operations[0].id, 'Not needed on this order'), sq) : { message: 'order not created' };
+    const added = o ? prod.withAccount(me, () => MES.addOrderOperation(sq, o.id, { title: 'Fit clip', description: 'Fit the clip', steps: 'Fit clip', position: o.operations.length, buyoffType: 'Technician', classification: 'Manufacturing', callouts: [], bom: [{ partNumber: 'BOM-009', name: 'Clip', required: 4 }] }), sq) : { message: 'order not created' };
+    const during = { a: need('BOM-001'), b: need('BOM-009') };
+    const rejected = o ? prod.withAccount(qa, () => MES.rejectSequenceChange(sq, o.id, 'Keep the released sequence for this order.'), sq) : { message: 'order not created' };
+    check('rejecting a sequence change restores the kit: the removed share comes back (10) and the added operation\'s line goes', removed.ok && added.ok && during.a === 6 && during.b === 4 && rejected.ok && need('BOM-001') === 10 && need('BOM-009') === undefined && MES.validate(sq) === true, `${removed.message} | ${added.message} | ${rejected.message} | during ${JSON.stringify(during)} after ${need('BOM-001')}/${need('BOM-009')}`);
+    // An operation whose BOM would take the kit past 20 lines is refused before anything changes.
+    if (o) { o.materials = Array.from({ length: 20 }, (_, n) => ({ id: `kit-f${n}`, name: `Part ${n}`, partNumber: `FULL-${n}`, required: 1, ready: false })); }
+    const fullBefore = o && JSON.stringify(o.materials);
+    const full = o ? prod.withAccount(me, () => MES.addOrderOperation(sq, o.id, { title: 'Fit cap', description: 'Fit the cap', steps: 'Fit cap', position: o.operations.length, buyoffType: 'Technician', classification: 'Manufacturing', callouts: [], bom: [{ partNumber: 'NEW-CAP', name: 'Cap', required: 1 }] }), sq) : { message: 'order not created' };
+    check('adding an operation whose BOM would take the kit past 20 lines is refused, the kit unchanged', !full.ok && /a work order kit holds up to 20/.test(full.message) && JSON.stringify(o.materials) === fullBefore, full.message);
+  }
+  {
     const ecState = load(prod, MES.seed());
     ecState.masterWIs = JSON.parse(JSON.stringify(qtyState.masterWIs));
     const make = () => { const r = mk(ecState, 5); return r.ok ? MES.getOrder(ecState, r.id) : null; };
