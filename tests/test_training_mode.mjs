@@ -164,16 +164,41 @@ async function serverCase(training) {
     if (p.status === 'fulfilled') {
       // The production server that started alongside sees the same file: it neither serves nor changes the training workspace.
       const pb = `http://127.0.0.1:${p.value}`;
-      const session = await (await fetch(`${pb}/api/auth/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'lead', password: 'race-password-1' }) })).json();
-      const auth = { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' };
+      const signIn = await fetch(`${pb}/api/auth/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'lead', password: 'race-password-1' }) });
+      const auth = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
       const read = await fetch(`${pb}/api/workspace`, { headers: auth });
       const row = await prod.store.getDoc('default');
       const act = await fetch(`${pb}/api/workspace/actions/MES.setPriority`, { method: 'POST', headers: { ...auth, 'If-Match': row.etag }, body: JSON.stringify({ args: ['WO-NONE', 'High'] }) });
-      ok('a production server that started alongside refuses to serve or change the training workspace', read.status === 422 && act.status === 422 && /saved by a training server/.test((await act.json()).error || ''), `${read.status} ${act.status}`);
+      ok('a production server that started alongside refuses to sign in, serve or change the training workspace', signIn.status === 422 && read.status === 422 && act.status === 422 && /claimed by a training server/.test((await act.json()).error || ''), `${signIn.status} ${read.status} ${act.status}`);
     } else ok('the production server that lost the race did not start (it found the training designation, or the training server held the database)', /created for a training server|database is locked/.test(String(p.reason?.message)), String(p.reason?.message));
   }
   if (p.status === 'fulfilled') await prod.closeAsync(); else await prod.store.close?.();
   if (t.status === 'fulfilled') await train.closeAsync();
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+{
+  // A production server already running on an empty database, then a training server claims that database: from then
+  // on the production server refuses every API route, archives and exports included, not only the workspace.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flight-training-late-'));
+  const file = path.join(dir, 'shared.sqlite');
+  const prod = createServer({ dbPath: file, quiet: true, training: false, setupCode: 'late-code' });
+  const pb = `http://127.0.0.1:${await prod.listenAsync(0, '127.0.0.1')}`;
+  const before = await fetch(`${pb}/api/health`);
+  const train = createServer({ dbPath: file, quiet: true, training: true, setupCode: 'late-code' });
+  const tb = `http://127.0.0.1:${await train.listenAsync(0, '127.0.0.1')}`;
+  await fetch(`${tb}/api/auth/accounts`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ setupCode: 'late-code', users: [{ username: 'lead', displayName: 'Training Lead', role: 'admin', password: 'late-password-1' }] }) });
+  const { token } = await (await fetch(`${tb}/api/auth/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'lead', password: 'late-password-1' }) })).json();
+  const auth = { Authorization: `Bearer ${token}` };
+  const statuses = {};
+  for (const route of ['/health', '/archive', '/archive/WO-10001', '/archive/WO-10001/print', '/archive/WO-10001/export', '/trace?q=SN-1', '/calibration-archive', '/workspace']) statuses[route] = (await fetch(`${pb}/api${route}`, { headers: auth })).status;
+  const signIn = await fetch(`${pb}/api/auth/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'lead', password: 'late-password-1' }) });
+  const setup = await fetch(`${pb}/api/auth/accounts`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ setupCode: 'late-code', users: [{ username: 'other', displayName: 'Other', role: 'admin', password: 'late-password-2' }] }) });
+  const refusal = (await signIn.json()).error || '';
+  ok('a production server running before a training server claimed its database refuses every API route afterwards, archives and exports included', before.status === 200 && Object.values(statuses).every(s => s === 422) && signIn.status === 422 && setup.status === 422 && /claimed by a training server/.test(refusal), JSON.stringify({ before: before.status, statuses, signIn: signIn.status, setup: setup.status }));
+  const trainingStill = await fetch(`${tb}/api/archive`, { headers: auth });
+  ok('the training server that claimed the database keeps working', trainingStill.status === 200, String(trainingStill.status));
+  await prod.closeAsync(); await train.closeAsync();
   fs.rmSync(dir, { recursive: true, force: true });
 }
 

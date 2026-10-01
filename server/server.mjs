@@ -329,6 +329,22 @@ export function createServer(options = {}) {
   // A production server never serves or acts on a workspace a training server saved, whatever reached its store.
   const trainingRefusal = 'This workspace was saved by a training server. A production server does not serve or change training records.';
   const trainingDoc = json => !training && json.includes('"trainingServer"') && Object.hasOwn(JSON.parse(json), 'trainingServer');
+  // A production server started on an empty database can be overtaken by a training server that designates it later.
+  // The first audit row never changes once written, so until that row exists every API request re-reads it; a row that
+  // is not the training designation settles the question for the life of the process, and the designation refuses
+  // every API route from then on (archives, trace, audit and exports included, not only the workspace).
+  let firstRowSettled = training, claimed = false;
+  const claimedRefusal = 'This database was claimed by a training server after this production server started. A production server does not serve or change training records. Stop this server and start it on its own database.';
+  const claimedForTraining = async () => {
+    if (claimed) return true;
+    if (firstRowSettled || typeof store.firstAuditRow !== 'function') return false;
+    const first = await store.firstAuditRow();
+    if (!first) return false;
+    firstRowSettled = true;
+    claimed = first.action === TRAINING_DESIGNATION;
+    if (claimed) log('refusing every API request: a training server designated this database after startup');
+    return claimed;
+  };
   const loadState = async () => { const row = await store.getDoc(TENANT); if (!row) return { state: null, etag: null }; if (trainingDoc(row.json)) return { state: null, etag: row.etag, problem: trainingRefusal }; const parsed = JSON.parse(row.json); let state; try { state = host.MES.upgrade(structuredClone(parsed)); } catch (e) { const damaged = registerProblem(parsed); if (damaged) return { state: null, etag: row.etag, raw: parsed, registers: damaged, problem: damaged }; throw e; } return { state, etag: row.etag, raw: parsed, registers: state ? registerProblem(state) : null, problem: state ? null : (host.MES.diagnose(parsed) || {}).detail || 'The document does not match the current record format.' }; };
   // Derived-state convergence: the browser engine recomputes these on boot, refresh and render
   // without ever queuing them as commands (planning blockers, assignment auto-close, master WI /
@@ -657,6 +673,7 @@ export function createServer(options = {}) {
       if (p.startsWith('/assets/') || (p === '/demo.html' && serveDemo) || p === '/favicon.ico') { serveStatic(req, res, p); return; }
       if (!p.startsWith('/api/')) { send(res, 404, { error: 'Not found' }); return; }
       const route = p.slice(4);
+      if (await claimedForTraining()) { send(res, 422, { error: claimedRefusal }); return; }
 
       // Liveness for anyone (a load balancer or monitor needs no account); the operating detail only with a session.
       if (route === '/health' && m === 'GET') {
