@@ -60,7 +60,7 @@ notice stays on every page until a QA Manager or Master Access account signed in
 only once that is logged. A tab of an older production build that was already open with a queue in memory is outside
 this cleanup; the server-side guard is issue #514. Drafts and partial sign-in failure
 counts the older demo could have written are set
-aside under `skyryse-mes-legacy-demo-*` keys; a lockout in force is kept. Every account creation is now written to
+aside under `skyryse-mes-legacy-demo-*` keys (drafts storage refuses to set aside are discarded, never left live); a lockout in force is kept. Every account creation is now written to
 the security log (`account-create`), so this cannot recur unnoticed.
 
 | Rule | What the engine does | Why |

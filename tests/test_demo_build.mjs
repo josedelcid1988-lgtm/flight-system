@@ -288,6 +288,16 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  const r2=await p.evaluate(()=>({queue:JSON.parse(localStorage.getItem('skyryse-mes-sync-queue-v1')||'[]').map(x=>x.clientWriteId)}));
  ok('the next load cleans the queue: the production workspace record is sent, the older demo\'s record and every account record never are',r2.queue.includes('prod-w1')&&!r2.queue.includes('old-demo-w1')&&!r2.queue.includes('prod-a1')&&posts.some(x=>x.clientWriteId==='prod-w1')&&!posts.some(x=>x.clientWriteId==='old-demo-w1'||x.entityType==='account'),JSON.stringify({r2,posts:posts.map(x=>x.clientWriteId)}));
  await ctx.close();}
+// When storage refuses the copy of an older demo's drafts, they are discarded, never left live for a production operation.
+{const ctx=await b.newContext({viewport:{width:1440,height:1000}});const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));
+ await ctx.addInitScript(()=>{const real=Storage.prototype.setItem;Storage.prototype.setItem=function(k,v){if(this===window.localStorage&&k==='skyryse-mes-legacy-demo-drafts-v1')throw new DOMException('full','QuotaExceededError');return real.call(this,k,v);};
+  if(sessionStorage.getItem('seeded'))return;sessionStorage.setItem('seeded','1');
+  real.call(localStorage,'skyryse-mes-auth-v1',JSON.stringify({users:[{username:'mlee',displayName:'Morgan Lee',salt:'01',hash:'e'.repeat(64),role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'master',displayName:'Master Access',salt:'00',hash:'f'.repeat(64),role:'admin',createdAt:'2026-09-17T00:00:00.000Z',createdBy:'demo build'}]}));
+  real.call(localStorage,'skyryse-mes-drafts-v1',JSON.stringify([['WO-10009|OP-10',{note:'rehearsal note',torque:'25 in-lb'}]]));});
+ await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(1200);
+ const r=await p.evaluate(()=>({drafts:localStorage.getItem('skyryse-mes-drafts-v1'),legacy:localStorage.getItem('skyryse-mes-legacy-demo-drafts-v1'),ev:JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').find(e=>e.type==='legacy-demo-removed')}));
+ ok('storage refused setting the older demo\'s drafts aside: they are discarded, not left live, and the removal says so',r.drafts===null&&r.legacy===null&&!!r.ev&&r.ev.draftsDiscarded===1&&r.ev.draftsMoved===0,JSON.stringify(r));
+ await ctx.close();}
 // A production server setting put in front of the demo (by a proxy or a page) is removed: the demo never signs in to the
 // production server or loads its workspace, and signs in with its own accounts.
 {const ctx=await b.newContext({viewport:{width:1440,height:1000}});const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));

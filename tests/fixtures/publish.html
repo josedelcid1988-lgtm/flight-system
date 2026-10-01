@@ -28,7 +28,7 @@
 // storage refuses it, nothing is removed, so every page, open now or opened later, finds the leftovers and closes.
 function purgeLegacyDemoState(){
  var REVIEW='skyryse-mes-legacy-demo-review-v1',DEMO_AUTH='skyryse-mes-demo-auth-v1',LEGACY_ACCOUNTS='skyryse-mes-legacy-demo-accounts-v1',LEGACY_ACCOUNT_QUEUE='skyryse-mes-legacy-demo-account-queue-v1',AUTH='skyryse-mes-auth-v1',QK='skyryse-mes-sync-queue-v1',SENT='skyryse-mes-sync-sent-v1',SK='skyryse-mes-security-v1',DR='skyryse-mes-drafts-v1',DSK='skyryse-mes-demo-security-v1',LK='skyryse-mes-lockout-v1',LEGACY_DRAFTS='skyryse-mes-legacy-demo-drafts-v1',LEGACY_LOCKS='skyryse-mes-legacy-demo-lockout-v1',ACCOUNT_HOLD='skyryse-mes-legacy-demo-account-hold-v1';
- var demo=new Set(),grew=true,removed=[],dropped=0,moved=0,draftsMoved=0,locksReset=0,sentCleared=false,accountRowsHeld=0;
+ var demo=new Set(),grew=true,removed=[],dropped=0,moved=0,draftsMoved=0,draftsDiscarded=0,locksReset=0,sentCleared=false,accountRowsHeld=0;
  function get(k){try{return JSON.parse(localStorage.getItem(k)||'null');}catch(e){return null;}}
  function put(k,v){localStorage.setItem(k,JSON.stringify(v));}
  var a=get(AUTH),q=get(QK),log=get(SK);
@@ -67,7 +67,9 @@ function purgeLegacyDemoState(){
  try{var sent=get(SENT);if(sent&&typeof sent==='object'&&Object.keys(sent).length){localStorage.removeItem(SENT);sentCleared=true;}}catch(e){}
  // Drafts and partial sign-in failure counts the older demo could have written are set aside under their own keys,
  // never merged into the demo's current ones. A lockout still in force is kept.
- try{var dr=get(DR);if(Array.isArray(dr)&&dr.length){var kept=get(LEGACY_DRAFTS);put(LEGACY_DRAFTS,(Array.isArray(kept)?kept:[]).concat(dr));localStorage.removeItem(DR);draftsMoved=dr.length;}}catch(e){}
+ // If storage refuses the copy, the drafts are discarded rather than left live: a draft is unsigned work, and an older
+ // demo's values must never pre-fill a production operation.
+ var dr=get(DR);if(Array.isArray(dr)&&dr.length){try{var kept=get(LEGACY_DRAFTS);put(LEGACY_DRAFTS,(Array.isArray(kept)?kept:[]).concat(dr));draftsMoved=dr.length;}catch(e){draftsDiscarded=dr.length;}try{localStorage.removeItem(DR);}catch(e){}}
  // The queue is rewritten once, without the older demo's records and without any account record: an account the older
  // demo changed or made under a production name cannot be told apart, so the other queued account records wait under
  // their own key and are never mirrored. If storage refuses the rewrite, this page's mirror sends nothing at all, and
@@ -76,7 +78,7 @@ function purgeLegacyDemoState(){
  if(acctRows.length){try{var held=get(LEGACY_ACCOUNT_QUEUE);put(LEGACY_ACCOUNT_QUEUE,(Array.isArray(held)?held:[]).concat(acctRows));accountRowsHeld=acctRows.length;}catch(e){}}
  if(demoRows.length||acctRows.length){try{put(QK,keepRows);dropped=demoRows.length;}catch(e){window.__skLegacyHoldMirror=true;}}
  try{var lk=get(LK);if(lk&&typeof lk==='object'&&Object.keys(lk).length){put(LEGACY_LOCKS,lk);var active={};Object.keys(lk).forEach(function(n){if(lk[n]&&Number(lk[n].until)>Date.now())active[n]={fails:0,until:lk[n].until};});put(LK,active);locksReset=Object.keys(lk).length-Object.keys(active).length;}}catch(e){}
- window.addEventListener('DOMContentLoaded',function(){try{window.dispatchEvent(new CustomEvent('sk-security',{detail:{type:'legacy-demo-removed',at:new Date().toISOString(),accounts:removed,queuedRecords:dropped,securityEvents:moved,draftsMoved:draftsMoved,lockoutsReset:locksReset,mirrorSentIndexCleared:sentCleared,accountsMovedToDemo:toDemo,accountsSetAside:setAside,accountsNotCopied:notCopied,accountRecordsHeld:accountRowsHeld}}));}catch(e){}});
+ window.addEventListener('DOMContentLoaded',function(){try{window.dispatchEvent(new CustomEvent('sk-security',{detail:{type:'legacy-demo-removed',at:new Date().toISOString(),accounts:removed,queuedRecords:dropped,securityEvents:moved,draftsMoved:draftsMoved,draftsDiscarded:draftsDiscarded,lockoutsReset:locksReset,mirrorSentIndexCleared:sentCleared,accountsMovedToDemo:toDemo,accountsSetAside:setAside,accountsNotCopied:notCopied,accountRecordsHeld:accountRowsHeld}}));}catch(e){}});
  showLegacyDemoReview();
 }
 // The review record. A step counts only once its security log entry is stored.
