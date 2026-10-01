@@ -34,6 +34,13 @@ const cases = [
   // Codex 4161235788: libpq unescapes a backslash in an unquoted value too, so \\ is one backslash.
   ['keywords with an escaped backslash, unquoted', 'host=db password=pa\\\\ss dbname=flight', { dbname: 'host=db dbname=flight', env: { PGPASSWORD: 'pa\\ss' } }],
   ['keywords with an escaped quote, unquoted', "host=db password=it\\'s", { dbname: 'host=db', env: { PGPASSWORD: "it's" } }],
+  // Codex 4161531100: a ' inside an unquoted value is an ordinary character to libpq.
+  ['keywords with an apostrophe inside an unquoted password', "password=it's host=db", { dbname: 'host=db', env: { PGPASSWORD: "it's" } }],
+  // Codex 4161531104: kept settings are copied exactly, so an escaped trailing space keeps its meaning.
+  ['keywords with an escaped trailing space in a kept value', 'dbname=flight\\  password=secret host=db', { dbname: 'dbname=flight\\  host=db', env: { PGPASSWORD: 'secret' } }],
+  // Codex 4161531093: libpq's URI has no fragment, so a # is part of the password, wherever the password is.
+  ['a URI query password with a #', 'postgresql://flight@db/flight?password=Head#Tail', { dbname: 'postgresql://flight@db/flight', env: { PGPASSWORD: 'Head#Tail' } }],
+  ['a URI user-info password with a #', 'postgresql://flight:Head#Tail@db/flight', { dbname: 'postgresql://flight@db/flight', env: { PGPASSWORD: 'Head#Tail' } }],
   ['a bare database name', 'flight', { dbname: 'flight', env: {} }],
 ];
 for (const [label, input, want] of cases) {

@@ -205,12 +205,14 @@ export function pgRestoreTarget(connectionString, env = process.env) {
   // A bare database name (no = and not a URI) holds no password: libpq reads it as the dbname alone.
   if (!/^postgres(ql)?:\/\//i.test(raw) && !raw.includes('=')) return { dbname: raw, env: {} };
   if (/^postgres(ql)?:\/\//i.test(raw)) {
-    const uri = raw.match(/^(postgres(?:ql)?:\/\/)([^/?#]*)([^?#]*)(?:\?([^#]*))?(#.*)?$/i);
+    // libpq's URI has no fragment: a # is ordinary data wherever it appears, so a password such as ?password=Head#Tail
+    // is read whole (Codex 4161531093).
+    const uri = raw.match(/^(postgres(?:ql)?:\/\/)([^/?]*)([^?]*)(?:\?(.*))?$/is);
     if (!uri) refuse('is not a URI libpq can read');
-    const [, scheme, authority, path, query, fragment = ''] = uri;
-    // An @ past the authority means user info was cut short by an unencoded / ? or #, so a password may sit in what
+    const [, scheme, authority, path, query] = uri;
+    // An @ past the authority means user info was cut short by an unencoded / or ?, so a password may sit in what
     // looks like the path or query (Codex 4161235818). libpq needs those characters percent-encoded anyway.
-    if (`${path}${query ?? ''}${fragment}`.includes('@')) refuse('has an @ outside its user info; percent-encode any / ? # or @ in the user name and password');
+    if (`${path}${query ?? ''}`.includes('@')) refuse('has an @ outside its user info; percent-encode any / ? or @ in the user name and password');
     const at = authority.lastIndexOf('@');
     let userinfo = at >= 0 ? authority.slice(0, at) : null;
     const hosts = at >= 0 ? authority.slice(at + 1) : authority;
@@ -227,11 +229,12 @@ export function pgRestoreTarget(connectionString, env = process.env) {
       kept.push(part);
     }
     if (password === null) return { dbname: raw, env: {} };
-    dbname = `${scheme}${userinfo !== null ? `${userinfo}@` : ''}${hosts}${path}${kept.length ? `?${kept.join('&')}` : ''}${fragment}`;
+    dbname = `${scheme}${userinfo !== null ? `${userinfo}@` : ''}${hosts}${path}${kept.length ? `?${kept.join('&')}` : ''}`;
   } else {
-    // keyword=value pairs: a value is single-quoted or runs to whitespace; in either, a backslash escapes the next
-    // character (libpq's rule for a quote or a backslash), so both forms are unescaped the same way (Codex 4161235788).
-    const pair = /\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*('(?:\\.|[^'\\])*'|(?:\\.|[^\s'\\])*)/y;
+    // keyword=value pairs, as libpq's conninfo_parse reads them: a value that starts with ' runs to the closing quote;
+    // any other value runs to whitespace, and a ' inside it is an ordinary character (Codex 4161531100). In both, a
+    // backslash escapes the next character, so both are unescaped the same way (Codex 4161235788).
+    const pair = /\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*('(?:\\.|[^'\\])*'|(?:\\.|[^\s'\\])(?:\\.|[^\s\\])*|)/y;
     const kept = [];
     let index = 0;
     while (index < raw.length) {
@@ -240,11 +243,13 @@ export function pgRestoreTarget(connectionString, env = process.env) {
       const match = pair.exec(raw);
       if (!match) refuse('is not a list of keyword=value settings libpq can read');
       index = pair.lastIndex;
-      const [text, key, value] = match;
+      const [, key, value] = match;
       if (key === 'password') { password = (value.startsWith("'") ? value.slice(1, -1) : value).replace(/\\(.)/g, '$1'); continue; }
       if (key === 'service') service = true;
       if (key === 'sslpassword') refuse(SSL_PASSWORD_REFUSAL);
-      kept.push(text.trim());
+      // Kept as key=value with the value exactly as written, escapes included, so an escaped trailing space survives
+      // (Codex 4161531104).
+      kept.push(`${key}=${value}`);
     }
     if (password === null) return { dbname: raw, env: {} };
     dbname = kept.join(' ');
