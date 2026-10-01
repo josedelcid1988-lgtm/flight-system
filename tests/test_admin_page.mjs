@@ -210,14 +210,19 @@ const pday=ms=>new Date(ms).toLocaleDateString('en-CA',{timeZone:'America/Los_An
 const E=pday(Date.now()+2*86400000);
 const late=await run(e=>{const r=MES.issueStamp(state,{name:'Kai Quality',buyoffType:'A&P',account:'kqe',expires:e,trainingCode:'ESD'});save();return r;},E);
 ok('setup: a stamp expiring in two days',late.ok,JSON.stringify(late));
-await p.clock.setFixedTime(new Date(`${E}T23:30:00-07:00`));
-await run(()=>{render();document.querySelector('[data-admin-tab="stamps"]').click();});
-const eve={utc:await run(()=>new Date().toISOString().slice(0,10)),flag:await rowFlag(late.id)};
+// Read the flag with the page's Date held at a chosen instant for one synchronous render. Moving the page
+// clock itself would also trip the 15-minute idle sign-out, so the time is only shifted inside this call.
+const flagAt=(iso,id)=>run(([iso,id])=>{const Real=Date,t=new Real(iso).getTime();
+  class Fixed extends Real{constructor(...a){super(...(a.length?a:[t]));} static now(){return t;}}
+  window.Date=Fixed;
+  try{render();document.querySelector('[data-admin-tab="stamps"]').click();const el=document.querySelector(`[data-stamp-status="${id}"]`),tr=el&&el.closest('tr');
+    return {utc:new Date().toISOString().slice(0,10),flag:tr?[...tr.querySelectorAll('.pill')].map(x=>x.textContent).join('|'):''};}
+  finally{window.Date=Real;render();}},[iso,id]);
+const eve=await flagAt(`${E}T23:30:00-07:00`,late.id);
 ok('at 23:30 Pacific on its expiry day the stamp reads Expires soon, not Expired (UTC date '+eve.utc+')',eve.utc>E&&/Expires soon/.test(eve.flag)&&!/Expired/.test(eve.flag),JSON.stringify(eve));
-await p.clock.setFixedTime(new Date(`${pday(new Date(`${E}T23:30:00-07:00`).getTime()+86400000)}T09:00:00-07:00`));
-await run(()=>{render();document.querySelector('[data-admin-tab="stamps"]').click();});
-ok('the next Pacific morning the same stamp reads Expired',/Expired/.test(await rowFlag(late.id)),await rowFlag(late.id));
-await p.clock.setFixedTime(new Date());
+const morning=await flagAt(`${pday(new Date(`${E}T23:30:00-07:00`).getTime()+86400000)}T09:00:00-07:00`,late.id);
+ok('the next Pacific morning the same stamp reads Expired',/Expired/.test(morning.flag),JSON.stringify(morning));
+ok('the shifted clock did not sign the manager out',await run(()=>!!skAuth.user()&&view==='admin'));
 
 // ---------------- the accounts table at phone width ----------------
 await p.setViewportSize({width:375,height:812});await p.click('[data-admin-tab="accounts"]');await p.waitForTimeout(400);
