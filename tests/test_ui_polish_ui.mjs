@@ -1,255 +1,266 @@
+// Visual and wording polish (tablet first): each check names the audit item it covers and fails on the old behavior.
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { chromium } from 'playwright';
 
-// UI polish from the Jinx UX audit. Visual and wording changes only; every engine rule is unchanged.
-//  - Calibration status pills: In Calibration and Out for Calibration are the neutral pill.open, Quarantined is red
-//    (pill.high), Retired is gray (pill.retired). Open audits are pill.open, closed audits pill.closed. React
-//    (System QMS records) and the legacy renderQmsRecords markup agree.
-//  - The calibration log is a table (entry, tool tag, status, due date, recorded by) with the note in an
-//    expandable row beneath each entry.
-//  - Every stamp PIN input has an accessible name from its label.
-//  - Trace search says it is searching and holds its Search button while the server's archive search is in
-//    flight, and says plainly when that search fails. Archived print and export hold their buttons while one runs.
-//  - The Hangar open-holds panel counts every held order and links to the full list.
-//  - The work order queue footer reads "Work order progress and approval rules are unchanged."
-const dir = process.env.FS_FIXTURES_DIR ? process.env.FS_FIXTURES_DIR.replace(/\/?$/, '/') : null;
-const fixtureUrl = name => dir ? new URL(name, new URL(dir, 'file:///')).href : new URL(`./fixtures/${name}`, import.meta.url).href;
+const fixture = new URL('./fixtures/demo_publish.html', import.meta.url).href;
+const source = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+const bundle = fs.readFileSync(new URL('../assets/flight-ui.js', import.meta.url), 'utf8');
 const browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
-const fails = [], errors = [];
-const check = (name, ok, detail = '') => { if (ok) console.log(`ok   ${name}`); else { fails.push(name); console.log(`FAIL ${name} ${detail}`); } };
+const errors = [], passed = [];
+const check = (name, fn) => fn().then(() => passed.push(name));
 
-const open = async (user = { username: 'admin', role: 'admin', displayName: 'Flight Master' }, fixture = 'demo_qa150_publish.html') => {
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  await context.addInitScript(u => {
-    localStorage.setItem('skyryse-mes-auth-v1', JSON.stringify({ users: [{ ...u, salt: 'test', hash: 'unused', createdAt: new Date().toISOString() }] }));
-    sessionStorage.setItem('skyryse-mes-session-v1', u.username);
+// WCAG relative luminance contrast between an element's text and the first opaque background behind it.
+const contrastOf = (page, selector) => page.locator(selector).first().evaluate(el => {
+  const rgb = value => (value.match(/[\d.]+/g) || []).map(Number);
+  const lum = ([r, g, b]) => [r, g, b].map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }).reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
+  let node = el, bg = null;
+  while (node && node.nodeType === 1) { const c = rgb(getComputedStyle(node).backgroundColor); if (c.length >= 3 && (c[3] === undefined || c[3] > 0.95)) { bg = c; break; } node = node.parentElement; }
+  bg = bg || [255, 255, 255];
+  const fg = lum(rgb(getComputedStyle(el).color)), back = lum(bg);
+  return (Math.max(fg, back) + 0.05) / (Math.min(fg, back) + 0.05);
+});
+
+async function open(width, height) {
+  const context = await browser.newContext({ viewport: { width, height } });
+  await context.addInitScript(() => {
+    localStorage.setItem('skyryse-mes-auth-v1', JSON.stringify({ users: [{ username: 'admin', displayName: 'Flight Master', salt: 'test', hash: 'unused', role: 'admin', createdAt: new Date().toISOString() }] }));
+    sessionStorage.setItem('skyryse-mes-session-v1', 'admin');
     sessionStorage.setItem('sk-boot-seen', '1');
-  }, user);
+    sessionStorage.setItem('sk-mnv-landing-seen', '1');
+  });
   const page = await context.newPage();
   page.on('pageerror', error => errors.push(error.message));
-  await page.goto(fixtureUrl(fixture));
+  await page.goto(fixture);
   await page.waitForFunction(() => window.__ready === true);
   return { context, page };
-};
-const show = (page, view) => page.evaluate(next => { view = next; render(); }, view);
-
-// Readers run in the page against a root element: the React island or a detached node holding the legacy markup.
-const readers = `({
-  cal: root => [...root.querySelectorAll('tr[data-calibration-entry]')].map(tr => ({ tag: tr.cells[1].querySelector('strong').textContent, pill: [...tr.querySelector('.pill').classList].filter(c => c !== 'pill').join(' ') })),
-  audits: root => [...root.querySelectorAll('.qms-record-card')].filter(card => /^AUD/.test(card.querySelector('h3')?.textContent || '')).map(card => ({ id: card.querySelector('h3').textContent.split(' · ')[0], status: card.querySelector('.panel-head > .pill').textContent, pill: [...card.querySelector('.panel-head > .pill').classList].filter(c => c !== 'pill').join(' ') })),
-  shape: root => { const table = root.querySelector('table.calibration-table'); return table ? { headers: [...table.querySelectorAll('thead th')].map(th => th.textContent), scoped: [...table.querySelectorAll('thead th')].every(th => th.getAttribute('scope') === 'col'), caption: table.querySelector('caption')?.textContent, notes: [...table.querySelectorAll('tr.calibration-detail-row details.calibration-notes')].map(d => d.textContent) } : null; },
-  runTogether: root => /CALLOG-\\d+ · /.test(root.textContent)
-})`;
-const readAll = (page, legacy) => page.evaluate(([src, legacy]) => {
-  const r = Function(`return ${src}`)();
-  let root = document.querySelector('#main #flight-react-island');
-  if (legacy) { root = document.createElement('div'); root.innerHTML = renderQmsRecords(); }
-  return { cal: r.cal(root), audits: r.audits(root), shape: r.shape(root), runTogether: r.runTogether(root) };
-}, [readers, legacy]);
+}
+const go = (page, view) => page.evaluate(value => { view = value; render(); }, view);
+const action = (page, name, data) => page.evaluate(([name, data]) => { const b = document.createElement('button'); b.dataset.action = name; Object.assign(b.dataset, data); document.body.appendChild(b); b.click(); b.remove(); }, [name, data]);
 
 try {
-  // ---- calibration pills, calibration table, audit pills ---------------------------------------------------------
-  {
-    const { context, page } = await open();
-    const seeded = await page.evaluate(() => {
-      const t = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }), [y, m, d] = t.split('-'), due = `${+y + 1}-${m}-${d}`;
-      const out = [];
-      for (const [tag, status] of [['POL-01', 'In Calibration'], ['POL-02', 'Out for Calibration'], ['POL-03', 'Quarantined'], ['POL-04', 'Retired']])
-        out.push(MES.recordCalibration(state, { tag, description: 'DIGITAL CALIPER', torque: 'no', serial: `SN-${tag}`, calibratedAt: t, expires: due, status, location: 'Production Floor', note: `Note for ${tag}` }));
-      out.push(MES.openAudit(state, { scope: 'Receiving process audit', findings: ['Receiving log missing two entries'] }));
-      return out.map(r => r.ok ? true : r.message);
+  const { context, page } = await open(1024, 768);
+
+  await check('H1 order table keeps ids, dates and badges on one line at 1024 and hides Created and Flight progress', async () => {
+    await go(page, 'orders');
+    await page.locator('.fr-order-table tbody tr').first().waitFor();
+    const layout = await page.evaluate(() => {
+      const table = document.querySelector('.fr-order-table');
+      const oneLine = el => el.getClientRects().length === 1 && getComputedStyle(el).whiteSpace === 'nowrap';
+      return {
+        ids: [...table.querySelectorAll('.fr-record-link strong')].every(oneLine),
+        dates: [...table.querySelectorAll('time')].filter(t => t.offsetParent).every(oneLine),
+        badges: [...table.querySelectorAll('.fr-fai-tag,.fr-status,.fr-order-blocked')].every(oneLine),
+        breakAnywhere: [...table.querySelectorAll('th,td')].some(cell => ['anywhere', 'break-word'].includes(getComputedStyle(cell).overflowWrap) || getComputedStyle(cell).wordBreak === 'break-all'),
+        hidden: [...table.querySelectorAll('thead th')].filter(th => getComputedStyle(th).display === 'none').map(th => th.textContent.trim()),
+        headerBreaks: [...table.querySelectorAll('thead th .log-sort span:first-child')].filter(span => span.textContent.trim().split(/\s+/).length === 1 && span.getBoundingClientRect().height > 30).map(span => span.textContent)
+      };
     });
-    check('the calibration entries and the audit used for the display checks are recorded', seeded.every(r => r === true), JSON.stringify(seeded));
-    // A closed audit is added for display only (never saved) so its pill can be read.
-    await page.evaluate(() => { state.audits.push({ id: 'AUD-POLISH-CLOSED', scope: 'Closed display audit', status: 'Closed', openedAt: new Date().toISOString(), openedBy: { name: 'Display' }, findings: [] }); });
-    await show(page, 'qms-records');
-    check('System QMS records renders through React', await page.locator('#main #flight-react-island').count() === 1);
-    const react = await readAll(page, false), legacy = await readAll(page, true);
-    const expected = { 'POL-01': 'open', 'POL-02': 'open', 'POL-03': 'high', 'POL-04': 'retired' };
-    for (const [label, got] of [['React', react], ['legacy', legacy]]) {
-      for (const [tag, cls] of Object.entries(expected)) {
-        const row = got.cal.find(r => r.tag === tag);
-        check(`${label}: calibration status for ${tag} uses pill.${cls}`, row && row.pill === cls, JSON.stringify(row));
-      }
-      const openAudit = got.audits.find(a => a.status === 'Open'), closedAudit = got.audits.find(a => a.id === 'AUD-POLISH-CLOSED');
-      check(`${label}: an open audit uses the neutral pill.open, not red`, openAudit && openAudit.pill === 'open', JSON.stringify(got.audits));
-      check(`${label}: a closed audit keeps pill.closed`, closedAudit && closedAudit.pill === 'closed', JSON.stringify(closedAudit));
-      check(`${label}: the calibration log is a table with entry, tool tag, status, due date and recorded by columns`, got.shape && JSON.stringify(got.shape.headers) === JSON.stringify(['Entry', 'Tool tag', 'Status', 'Due date', 'Recorded by']) && got.shape.scoped && got.shape.caption === 'Calibration log entries', JSON.stringify(got.shape));
-      check(`${label}: each entry's note sits in an expandable row`, got.shape && got.shape.notes.some(text => text.includes('Note for POL-04')), JSON.stringify(got.shape?.notes?.slice(0, 2)));
-      check(`${label}: the calibration log no longer renders as one run-together line per entry`, !got.runTogether);
+    assert.equal(layout.ids, true, 'work-order ids stay on one line');
+    assert.equal(layout.dates, true, 'dates stay on one line');
+    assert.equal(layout.badges, true, 'FAI, status and blocked badges stay on one line');
+    assert.equal(layout.breakAnywhere, false, 'no order-table cell may break a word mid-letter');
+    assert.deepEqual(layout.hidden, ['Created', 'Flight progress'], 'below 1200px Created and Flight progress are hidden');
+    assert.deepEqual(layout.headerBreaks, [], 'one-word headers never wrap letter by letter');
+    await page.emulateMedia({ media: 'print' });
+    assert.equal(await page.evaluate(() => [...document.querySelectorAll('.fr-order-table thead th')].filter(th => getComputedStyle(th).display !== 'none').length), 8, 'a printed queue keeps Created and Flight progress');
+    await page.emulateMedia({ media: 'screen' });
+  });
+
+  await check('H2 work-order section tabs are visible below a read-only stepper and navigate', async () => {
+    await page.evaluate(() => { selectedId = state.orders.find(o => o.operations.length > 4).id; selectedOp = null; tab = 'operations'; view = 'order'; render(); });
+    const tabs = page.locator('nav.tabs[aria-label="Work order sections"] [role="tab"]');
+    await tabs.first().waitFor({ state: 'visible' });
+    assert.deepEqual(await tabs.evaluateAll(list => list.map(b => b.firstChild.textContent.trim())), ['Kit', 'Build', 'Quality', 'Stock', 'Record']);
+    assert.ok(await tabs.evaluateAll(list => list.every(b => b.querySelector('.badge')?.textContent.trim())), 'every tab shows its count');
+    assert.equal(await page.locator('.route-stages button').count(), 0, 'lifecycle stages are status, not buttons');
+    await page.evaluate(() => { selectedId = 'WO-10003'; tab = 'operations'; view = 'order'; render(); });
+    const quality = await page.evaluate(() => { const o = MES.getOrder(state, 'WO-10003'); return [Number(document.querySelector('nav.tabs [data-tab="quality"] .badge').textContent), o.tickets.length + o.reports.length + (o.fai?.required ? 1 : 0) + o.conformity.length, o.conformity.length]; });
+    assert.ok(quality[2] > 0, 'WO-10003 carries a conformity package');
+    assert.equal(quality[0], quality[1], 'the Quality tab count includes FAIR and conformity packages, not only NC tickets and reports');
+    await page.evaluate(() => { selectedId = state.orders.find(o => o.operations.length > 4).id; tab = 'operations'; view = 'order'; render(); });
+    assert.equal(await page.locator('.route-stage[aria-current="step"]').count(), 1);
+    await tabs.filter({ hasText: 'Kit' }).click();
+    assert.equal(await page.evaluate(() => tab), 'materials', 'the Kit tab opens the kit section');
+    assert.equal(await tabs.filter({ hasText: 'Kit' }).getAttribute('aria-selected'), 'true');
+    await tabs.filter({ hasText: 'Record' }).click();
+    assert.equal(await page.evaluate(() => tab), 'record', 'the Record tab opens the record section');
+    await page.locator('.route-stage').filter({ hasText: /closed/i }).click({ force: true });
+    assert.equal(await page.evaluate(() => tab), 'record', 'clicking the CLOSED stage no longer jumps to Stock');
+  });
+
+  await check('H4 light Maneuver headings use readable chips and next-step text, show the record id and align left', async () => {
+    await action(page, 'mnv-open-board', { board: 'MRB-101' });
+    await page.locator('#mnv-board-h').waitFor();
+    for (const chip of ['.page-heading .order-link >> nth=0', '.page-heading .order-link >> nth=1']) assert.ok(await contrastOf(page, chip) >= 4.5, `${chip} contrast is at least 4.5:1`);
+    assert.match(await page.locator('.page-heading .hero-eyebrow').innerText(), /MRB-101/i, 'the MRB id is visible in the eyebrow');
+    await action(page, 'mnv-open-car', { car: 'CAR-1001' });
+    await page.locator('#mnv-car-h').waitFor();
+    assert.ok(await contrastOf(page, '.page-heading .small strong') >= 4.5, 'the CAR next step reads at 4.5:1 or better');
+    assert.match(await page.locator('.page-heading .hero-eyebrow').innerText(), /CAR-1001/i);
+    const offset = await page.evaluate(() => { const h = document.querySelector('.page-heading'); return document.querySelector('#mnv-car-h').getBoundingClientRect().left - h.getBoundingClientRect().left; });
+    assert.ok(offset < 24, `the heading is left aligned (offset ${offset}px)`);
+    await page.evaluate(() => { selectedId = state.orders[0].id; view = 'order'; render(); });
+    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('.page-heading h1')).color), 'rgb(255, 255, 255)', 'the dark work-order hero keeps white text');
+  });
+
+  await check('M1 Flight Plan nav marks only the current view', async () => {
+    for (const [view, label] of [['plan-forecast', 'MRP forecast'], ['plan-kanban', 'Kanban']]) {
+      await go(page, view);
+      await page.locator('.fr-planning-nav').waitFor();
+      assert.deepEqual(await page.locator('.fr-planning-nav [aria-current="page"]').allTextContents(), [label]);
     }
-    check('React and legacy list the same calibration entries with the same pills', JSON.stringify(react.cal) === JSON.stringify(legacy.cal), `${JSON.stringify(react.cal)} vs ${JSON.stringify(legacy.cal)}`);
-    const notes = page.locator('#main tr.calibration-detail-row details.calibration-notes').first();
-    await notes.locator('summary').click();
-    check('opening a calibration entry shows its note and signature', await notes.evaluate(d => d.open) && /SHA-256/.test(await notes.innerText()));
-    // Pill styles: draft is the neutral blue of pill.open; retired is muted gray, unlike open, high and closed.
-    const styles = await page.evaluate(() => {
-      const paint = cls => { const el = document.createElement('span'); el.className = `pill ${cls}`; document.body.append(el); const s = getComputedStyle(el); const out = `${s.color}|${s.backgroundColor}`; el.remove(); return out; };
-      return { open: paint('open'), draft: paint('draft'), retired: paint('retired'), high: paint('high'), closed: paint('closed') };
-    });
-    check('.pill.draft has the neutral blue style of .pill.open', styles.draft === styles.open, JSON.stringify(styles));
-    check('.pill.retired is its own muted style, not blue, red or green', new Set([styles.retired, styles.open, styles.high, styles.closed]).size === 4, JSON.stringify(styles));
-    await context.close();
-  }
+  });
 
-  // ---- stamp PIN inputs have an accessible name -----------------------------------------------------------------
-  {
-    const { context, page } = await open({ username: 'quinn', role: 'qe', displayName: 'Quinn Inspector' }, 'demo_publish.html');
-    const legacy = await page.evaluate(() => {
-      const root = document.createElement('div');
-      root.innerHTML = ['fair-verify-pin', 'fair-review-pin', 'fair-approve-pin', 'conf-aqi-pin', 'conf-8130-pin'].map(id => fairPin('Your stamp PIN', id)).join('');
-      document.body.append(root);
-      const out = [...root.querySelectorAll('input[name="pin"]')].map(input => ({ id: input.id, labels: [...(input.labels || [])].map(l => l.textContent) }));
-      root.remove();
-      return { master: !!MES.masterAccess(), out };
-    });
-    check('the PIN check runs as an ordinary Quality account', !legacy.master);
-    check('legacy FAIR and conformity PIN inputs each have a label tied to them', legacy.out.length === 5 && legacy.out.every(i => i.id && i.labels.length === 1 && i.labels[0] === 'Your stamp PIN'), JSON.stringify(legacy.out));
-    // React: the FAIR tab of an order whose FAIR is still open renders the verify form with the PIN field.
-    const target = await page.evaluate(() => { const o = state.orders.find(x => x.fair && x.fair.status === 'Open'); return o ? o.id : null; });
-    check('the fixture has an order with an open FAIR', !!target);
-    if (target) {
-      await page.evaluate(id => { selectedId = id; view = 'order'; tab = 'quality'; render(); }, target);
-      // The signatures sit on the FAIR's last page.
-      const pages = page.locator('#fair-panel [role="tab"]');
-      if (await pages.count()) await pages.last().click();
-      const pins = await page.evaluate(() => [...document.querySelectorAll('#main input[name="pin"]:not([type="hidden"])')].map(input => ({ id: input.id, labels: [...(input.labels || [])].map(l => l.textContent.trim()) })));
-      check('React FAIR PIN inputs each have a label tied to them', pins.length > 0 && pins.every(p => p.id && p.labels.length === 1), JSON.stringify(pins));
-      check('the React FAIR PIN is found by its label', await page.getByLabel('Your stamp PIN').count() >= 1);
+  await check('M2 breadcrumbs and page titles use readable names', async () => {
+    for (const [view, label] of [['qms-config', 'QMS configuration'], ['qms-records', 'System QMS records'], ['support-log', 'Support overrides'], ['trace-report', 'Traceability report']]) {
+      await go(page, view);
+      await page.waitForFunction(text => document.querySelector('#breadcrumb').textContent.trim() === text, label);
+      assert.ok((await page.title()).endsWith(label), `${view} title ends with ${label}`);
     }
-    // The execution tab stamp number and PIN fields, as rendered for this account.
-    const exec = await page.evaluate(() => {
-      const o = state.orders.find(x => x.status === 'Building' && x.operations.some(op => !op.done));
-      if (!o) return null;
-      selectedId = o.id; view = 'order'; tab = 'execution'; selectedOp = o.operations.find(op => !op.done).id; render();
-      return [...document.querySelectorAll('#main input[name="pin"]:not([type="hidden"]), #main input[name="stampNumber"]')].map(input => ({ id: input.id, labels: [...(input.labels || [])].map(l => l.textContent.trim()) }));
-    });
-    check('execution tab stamp number and PIN inputs have a label tied to them', exec && exec.every(i => i.labels.length > 0), JSON.stringify(exec));
-    await context.close();
-  }
+  });
 
-  // ---- trace search and archived print/export busy state ---------------------------------------------------------
-  {
-    const { context, page } = await open();
-    await page.evaluate(() => {
-      window.__traceCalls = [];
-      window.skServer = Object.assign(window.skServer || {}, { active: true, token: () => 'test', context: { api: '/api' }, api: path => new Promise((resolve, reject) => { window.__traceCalls.push({ path, resolve, reject }); }) });
-      traceQuery = ''; view = 'trace'; render();
+  await check('M7 Maneuver nav badges equal the open records the lists count', async () => {
+    for (const [view, badge] of [['mnv-intake', 'mnv-intake-count'], ['mnv-cars', 'mnv-car-count'], ['mnv-mrb', 'mnv-mrb-count'], ['mnv-spr', 'mnv-spr-count']]) {
+      await go(page, view);
+      await page.locator('.fr-count-open').waitFor();
+      const open = Number(await page.locator('.fr-count-open').getAttribute('data-open-count'));
+      assert.equal(Number(await page.locator(`#${badge}`).textContent()), open, `${view} badge equals the list's open count`);
+    }
+    await go(page, 'mnv-intake');
+    await page.locator('[aria-label="Filter NC intake"]').selectOption('Open');
+    assert.equal(await page.locator('.fr-queue tbody tr').count(), Number(await page.locator('#mnv-intake-count').textContent()), 'NC intake badge equals the Open list');
+    assert.ok(Number(await page.locator('#mnv-intake-count').textContent()) > 0, 'an open NC inside a work order is counted');
+    await go(page, 'mnv-mrb');
+    await page.locator('.fr-count-open').waitFor();
+    assert.equal(await page.locator('.fr-queue tbody tr').filter({ hasText: /Open/ }).count(), Number(await page.locator('#mnv-mrb-count').textContent()), 'the MRB badge counts only boards the MRB list shows as open');
+  });
+
+  await check('M17 empty lists say whether nothing exists or nothing matches', async () => {
+    await go(page, 'mnv-spr');
+    await page.locator('.fr-empty').waitFor();
+    assert.equal(await page.locator('.fr-empty').innerText(), 'No problem reports yet.');
+    assert.equal(await page.locator('.fr-maneuver footer').innerText(), '0 problem reports');
+    await page.locator('[aria-label="Search Flight Maneuver records"]').fill('nothing-like-this');
+    assert.match(await page.locator('.fr-empty').innerText(), /^No records match the search or filters/);
+    assert.ok(bundle.includes('Nothing needs attention right now.'), 'an empty Quality Hangar says nothing needs attention, not that no records exist');
+    await go(page, 'mnv-intake');
+    await page.locator('[aria-label="Filter NC intake"]').selectOption('Escapes');
+    await go(page, 'mnv-spr');
+    await page.locator('.fr-empty').waitFor();
+    assert.equal(await page.locator('.fr-empty').innerText(), 'No problem reports yet.', 'a hidden NC intake filter does not leak into another page');
+  });
+
+  await check('M18 an expired lot reads Expired N days ago in the danger colour', async () => {
+    await go(page, 'plan-forecast');
+    await page.locator('.fr-forecast-page').waitFor();
+    const expected = await page.evaluate(() => FlightPlan.forecast(state).shelfLife.filter(item => item.daysLeft < 0).length);
+    const cells = page.locator('.fr-expired-label');
+    assert.equal(await cells.count(), expected);
+    for (const text of await cells.allTextContents()) assert.match(text, /Expired \d+ days? ago$/);
+    assert.doesNotMatch(await page.locator('.fr-forecast-page').innerText(), /· -\d+ days/);
+  });
+
+  await check('M8 a table wider than its panel is marked so it shows a scroll edge', async () => {
+    await go(page, 'serials');
+    await page.waitForFunction(() => document.querySelector('#main [data-scroll-x]'));
+    const box = await page.locator('#main [data-scroll-x]').first().evaluate(el => { el.scrollLeft = el.scrollWidth; return new Promise(r => setTimeout(() => r([el.dataset.scrollX, getComputedStyle(el).boxShadow]), 100)); });
+    assert.equal(box[0], 'end');
+    assert.notEqual(box[1], 'none');
+  });
+
+  await check('M9 keyboard focus shows a ring on toolbar, search, filters and sidebar', async () => {
+    await go(page, 'orders');
+    await page.locator('.fr-order-table').waitFor();
+    for (const selector of ['.fr-order-heading-actions .btn >> nth=0', '.fr-order-heading-actions .btn >> nth=-1', '.global-search input', '.fr-order-table th .log-menu summary >> nth=0', '.fs-utilities > summary']) {
+      await page.keyboard.press('Shift');
+      const ring = await page.locator(selector).evaluate(el => { el.focus(); const s = getComputedStyle(el); return [el.matches(':focus-visible'), s.outlineStyle, parseFloat(s.outlineWidth)]; });
+      assert.equal(ring[0], true, `${selector} takes keyboard focus`);
+      assert.equal(ring[1], 'solid', `${selector} shows a focus outline`);
+      assert.ok(ring[2] >= 2, `${selector} focus outline is at least 2px`);
+    }
+  });
+
+  await check('M13 keep-screen-awake toggle has a name and a visible label', async () => {
+    const lock = page.locator('[data-wakelock]');
+    assert.equal(await lock.getAttribute('aria-label'), 'Keep screen awake');
+    assert.equal((await lock.locator('.wakelock-label').innerText()).trim(), 'Stay awake');
+    assert.ok(await lock.locator('.wakelock-label').isVisible());
+    await page.setViewportSize({ width: 360, height: 740 });
+    assert.equal(await lock.locator('.wakelock-label').isVisible(), false, 'on a phone the label hides so the top bar fits');
+    assert.equal(await lock.getAttribute('aria-label'), 'Keep screen awake', 'the accessible name stays on a phone');
+    await page.setViewportSize({ width: 1024, height: 768 });
+  });
+
+  await check('M12 conformity history uses human labels', async () => {
+    const entry = await page.evaluate(() => {
+      const result = MES.saveConformity(state, 'WO-10003', 'CI-110-00001', { jira: 'MES-77', darName: 'J. Rivera', darDesignation: 'DAR-F 123' });
+      return result.ok ? MES.getOrder(state, 'WO-10003').history.at(-1).action : result.message;
     });
-    const search = page.getByRole('textbox', { name: 'Traceability search' });
-    const submit = page.locator('.fr-trace form button[type="submit"]');
-    // Settle every pending archive search the same way until the busy line clears. A re-render can leave an earlier
-    // request abandoned beside the live one; settling all of them avoids racing the debounce.
-    const settle = async (kind, payload) => {
-      for (let i = 0; i < 40; i++) {
-        await page.evaluate(([k, p]) => window.__traceCalls.forEach(c => { if (!c.done) { c.done = true; k === 'reject' ? c.reject(new Error(p)) : c.resolve(p); } }), [kind, payload]);
-        if (!(await page.locator('[data-trace-busy]').count())) return;
-        await page.waitForTimeout(100);
+    assert.match(entry, /Jira ticket MES-77; DAR name J\. Rivera; DAR designation no\. DAR-F 123/);
+    const reviewEntry = await page.evaluate(() => { const result = MES.saveConformity(state, 'WO-10003', 'CI-110-00001', { darDate: '2026-09-30' }); return result.ok ? MES.getOrder(state, 'WO-10003').history.at(-1).action : result.message; });
+    assert.match(reviewEntry, /DAR review date 2026-09-30/, 'the DAR review date is not recorded as a signature');
+    assert.doesNotMatch(reviewEntry, /DAR signed/);
+    assert.doesNotMatch(entry, /darName|darDesignation|jira MES/);
+    assert.ok(source.includes('`Completed operation recorded: ${operation.title}.'), 'the buy-off entry starts with its subject');
+    assert.ok(!source.includes('record(state, order, ` operation recorded:'), 'no buy-off entry starts with a dropped word');
+  });
+
+  await check('L1 count pills show plain numbers', async () => {
+    for (const view of ['orders', 'plan-kanban', 'mnv-home']) {
+      await go(page, view);
+      await page.locator('.fr-count').first().waitFor();
+      for (const text of await page.locator('.fr-count').allTextContents()) assert.doesNotMatch(text.trim(), /^0\d/, `${view} count "${text}" has no leading zero`);
+    }
+  });
+  await context.close();
+
+  await check('M5 the tablet top bar never lets the breadcrumb run into the search', async () => {
+    for (const width of [901, 1024]) {
+      const { context: narrow, page: narrowPage } = await open(width, 768);
+      for (const view of ['qms-records', 'orders', 'order']) {
+        if (view === 'order') await narrowPage.evaluate(() => { selectedId = state.orders.find(o => o.operations.length > 4).id; view = 'order'; render(); });
+        else await go(narrowPage, view);
+        const gap = await narrowPage.evaluate(() => document.querySelector('.topbar .global-search').getBoundingClientRect().left - document.querySelector('.breadcrumbs').getBoundingClientRect().right);
+        assert.ok(gap >= 0, `${view} at ${width}px: the breadcrumb ends before the search (gap ${gap})`);
       }
-    };
-    await search.fill('FC-200-00001');
-    await page.locator('[data-trace-busy]').waitFor();
-    check('trace search says it is searching while the server request is in flight', /Searching archived work orders/.test(await page.locator('[data-trace-busy]').innerText()) && await page.locator('[data-trace-busy]').getAttribute('role') === 'status');
-    check('the Search button is disabled while the server request is in flight', await submit.isDisabled() && /Searching/.test(await submit.innerText()));
-    // Enter still searches while the button waits (a disabled submit button blocks implicit form submission).
-    await search.press('Enter');
-    check('Enter searches while the server request is in flight', await page.evaluate(() => traceQuery) === 'FC-200-00001');
-    await page.waitForFunction(() => window.__traceCalls.length > 0);
-    await settle('resolve', { ok: true, status: 200, json: { results: [{ source: 'archive', orderId: 'WO-ARCH-1', title: 'Archived assembly', partNumber: 'SR-1', serials: ['FC-200-00001'], lots: [], closedAt: '2026-01-02' }] } });
-    await page.locator('[data-trace-busy]').waitFor({ state: 'detached' });
-    check('the Search button is enabled again when the search succeeds', await submit.isEnabled() && (await submit.innerText()).trim() === 'Search');
-    check('archived matches are listed after the search', /WO-ARCH-1/.test(await page.locator('.fr-trace').innerText()));
-    // Archived print and export hold their buttons while one request runs.
-    await page.evaluate(() => { window.__fetch = window.fetch; window.fetch = (...args) => new Promise((resolve, reject) => { window.__archiveFetch = { args, resolve, reject }; }); });
-    const exportButton = page.getByRole('button', { name: 'Export archived WO-ARCH-1' }), printButton = page.getByRole('button', { name: 'Print archived WO-ARCH-1' });
-    await exportButton.click();
-    await page.locator('[data-archive-busy]').waitFor();
-    check('archived export says it is preparing the export', /Preparing the export for WO-ARCH-1/.test(await page.locator('[data-archive-busy]').innerText()));
-    check('archived print and export are disabled while the export runs', await exportButton.isDisabled() && await printButton.isDisabled());
-    await page.evaluate(() => window.__archiveFetch.reject(new Error('offline')));
-    await page.locator('[data-archive-busy]').waitFor({ state: 'detached' });
-    check('archived print and export are enabled again after a failure', await exportButton.isEnabled() && await printButton.isEnabled());
-    check('the export failure is shown plainly', /WO-ARCH-1 could not be opened because the server did not answer/.test(await page.locator('.fr-trace').innerText()));
-    // The busy line and a later failure stay visible when the search changes to one with no archived matches.
-    await exportButton.click();
-    await page.locator('[data-archive-busy]').waitFor();
-    await search.fill('NO-ARCHIVE-MATCH');
-    await settle('resolve', { ok: true, status: 200, json: { results: [] } });
-    check('the archive busy line stays visible after the search changes to one with no archived matches', await page.locator('[data-archive-busy]').count() === 1 && await page.getByRole('button', { name: 'Export archived WO-ARCH-1' }).count() === 0);
-    await page.evaluate(() => window.__archiveFetch.reject(new Error('offline')));
-    await page.locator('[data-archive-busy]').waitFor({ state: 'detached' });
-    check('the archive failure still shows after the search changed', /WO-ARCH-1 could not be opened because the server did not answer/.test(await page.locator('[data-archive-note]').innerText()));
-    await page.evaluate(() => { window.fetch = window.__fetch; });
-    // A server search that fails re-enables Search and says what happened.
-    await search.fill('FC-200-00002');
-    await page.locator('[data-trace-busy]').waitFor();
-    check('a new search is busy again', await submit.isDisabled());
-    await settle('reject', 'offline');
-    await page.locator('[data-trace-error]').waitFor();
-    check('a failed server search re-enables Search', await submit.isEnabled());
-    check('a failed server search says so plainly and keeps the live results', /Archived work orders could not be searched because the server did not answer\. Live results are shown\./.test(await page.locator('[data-trace-error]').innerText()));
-    await search.fill('FC-200-00003');
-    await page.locator('[data-trace-busy]').waitFor();
-    await settle('resolve', { ok: false, status: 503, json: {} });
-    await page.locator('[data-trace-error]', { hasText: '(503)' }).waitFor();
-    const unavailable = await page.locator('[data-trace-error]').innerText();
-    check('a refused server search names the status and re-enables Search', /could not be searched \(503\)/.test(unavailable) && await submit.isEnabled());
-    check('a server failure says to search again later, not to sign in', /Search again in a few minutes/.test(unavailable) && !/Sign in again/.test(unavailable), unavailable);
-    await search.fill('FC-200-00004');
-    await page.locator('[data-trace-busy]').waitFor();
-    await settle('resolve', { ok: false, status: 401, json: {} });
-    await page.locator('[data-trace-error]', { hasText: '(401)' }).waitFor();
-    check('an expired session says to sign in again', /Sign in again, then search again\./.test(await page.locator('[data-trace-error]').innerText()));
-    await context.close();
-  }
+      if (width === 1024) assert.equal(await narrowPage.evaluate(() => { const c = document.querySelector('#breadcrumb'); return c.scrollWidth <= c.clientWidth; }), true, 'at 1024 the work-order crumb is shown in full');
+      await narrow.close();
+    }
+  });
 
-  // ---- Hangar holds link and queue footer -----------------------------------------------------------------------
-  {
-    const { context, page } = await open();
-    // Filters left on All work orders (column filter, aircraft, flagged, WI) must not hide held orders from View all holds.
-    await page.evaluate(() => { skTable.state('orders').filters.Pedigree = ['No such pedigree']; aircraftFilter = MES.AIRCRAFT[0]; flaggedOnly = true; });
-    check('the stale column filter is in place before the link is used', await page.evaluate(() => skTable.selected('orders', 'Pedigree').length === 1));
-    await show(page, 'home');
-    const holds = page.locator('.fr-holds');
-    const held = await page.evaluate(() => state.orders.filter(o => o.status !== 'Closed' && (MES.blockingTickets(o).length || MES.sourceInspectionHolds(state, o).length)).length);
-    const shown = await holds.locator('.fr-hold-row').count();
-    check('the fixture has more than four held orders', held > 4, String(held));
-    check('the Hangar holds panel shows at most four held orders', shown === Math.min(4, held), `${shown} of ${held}`);
-    check('the holds count names every held order, not only the four shown', Number(await holds.locator('.fr-count').innerText()) === held, `${await holds.locator('.fr-count').innerText()} vs ${held}`);
-    const link = holds.getByRole('button', { name: /View all holds/ });
-    check('the holds panel offers View all holds with the total', await link.count() === 1 && (await link.innerText()).includes(`(${held})`));
-    await link.click();
-    await page.locator('body[data-view="orders"]').waitFor();
-    check('View all holds opens All work orders filtered to On hold', await page.getByRole('combobox', { name: 'Work order status' }).inputValue() === 'On hold');
-    // The list holds exactly the orders the Hangar counted: blocking tickets or pending source inspections on an open
-    // order. An order held only by a source inspection is listed; an engineering-change order with no hold is not.
-    const expectedIds = await page.evaluate(() => state.orders.filter(o => !['Closed', 'Cancelled', 'Scrapped'].includes(o.status) && (MES.blockingTickets(o).length || MES.sourceInspectionHolds(state, o).length)).map(o => o.id).sort());
-    const listedIds = (await page.locator('.fr-order-table tbody tr[data-order-row]').evaluateAll(list => list.map(r => r.dataset.orderRow))).sort();
-    check('the On hold list shows exactly the orders the Hangar counted', JSON.stringify(listedIds) === JSON.stringify(expectedIds) && listedIds.length === held, `${listedIds.length} listed vs ${expectedIds.length} expected`);
-    const footer = await page.locator('.fr-queue footer').innerText();
-    check('the work order queue footer says progress and approval rules are unchanged', footer.includes('Work order progress and approval rules are unchanged.'), footer);
-    check('the old footer wording is gone', !/existing MES command gates/.test(await page.content()));
-    // An order held only by a pending source inspection is counted on the Hangar and listed under On hold.
-    const sourceOnly = await page.evaluate(() => {
-      const o = state.orders.find(x => !['Closed', 'Cancelled', 'Scrapped'].includes(x.status) && !MES.blockingTickets(x).length && !MES.sourceInspectionHolds(state, x).length && !MES.engineeringChange(x));
-      const original = MES.sourceInspectionHolds;
-      MES.sourceInspectionHolds = (s, order) => order && order.id === o.id ? [{ id: 'SI-TEST', status: 'Pending', title: 'Source inspection pending at the supplier' }] : original(s, order);
-      view = 'orders'; render();
-      return o.id;
-    });
-    const sourceRow = page.locator(`.fr-order-table tbody tr[data-order-row="${sourceOnly}"]`);
-    check('an order held only by a source inspection is listed under On hold', await sourceRow.count() === 1);
-    check('that row shows it is on hold and why', /On hold/.test(await sourceRow.innerText()) && /Source inspection pending at the supplier/.test(await sourceRow.locator('[data-hold-reason]').innerText()) && /hold-row/.test(await sourceRow.getAttribute('class')));
-    // Navigation without a status still clears the filter.
-    await page.evaluate(() => { const b = document.createElement('button'); b.dataset.action = 'nav'; b.dataset.view = 'orders'; document.body.append(b); b.click(); b.remove(); });
-    check('ordinary navigation to All work orders shows every status', await page.getByRole('combobox', { name: 'Work order status' }).inputValue() === 'All');
-    // With no held orders the panel says so and offers no link.
-    await page.evaluate(() => { MES.blockingTickets = () => []; MES.sourceInspectionHolds = () => []; view = 'home'; render(); });
-    check('with no holds the panel says so and offers no View all holds', await page.locator('.fr-no-holds').count() === 1 && await page.locator('.fr-holds-all').count() === 0);
-    await context.close();
-  }
+  await check('H1 at 1440 the Created and Flight progress columns are shown', async () => {
+    const { context: wide, page: widePage } = await open(1440, 900);
+    await go(widePage, 'orders');
+    await widePage.locator('.fr-order-table tbody tr').first().waitFor();
+    assert.equal(await widePage.evaluate(() => [...document.querySelectorAll('.fr-order-table thead th')].filter(th => getComputedStyle(th).display !== 'none').length), 8);
+    assert.equal(await widePage.evaluate(() => [...document.querySelectorAll('.fr-order-table .fr-record-link strong')].every(el => el.getClientRects().length === 1)), true);
+    await wide.close();
+  });
+
+  await check('L3 L6 L9 L10 L15 low items: copy, touch targets and one primary style', async () => {
+    assert.ok(source.includes('placeholder="Example: Functional test result requires review"') && !source.includes('placeholder="Example:  test'), 'the NC summary example has no dropped word');
+    assert.ok(source.includes("${/[.!?]$/.test(note) ? '' : '.'}"), 'an MRB vote note that ends in a period is not given a second one');
+    const { context: tablet, page: tabletPage } = await open(1024, 768);
+    await go(tabletPage, 'mnv-intake');
+    await tabletPage.locator('.fr-primary').first().waitFor();
+    const primary = await tabletPage.locator('.fr-primary').first().evaluate(el => [getComputedStyle(el).backgroundColor, getComputedStyle(el).backgroundImage]);
+    assert.deepEqual(primary, ['rgb(20, 22, 21)', 'none'], 'Raise NC uses the same solid primary as Create work order');
+    await go(tabletPage, 'orders');
+    await tabletPage.locator('.fr-order-table th .log-menu > summary').first().waitFor();
+    const taps = await tabletPage.evaluate(() => [...document.querySelectorAll('.fr-order-table thead th')].filter(th => th.querySelector('.log-menu > summary') && getComputedStyle(th).display !== 'none').map(th => { const f = th.querySelector('.log-menu > summary').getBoundingClientRect(), s = th.querySelector('.log-sort').getBoundingClientRect(); return [f.width, f.height, f.left - s.right]; }));
+    for (const [w, h, gap] of taps) assert.ok(w >= 44 && h >= 44 && gap >= 0, `column filter is a 44px target that does not overlap its sort button (${w}x${h}, gap ${gap})`);
+    assert.equal(await tabletPage.locator('.fr-order-page .fr-table-scroll').evaluate(el => el.scrollWidth <= el.clientWidth), true, 'the 44px filters still fit the table at 1024');
+    await tablet.close();
+  });
+
+  await check('M3 and M11 view names match the nav and developer copy is gone', async () => {
+    for (const old of ["'Planning board'", "'Material forecast'", "wis:'Work instruction library'", "'Process risk analysis'", 'Skyryse Problem Reports']) assert.ok(!source.includes(old), `index.html no longer names a view ${old}`);
+    for (const old of ['remain authoritative', 'approval gates remain in Flight Maneuver', 'supplied Datum source', 'Corrective action · in-house', 'Current Flight System records', 'Running serial assignment register', 'NC Intake', 'Corrective Actions', 'Problem Reports']) assert.ok(!bundle.includes(old), `the React bundle no longer shows "${old}"`);
+  });
 } finally {
   await browser.close();
 }
+console.log(`checks ${passed.length} pass 0 fail 0`);
 console.log('page errors', JSON.stringify(errors));
-console.log('FAILS', JSON.stringify(fails));
-if (fails.length || errors.length) process.exitCode = 1;
+assert.deepEqual(errors, []);
