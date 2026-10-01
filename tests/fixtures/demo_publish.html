@@ -6523,7 +6523,7 @@ const OP_BOM_MAX = 12;
   const recordFileBytes = state => plain(state.maneuver) ? Object.values(state.maneuver).reduce((total, records) => total + listOf(records).reduce((sum, rec) => sum + heldBytes(rec), 0), 0) : 0;
   const attachmentBytes = state => recordFileBytes(state) + state.orders.reduce((total, order) => total + fileBytes(listOf(order.kitFiles)) + fileBytes(listOf(order.quarantinedKitFiles)) + order.operations.reduce((sum, op) => sum + heldBytes(op), 0) + listOf(order.tickets).reduce((sum, t) => sum + heldBytes(t), 0), 0);
   // A split copies the order's live files onto the new order, so the copy must fit the workspace limit too.
-  const splitBudgetError = (state, child) => attachmentBytes(state) + fileBytes(listOf(child.kitFiles)) + listOf(child.operations).reduce((sum, op) => sum + fileBytes(listOf(op.attachments)), 0) > MAX_ATTACHMENTS_TOTAL ? 'Splitting would copy this order\u2019s files onto the new order past the workspace attachment limit. Keep the larger files in the controlled document system and reference them here, then split.' : null;
+  const splitBudgetError = (state, child) => attachmentBytes(state) + fileBytes(listOf(child.kitFiles)) + listOf(child.operations).reduce((sum, op) => sum + fileBytes(listOf(op.attachments)) + fileBytes(listOf(op.evidence)), 0) > MAX_ATTACHMENTS_TOTAL ? 'Splitting would copy this order\u2019s files onto the new order past the workspace attachment limit. Keep the larger files in the controlled document system and reference them here, then split.' : null;
   // Content is held to the workspace attachment limit. A file logged by name only still adds a record (and, once
   // removed, its quarantine entry), so records have a fixed headroom above that limit; past it no file is added.
   const FILE_RECORD_ALLOWANCE = 2000, FILE_RECORD_HEADROOM = 500000;
@@ -7541,9 +7541,9 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     let backToDraftNote = '';
     Object.assign(child, { id, quantity: qty, serial: `${order.serial.replace(/-Split-\d+$/, '')}-Split-${seq}`, history: [], tickets: [], reports: [], releaseApproval: null, splitFrom: order.id, splitAt: new Date().toISOString() });
     delete child.engineeringChanges; delete child.splitInto; delete child.quarantinedKitFiles;
-    // Removal records stay on the order the file was removed from; the split starts with none, in its captured
-    // sequence baseline as well.
-    if (Array.isArray(child.sequenceBaseline)) child.sequenceBaseline.forEach(op => { if (op) { delete op.quarantinedAttachments; delete op.quarantinedEvidence; } });
+    // Removal records stay on the order the file was removed from; the split starts with none. The split carries no
+    // pending sequence change, so the captured baseline (which can still list a file removed since) is not copied.
+    delete child.sequenceBaseline;
     child.operations = child.operations.map(op => { const { quarantinedAttachments, quarantinedEvidence, ...rest } = op; return { ...rest, done: false, note: '', buyoff: null, evidence: [], stepChecks: {}, stepPerformers: [] }; });
     { const over = splitBudgetError(state, child); if (over) return fail(over); }
     const approvalReset = order.releaseApproval !== null && order.releaseApproval !== undefined;
@@ -7590,7 +7590,8 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     delete child.closureRequest; delete child.pedigreeChange; delete child.sequenceChange;
     // Removal records stay on the order the file was removed from; the split starts with none.
     delete child.quarantinedKitFiles; child.operations.forEach(op => { delete op.quarantinedAttachments; delete op.quarantinedEvidence; });
-    if (Array.isArray(child.sequenceBaseline)) child.sequenceBaseline.forEach(op => { if (op) { delete op.quarantinedAttachments; delete op.quarantinedEvidence; } });
+    // The split carries no pending sequence change, so the captured baseline is not copied.
+    delete child.sequenceBaseline;
     // Completed work carries over: these units were built alongside the rest up to this point.
     // Evidence ids are unique workspace-wide, so the child's copies are re-keyed; the recordings
     // themselves stay stored against the parent order's ids.

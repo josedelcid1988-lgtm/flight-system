@@ -28,6 +28,10 @@ const REASON = 'Attached to the wrong operation.';
 const resigned = (entry, id) => { const subject = { ...entry.manifest.subject, fileId: id, contentSha256: typeof entry.dataUrl === 'string' ? MES.sha256(entry.dataUrl) : null }; return { ...entry, id, manifest: { ...entry.manifest, subject, hash: MES.sha256(MES.canonical(subject)) } }; };
 // An open operation whose removals are allowed now: one that existed before any sequence change still waiting for QA.
 const removableOp = (order) => order.operations.find(item => !item.done && (!MES.pendingSequenceChange(order) || (order.sequenceBaseline || []).some(b => b.id === item.id)));
+const evidenceRecordOf = e => { const { removedAt, removedBy, removeReason, manifest, ...kept } = e; return kept; };
+const clip = id => ({ id, fileName: `${id}.webm`, mimeType: 'video/webm', size: 10, source: 'upload', description: 'Torque application recording.' });
+const evId = n => `EV-00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+const recordingTarget = state => { for (const order of state.orders) { const op = order.operations.find(item => !item.done); if (op && order.status === 'Building' && host.withAccount(technician, () => MES.attachEvidence(structuredClone(state), order.id, op.id, clip(evId(999))).ok, state)) return { order, op }; } return null; };
 
 // One holder per surface: how to add a file, how to remove it, and where its live and quarantined files live.
 function surfaces(state) {
@@ -329,11 +333,13 @@ function surfaces(state) {
     const bOrder = bl.orders.find(o => ['Draft', 'Kitting'].includes(o.status) && o.quantity >= 2 && !MES.engineeringChange(o) && !MES.pendingSequenceChange(o));
     const bOp = bOrder.operations[0];
     host.withAccount(admin, () => MES.addAttachment(bl, bOrder.id, bOp.id, photo), bl);
-    host.withAccount(admin, () => MES.removeAttachment(bl, bOrder.id, bOp.id, bOp.attachments.at(-1).id, REASON), bl);
+    const liveId = bOp.attachments.at(-1).id;
+    // The baseline is captured while the file is live, then the file is removed while the change waits.
     bOrder.sequenceBaseline = structuredClone(bOrder.operations);
+    host.withAccount(admin, () => MES.removeAttachment(bl, bOrder.id, bOp.id, liveId, REASON), bl);
     const split = host.withAccount(admin, () => MES.splitOrder(bl, bOrder.id, 1), bl);
     const child = split.ok && bl.orders.find(o => o.splitFrom === bOrder.id);
-    check('a split leaves no parent removal record in the new order\u2019s captured sequence baseline', !!child && (!Array.isArray(child.sequenceBaseline) || child.sequenceBaseline.every(op => op.quarantinedAttachments === undefined)) && bOp.quarantinedAttachments.length >= 1 && MES.validate(bl));
+    check('a split does not copy the captured sequence baseline, so a file removed since is not kept live on the new order', !!child && child.sequenceBaseline === undefined && !JSON.stringify(child).includes(liveId) && bOp.quarantinedAttachments.some(f => f.id === liveId) && MES.validate(bl));
   }
   // A split request copies files as a plain split does, so it is held to the same workspace limit.
   {
@@ -346,6 +352,23 @@ function surfaces(state) {
     const before = JSON.stringify(heavyReq);
     const result = host.withAccount(admin, () => MES.splitRequestOrder(heavyReq, rOrder.id, 'SPR-QUAR-3'), heavyReq);
     check('a split request that would copy files past the workspace limit is refused with what to do, and nothing changes', result.ok === false && /Splitting would copy this order.s files/.test(result.message) && JSON.stringify(heavyReq) === before);
+  }
+  // A split request copies and re-keys live recordings onto the new order, so their records count toward the limit too.
+  {
+    const near = structuredClone(state), admin = { username: 'quar-admin', displayName: 'Flight Master', role: 'admin' };
+    const { order: eOrder, op: eOp } = recordingTarget(near);
+    host.withAccount(technician, () => MES.attachEvidence(near, eOrder.id, eOp.id, clip(evId(900))), near);
+    eOrder.kitFiles = []; eOrder.operations.forEach(x => { x.attachments = []; });
+    if (MES.pendingSequenceChange(eOrder)) { eOrder.sequenceChange = null; delete eOrder.sequenceBaseline; }
+    const other = near.orders.find(o => o.id !== eOrder.id && o.operations.length).operations[0];
+    const filler = { id: `ATT-${other.id}-FILL`, name: 'filler.bin', type: 'application/octet-stream', size: 1, storage: 'inline', addedAt: new Date().toISOString(), addedBy: { name: 'Flight Master', role: 'Master Access', credentialId: 'ACCT-admin' }, dataUrl: 'data:,' };
+    other.attachments = [...(other.attachments || []), filler];
+    filler.dataUrl = 'data:,' + 'a'.repeat(3000000 - MES.workspaceFileBytes(near) - 3000);
+    Object.assign(eOrder, { quantity: 3 });
+    eOrder.splitRequests = [{ id: 'SPR-QUAR-EVB', ticketId: null, quantity: 1, of: 3, serials: [], reason: 'Split one unit out', status: 'Open', requestedBy: { name: 'Flight Master', role: 'Master Access', credentialId: 'MA-1' }, requestedAt: new Date().toISOString() }];
+    const before = JSON.stringify(near);
+    const result = host.withAccount(admin, () => MES.splitRequestOrder(near, eOrder.id, 'SPR-QUAR-EVB'), near);
+    check('a split request whose copied recordings would pass the workspace limit is refused, and nothing changes', result.ok === false && /Splitting would copy this order.s files/.test(result.message) && JSON.stringify(near) === before);
   }
   // Splitting an order does not copy removal records onto the new order; they stay where the file was removed.
   {
@@ -370,11 +393,7 @@ function surfaces(state) {
   check('a removal record edited after signing fails manifest verification', !MES.verifyManifests(edited).ok);
 }
 
-const evidenceRecordOf = e => { const { removedAt, removedBy, removeReason, manifest, ...kept } = e; return kept; };
-const clip = id => ({ id, fileName: `${id}.webm`, mimeType: 'video/webm', size: 10, source: 'upload', description: 'Torque application recording.' });
-const evId = n => `EV-00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 // The current, unblocked Building operation where recordings may change now.
-const recordingTarget = state => { for (const order of state.orders) { const op = order.operations.find(item => !item.done); if (op && order.status === 'Building' && host.withAccount(technician, () => MES.attachEvidence(structuredClone(state), order.id, op.id, clip(evId(999))).ok, state)) return { order, op }; } return null; };
 // ---- engine: a removal never grows the workspace past what its live file was already charged ----
 {
   const state = curated();
