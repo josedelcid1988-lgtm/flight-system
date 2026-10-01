@@ -145,14 +145,61 @@ function surfaces(state) {
     check('an operation file is removed while a sequence change waits for QA', removed.ok && liveOp().quarantinedAttachments.some(f => f.id === fileId));
     const newOp = sOrder.operations.find(x => !seq.orders.find(o => o.id === sOrder.id).sequenceBaseline.some(b => b.id === x.id));
     const onNew = host.withAccount(technician, () => MES.addAttachment(seq, sOrder.id, newOp.id, photo), seq);
-    const newRefused = onNew.ok && host.withAccount(technician, () => MES.removeAttachment(seq, sOrder.id, newOp.id, newOp.attachments.at(-1).id, REASON), seq);
-    check('a file on an operation the pending change added is not removed until QA decides, with what to do', newRefused && newRefused.ok === false && /added by a sequence change that is waiting for QA/.test(newRefused.message));
+    check('an operation the pending change added takes no files until QA decides, with what to do', onNew.ok === false && /added by a sequence change that is waiting for QA\. Attach files after QA approves/.test(onNew.message));
+    newOp.attachments = [{ ...structuredClone(sOp.quarantinedAttachments[0]), id: `ATT-${newOp.id}-1` }];
+    ['removedAt', 'removedBy', 'removeReason', 'manifest'].forEach(key => delete newOp.attachments[0][key]);
+    const beforeReject = JSON.stringify(seq);
+    const blocked = host.withAccount(qmUser, () => MES.rejectSequenceChange(seq, sOrder.id, 'Not needed on this build.'), seq);
+    check('rejecting a sequence change is refused while an operation it added holds files, and nothing changes', blocked.ok === false && /holds files that are part of the record, so rejecting the change would erase them/.test(blocked.message) && JSON.stringify(seq) === beforeReject);
+    newOp.attachments = [];
     const rejected = host.withAccount(qmUser, () => MES.rejectSequenceChange(seq, sOrder.id, 'Not needed on this build.'), seq);
     check('after the sequence change is rejected the removed file is still quarantined, not live again, and the workspace verifies', rejected.ok && !MES.pendingSequenceChange(sOrder) && !liveOp().attachments.some(f => f.id === fileId) && liveOp().quarantinedAttachments.some(f => f.id === fileId) && MES.validate(seq) && MES.verifyManifests(seq).ok);
     const holder = structuredClone(state), hOrder = holder.orders.find(o => o.operations.some(x => (x.quarantinedAttachments || []).length) && ['Draft', 'Kitting', 'Building'].includes(o.status));
     const hOp = hOrder.operations.find(x => (x.quarantinedAttachments || []).length);
     const removeOp = host.withAccount(me, () => MES.removeOrderOperation(holder, hOrder.id, hOp.id, 'Not needed on this build.'), holder);
     check('an operation holding quarantined files cannot be removed, and its files stay', removeOp.ok === false && hOrder.operations.some(x => x.id === hOp.id && x.quarantinedAttachments.length));
+  }
+  // The manifest signer must be the person recorded as removing the file.
+  {
+    const forged = structuredClone(state), entry = forged.orders.flatMap(o => o.operations).find(x => (x.quarantinedAttachments || []).length).quarantinedAttachments[0];
+    entry.manifest.signer = { ...entry.manifest.signer, name: 'Someone Else', credentialId: 'ACCT-someone' };
+    check('a removal manifest signed by someone other than the recorded remover fails validation', !MES.validate(forged) && !MES.verifyManifests(forged).ok);
+  }
+  // A split copies the order's live files, so it must fit the workspace limit; nothing changes when it does not.
+  {
+    const heavy = structuredClone(state), admin = { username: 'quar-admin', displayName: 'Flight Master', role: 'admin' };
+    const hOrder = heavy.orders.find(o => ['Draft', 'Kitting'].includes(o.status) && o.quantity >= 2 && !MES.engineeringChange(o));
+    const hOp = hOrder.operations[0];
+    hOp.attachments = [0, 1, 2, 3, 4, 5].map(i => ({ id: `ATT-${hOp.id}-H${i}`, name: `big-${i}.png`, type: 'image/png', size: 200000, storage: 'inline', addedAt: new Date().toISOString(), addedBy: { name: 'Flight Master', role: 'Master Access', credentialId: 'ACCT-admin' }, dataUrl: `data:image/png;base64,${'D'.repeat(290000)}` }));
+    const before = JSON.stringify(heavy);
+    const split = host.withAccount(admin, () => MES.splitOrder(heavy, hOrder.id, 1), heavy);
+    check('a split that would copy files past the workspace limit is refused with what to do, and nothing changes', split.ok === false && /Splitting would copy this order.s files onto the new order past the workspace attachment limit/.test(split.message) && JSON.stringify(heavy) === before);
+  }
+  // A standard rework pair is removed whole or not at all: a member holding files stops both.
+  {
+    const pair = structuredClone(state), pOrder = pair.orders.find(o => ['Draft', 'Kitting', 'Building'].includes(o.status) && !MES.pendingSequenceChange(o) && o.operations.filter(x => !x.done).length >= 3);
+    const [first, second] = pOrder.operations.filter(x => !x.done).slice(-2);
+    first.stdPair = 'STD-QUAR'; second.stdPair = 'STD-QUAR';
+    second.attachments = [{ id: `ATT-${second.id}-P1`, name: 'pair.png', type: 'image/png', size: 10, storage: 'inline', addedAt: new Date().toISOString(), addedBy: { name: 'Flight Master', role: 'Master Access', credentialId: 'ACCT-admin' }, dataUrl: photo.dataUrl }];
+    const before = JSON.stringify(pair);
+    const removed = host.withAccount(me, () => MES.removeOrderOperation(pair, pOrder.id, first.id, 'Not needed on this build.'), pair);
+    check('a standard rework pair whose partner holds files is refused before either operation is removed', removed.ok === false && /standard rework pair holds files/.test(removed.message) && JSON.stringify(pair) === before);
+  }
+  // A split request can move its NC ticket onto the new order; the ticket keeps its removal records there.
+  {
+    const tq = structuredClone(state), admin = { username: 'quar-admin', displayName: 'Flight Master', role: 'admin' };
+    const tOrder = tq.orders.find(o => ['Kitting', 'Building'].includes(o.status) && !MES.engineeringChange(o) && o.tickets.some(t => t.status === 'Open'));
+    // The fixture's only such order has a sequence change waiting for QA, which holds a split; settle it on this copy.
+    if (MES.pendingSequenceChange(tOrder)) { tOrder.sequenceChange = null; delete tOrder.sequenceBaseline; }
+    const tTicket = tOrder.tickets.find(t => t.status === 'Open');
+    const attached = host.withAccount(technician, () => MES.addTicketAttachment(tq, tOrder.id, tTicket.id, photo), tq);
+    const removed = attached.ok && host.withAccount(me, () => MES.removeTicketAttachment(tq, tOrder.id, tTicket.id, tTicket.attachments.at(-1).id, REASON), tq);
+    Object.assign(tOrder, { quantity: 3 });
+    tOrder.splitRequests = [{ id: 'SPR-QUAR-2', ticketId: tTicket.id, quantity: 1, of: 3, serials: [], reason: 'Split the affected unit out with its NC', status: 'Open', requestedBy: { name: 'Flight Master', role: 'Master Access', credentialId: 'MA-1' }, requestedAt: new Date().toISOString() }];
+    const result = removed && removed.ok && host.withAccount(admin, () => MES.splitRequestOrder(tq, tOrder.id, 'SPR-QUAR-2'), tq);
+    const child = result && result.ok && tq.orders.find(o => o.id === result.id);
+    const moved = child && child.tickets.find(t => t.id === tTicket.id);
+    check('a split request that moves an NC ticket keeps the ticket\u2019s removal records on the new order, and the workspace verifies', !!moved && (moved.quarantinedAttachments || []).some(f => f.removeReason === REASON) && !tOrder.tickets.some(t => t.id === tTicket.id) && MES.validate(tq) && MES.verifyManifests(tq).ok);
   }
   // Fulfilling a split request does not copy removal records onto the new order either.
   {
