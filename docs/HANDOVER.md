@@ -52,8 +52,10 @@ switching account is refused, nothing can be signed or changed, and the page say
 without the browser's accounts (`docs/MIGRATION.md`) and then clear the browser's site data. A tab already open when
 the leftovers are found closes too. The review record is saved before anything is removed; if storage refuses it,
 nothing is removed, so every page finds the leftovers and closes, and the mirror sends nothing until storage is freed.
-Queued account records wait outside the mirror queue under `skyryse-mes-legacy-demo-account-queue-v1`, and the mirror
-sends no account record while the record is pending. With the server, sign-in and accounts are the server's, so a
+The queue is rewritten once without the older demo's records and without any account record (those wait under
+`skyryse-mes-legacy-demo-account-queue-v1`); if that rewrite is refused, the page's mirror sends nothing and the next
+load retries. From the first finding on, the browser's local accounts are never mirrored again
+(`skyryse-mes-legacy-demo-account-hold-v1`, cleared only with the site data), also after the server notice is cleared. With the server, sign-in and accounts are the server's, so a
 notice stays on every page until a QA Manager or Master Access account signed in to the server marks the review done,
 only once that is logged. A tab of an older production build that was already open with a queue in memory is outside
 this cleanup; the server-side guard is issue #514. Drafts and partial sign-in failure

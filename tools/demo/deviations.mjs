@@ -203,6 +203,10 @@ const LIST = [
     why: 'Whatever identity provider the production file or the page sets, the demo signs in only with its own local accounts (D-4) and the password demo1234. It never starts the production single sign-on redirect, never receives a production identity token, and signing out never calls the production provider.',
     find: '  var cfg = window.SK_IDENTITY;\n', count: 1,
     replace: (ctx, m, id) => `  var cfg = window.SK_IDENTITY; cfg.provider = 'local'; /* DEMO ${id} */\n` },
+  { area: 'Accounts', title: 'Never the production server',
+    why: 'Whatever server setting a deployment, proxy or page puts in front of the demo (window.FLIGHT_SERVER, which the Flight System server writes only into its production page), the demo removes it before any of its own scripts run and keeps it unset, so the demo never signs in to the production server, never loads or writes the shared production workspace, and always works on its own browser storage under its relaxed rules.',
+    find: '<title>Flight System Demo</title>', count: 1,
+    replace: (ctx, m, id) => `<script>/* DEMO ${id} */try{delete window.FLIGHT_SERVER;}catch(e){}try{Object.defineProperty(window,'FLIGHT_SERVER',{get:function(){return undefined;},set:function(){},configurable:false});}catch(e){window.FLIGHT_SERVER=undefined;}</script>\n${m}` },
 ];
 
 export const DEVIATIONS = LIST.map((d, i) => Object.freeze({ ...d, id: `D-${i + 1}` }));

@@ -27,7 +27,7 @@
 // the server and the browser's site data is cleared. The review record is saved before anything is removed; if
 // storage refuses it, nothing is removed, so every page, open now or opened later, finds the leftovers and closes.
 function purgeLegacyDemoState(){
- var REVIEW='skyryse-mes-legacy-demo-review-v1',DEMO_AUTH='skyryse-mes-demo-auth-v1',LEGACY_ACCOUNTS='skyryse-mes-legacy-demo-accounts-v1',LEGACY_ACCOUNT_QUEUE='skyryse-mes-legacy-demo-account-queue-v1',AUTH='skyryse-mes-auth-v1',QK='skyryse-mes-sync-queue-v1',SENT='skyryse-mes-sync-sent-v1',SK='skyryse-mes-security-v1',DR='skyryse-mes-drafts-v1',DSK='skyryse-mes-demo-security-v1',LK='skyryse-mes-lockout-v1',LEGACY_DRAFTS='skyryse-mes-legacy-demo-drafts-v1',LEGACY_LOCKS='skyryse-mes-legacy-demo-lockout-v1';
+ var REVIEW='skyryse-mes-legacy-demo-review-v1',DEMO_AUTH='skyryse-mes-demo-auth-v1',LEGACY_ACCOUNTS='skyryse-mes-legacy-demo-accounts-v1',LEGACY_ACCOUNT_QUEUE='skyryse-mes-legacy-demo-account-queue-v1',AUTH='skyryse-mes-auth-v1',QK='skyryse-mes-sync-queue-v1',SENT='skyryse-mes-sync-sent-v1',SK='skyryse-mes-security-v1',DR='skyryse-mes-drafts-v1',DSK='skyryse-mes-demo-security-v1',LK='skyryse-mes-lockout-v1',LEGACY_DRAFTS='skyryse-mes-legacy-demo-drafts-v1',LEGACY_LOCKS='skyryse-mes-legacy-demo-lockout-v1',ACCOUNT_HOLD='skyryse-mes-legacy-demo-account-hold-v1';
  var demo=new Set(),grew=true,removed=[],dropped=0,moved=0,draftsMoved=0,locksReset=0,sentCleared=false,accountRowsHeld=0;
  function get(k){try{return JSON.parse(localStorage.getItem(k)||'null');}catch(e){return null;}}
  function put(k,v){localStorage.setItem(k,JSON.stringify(v));}
@@ -44,6 +44,8 @@ function purgeLegacyDemoState(){
  var gone=users.filter(function(u){return u&&demoMade(u.createdBy);}),demoRows=queued.filter(demoQueued),demoEvents=Array.isArray(log)?log.filter(fromDemo):[];
  if(!gone.length&&!demoRows.length&&!demoEvents.length){showLegacyDemoReview();return;}
  // The review record first. An earlier record is kept as it is.
+ // From the first finding on, this browser's local accounts are never mirrored again (cleared only with the site data).
+ try{localStorage.setItem(ACCOUNT_HOLD,'1');}catch(e){}
  var reviewRecord=get(REVIEW),reviewSaved=!!reviewRecord;
  if(!reviewSaved){reviewRecord={foundAt:new Date().toISOString(),accounts:gone.map(function(u){return u.username;}),queuedRecords:demoRows.length,securityEvents:demoEvents.length};try{put(REVIEW,reviewRecord);reviewSaved=!!get(REVIEW);}catch(e){}}
  if(!reviewSaved){window.__skLegacyReviewUnsaved=reviewRecord;try{var bc=new BroadcastChannel(REVIEW);bc.postMessage({foundAt:reviewRecord.foundAt});bc.close();}catch(e){}
@@ -61,33 +63,38 @@ function purgeLegacyDemoState(){
  var copied=false;if(gone.length){try{copyToDemo();copied=true;}catch(e){}}
  try{removed=gone.map(function(u){return u.username;});if(removed.length){a.users=users.filter(function(u){return !(u&&demoMade(u.createdBy));});put(AUTH,a);}}catch(e){}
  if(gone.length&&!copied){try{copyToDemo();}catch(e){notCopied=gone.length;}}
- try{var keep=queued.filter(function(r){return !demoQueued(r);});dropped=queued.length-keep.length;if(dropped)put(QK,keep);queued=keep;}catch(e){}
  try{moved=demoEvents.length;if(moved){var dl=get(DSK);put(DSK,demoEvents.concat(Array.isArray(dl)?dl:[]).slice(-5000));put(SK,log.filter(function(e){return !fromDemo(e);}));}}catch(e){}
  try{var sent=get(SENT);if(sent&&typeof sent==='object'&&Object.keys(sent).length){localStorage.removeItem(SENT);sentCleared=true;}}catch(e){}
  // Drafts and partial sign-in failure counts the older demo could have written are set aside under their own keys,
  // never merged into the demo's current ones. A lockout still in force is kept.
  try{var dr=get(DR);if(Array.isArray(dr)&&dr.length){var kept=get(LEGACY_DRAFTS);put(LEGACY_DRAFTS,(Array.isArray(kept)?kept:[]).concat(dr));localStorage.removeItem(DR);draftsMoved=dr.length;}}catch(e){}
- // Every other queued account record waits outside the queue: an account the older demo changed or made under a
- // production name cannot be told apart, so none is mirrored. If storage refuses either write, the mirror client
- // still sends no account record while the review is pending.
- var acctRows=queued.filter(accountRecord);
- if(acctRows.length){try{var held=get(LEGACY_ACCOUNT_QUEUE);put(LEGACY_ACCOUNT_QUEUE,(Array.isArray(held)?held:[]).concat(acctRows));accountRowsHeld=acctRows.length;}catch(e){}
-  try{put(QK,queued.filter(function(r){return !accountRecord(r);}));}catch(e){}}
+ // The queue is rewritten once, without the older demo's records and without any account record: an account the older
+ // demo changed or made under a production name cannot be told apart, so the other queued account records wait under
+ // their own key and are never mirrored. If storage refuses the rewrite, this page's mirror sends nothing at all, and
+ // the next load finds the demo's records again and retries.
+ var acctRows=queued.filter(function(r){return accountRecord(r)&&!demoQueued(r);}),keepRows=queued.filter(function(r){return !demoQueued(r)&&!accountRecord(r);});
+ if(acctRows.length){try{var held=get(LEGACY_ACCOUNT_QUEUE);put(LEGACY_ACCOUNT_QUEUE,(Array.isArray(held)?held:[]).concat(acctRows));accountRowsHeld=acctRows.length;}catch(e){}}
+ if(demoRows.length||acctRows.length){try{put(QK,keepRows);dropped=demoRows.length;}catch(e){window.__skLegacyHoldMirror=true;}}
  try{var lk=get(LK);if(lk&&typeof lk==='object'&&Object.keys(lk).length){put(LEGACY_LOCKS,lk);var active={};Object.keys(lk).forEach(function(n){if(lk[n]&&Number(lk[n].until)>Date.now())active[n]={fails:0,until:lk[n].until};});put(LK,active);locksReset=Object.keys(lk).length-Object.keys(active).length;}}catch(e){}
  window.addEventListener('DOMContentLoaded',function(){try{window.dispatchEvent(new CustomEvent('sk-security',{detail:{type:'legacy-demo-removed',at:new Date().toISOString(),accounts:removed,queuedRecords:dropped,securityEvents:moved,draftsMoved:draftsMoved,lockoutsReset:locksReset,mirrorSentIndexCleared:sentCleared,accountsMovedToDemo:toDemo,accountsSetAside:setAside,accountsNotCopied:notCopied,accountRecordsHeld:accountRowsHeld}}));}catch(e){}});
  showLegacyDemoReview();
 }
 // The review record. A step counts only once its security log entry is stored.
 function legacyDemoReviewApi(){
- var REVIEW='skyryse-mes-legacy-demo-review-v1';
+ var REVIEW='skyryse-mes-legacy-demo-review-v1',ACCOUNT_HOLD='skyryse-mes-legacy-demo-account-hold-v1';
  return {
   pending:function(){var v=null;try{v=JSON.parse(localStorage.getItem(REVIEW)||'null');}catch(e){}return v||window.__skLegacyReviewUnsaved||null;},
   // True while the record could not be saved: the older demo's queued records are still in the queue.
   unsaved:function(){return !!window.__skLegacyReviewUnsaved;},
+  // The mirror sends nothing while the record is unsaved or the queue could not be cleaned on this page.
+  holdMirror:function(){return !!window.__skLegacyReviewUnsaved||!!window.__skLegacyHoldMirror;},
+  // This browser's local accounts are never mirrored once an older demo's leftovers were found here.
+  holdAccounts:function(){try{return !!localStorage.getItem(ACCOUNT_HOLD)||!!localStorage.getItem(REVIEW)||!!window.__skLegacyReviewUnsaved;}catch(e){return true;}},
   audit:function(detail){var at=new Date().toISOString(),d={at:at};Object.keys(detail).forEach(function(k){d[k]=detail[k];});try{window.dispatchEvent(new CustomEvent('sk-security',{detail:d}));}catch(e){}
    var log=[];try{log=window.skSecurityLog&&window.skSecurityLog.read?window.skSecurityLog.read():[];}catch(e){}
    return Array.isArray(log)&&log.some(function(e){return !!e&&e.type===d.type&&e.at===at&&e.by===d.by;});},
-  done:function(){try{localStorage.removeItem(REVIEW);return !localStorage.getItem(REVIEW);}catch(e){return false;}}
+  // The account hold is confirmed before the record goes, so clearing the notice never lets the local accounts be mirrored.
+  done:function(){try{localStorage.setItem(ACCOUNT_HOLD,'1');if(!localStorage.getItem(ACCOUNT_HOLD))return false;localStorage.removeItem(REVIEW);return !localStorage.getItem(REVIEW);}catch(e){return false;}}
  };
 }
 // With the server, sign-in and accounts are the server's, so a notice on every page until a QA Manager or Master Access
@@ -14539,9 +14546,10 @@ window.SK_MIRROR = window.SK_MIRROR || {
       paint(); schedule(0);
     } catch (e) { lastError = 'Mirror could not queue this change: ' + e.message; paint(); }
   }
-  // While an older demo's account review is pending, no account record is sent: the accounts cannot be trusted. While
-  // its record could not be saved, nothing is sent: the older demo's queued records are then still in the queue.
-  function pending() { var R = window.skLegacyDemoReview, hold = !!(R && R.pending()), all = !!(R && R.unsaved()); return queue.filter(function (r) { return !r.rejected && !all && !(hold && r.entityType === 'account'); }); }
+  // Once an older demo's leftovers were found on this browser, no local account record is sent: those accounts cannot
+  // be trusted. While the cleanup could not finish on this page, nothing is sent: the older demo's queued records may
+  // still be in the queue.
+  function pending() { var R = window.skLegacyDemoReview, hold = !!(R && R.holdAccounts()), all = !!(R && R.holdMirror()); return queue.filter(function (r) { return !r.rejected && !all && !(hold && r.entityType === 'account'); }); }
   function schedule(ms) { if (retryTimer) return; retryTimer = setTimeout(function () { retryTimer = null; flush(); }, ms); }
   function flush() {
     if (inflight) return inflight;

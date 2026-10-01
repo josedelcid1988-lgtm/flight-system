@@ -269,18 +269,37 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  {const l=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),users:JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.map(u=>u.username)}));
  ok('review record refused: a later load finds the leftovers again and closes',l.gate&&l.users.includes('master'),JSON.stringify(l));}
  await ctx.close();}
-// Queued account records are never sent to the mirror while the review is pending, even when storage refuses to move
-// them out of the queue; the workspace records in the same queue are sent.
+// Queued account records are never sent to the mirror once an older demo's leftovers were found. If storage refuses
+// the queue rewrite, the page's mirror sends nothing at all; the next load cleans the queue and sends the production
+// workspace record, and still no account record.
 {const ctx=await b.newContext({viewport:{width:1440,height:1000}});const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));
  const posts=[];await ctx.route(/mirror-hold\.test|\/api\/v1\/writes/,route=>{try{posts.push(...(JSON.parse(route.request().postData()||'{}').records||[]));}catch(e){}route.fulfill({status:500,contentType:'application/json',body:'{"ok":false}'});});
  await ctx.addInitScript(()=>{window.SK_MIRROR={url:'http://mirror-hold.test',token:'hold-token',batchSize:50};const real=Storage.prototype.setItem;
-  Storage.prototype.setItem=function(k,v){if(this===window.localStorage&&(k==='skyryse-mes-legacy-demo-account-queue-v1'||(k==='skyryse-mes-sync-queue-v1'&&!window.__queueOk)))throw new DOMException('full','QuotaExceededError');return real.call(this,k,v);};
+  const refuseQueue=!sessionStorage.getItem('queueOk');
+  Storage.prototype.setItem=function(k,v){if(this===window.localStorage&&(k==='skyryse-mes-legacy-demo-account-queue-v1'||(refuseQueue&&k==='skyryse-mes-sync-queue-v1')))throw new DOMException('full','QuotaExceededError');return real.call(this,k,v);};
   if(sessionStorage.getItem('seeded'))return;sessionStorage.setItem('seeded','1');
   real.call(localStorage,'skyryse-mes-auth-v1',JSON.stringify({users:[{username:'mlee',displayName:'Morgan Lee',salt:'01',hash:'e'.repeat(64),role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'master',displayName:'Master Access',salt:'00',hash:'f'.repeat(64),role:'admin',createdAt:'2026-09-17T00:00:00.000Z',createdBy:'demo build'}]}));
-  real.call(localStorage,'skyryse-mes-sync-queue-v1',JSON.stringify([{clientWriteId:'prod-w1',storeKey:'skyryse-mes-work-order-v1',entityType:'order',entityId:'WO-1',operation:'upsert',payloadJson:'{}'},{clientWriteId:'prod-a1',storeKey:'skyryse-mes-auth-v1',entityType:'account',entityId:'mlee',operation:'upsert',payloadJson:JSON.stringify({username:'mlee',role:'admin',createdBy:'mlee'})}]));});
+  real.call(localStorage,'skyryse-mes-sync-queue-v1',JSON.stringify([{clientWriteId:'prod-w1',storeKey:'skyryse-mes-work-order-v1',entityType:'order',entityId:'WO-1',operation:'upsert',payloadJson:'{}'},{clientWriteId:'old-demo-w1',storeKey:'skyryse-mes-work-order-qa100-v1',entityType:'order',entityId:'WO-10009',operation:'upsert',payloadJson:'{}'},{clientWriteId:'prod-a1',storeKey:'skyryse-mes-auth-v1',entityType:'account',entityId:'mlee',operation:'upsert',payloadJson:JSON.stringify({username:'mlee',role:'admin',createdBy:'mlee'})}]));});
  await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(2500);
- const r=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),queue:JSON.parse(localStorage.getItem('skyryse-mes-sync-queue-v1')||'[]').map(x=>x.clientWriteId)}));
- ok('storage refused moving the account record out of the queue: it stays queued, the review is required, and the mirror is sent the workspace record but no account record',r.gate&&r.queue.includes('prod-a1')&&posts.some(x=>x.clientWriteId==='prod-w1')&&!posts.some(x=>x.entityType==='account'),JSON.stringify({r,posts:posts.map(x=>x.clientWriteId)}));
+ const r1=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),queue:JSON.parse(localStorage.getItem('skyryse-mes-sync-queue-v1')||'[]').map(x=>x.clientWriteId)}));
+ ok('storage refused the queue rewrite: the review is required, the queue is unchanged, and the mirror is sent nothing at all',r1.gate&&JSON.stringify(r1.queue)==='["prod-w1","old-demo-w1","prod-a1"]'&&posts.length===0,JSON.stringify({r1,posts:posts.map(x=>x.clientWriteId)}));
+ await p.evaluate(()=>sessionStorage.setItem('queueOk','1'));await p.reload();await p.waitForTimeout(2500);
+ const r2=await p.evaluate(()=>({queue:JSON.parse(localStorage.getItem('skyryse-mes-sync-queue-v1')||'[]').map(x=>x.clientWriteId)}));
+ ok('the next load cleans the queue: the production workspace record is sent, the older demo\'s record and every account record never are',r2.queue.includes('prod-w1')&&!r2.queue.includes('old-demo-w1')&&!r2.queue.includes('prod-a1')&&posts.some(x=>x.clientWriteId==='prod-w1')&&!posts.some(x=>x.clientWriteId==='old-demo-w1'||x.entityType==='account'),JSON.stringify({r2,posts:posts.map(x=>x.clientWriteId)}));
+ await ctx.close();}
+// A production server setting put in front of the demo (by a proxy or a page) is removed: the demo never signs in to the
+// production server or loads its workspace, and signs in with its own accounts.
+{const ctx=await b.newContext({viewport:{width:1440,height:1000}});const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));
+ const calls=[];await ctx.route(/prod-server\.test/,route=>{calls.push(route.request().url());route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({ok:true,users:[],idleMinutes:15,maxHours:12})});});
+ await ctx.addInitScript(()=>{window.FLIGHT_SERVER={api:'http://prod-server.test/api',etag:null,auth:{users:[],setupRequired:false}};});
+ await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(900);
+ ok('the refusal case is real: production takes that server setting',await p.evaluate(()=>!!(window.skServer&&window.skServer.active)));
+ calls.length=0;
+ await p.goto('file://'+FIXTURES+'demo_publish.html');await p.waitForFunction(()=>!!document.querySelector('#sk-boot input[name=username]'));
+ await p.locator('#sk-boot input[name=username]').fill('master');await p.locator('#sk-boot input[name=password]').fill('demo1234');
+ await p.locator('#sk-boot form').evaluate(f=>f.requestSubmit());await p.waitForFunction(()=>!document.getElementById('sk-boot'),null,{timeout:20000});
+ const d=await p.evaluate(()=>({server:window.FLIGHT_SERVER,active:!!(window.skServer&&window.skServer.active),user:skAuth.user()&&skAuth.user().username,set:(()=>{window.FLIGHT_SERVER={api:'/api'};return window.FLIGHT_SERVER;})()}));
+ ok('the demo removes a production server setting, cannot be given one later, signs in locally and never calls that server',d.server===undefined&&!d.active&&d.user==='master'&&d.set===undefined&&calls.length===0,JSON.stringify({d,calls}));
  await ctx.close();}
 // With the server, the notice is shown and a QA Manager signed in to the server marks the review done, but only once
 // its security log entry is stored.
@@ -296,6 +315,7 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  ok('when the security log entry cannot be stored, the review flag and notice stay and say why',full.notice&&full.flag&&/was not recorded/.test(full.text),JSON.stringify(full));
  const done=await p.evaluate(async()=>{document.querySelector('#sk-legacy-demo-notice button').click();await new Promise(r=>setTimeout(r,200));return {notice:!!document.getElementById('sk-legacy-demo-notice'),flag:!!localStorage.getItem('skyryse-mes-legacy-demo-review-v1'),log:JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').filter(e=>e.type==='legacy-demo-reviewed')};});
  ok('a QA Manager signed in to the server marks the review done, logged with who did it',!done.notice&&!done.flag&&done.log.length===1&&done.log[0].by==='mlee',JSON.stringify(done));
+ ok('clearing the notice keeps this browser\'s local accounts out of the mirror for good',await p.evaluate(()=>!!localStorage.getItem('skyryse-mes-legacy-demo-account-hold-v1')&&window.skLegacyDemoReview.holdAccounts()));
  await ctx.close();}
 // Saved table filters: a filter saved or removed in the demo never changes production's.
 ok('the demo keeps saved table filters under its own key',/'skyryse-mes-demo-tablefilters-v1'\/\* DEMO D-\d+ \*\//.test(curated)&&!curated.includes("'skyryse-mes-tablefilters-v1'")&&prod.includes("var KEY='skyryse-mes-tablefilters-v1';"));
