@@ -1454,7 +1454,7 @@ function OrderView({ state, MES, order, tab, selectedOp, skCan }) {
   const tabDefs = [
     ['materials', 'Kit', `${o.materials.filter(m => m.ready).length}/${o.materials.length}`],
     ['operations', 'Build', `${doneCount(o)}/${o.operations.length}`],
-    ['quality', 'Quality', o.tickets.length + o.reports.length],
+    ['quality', 'Quality', o.tickets.length + o.reports.length + (o.fai?.required ? 1 : 0) + (Array.isArray(o.conformity) ? o.conformity.length : 0)],
     ['inventory', 'Stock', o.inventory ? 'Stocked' : MES.isSerialized(o.partNumber) ? `${MES.orderSerials(state, o).length}/${o.quantity} S/N` : 'Lot'],
     ['record', 'Record', o.history.length]
   ];

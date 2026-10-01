@@ -74,6 +74,11 @@ try {
     assert.deepEqual(await tabs.evaluateAll(list => list.map(b => b.firstChild.textContent.trim())), ['Kit', 'Build', 'Quality', 'Stock', 'Record']);
     assert.ok(await tabs.evaluateAll(list => list.every(b => b.querySelector('.badge')?.textContent.trim())), 'every tab shows its count');
     assert.equal(await page.locator('.route-stages button').count(), 0, 'lifecycle stages are status, not buttons');
+    await page.evaluate(() => { selectedId = 'WO-10003'; tab = 'operations'; view = 'order'; render(); });
+    const quality = await page.evaluate(() => { const o = MES.getOrder(state, 'WO-10003'); return [Number(document.querySelector('nav.tabs [data-tab="quality"] .badge').textContent), o.tickets.length + o.reports.length + (o.fai?.required ? 1 : 0) + o.conformity.length, o.conformity.length]; });
+    assert.ok(quality[2] > 0, 'WO-10003 carries a conformity package');
+    assert.equal(quality[0], quality[1], 'the Quality tab count includes FAIR and conformity packages, not only NC tickets and reports');
+    await page.evaluate(() => { selectedId = state.orders.find(o => o.operations.length > 4).id; tab = 'operations'; view = 'order'; render(); });
     assert.equal(await page.locator('.route-stage[aria-current="step"]').count(), 1);
     await tabs.filter({ hasText: 'Kit' }).click();
     assert.equal(await page.evaluate(() => tab), 'materials', 'the Kit tab opens the kit section');
