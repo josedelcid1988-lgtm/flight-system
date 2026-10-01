@@ -136,17 +136,42 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
 {const ctx=await b.newContext({viewport:{width:1440,height:1000}});const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));
  const demoUsers=JSON.parse(fs.readFileSync(path.join(ROOT,'tools/demo/accounts.json'),'utf8')).users;
  await ctx.addInitScript(users=>{if(sessionStorage.getItem('seeded'))return;sessionStorage.setItem('seeded','1');
-  localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify({users:[{username:'mlee',displayName:'Morgan Lee',salt:'00',hash:'f'.repeat(64),role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},...users]}));
-  localStorage.setItem('skyryse-mes-sync-queue-v1',JSON.stringify([{clientWriteId:'old-demo-1',storeKey:'skyryse-mes-work-order-qa100-v1'},{clientWriteId:'prod-1',storeKey:'skyryse-mes-work-order-v1'}]));},demoUsers);
+  // qa.boss was added in the older demo by its master with a chosen password and Master Access; tech.two by qa.boss.
+  localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify({users:[{username:'mlee',displayName:'Morgan Lee',salt:'00',hash:'f'.repeat(64),role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'ops1',displayName:'Ops One',salt:'00',hash:'f'.repeat(64),role:'ops',createdAt:'2026-09-02T00:00:00.000Z',createdBy:'mlee'},...users,{username:'qa.boss',displayName:'QA Boss',salt:'01',hash:'ecad7597c83a96d133e45f9e9d271cbb0d1815dbae29b38b5148be7822799576',role:'admin',createdAt:'2026-09-03T00:00:00.000Z',createdBy:'master'},{username:'tech.two',displayName:'Tech Two',salt:'00',hash:'f'.repeat(64),role:'technician',createdAt:'2026-09-04T00:00:00.000Z',createdBy:'qa.boss'}]}));
+  const acct=(id,cw,createdBy,op)=>({clientWriteId:cw,storeKey:'skyryse-mes-auth-v1',entityType:'account',entityId:id,operation:op||'upsert',payloadJson:JSON.stringify(op==='delete'?{entityType:'account',entityId:id,deleted:true}:{username:id,role:'admin',createdBy})});
+  localStorage.setItem('skyryse-mes-sync-queue-v1',JSON.stringify([{clientWriteId:'old-demo-1',storeKey:'skyryse-mes-work-order-qa100-v1'},{clientWriteId:'prod-1',storeKey:'skyryse-mes-work-order-v1'},acct('master','old-demo-acct-1','demo build'),acct('qa.boss','old-demo-acct-2','master'),acct('ghost','old-demo-acct-3','qa.boss'),acct('tech.two','old-demo-acct-4',null,'delete'),acct('mlee','prod-acct-1','mlee'),acct('retired1','prod-acct-2',null,'delete')]));
+  localStorage.setItem('skyryse-mes-security-v1',JSON.stringify([{at:'2026-09-03T00:00:00.000Z',page:'/srv/flight/demo.html',type:'signin',username:'master'},{at:'2026-09-03T00:01:00.000Z',page:'/srv/flight/demo.html',type:'role-change',username:'qa.boss',by:'master'},{at:'2026-09-03T00:02:00.000Z',page:'/srv/flight/index.html',type:'signin',username:'mlee'}]));},demoUsers);
  await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(1200);
- const r=await p.evaluate(()=>({users:JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.map(u=>u.username),queue:JSON.parse(localStorage.getItem('skyryse-mes-sync-queue-v1')).map(x=>x.clientWriteId),log:localStorage.getItem('skyryse-mes-security-v1')||''}));
+ const r=await p.evaluate(()=>({users:JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.map(u=>u.username),queue:JSON.parse(localStorage.getItem('skyryse-mes-sync-queue-v1')).map(x=>x.clientWriteId),log:localStorage.getItem('skyryse-mes-security-v1')||'',demoLog:JSON.parse(localStorage.getItem('skyryse-mes-demo-security-v1')||'[]')}));
  ok('the refusal case is real: the older demo accounts include master',demoUsers.some(u=>u.username==='master'&&u.createdBy==='demo build'));
- ok('production opened first removes every account an older demo build created and keeps its own',JSON.stringify(r.users)==='["mlee"]',JSON.stringify(r.users));
- ok('production opened first drops the older demo\'s queued workspace records before its mirror can send them',JSON.stringify(r.queue)==='["prod-1"]',JSON.stringify(r.queue));
- ok('the removal is recorded in the production security log',/legacy-demo-removed/.test(r.log)&&/master/.test(r.log),r.log.slice(0,300));
+ ok('production opened first removes every account an older demo build created, and every account those created, and keeps its own',JSON.stringify(r.users)==='["mlee","ops1"]',JSON.stringify(r.users));
+ ok('production opened first drops the older demo\'s queued workspace and account records before its mirror can send them, and keeps its own',JSON.stringify(r.queue)==='["prod-1","prod-acct-1","prod-acct-2"]',JSON.stringify(r.queue));
+ const prodLog=JSON.parse(r.log||'[]');
+ ok('security events a demo page wrote leave the production security log; production events stay',!prodLog.some(e=>/demo\.html$/.test(e.page||''))&&prodLog.some(e=>e.type==='signin'&&e.username==='mlee'),r.log.slice(0,400));
+ ok('those demo events are kept in the demo security log, not deleted',r.demoLog.length===2&&r.demoLog.every(e=>e.page==='/srv/flight/demo.html'),JSON.stringify(r.demoLog));
+ {const ev=prodLog.find(e=>e.type==='legacy-demo-removed')||{};ok('the removal is recorded in the production security log',(ev.accounts||[]).includes('master')&&(ev.accounts||[]).includes('qa.boss')&&ev.queuedRecords===5&&ev.securityEvents===2,JSON.stringify(ev));}
  await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(600);
  const signIn=await p.evaluate(async()=>{const r=await skAuth.switchAccount('master','demo1234');return r.ok;});
  ok('master with demo1234 no longer signs in to production',signIn===false,String(signIn));
+ const bossIn=await p.evaluate(async()=>{const r=await skAuth.switchAccount('qa.boss','chosen-pass-1');return r.ok;});
+ ok('an account the older demo\'s master created no longer signs in to production with its chosen password',bossIn===false,String(bossIn));
+ const again=await p.evaluate(()=>JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').filter(e=>e.type==='legacy-demo-removed').length);
+ ok('a second open finds nothing left to remove and records nothing new',again===1,String(again));
+ await ctx.close();}
+// An identity provider set for production (here before load, as a deployment page does) never reaches the demo.
+{const ctx=await b.newContext({viewport:{width:1440,height:1000}});const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));
+ const fetched=[];await ctx.route(/idp\.example/,route=>{fetched.push(route.request().url());route.abort();});
+ await ctx.addInitScript(()=>{window.SK_IDENTITY={provider:'okta',okta:{issuer:'https://idp.example/oauth2/default',clientId:'prod-client',redirectUri:'',scopes:'openid',groupsClaim:'groups',usernameClaim:'preferred_username',groupToRole:{},defaultRole:'general',sessionMinutes:720}};});
+ await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(900);
+ const prodProvider=await p.evaluate(()=>window.skIdentity&&window.skIdentity.provider);
+ ok('the refusal case is real: production takes that provider',prodProvider==='okta'&&fetched.length>0,JSON.stringify({prodProvider,fetched}));
+ fetched.length=0;
+ await p.goto('file://'+FIXTURES+'demo_publish.html');await p.waitForFunction(()=>!!document.querySelector('#sk-boot input[name=username]'));
+ const demoProvider=await p.evaluate(()=>window.skIdentity&&window.skIdentity.provider);
+ ok('the demo keeps local sign-in and never contacts the production provider',demoProvider==='local'&&fetched.length===0,JSON.stringify({demoProvider,fetched}));
+ await p.locator('#sk-boot input[name=username]').fill('master');await p.locator('#sk-boot input[name=password]').fill('demo1234');
+ await p.locator('#sk-boot form').evaluate(f=>f.requestSubmit());await p.waitForFunction(()=>!document.getElementById('sk-boot'),null,{timeout:20000});
+ ok('a demo account signs in with demo1234 although production names a provider',await p.evaluate(()=>skAuth.user()&&skAuth.user().username)==='master');
  await ctx.close();}
 // The demo build itself never runs that cleanup on its own accounts.
 ok('the cleanup is switched off in the demo build and active in production',/purgeLegacyDemoState\(\)\{return;\/\* DEMO D-\d+ \*\//.test(curated)&&/ function purgeLegacyDemoState\(\)\{var removed/.test(prod));

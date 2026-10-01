@@ -1659,12 +1659,24 @@ function skBoot(){
  function currentUser(){try{if(SERVER&&!serverToken())return null;var u=sessionStorage.getItem(SESSION_KEY);if(!u)return null;var a=loadAuth();return a.users.find(function(x){return x.username===u;})||null;}catch(e){return null;}}
  // Security events for the audit log kept by the hardening layer (sign-in, failures, lockouts, role changes).
  function secEvent(type,detail){try{window.dispatchEvent(new CustomEvent('sk-security',{detail:Object.assign({type:type,at:new Date().toISOString()},detail||{})}));}catch(e){}}
- // One-time cleanup of what an older demo build left in this browser's production storage: its known-password
- // accounts (every one is marked createdBy "demo build", which no production account can carry) and mirror records
- // it queued for its own workspace. Runs before sign-in and before the mirror client can send anything.
- function purgeLegacyDemoState(){var removed=[],dropped=0;try{var a=JSON.parse(localStorage.getItem(AUTH_KEY)||'null');if(a&&Array.isArray(a.users)){removed=a.users.filter(function(u){return u&&u.createdBy==='demo build';}).map(function(u){return u.username;});if(removed.length){a.users=a.users.filter(function(u){return !(u&&u.createdBy==='demo build');});localStorage.setItem(AUTH_KEY,JSON.stringify(a));}}}catch(e){}
-  try{var QK='skyryse-mes-sync-queue-v1',q=JSON.parse(localStorage.getItem(QK)||'null');if(Array.isArray(q)){var keep=q.filter(function(r){return !(r&&r.storeKey==='skyryse-mes-work-order-qa100-v1');});dropped=q.length-keep.length;if(dropped)localStorage.setItem(QK,JSON.stringify(keep));}}catch(e){}
-  if(removed.length||dropped)window.addEventListener('DOMContentLoaded',function(){secEvent('legacy-demo-removed',{accounts:removed,queuedRecords:dropped});});}
+ // Cleanup of what an older demo build left in this browser's production storage, before sign-in and before the
+ // mirror client can send anything. Demo accounts: every account the demo seeded is marked createdBy "demo build",
+ // which no production account can carry, and any account a demo account created names that account as its creator,
+ // so the set is closed over createdBy. Their queued account records go with them, as do queued records for the demo
+ // workspace. Security events a demo page wrote (their page is a demo file) move to the demo security log.
+ function purgeLegacyDemoState(){var removed=[],dropped=0,moved=0,QK='skyryse-mes-sync-queue-v1',SK='skyryse-mes-security-v1',DSK='skyryse-mes-demo-security-v1',demo={},a=null,q=null,grew=true;
+  try{a=JSON.parse(localStorage.getItem(AUTH_KEY)||'null');}catch(e){}
+  try{q=JSON.parse(localStorage.getItem(QK)||'null');}catch(e){}
+  var users=a&&Array.isArray(a.users)?a.users:[],queued=Array.isArray(q)?q:[];
+  function payload(r){try{return JSON.parse(r.payloadJson||'null')||{};}catch(e){return {};}}
+  function demoMade(by){return by==='demo build'||(typeof by==='string'&&demo.hasOwnProperty(by));}
+  function mark(name,by){if(typeof name==='string'&&!demo.hasOwnProperty(name)&&demoMade(by)){demo[name]=1;grew=true;}}
+  function demoAccountRecord(r){return !!r&&r.storeKey===AUTH_KEY&&r.entityType==='account'&&(r.operation==='delete'?demo.hasOwnProperty(r.entityId):demoMade(payload(r).createdBy));}
+  while(grew){grew=false;users.forEach(function(u){if(u)mark(u.username,u.createdBy);});queued.forEach(function(r){if(r&&r.storeKey===AUTH_KEY&&r.entityType==='account'&&r.operation!=='delete')mark(r.entityId,payload(r).createdBy);});}
+  try{removed=users.filter(function(u){return u&&demoMade(u.createdBy);}).map(function(u){return u.username;});if(removed.length){a.users=users.filter(function(u){return !(u&&demoMade(u.createdBy));});localStorage.setItem(AUTH_KEY,JSON.stringify(a));}}catch(e){}
+  try{var keep=queued.filter(function(r){return !(r&&(r.storeKey==='skyryse-mes-work-order-qa100-v1'||demoAccountRecord(r)));});dropped=queued.length-keep.length;if(dropped)localStorage.setItem(QK,JSON.stringify(keep));}catch(e){}
+  try{var log=JSON.parse(localStorage.getItem(SK)||'null');if(Array.isArray(log)){var fromDemo=function(e){return !!e&&typeof e.page==='string'&&/(^|\/)demo[^\/]*\.html?$/i.test(e.page);},out=log.filter(fromDemo);moved=out.length;if(moved){var dl=[];try{dl=JSON.parse(localStorage.getItem(DSK)||'[]');if(!Array.isArray(dl))dl=[];}catch(e){dl=[];}localStorage.setItem(DSK,JSON.stringify(out.concat(dl).slice(-5000)));localStorage.setItem(SK,JSON.stringify(log.filter(function(e){return !fromDemo(e);})));}}}catch(e){}
+  if(removed.length||dropped||moved)window.addEventListener('DOMContentLoaded',function(){secEvent('legacy-demo-removed',{accounts:removed,queuedRecords:dropped,securityEvents:moved});});}
  purgeLegacyDemoState();
  var LOCK_KEY='skyryse-mes-lockout-v1',LOCK_AFTER=5,LOCK_MINUTES=5;
  function lockState(username){try{var all=JSON.parse(localStorage.getItem(LOCK_KEY)||'{}');return all[username]||{fails:0,until:0};}catch(e){return {fails:0,until:0};}}

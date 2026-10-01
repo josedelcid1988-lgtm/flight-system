@@ -183,10 +183,10 @@ const LIST = [
     replace: (ctx, m, id) => `${m.replace('skyryse-mes-sync-', 'skyryse-mes-demo-sync-')}/* DEMO ${id} */` },
   { area: 'Accounts', title: 'Separate session, lockout, security log, sign-in tokens, drafts and evidence storage',
     why: 'Signing in to the demo never signs anyone in to the production page in the same tab, and signing out of the demo never removes the production server session token when the server also serves the demo. Failed or successful demo sign-ins never lock or unlock a production account of the same name, demo sign-ins and role changes never appear in the production security log or its export, and demo drafts and evidence stay out of production. Each key gains -demo- in the demo build; the production keys are unchanged.',
-    find: /(['"])skyryse-mes-(session|lockout|security|oidc|server-token|drafts|evidence)-v1\1/g, count: 11,
+    find: /(['"])skyryse-mes-(session|lockout|security|oidc|server-token|drafts|evidence)-v1\1/g, count: 12,
     replace: (ctx, m, id) => `${m.replace('skyryse-mes-', 'skyryse-mes-demo-')}/* DEMO ${id} */` },
   { area: 'Data', title: 'Mirror setting taken before the page loads; old demo records dropped from the shared queue',
-    why: 'Records the SK_MIRROR setting present before any of the file runs (none in normal use; tools/run-suites.mjs --mirror sets one), so D-39 can ignore any address or token written in the production file. A demo built before D-40 queued its records under the production queue key if IT had set a mirror address in index.html; on first open the demo removes queued records that name the demo workspace, so a production page in the same browser cannot send them. Account records queued by such a demo cannot be told apart from production ones and are left; see docs/DEMO_DEVIATIONS.md.',
+    why: 'Records the SK_MIRROR setting present before any of the file runs (none in normal use; tools/run-suites.mjs --mirror sets one), so D-39 can ignore any address or token written in the production file. A demo built before D-40 queued its records under the production queue key if IT had set a mirror address in index.html; on first open the demo removes queued records that name the demo workspace, so a production page in the same browser cannot send them. Queued account records an older demo made are removed by production itself (purgeLegacyDemoState), which can tell them apart by their creator.',
     find: '<title>Flight System Demo</title>', count: 1,
     replace: (ctx, m, id) => `<script>/* DEMO ${id} */window.__demoMirrorPreset=window.SK_MIRROR||null;try{var Q='skyryse-mes-sync-'+'queue-v1',q=JSON.parse(localStorage.getItem(Q)||'null');if(Array.isArray(q)){var keep=q.filter(function(r){return !(r&&r.storeKey==='skyryse-mes-work-order-qa100-v1');});if(keep.length!==q.length)localStorage.setItem(Q,JSON.stringify(keep));}}catch(e){}</script>\n<title>Flight System Demo</title>` },
   { area: 'Data', title: 'Earlier demo recordings read from the old evidence store',
@@ -194,9 +194,13 @@ const LIST = [
     find: "get: async id => { if (!serverMode()) return transact('get', id);", count: 1,
     replace: (ctx, m, id) => `get: async id => { if (!serverMode()) { /* DEMO ${id} */ const own = await transact('get', id); if (own !== null) return own; const old = await new Promise(done => { try { let fresh = false; const r = root.indexedDB.open('skyryse-mes-' + 'evidence-v1'); r.onupgradeneeded = () => { fresh = true; r.transaction.abort(); }; r.onerror = () => done(null); r.onsuccess = () => { const d = r.result; if (fresh || !d.objectStoreNames.contains(STORE)) { d.close(); done(null); return; } try { const g = d.transaction(STORE, 'readonly').objectStore(STORE).get(id); g.onsuccess = () => { d.close(); done(g.result instanceof Blob ? g.result : null); }; g.onerror = () => { d.close(); done(null); }; } catch (e) { d.close(); done(null); } }; } catch (e) { done(null); } }); if (old) await transact('put', id, old).catch(() => {}); return old; }` },
   { area: 'Accounts', title: 'Production cleanup of older demo leftovers switched off',
-    why: 'Production removes, once, the known-password accounts and queued mirror records an older demo build left in its storage. The demo keeps its accounts under its own keys (D-38, D-41) and must not remove them, so the cleanup returns at once in the demo build.',
+    why: 'Production removes the known-password accounts, the accounts they created and the queued mirror records an older demo build left in its storage, and moves the security events demo pages wrote out of the production security log. The demo keeps its accounts under its own keys (D-38, D-41) and must not remove them, so the cleanup returns at once in the demo build.',
     find: ' function purgeLegacyDemoState(){', count: 1,
     replace: (ctx, m, id) => ` function purgeLegacyDemoState(){return;/* DEMO ${id} */` },
+  { area: 'Accounts', title: 'Local sign-in only',
+    why: 'Whatever identity provider the production file or the page sets, the demo signs in only with its own local accounts (D-4) and the password demo1234. It never starts the production single sign-on redirect, never receives a production identity token, and signing out never calls the production provider.',
+    find: '  var cfg = window.SK_IDENTITY;\n', count: 1,
+    replace: (ctx, m, id) => `  var cfg = window.SK_IDENTITY; cfg.provider = 'local'; /* DEMO ${id} */\n` },
 ];
 
 export const DEVIATIONS = LIST.map((d, i) => Object.freeze({ ...d, id: `D-${i + 1}` }));
