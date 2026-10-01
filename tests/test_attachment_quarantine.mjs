@@ -485,6 +485,28 @@ function surfaces(state) {
   }
 }
 
+// ---- engine: a removal keeps who added the file and when, and the remover's full identity, even if re-signed ----
+{
+  const state = curated();
+  const [first] = surfaces(state);
+  host.withAccount(technician, () => first.add(), state);
+  const fileId = first.live().at(-1).id;
+  host.withAccount(technician, () => first.remove(fileId, REASON), state);
+  const { order, op } = recordingTarget(state);
+  host.withAccount(technician, () => MES.attachEvidence(state, order.id, op.id, clip(evId(960))), state);
+  host.withAccount(technician, () => MES.removeEvidence(state, order.id, op.id, evId(960), REASON), state);
+  const resign = e => { e.manifest = { ...e.manifest, hash: MES.sha256(MES.canonical(e.manifest.subject)) }; };
+  const fileOf = copy => surfaces(copy)[0].quarantined().find(f => f.id === fileId);
+  const clipOf = copy => copy.orders.find(o => o.id === order.id).operations.find(x => x.id === op.id).quarantinedEvidence.find(e => e.id === evId(960));
+  for (const [label, edit] of [['date added was erased', e => { delete e.addedAt; e.manifest.subject.addedAt = null; }], ['adder was erased', e => { delete e.addedBy; e.manifest.subject.addedBy = null; }]]) {
+    const copy = structuredClone(state), e = fileOf(copy); edit(e); resign(e);
+    check(`validation refuses a removed file whose ${label}, even re-signed`, !MES.validate(copy));
+  }
+  const dropRole = e => { delete e.removedBy.role; delete e.manifest.subject.removedBy.role; delete e.manifest.signer.role; resign(e); };
+  { const copy = structuredClone(state); dropRole(fileOf(copy)); check('validation refuses a removed file whose remover role was erased everywhere, even re-signed', !MES.validate(copy) && !MES.verifyManifests(copy).ok); }
+  { const copy = structuredClone(state); dropRole(clipOf(copy)); check('validation refuses a removed recording whose remover role was erased everywhere, even re-signed', !MES.validate(copy) && !MES.verifyManifests(copy).ok); }
+}
+
 // ---- engine: a sequence change never drops files, and its captured copy is counted, then discarded on release ----
 {
   const state = curated(), qmUser = { username: 'quar-qm', displayName: 'Quincy Manager', role: 'qm' };
