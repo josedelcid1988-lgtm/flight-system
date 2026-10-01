@@ -68,9 +68,13 @@ export function openDb(path) {
     for (const id of archivedEvidenceIds(json)) add.run(id, orderId);
     db.prepare('INSERT OR IGNORE INTO archive_evidence_indexed (order_id) VALUES (?)').run(orderId);
   };
+  // One pass covers the archive as it stood when the pass started (the highest order_id then), walked with a key cursor,
+  // so each row is visited at most once and another process still archiving cannot keep the pass running.
   const reconcileArchiveEvidence = () => {
-    const page = db.prepare('SELECT a.order_id, a.json FROM archive a WHERE NOT EXISTS (SELECT 1 FROM archive_evidence_indexed i WHERE i.order_id = a.order_id) ORDER BY a.order_id LIMIT 200');
-    for (let rows; (rows = page.all()).length;) {
+    const end = db.prepare('SELECT MAX(order_id) AS last FROM archive').get()?.last;
+    if (end == null) return;
+    const page = db.prepare('SELECT a.order_id, a.json FROM archive a WHERE a.order_id > ? AND a.order_id <= ? AND NOT EXISTS (SELECT 1 FROM archive_evidence_indexed i WHERE i.order_id = a.order_id) ORDER BY a.order_id LIMIT 200');
+    for (let after = '', rows; (rows = page.all(after, end)).length; after = rows[rows.length - 1].order_id) {
       db.exec('BEGIN IMMEDIATE');
       try { for (const row of rows) recordArchiveEvidence(row.order_id, row.json); db.exec('COMMIT'); } catch (error) { db.exec('ROLLBACK'); throw error; }
     }

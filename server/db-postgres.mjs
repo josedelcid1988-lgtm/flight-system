@@ -78,15 +78,21 @@ async function recordArchiveEvidence(query, orderId, json) {
   for (const id of archivedEvidenceIds(json)) await query('INSERT INTO archive_evidence (evidence_id,order_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [id, orderId]);
   await query('INSERT INTO archive_evidence_indexed (order_id) VALUES ($1) ON CONFLICT DO NOTHING', [orderId]);
 }
+// One pass covers the archive as it stood when the pass started: the highest order_id then is the end, and a key cursor
+// walks up to it, so every row is visited at most once and a server still archiving on an earlier release cannot keep
+// the pass (a start, or a lookup that missed) running. Rows archived after the pass began are indexed by the next pass.
 async function reconcileArchiveEvidence(pool) {
-  for (;;) {
+  const end = (await pool.query('SELECT MAX(order_id) AS last FROM archive')).rows[0]?.last;
+  if (end == null) return;
+  for (let after = '';;) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      const rows = (await client.query('SELECT a.order_id, a.json FROM archive a WHERE NOT EXISTS (SELECT 1 FROM archive_evidence_indexed i WHERE i.order_id = a.order_id) ORDER BY a.order_id LIMIT 200')).rows;
+      const rows = (await client.query('SELECT a.order_id, a.json FROM archive a WHERE a.order_id > $1 AND a.order_id <= $2 AND NOT EXISTS (SELECT 1 FROM archive_evidence_indexed i WHERE i.order_id = a.order_id) ORDER BY a.order_id LIMIT 200', [after, end])).rows;
       for (const row of rows) await recordArchiveEvidence(client.query.bind(client), row.order_id, row.json);
       await client.query('COMMIT');
       if (!rows.length) return;
+      after = rows[rows.length - 1].order_id;
     } catch (error) {
       await client.query('ROLLBACK').catch(() => {});
       throw error;

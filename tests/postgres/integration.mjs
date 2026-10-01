@@ -189,6 +189,24 @@ try {
   await refPool.query("INSERT INTO archive (order_id,json,sha256,schema,part_number,serials,lots,parts,title,closed_at,archived_at,archived_by) VALUES ('WO-PG-OLD',$1,$2,1,'P','[]','[]','[\"P\"]','Old writer',NULL,'2026-10-01T00:00:00.000Z','old-release')", [lateJson, createHash('sha256').update(lateJson).digest('hex')]);
   assert.equal(await reopened.archiveNamesEvidence(lateId), true, 'an order archived by a previous-release server is indexed on the next lookup');
   assert.equal(await reopened.archiveNamesEvidence(plantedId), false);
+  // A previous-release server that keeps archiving while this one reconciles must not keep reconciliation (and so a
+  // missed lookup or a server start) running forever: each pass covers the rows present when it started.
+  const writerPool = new (await import('pg')).Pool({ connectionString, max: 2 });
+  let writing = true, written = 0;
+  const writer = (async () => {
+    // 1,000 unmarked rows per statement, faster than any reconciler can index them.
+    while (writing) {
+      await writerPool.query("INSERT INTO archive (order_id,json,sha256,schema,part_number,serials,lots,parts,title,closed_at,archived_at,archived_by) SELECT 'WO-PG-ZZ-' || lpad((g + $1)::text, 9, '0'), '{\"order\":{\"id\":\"x\",\"status\":\"Closed\",\"operations\":[]},\"activity\":[]}', repeat('0', 64), 1, 'P', '[]', '[]', '[\"P\"]', 'Old writer', NULL, '2026-10-01T00:00:00.000Z', 'old-release' FROM generate_series(1, 1000) AS g", [written]);
+      written += 1000;
+    }
+  })();
+  await new Promise(resolve => setTimeout(resolve, 300));
+  const missing = `EV-${randomUUID()}`, started = Date.now();
+  const outcome = await Promise.race([reopened.archiveNamesEvidence(missing).then(found => ({ found })), new Promise(resolve => setTimeout(() => resolve({ timedOut: true }), 15000))]);
+  writing = false; await writer; await writerPool.end();
+  assert.ok(!outcome.timedOut, `a missed lookup finishes while an older server keeps archiving (${written} rows written)`);
+  assert.equal(outcome.found, false);
+  assert.ok(Date.now() - started < 15000);
   await reopened.close?.();
   await refPool.end();
   console.log('ok PostgreSQL evidence bytes round-trip with SHA-256');
