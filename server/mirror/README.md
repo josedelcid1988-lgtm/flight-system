@@ -20,6 +20,11 @@ shipped default) the app is unchanged.
 - Loopback only in plain HTTP: to serve other machines it runs behind a TLS-terminating reverse proxy.
 - Never receives a password, a stamp PIN or their hashes and salts. Accounts arrive as name, role
   and Support Access only.
+- Not an authority on who did what. The write token is shared by every browser, and the actor and
+  credential on each record are what the browser reports, checked for format only. The signature
+  manifests inside a record are the app's own evidence; the mirror proves only that a record arrived
+  and has not changed since. Keep the anchor (`FS_MIRROR_ANCHOR`) on storage the database host cannot
+  rewrite: next to the database it catches mistakes, not someone who can edit both files.
 
 Requires Node 22.13 or later (for `node:sqlite` without a flag).
 
