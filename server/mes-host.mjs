@@ -145,7 +145,7 @@ export function createHost(indexPath, html = fs.readFileSync(indexPath, 'utf8'))
     'MES.checkConformity', 'MES.complete8130_9', 'MES.void8130_9', 'MES.aqiSign8130_9', 'MES.notifyCertification',
     'MES.addDarFinding', 'MES.acceptDarFinding', 'MES.recordDarApproval', 'MES.record8130_3', 'MES.closeConformity',
     'MES.issueFromOrder', 'MES.returnIssuedOrder', 'MES.qaReviewMasterWI', 'MES.setImpactDecision', 'MES.linkECO', 'MES.setWICriticalSafety', 'MES.addPfmeaRow', 'MES.updatePfmeaRow',
-    'MES.setStampPin', 'MES.setMsdsBook', 'MES.tickFodItem', 'MES.removeKitFile', 'MES.addMasterWI',
+    'MES.setStampPin', 'MES.setMsdsBook', 'MES.tickFodItem', 'MES.removeKitFile', 'MES.addMasterWI', 'MES.importMasterWIs',
     'MES.updateMasterWI', 'MES.saveWIOperations', 'MES.releaseMasterWI', 'MES.reviseMasterWI', 'MES.setStepCheck',
     'MES.pushATPSoftware', 'MES.reviewATPPush', 'MES.linkATPSoftware', 'MES.addPurchaseOrder',
     'MES.requestOrderClosure', 'MES.postNotice', 'MES.acknowledgeNotice', 'MES.updateNotice',
