@@ -73,7 +73,14 @@ export function openDatabase(dbPath) {
   db.exec(SCHEMA);
   // A database written before signature manifests joined the chain gains the column; its older rows keep a
   // null value and their links are unchanged.
-  if (!db.prepare('PRAGMA table_info(records)').all().some(c => c.name === 'manifests_sha256')) db.exec('ALTER TABLE records ADD COLUMN manifests_sha256 TEXT');
+  const added = !db.prepare('PRAGMA table_info(records)').all().some(c => c.name === 'manifests_sha256');
+  if (added) db.exec('ALTER TABLE records ADD COLUMN manifests_sha256 TEXT');
+  // The rows written before that are recorded once, so verify accepts a row without manifests_sha256 only there.
+  // A database that gained the column before this record existed counts its leading rows without one.
+  if (!db.prepare("SELECT 1 FROM mirror_meta WHERE key = 'legacy_through'").get()) {
+    const q = added ? 'SELECT COALESCE(MAX(id), 0) n FROM records' : 'SELECT COALESCE((SELECT MIN(id) - 1 FROM records WHERE manifests_sha256 IS NOT NULL), (SELECT MAX(id) FROM records), 0) n';
+    db.prepare("INSERT INTO mirror_meta (key, value) VALUES ('legacy_through', ?)").run(String(Number(db.prepare(q).get().n)));
+  }
   return db;
 }
 
@@ -232,15 +239,28 @@ export function appendRecords(db, clientId, records, now = () => new Date().toIS
 // must still hash to manifests_sha256, and prev_sha256 must be the link of the row before (64 zeros for the
 // first). With an anchor, the row count and the tip must equal it, so rows removed from the end or a changed
 // last row are found too. Reports the first problem.
+// The id of the last row written before manifests joined the chain, as recorded in mirror_meta, or null for a
+// database that has no such record (a backup taken before it existed: then only the leading-rows rule applies).
+function legacyThrough(db) {
+  try { const r = db.prepare("SELECT value FROM mirror_meta WHERE key = 'legacy_through'").get(); return r && /^\d+$/.test(r.value) ? Number(r.value) : null; } catch { return null; }
+}
 export function verifyChain(db, { anchor } = {}) {
-  let expected = ZERO, count = 0, previousId = 0, tip = ZERO, legacyRows = 0;
+  let expected = ZERO, count = 0, previousId = 0, tip = ZERO, legacyRows = 0, covered = false;
+  const boundary = legacyThrough(db);
   const manifestsOf = db.prepare('SELECT path, meaning, signer_name, signer_credential, signed_at, algorithm, hash FROM signature_manifests WHERE record_id = ? ORDER BY id');
   for (const row of db.prepare('SELECT * FROM records ORDER BY id').iterate()) {
     count += 1;
     const id = Number(row.id);
     if (sha256(row.payload_json) !== row.payload_sha256) return { ok: false, records: count, firstBreak: { id, reason: 'payload_json no longer matches payload_sha256 (the record was changed after it was written)' } };
-    if (row.manifests_sha256 === null || row.manifests_sha256 === undefined) legacyRows += 1;
-    else if (manifestSetHash(manifestsOf.all(row.id)) !== row.manifests_sha256) return { ok: false, records: count, firstBreak: { id, reason: 'the signature manifests of this row no longer match manifests_sha256 (a manifest was changed, added or removed)' } };
+    // A row without manifests_sha256 is accepted only among the leading rows written before the column existed,
+    // up to the id recorded at migration; anywhere else its manifests would be covered by no hash.
+    if (row.manifests_sha256 === null || row.manifests_sha256 === undefined) {
+      if (covered || (boundary !== null && id > boundary)) return { ok: false, records: count, firstBreak: { id, reason: 'this row has no manifests_sha256 but was written after signature manifests joined the chain (its manifests are covered by no hash)' } };
+      legacyRows += 1;
+    } else {
+      covered = true;
+      if (manifestSetHash(manifestsOf.all(row.id)) !== row.manifests_sha256) return { ok: false, records: count, firstBreak: { id, reason: 'the signature manifests of this row no longer match manifests_sha256 (a manifest was changed, added or removed)' } };
+    }
     if (row.prev_sha256 !== expected) return { ok: false, records: count, firstBreak: { id, reason: id !== previousId + 1 ? `row ${previousId + 1} is missing or out of order` : 'prev_sha256 does not match the previous row (a row before it was changed)' } };
     expected = tip = linkHash(row);
     previousId = id;
@@ -370,6 +390,12 @@ export function createMirror(options = {}) {
       if (req.method === 'POST' && url.pathname === `/api/${API_VERSION}/writes`) {
         if (!writer(req)) return fail(res, 401, 'unauthorized', 'Send the write token as Authorization: Bearer <token>.');
         let body; try { body = JSON.parse(await readBody(req)); } catch (e) { return e.status === 413 ? fail(res, 413, 'too_large', `Request body over ${cfg.maxBodyBytes} bytes.`) : fail(res, 400, 'bad_request', 'Body is not valid JSON.'); }
+        // A probe: no records, only the newest row the app was told was stored. It stores nothing and is answered
+        // with ackCheck alone, so a device with nothing queued still finds out the mirror was restored.
+        if (body && Array.isArray(body.records) && body.records.length === 0) {
+          if (!str(body.clientId, 120) || !body.lastAck) return fail(res, 400, 'bad_request', 'A post with no records must give clientId and lastAck.');
+          return send(res, 200, { ok: true, results: [], ackCheck: ackCheck(db, body.lastAck) });
+        }
         const anchorNow = settleAnchor(anchorPath, db);
         // SQLite's data_version changes only when another connection commits to the database file. Until it
         // does, the rows are the ones this server wrote and verified, and the tip check against the anchor is

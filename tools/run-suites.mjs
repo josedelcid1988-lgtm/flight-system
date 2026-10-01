@@ -75,7 +75,8 @@ async function mirrorFixtures() {
   for (const f of fs.readdirSync(path.join(TESTS, 'fixtures')).filter(f => f.endsWith('.html'))) {
     const html = fs.readFileSync(path.join(TESTS, 'fixtures', f), 'utf8');
     if (!html.includes('<head>')) throw new Error(`${f} has no <head> to add the mirror setting to.`);
-    fs.writeFileSync(path.join(dir, f), html.replace('<head>', `<head><script>window.SK_MIRROR={url:${JSON.stringify(url)},token:${JSON.stringify(writeToken)},batchSize:100};</script>`));
+    // The demo builds take a mirror only from __FS_SUITE_DEMO_MIRROR__ (never SK_MIRROR), so the suite names it twice.
+    fs.writeFileSync(path.join(dir, f), html.replace('<head>', `<head><script>window.SK_MIRROR={url:${JSON.stringify(url)},token:${JSON.stringify(writeToken)},batchSize:100};window.__FS_SUITE_DEMO_MIRROR__=window.SK_MIRROR;</script>`));
   }
   return { url, dir, tmp, mirror };
 }

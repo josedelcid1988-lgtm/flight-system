@@ -68,6 +68,10 @@ mirror stays off and the reason is in `skMirror.refused`.
 Leave `url` empty to switch the mirror off. The header then shows nothing and the app makes no
 network calls.
 
+The demo build (`demo.html`) never uses this setting: whatever `SK_MIRROR` the production file or a
+page sets, the demo's mirror stays off and it sends nothing (deviation "Never the production mirror" in
+`docs/DEMO_DEVIATIONS.md`). Only `tools/run-suites.mjs --mirror` gives it a throwaway test server.
+
 ## Settings
 
 Command line flags win over environment variables, which win over the defaults.
@@ -109,9 +113,9 @@ Every endpoint except `POST /api/v1/writes` and health needs the operator token.
 
 | Method and path | Purpose |
 | --- | --- |
-| `POST /api/v1/writes` | Write token (or operator token). Body `{ clientId, lastAck, records: [...] }`, up to 500 records. `lastAck` is the newest row the server confirmed to this client; the answer carries `ackCheck: 'missing'` when the server no longer holds it (it was restored from an older backup), and the app then sends every record again. Each comes back `stored`, `duplicate` (the same `clientWriteId` and payload already stored: a safe retry) or `rejected` with a reason (bad hash, malformed manifest, a `clientWriteId` reused for a different payload). |
+| `POST /api/v1/writes` | Write token (or operator token). Body `{ clientId, lastAck, records: [...] }`, up to 500 records. `lastAck` is the newest row the server confirmed to this client; the answer carries `ackCheck: 'missing'` when the server no longer holds it (it was restored from an older backup), and the app then sends every record again. A post with `records: []` and a `lastAck` is a probe: it stores nothing and is answered with `ackCheck` only, so a device with nothing queued (it probes on load, when it comes back online, when its tab is shown again and every five minutes) still finds out about a restore. Each record comes back `stored`, `duplicate` (the same `clientWriteId` and payload already stored: a safe retry) or `rejected` with a reason (bad hash, malformed manifest, a `clientWriteId` reused for a different payload). |
 | `GET /api/v1/health` | With the token: row and manifest counts, the last write time, the backup settings and the last backup file. Without it: `{ ok, api }` only. |
-| `GET /api/v1/verify` | Walks the whole chain and compares its count and tip with the anchor: `chainIntact`, the row count, the chain tip, the anchor, and `firstBreak: { id, reason }` when it is broken. `legacyRows` counts rows written before manifests joined the chain (their manifests are not covered by the link). |
+| `GET /api/v1/verify` | Walks the whole chain and compares its count and tip with the anchor: `chainIntact`, the row count, the chain tip, the anchor, and `firstBreak: { id, reason }` when it is broken. `legacyRows` counts rows written before manifests joined the chain (their manifests are not covered by the link). Such rows are accepted only at the start of the chain, up to the row id recorded once when the database gained the column (`mirror_meta.legacy_through`, which cannot be changed); a row without `manifests_sha256` anywhere else breaks the chain. |
 | `GET /api/v1/export?format=json` | Full retention export: every record with its manifests, the chain anchor (`anchor`) and a verify result against it. |
 | `GET /api/v1/export?format=csv` | The same records as CSV, one row per record. The last row also carries the anchor (`chain_anchor_records`, `chain_anchor_tip`), so a file missing rows from its end, or with a changed last row, shows it. |
 | `GET /api/v1/records?entity=order&id=WO-10001` | Every record for one entity, oldest first, with its manifests. For audits. |
@@ -152,9 +156,12 @@ of that disk.
 6. Start the server and check that `GET /api/v1/verify` shows `chainIntact: true`.
 7. Records that devices had not yet synced are still in their local queues and are re-sent on their
    own. Records the server had confirmed after the backup was taken are re-sent too: on its next post
-   each device names the newest row it was told was stored, the restored server answers that it no
+   (or its next probe, within five minutes even when nothing is queued) each device names the newest row it was told was stored, the restored server answers that it no
    longer has it, and the device queues every entity it holds again, a delete for every entity it
-   deleted, and one `snapshot` record listing every entity key it holds. Anything from that device
+   deleted, and one `snapshot` record listing every entity key it holds. The device builds these from
+   the workspace saved in the browser, not from one tab's memory, so a tab that has not yet heard of
+   another tab's change never leaves that change out; when the saved workspace fails validation it
+   sends no snapshot. Anything from that device
    absent from its latest snapshot is deleted, including deletions made before this build. Intermediate versions written
    between the backup and the restore are only in the database you moved aside. Before deciding anything about them, compare:
    ```bash

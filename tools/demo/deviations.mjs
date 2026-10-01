@@ -171,6 +171,14 @@ const LIST = [
         .replace(/^const CAL_SNAPSHOT = '[^']*';/, () => `/* DEMO ${id} */ const DEMO_CAL = (${ctx.calRebase})(${snapshot}, (typeof window !== 'undefined' && window.__DEMO_SEED) || null, ${firstLoad});\n  const CAL_SNAPSHOT = DEMO_CAL.snapshot;`)
         .replace(/Object\.freeze\(\{ tag, description, serial, expires, status, location \}\)\)\);$/, () => 'Object.freeze({ tag, description, serial, expires: DEMO_CAL.expires(expires), status, location })));');
     } },
+  { area: 'Data', title: 'Never the production mirror',
+    why: 'Whatever mirror address and token the production file sets (the fallback object or a mirror setting a page or proxy makes before load, window.SK_MIRROR), the demo replaces the whole setting with an empty address, so the mirror stays off: the demo never sends records made under its relaxed gates to the production retention database and never holds the production mirror token. Only tools/run-suites.mjs --mirror gives the demo its own throwaway server, through __FS_SUITE_DEMO_MIRROR__.',
+    find: /window\.SK_MIRROR = [^;{]*\{[\s\S]*?\};/g, count: 1,
+    replace: (ctx, m, id) => `/* DEMO ${id} */ window.SK_MIRROR = window.__FS_SUITE_DEMO_MIRROR__ || { url: '', token: '', batchSize: 50 };` },
+  { area: 'Data', title: 'Separate mirror queue keys',
+    why: 'Records, confirmations and acknowledgements the demo keeps for a mirror are under skyryse-mes-demo-sync-*, so a production page in the same browser never sends a demo record to its mirror and never takes a demo acknowledgement as its own.',
+    find: /(['"])skyryse-mes-sync-(?:queue|sent|client|ack)-v1\1/g, count: 4,
+    replace: (ctx, m, id) => `${m.replace('skyryse-mes-sync-', 'skyryse-mes-demo-sync-')}/* DEMO ${id} */` },
 ];
 
 export const DEVIATIONS = LIST.map((d, i) => Object.freeze({ ...d, id: `D-${i + 1}` }));

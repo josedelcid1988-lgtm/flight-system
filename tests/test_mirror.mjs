@@ -14,6 +14,7 @@ const ROOT=path.resolve(TESTS,'..');
 const {createMirror,settings,sha256,verifyChain,pruneBackups,readAnchor,startRefusal,ackCheck,anchorMismatch}=await import(path.join(ROOT,'server/mirror/server.mjs'));
 const PROD='file://'+FIXTURES+'publish.html';
 const STAMP=(h=>({build:h.match(/<meta name="fs-build" content="([^"]*)">/)[1],sha256:h.match(/<meta name="fs-build-sha256" content="([^"]*)">/)[1]}))(fs.readFileSync(FIXTURES+'publish.html','utf8'));
+const legacyMeta=db=>{try{return (db.prepare("SELECT value FROM mirror_meta WHERE key='legacy_through'").get()||{}).value;}catch(e){return 'no mirror_meta: '+e.message;}};
 const fails=[];const ok=(w,c,m='')=>{console.log((c?'  ok   ':'  FAIL ')+w+(c?'':' -> '+m));if(!c)fails.push(w);};
 const tmp=fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()),'fs-mirror-test-'));
 const dbPath=path.join(tmp,'mirror.sqlite'),backupDir=path.join(tmp,'backups');
@@ -155,6 +156,7 @@ await m.close();
   const ml=createMirror({dbPath:old,backupDir:path.join(tmp,'b11'),port:0,backupEveryMinutes:0,...SECURE});const al=await ml.listen();
   const more=await fetch(`http://127.0.0.1:${al.port}/api/v1/writes`,{method:'POST',headers:{'content-type':'application/json',...WAUTH},body:JSON.stringify({clientId:'new',records:[rec(63)]})}).then(r=>r.json());
   const vl=ml.verify();
+  ok('a database from before this change records its legacy rows once, at migration',legacyMeta(ml.db)==='2',String(legacyMeta(ml.db)));
   ok('a database from before this change gains the column, keeps its links and keeps writing',ra.status===0&&more.results[0].status==='stored'&&vl.ok&&vl.records===3&&vl.legacyRows===2,JSON.stringify({vl,ra:ra.stderr}));
   // A legacy row's manifests are covered by no hash, so restore-test --against compares them directly.
   const bkl=ml.backup();await ml.close();
@@ -268,6 +270,44 @@ await m.close();
  {const d=new DatabaseSync(tp);d.exec('DROP TRIGGER records_no_update');const pj=JSON.stringify({id:'WO-113',value:'forged'});d.prepare('UPDATE records SET payload_json=?, payload_sha256=? WHERE id=3').run(pj,sha256(pj));d.close();}
  {const d=new DatabaseSync(tp,{readOnly:true});ok('the refusal case is real: without an anchor the rewritten live chain still verifies',verifyChain(d).ok);d.close();}
  rt=run(['--live-anchor',ap]);ok('with its anchor, --against finds the rewritten live last row',rt.status===1&&/live database is not intact/.test(rt.stderr)&&/chain tip/.test(rt.stderr),rt.stdout+rt.stderr);}
+
+// A probe (a post with no records) is answered with ackCheck alone and stores nothing, so a device with an empty
+// queue still learns of a restore; without lastAck it is refused.
+{const tp=path.join(tmp,'probe.sqlite');const mp=createMirror({dbPath:tp,backupDir:path.join(tmp,'b20'),port:0,backupEveryMinutes:0,...SECURE});const ap=await mp.listen();
+ const pp=body=>fetch(`http://127.0.0.1:${ap.port}/api/v1/writes`,{method:'POST',headers:{'content-type':'application/json',...WAUTH},body:JSON.stringify(body)}).then(async r=>({status:r.status,json:await r.json()}));
+ const w=await pp({clientId:'pr',records:[rec(501)]});const id=w.json.results[0].id;const anchorBefore=fs.readFileSync(tp+'.anchor.json','utf8');
+ const okp=await pp({clientId:'pr',lastAck:{id,clientWriteId:'srv-501'},records:[]});
+ const lostp=await pp({clientId:'pr',lastAck:{id:id+50,clientWriteId:'srv-gone'},records:[]});
+ ok('a probe naming a row the server holds is answered ok, one naming a lost row missing',okp.status===200&&okp.json.ackCheck==='ok'&&okp.json.results.length===0&&lostp.json.ackCheck==='missing',JSON.stringify({okp,lostp}));
+ ok('a probe stores nothing and leaves the anchor as it was',Number(mp.db.prepare('SELECT COUNT(*) n FROM records').get().n)===1&&fs.readFileSync(tp+'.anchor.json','utf8')===anchorBefore);
+ const bad=await pp({clientId:'pr',records:[]});
+ ok('a post with no records and no lastAck is refused',bad.status===400&&/lastAck/.test(bad.json.error.message),JSON.stringify(bad));
+ await mp.close();}
+// A row without manifests_sha256 is accepted only among the rows written before manifests joined the chain (#385).
+{const {DatabaseSync}=await import('node:sqlite');const {linkHash,writeAnchor}=await import(path.join(ROOT,'server/mirror/server.mjs'));
+ const tp=path.join(tmp,'nullrow.sqlite');const mn=createMirror({dbPath:tp,backupDir:path.join(tmp,'b21'),port:0,backupEveryMinutes:0,...SECURE});const an=await mn.listen();
+ await fetch(`http://127.0.0.1:${an.port}/api/v1/writes`,{method:'POST',headers:{'content-type':'application/json',...WAUTH},body:JSON.stringify({clientId:'n',records:[rec(601),rec(602)]})});
+ ok('a database created with the column records that no row is legacy',legacyMeta(mn.db)==='0',String(legacyMeta(mn.db)));
+ let metaRefused='';try{mn.db.exec("UPDATE mirror_meta SET value='99'");}catch(e){metaRefused=e.message;}
+ ok('the legacy boundary cannot be changed',/append-only/.test(metaRefused),metaRefused);
+ await mn.close();
+ // A row appended outside the server, linked correctly but without manifests_sha256, with a manifest no hash covers.
+ const d=new DatabaseSync(tp);const prev=d.prepare('SELECT * FROM records ORDER BY id DESC LIMIT 1').get();const x=rec(603);
+ d.prepare('INSERT INTO records (client_write_id,store_key,entity_type,entity_id,operation,payload_json,payload_sha256,prev_sha256,actor,credential,client_ts,server_ts,build_version,build_sha256,client_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(x.clientWriteId,x.storeKey,x.entityType,x.entityId,x.operation,x.payloadJson,x.payloadSha256,linkHash(prev),x.actor,x.credential,x.clientTs,new Date().toISOString(),x.buildVersion,x.buildSha256,'n');
+ d.prepare("INSERT INTO signature_manifests (record_id,path,meaning,signer_name,signer_credential,signed_at,algorithm,hash) VALUES (3,'order.closure','Closure approval','Forger','ACCT-x','2026-01-01T00:00:00Z','SHA-256',?)").run('d'.repeat(64));
+ writeAnchor(tp+'.anchor.json',d);const forged=d.prepare('SELECT * FROM records WHERE id=3').get();
+ ok('the refusal case is real: the forged row links to the row before it and the anchor matches',forged.prev_sha256===linkHash(prev)&&forged.manifests_sha256===null);
+ const vf=verifyChain(d,{anchor:readAnchor(tp+'.anchor.json')});d.close();
+ ok('a row without manifests_sha256 after rows that carry it breaks the chain',!vf.ok&&vf.firstBreak.id===3&&/no manifests_sha256/.test(vf.firstBreak.reason),JSON.stringify(vf));}
+// A signature manifest added to a chain-covered row of a backup fails the restore comparison (#385).
+{const {DatabaseSync}=await import('node:sqlite');const tp=path.join(tmp,'inject.sqlite');const mi=createMirror({dbPath:tp,backupDir:path.join(tmp,'b22'),port:0,backupEveryMinutes:0,...SECURE});const ai=await mi.listen();
+ await fetch(`http://127.0.0.1:${ai.port}/api/v1/writes`,{method:'POST',headers:{'content-type':'application/json',...WAUTH},body:JSON.stringify({clientId:'i',records:[rec(701),rec(702)]})});
+ const bki=mi.backup();await mi.close();
+ const clean=spawnSync(process.execPath,[path.join(ROOT,'server/mirror/restore-test.mjs'),bki,'--against',tp],{encoding:'utf8'});
+ ok('an untouched backup matches the live database',clean.status===0,clean.stdout+clean.stderr);
+ {const d=new DatabaseSync(bki);d.prepare("INSERT INTO signature_manifests (record_id,path,meaning,signer_name,signer_credential,signed_at,algorithm,hash) VALUES (1,'order.extra','Approval','Forger','ACCT-x','2026-01-01T00:00:00Z','SHA-256',?)").run('b'.repeat(64));d.close();}
+ const inj=spawnSync(process.execPath,[path.join(ROOT,'server/mirror/restore-test.mjs'),bki,'--against',tp],{encoding:'utf8'});
+ ok('a manifest injected for a chain-covered row of a backup fails the restore test',inj.status===1&&/BROKEN/.test(inj.stdout)&&/signature manifests/.test(inj.stdout+inj.stderr),inj.stdout+inj.stderr);}
 
 // Fail closed (issue 76): no token configured refuses to start, no origin configured sends no CORS header, and
 // health tells a caller without the token only that the mirror is up.
@@ -404,16 +444,71 @@ const devAck=()=>p.evaluate(()=>{const P='skyryse-mes-sync-ack-v1:',slots=[];con
  ok('an answer from before another tab\'s restore reset is not recorded in the new epoch',Number.isFinite(held)&&!d.slots.some(x=>x.epoch===e0+1&&x.ack&&x.ack.id===held),JSON.stringify({held,slots:d.slots.map(x=>[x.epoch,x.ack&&x.ack.id])}));
  ok('instead the tab sends everything again',!!resentAfter&&resentAfter!==resentBefore,JSON.stringify({resentBefore,resentAfter}));}
 // A tab whose workspace another tab changed meanwhile resends from the copy saved in the browser, so its snapshot
-// lists what the other tab made instead of marking it deleted.
-{const OTHER='skyryse-mes-sync-ack-v1:page-other-tab';let staged=false;const e0=(await devAck()).epoch;
- await ctx.route(/\/api\/v1\/writes$/,async route=>{const resp=await route.fetch();if(!staged){staged=true;
-   await p.evaluate(([k,v])=>{const ws=JSON.parse(localStorage.getItem('skyryse-mes-work-order-v1'));const o=structuredClone(ws.orders[0]);o.id='WO-OTHER-TAB-1';ws.orders.push(o);localStorage.setItem('skyryse-mes-work-order-v1',JSON.stringify(ws));storageBlocked=true;localStorage.setItem(k,JSON.stringify(v));},[OTHER,{epoch:e0+1,ack:null,at:Date.now()}]);}
+// lists what the other tab made instead of marking it deleted. The other tab's storage event has not reached this
+// tab yet (storageBlocked is still false): the saved copy is read anyway.
+const snapshots=()=>m.db.prepare("SELECT id,payload_json FROM records WHERE entity_type='snapshot' ORDER BY id").all();
+{const OTHER='skyryse-mes-sync-ack-v1:page-other-tab';let staged=null;const e0=(await devAck()).epoch;
+ await ctx.route(/\/api\/v1\/writes$/,async route=>{const resp=await route.fetch();if(!staged){staged='pending';
+   staged=await p.evaluate(([k,v])=>{const ws=structuredClone(state);const wi=ws.masterWIs.find(x=>x.status==='Released');const r=MES.addOrder(ws,{masterWI:wi.id+'|'+wi.revision,pedigree:'Production',subcategory:'Mfg.',quantity:1,aircraft:MES.AIRCRAFT[0],site:MES.SITES[0]});localStorage.setItem(KEY,JSON.stringify(ws));localStorage.setItem(k,JSON.stringify(v));return {id:r.id,blocked:storageBlocked,valid:MES.validate(ws)};},[OTHER,{epoch:e0+1,ack:null,at:Date.now()}]);}
   await route.fulfill({response:resp});});
  await mkOrder(p);await drain();await ctx.unroute(/\/api\/v1\/writes$/);
- const snap=m.db.prepare("SELECT payload_json FROM records WHERE entity_type='snapshot' ORDER BY id DESC LIMIT 1").get();const keys=snap?JSON.parse(snap.payload_json).keys:[];
- ok('the refusal case is real: this tab\'s own state lacks the other tab\'s order',await p.evaluate(()=>!state.orders.some(o=>o.id==='WO-OTHER-TAB-1')));
- ok('a stale tab\'s recovery snapshot lists the order another tab made',keys.includes('order|WO-OTHER-TAB-1'),JSON.stringify(keys.filter(k=>k.startsWith('order|')).slice(-3)));
- await p.evaluate(()=>{storageBlocked=false;});}
+ const snap=snapshots().pop();const keys=snap?JSON.parse(snap.payload_json).keys:[];
+ ok('the refusal case is real: this tab\'s own state lacks the other tab\'s order, and no storage event has marked it stale',staged&&staged.valid&&staged.blocked===false&&await p.evaluate(id=>!state.orders.some(o=>o.id===id),staged.id),JSON.stringify(staged));
+ ok('a recovery snapshot lists the order another tab saved, even before its storage event arrives',keys.includes('order|'+staged.id),JSON.stringify(keys.filter(k=>k.startsWith('order|')).slice(-3)));
+ // This tab takes the saved workspace as its own, as a reload would, so later writes do not drop the other tab's order.
+ await p.evaluate(()=>{state=JSON.parse(localStorage.getItem(KEY));lastSaved=structuredClone(state);});}
+// A saved workspace that fails validation is not trusted: no snapshot is sent and no workspace entity is marked
+// deleted; the account records are still sent again.
+{const OTHER='skyryse-mes-sync-ack-v1:page-other-tab';let staged=false;const e0=(await devAck()).epoch;const before=snapshots().length;
+ await ctx.route(/\/api\/v1\/writes$/,async route=>{const resp=await route.fetch();if(!staged){staged=true;
+   await p.evaluate(([k,v])=>{const ws=JSON.parse(localStorage.getItem(KEY));ws.orders=[{id:'not a valid order'}];localStorage.setItem(KEY,JSON.stringify(ws));localStorage.setItem(k,JSON.stringify(v));},[OTHER,{epoch:e0+1,ack:null,at:Date.now()}]);}
+  await route.fulfill({response:resp});});
+ const r0=count();await mkOrder(p);const st3=await drain();await ctx.unroute(/\/api\/v1\/writes$/);
+ const added=m.db.prepare('SELECT entity_type t,operation o FROM records WHERE id>?').all(r0);
+ ok('the refusal case is real: the saved workspace fails validation',await p.evaluate(()=>!MES.validate(JSON.parse(localStorage.getItem(KEY)))));
+ ok('with an invalid saved workspace no snapshot is sent and no order is marked deleted',snapshots().length===before&&!added.some(x=>x.t==='order'&&x.o==='delete')&&added.some(x=>x.t==='account')&&st3.unsynced===0,JSON.stringify({added:added.slice(0,8),st3}));
+ await p.evaluate(()=>{save();});await drain();}
+// A device with nothing queued still finds a restore: it probes the mirror, which no longer holds its last
+// confirmed row, and sends everything again (#374).
+{const w6=await mkOrder(p);await drain();const bk3=m.backup();
+ const w7=await mkOrder(p);st=await drain();
+ const has=id=>!!m.db.prepare("SELECT 1 FROM records WHERE entity_type='order' AND entity_id=?").get(id);
+ ok('an order confirmed after the backup is on the server, and nothing is queued',has(w7.id)&&st.unsynced===0,JSON.stringify(st));
+ await m.close();const live=path.join(tmp,'live.sqlite');for(const x of ['-wal','-shm'])fs.rmSync(live+x,{force:true});fs.copyFileSync(bk3,live);fs.copyFileSync(bk3+'.anchor.json',live+'.anchor.json');
+ m=createMirror({dbPath:live,backupDir:path.join(tmp,'b4'),port:PORT,backupEveryMinutes:0,...SECURE});await m.listen();
+ const resent0=await p.evaluate(()=>window.skMirror.status().resentAt);
+ ok('the refusal case is real: the restored server lacks the order and the device has nothing to send',!has(w7.id)&&has(w6.id)&&(await p.evaluate(()=>window.skMirror.status().unsynced))===0);
+ await p.evaluate(()=>window.skMirror.probe());st=await drain();
+ ok('a probe from an idle device finds the restore and the order is sent again',has(w7.id)&&st.unsynced===0&&st.resentAt&&st.resentAt!==resent0,JSON.stringify({st,resent0}));
+ const r1=count();await p.evaluate(()=>window.skMirror.probe());await p.waitForTimeout(300);
+ ok('a probe once caught up stores nothing and sends nothing again',count()===r1&&(await p.evaluate(()=>window.skMirror.status().resentAt))===st.resentAt);
+ ok('the chain is intact after the probe recovery',m.verify().ok,JSON.stringify(m.verify()));}
+// Two real tabs of one device, a restore, and both tabs recover at once: their write ids never collide, nothing is
+// refused, every order is back, and the device's acknowledgement ends on a row the server holds (#386, r4154794192).
+{const p2=await ctx.newPage();p2.on('pageerror',e=>errs.push('tab 2: '+e.message));await p2.goto(PROD);await p2.waitForFunction(()=>!!window.skMirror&&window.skMirror.enabled,null,{timeout:30000});
+ const bk4=m.backup();const later=[];for(let i=0;i<2;i++)later.push((await mkOrder(p)).id);st=await drain();
+ const has=id=>!!m.db.prepare("SELECT 1 FROM records WHERE entity_type='order' AND entity_id=?").get(id);
+ const tab2Stale=await p2.evaluate(()=>storageBlocked);
+ ok('the second tab saw the first tab\'s writes as another tab\'s change, and its own state lacks them',tab2Stale===true&&await p2.evaluate(ids=>ids.every(id=>!state.orders.some(o=>o.id===id)),later),String(tab2Stale));
+ await m.close();const live=path.join(tmp,'live.sqlite');for(const x of ['-wal','-shm'])fs.rmSync(live+x,{force:true});fs.copyFileSync(bk4,live);fs.copyFileSync(bk4+'.anchor.json',live+'.anchor.json');
+ m=createMirror({dbPath:live,backupDir:path.join(tmp,'b4'),port:PORT,backupEveryMinutes:0,...SECURE});await m.listen();
+ ok('the refusal case is real: the restored server lacks both orders',!later.some(has));
+ await Promise.all([p.evaluate(()=>window.skMirror.probe()),p2.evaluate(()=>window.skMirror.probe())]);
+ const drainTab=pg=>pg.evaluate(async()=>{for(let i=0;i<80&&window.skMirror.status().unsynced;i++){await window.skMirror.flush();await new Promise(r=>setTimeout(r,100));}return window.skMirror.status();});
+ const [s1,s2]=await Promise.all([drainTab(p),drainTab(p2)]);
+ ok('both tabs recover with nothing refused and nothing left queued',s1.rejected===0&&s2.rejected===0&&s1.unsynced===0&&s2.unsynced===0,JSON.stringify({s1,s2}));
+ ok('every order confirmed before the restore is back on the server',later.every(has));
+ const ids=m.db.prepare("SELECT client_write_id c FROM records WHERE client_id LIKE 'client-%'").all().map(r=>r.c);
+ ok('no write id is used twice across the two tabs',new Set(ids).size===ids.length&&new Set(ids.map(c=>c.split('-page-')[1].split('-').slice(0,-1).join('-'))).size>=2,String(ids.length));
+ const snaps=snapshots().slice(-2).map(x=>JSON.parse(x.payload_json).keys);
+ ok('no recovery snapshot leaves out an order either tab holds',snaps.length>0&&snaps.every(k=>later.every(id=>k.includes('order|'+id))),JSON.stringify(snaps.map(k=>k.filter(x=>x.startsWith('order|')).length)));
+ const d=await devAck();const {ackCheck:ac}=await import(path.join(ROOT,'server/mirror/server.mjs'));
+ ok('the device\'s acknowledgement ends on a row the restored server holds',!!d.ack&&ac(m.db,d.ack)==='ok',JSON.stringify(d.ack));
+ const resentNow=await p.evaluate(()=>window.skMirror.status().resentAt);const w8=await mkOrder(p);st=await drain();
+ ok('after both tabs recovered, the next write is confirmed without another resend',has(w8.id)&&st.resentAt===resentNow,JSON.stringify({st,resentNow}));
+ ok('the chain is intact after both tabs recovered',m.verify().ok,JSON.stringify(m.verify()));
+ await p2.close();
+ await p.evaluate(()=>{state=JSON.parse(localStorage.getItem(KEY));lastSaved=structuredClone(state);storageBlocked=false;});}
 // A device upgraded from a build without acknowledgements: it has confirmed records but no lastAck, so its
 // first confirmed post sends everything once instead of trusting a mirror that may have been restored.
 {await p.evaluate(()=>{const c=JSON.parse(localStorage.getItem('skyryse-mes-sync-client-v1'));delete c.ack;delete c.ackEpoch;localStorage.setItem('skyryse-mes-sync-client-v1',JSON.stringify(c));Object.keys(localStorage).filter(k=>k.startsWith('skyryse-mes-sync-ack-v1:')).forEach(k=>localStorage.removeItem(k));});
@@ -424,6 +519,28 @@ const devAck=()=>p.evaluate(()=>{const P='skyryse-mes-sync-ack-v1:',slots=[];con
  ok('an upgraded device with confirmed records and no acknowledgement sends everything once on its first post, then records an acknowledgement',pre.ack===null&&pre.sent>0&&pre.resent===null&&w5.ok&&!!st.resentAt&&count()-before>=pre.sent&&!!post&&Number.isInteger(post.id),JSON.stringify({pre,added:count()-before,post}));
  const b2=count();await mkOrder(p);st=await drain();
  ok('after that baseline the next write sends only what changed',count()-b2<=3,JSON.stringify({added:count()-b2}));}
+// The demo never uses the mirror a production setting names: an SK_MIRROR set before load (as a page, proxy or
+// the suite runner could) is replaced with an empty address, nothing is queued and no request leaves the page.
+// Only the suite runner's own hook, __FS_SUITE_DEMO_MIRROR__, turns the demo's mirror on, under its own keys.
+{const DEMO='file://'+FIXTURES+'demo_publish.html';const port=`127.0.0.1:${PORT}`;
+ const syncKeys=pg=>pg.evaluate(()=>Object.keys(localStorage).filter(k=>/sync/.test(k)).sort());
+ const dctx=await b.newContext();await dctx.addInitScript(([url,token])=>{window.SK_MIRROR={url,token,batchSize:25};},[`http://${port}`,WTOKEN]);
+ const dp=await dctx.newPage();const derrs=[];dp.on('pageerror',e=>derrs.push(e.message));const dnet=[];dp.on('request',q=>{if(q.url().includes(port))dnet.push(q.url());});
+ await dp.goto(DEMO);await dp.waitForFunction(()=>!!window.skMirror&&typeof state!=='undefined',null,{timeout:30000});
+ const r0=count();
+ const ds=await dp.evaluate(async()=>{const saved=save();await window.skMirror.flush();await new Promise(r=>setTimeout(r,2000));return {saved,enabled:window.skMirror.enabled,url:window.SK_MIRROR.url,token:window.SK_MIRROR.token,status:window.skMirror.status()};});
+ ok('the demo ignores a mirror setting made before it loads: no address, no token, mirror off',ds.saved&&ds.enabled===false&&ds.url===''&&ds.token===''&&ds.status.unsynced===0,JSON.stringify(ds));
+ ok('the demo sends nothing to the mirror and queues nothing',dnet.length===0&&count()===r0&&(await syncKeys(dp)).length===0,JSON.stringify({dnet,keys:await syncKeys(dp),added:count()-r0}));
+ ok('no page errors in the demo with a mirror setting present',derrs.length===0,derrs.join(' | '));
+ await dctx.close();
+ const sctx=await b.newContext();await sctx.addInitScript(([url,token])=>{window.SK_MIRROR={url,token,batchSize:25};window.__FS_SUITE_DEMO_MIRROR__=window.SK_MIRROR;},[`http://${port}`,WTOKEN]);
+ const sp=await sctx.newPage();await sp.goto(DEMO);await sp.waitForFunction(()=>!!window.skMirror&&typeof state!=='undefined',null,{timeout:30000});
+ const r1=count();
+ const ss=await sp.evaluate(async()=>{const saved=save();for(let i=0;i<60&&window.skMirror.status().unsynced;i++){await window.skMirror.flush();await new Promise(r=>setTimeout(r,100));}return {saved,enabled:window.skMirror.enabled,status:window.skMirror.status()};});
+ const keys=await syncKeys(sp);
+ ok('the suite runner\'s hook alone turns the demo mirror on, and its records reach that server',ss.saved&&ss.enabled===true&&ss.status.unsynced===0&&count()>r1,JSON.stringify({ss,added:count()-r1}));
+ ok('the demo keeps its mirror queue, confirmations and acknowledgements under demo keys only',keys.length>0&&keys.every(k=>k.startsWith('skyryse-mes-demo-sync-')),JSON.stringify(keys));
+ await sctx.close();}
 ok('state valid in the app at the end',await p.evaluate(()=>MES.validate(state)));
 ok('no page errors with the mirror on, including the outage',errs.length===0,errs.join(' | '));
 await ctx.close();await b.close();await m.close();

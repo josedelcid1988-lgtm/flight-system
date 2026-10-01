@@ -54,3 +54,15 @@ CREATE TRIGGER IF NOT EXISTS manifests_no_update BEFORE UPDATE ON signature_mani
 BEGIN SELECT RAISE(ABORT, 'signature_manifests are append-only: UPDATE is not allowed'); END;
 CREATE TRIGGER IF NOT EXISTS manifests_no_delete BEFORE DELETE ON signature_manifests
 BEGIN SELECT RAISE(ABORT, 'signature_manifests are append-only: DELETE is not allowed'); END;
+
+-- Facts about the database itself, written once and never changed. legacy_through is the id of the last row
+-- written before manifests_sha256 existed (0 for a database created with it). Only rows up to that id may lack
+-- manifests_sha256; verify refuses a row without it anywhere else.
+CREATE TABLE IF NOT EXISTS mirror_meta (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS meta_no_update BEFORE UPDATE ON mirror_meta
+BEGIN SELECT RAISE(ABORT, 'mirror_meta is append-only: UPDATE is not allowed'); END;
+CREATE TRIGGER IF NOT EXISTS meta_no_delete BEFORE DELETE ON mirror_meta
+BEGIN SELECT RAISE(ABORT, 'mirror_meta is append-only: DELETE is not allowed'); END;
