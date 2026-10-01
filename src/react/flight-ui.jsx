@@ -174,16 +174,16 @@ const writeBig3Collapsed = (username, collapsed) => { try { localStorage.setItem
 // workspace through the same engine commands (and, with a server, the same server actions) as Flight Plan.
 const plannerReadCopy = state => { try { return structuredClone(state); } catch { return JSON.parse(JSON.stringify(state)); } };
 
-function BigThreeAccept({ item, index }) {
-  return item.status === 'accepted' ? <span className="pill accepted">Accepted</span> : <button className="btn quiet" data-action="big3-decide" data-index={index} data-decision="accept">Accept</button>;
+function BigThreeAccept({ item, index, date }) {
+  return item.status === 'accepted' ? <span className="pill accepted">Accepted</span> : <button className="btn quiet" data-action="big3-decide" data-index={index} data-date={date} data-decision="accept">Accept</button>;
 }
 
-function BigThreeSlotActions({ index, block }) {
+function BigThreeSlotActions({ index, block, date }) {
   return <>
     <label className="sr-only" htmlFor={`big3-reason-${index}`}>Reason for declining task {index + 1}</label><input id={`big3-reason-${index}`} className="big3-reason" maxLength="300" placeholder="Reason to decline"/>
-    <button className="btn quiet" data-action="big3-decide" data-index={index} data-decision="decline">Decline</button>
-    {!block ? <><label className="sr-only" htmlFor={`big3-start-${index}`}>Proposed start time for task {index + 1}</label><input id={`big3-start-${index}`} type="time" aria-label="Proposed start time"/><label className="sr-only" htmlFor={`big3-end-${index}`}>Proposed end time for task {index + 1}</label><input id={`big3-end-${index}`} type="time" aria-label="Proposed end time"/><button className="btn quiet" data-action="big3-time-propose" data-index={index}>Propose time</button></> : block.status === 'Proposed' && <><button className="btn quiet" data-action="big3-time-decide" data-id={block.id} data-decision="accept">Accept time</button><button className="btn quiet" data-action="big3-time-decide" data-id={block.id} data-decision="decline">Decline time</button></>}
-    {window.skAuth?.can?.('post-notice') && <><label className="sr-only" htmlFor={`big3-escalation-${index}`}>Escalation reason</label><input id={`big3-escalation-${index}`} className="big3-reason" maxLength="500" placeholder="Escalation reason"/><button className="btn quiet" data-action="big3-escalate" data-index={index}>Escalate to QA</button></>}
+    <button className="btn quiet" data-action="big3-decide" data-index={index} data-date={date} data-decision="decline">Decline</button>
+    {!block ? <><label className="sr-only" htmlFor={`big3-start-${index}`}>Proposed start time for task {index + 1}</label><input id={`big3-start-${index}`} type="time" aria-label="Proposed start time"/><label className="sr-only" htmlFor={`big3-end-${index}`}>Proposed end time for task {index + 1}</label><input id={`big3-end-${index}`} type="time" aria-label="Proposed end time"/><button className="btn quiet" data-action="big3-time-propose" data-index={index} data-date={date}>Propose time</button></> : block.status === 'Proposed' && <><button className="btn quiet" data-action="big3-time-decide" data-id={block.id} data-index={index} data-date={date} data-decision="accept">Accept time</button><label className="sr-only" htmlFor={`big3-time-reason-${index}`}>Reason for declining the proposed time for task {index + 1}</label><input id={`big3-time-reason-${index}`} className="big3-reason" maxLength="300" placeholder="Reason to decline the time"/><button className="btn quiet" data-action="big3-time-decide" data-id={block.id} data-index={index} data-date={date} data-decision="decline">Decline time</button></>}
+    {window.skAuth?.can?.('post-notice') && <><label className="sr-only" htmlFor={`big3-escalation-${index}`}>Escalation reason</label><input id={`big3-escalation-${index}`} className="big3-reason" maxLength="500" placeholder="Escalation reason"/><button className="btn quiet" data-action="big3-escalate" data-index={index} data-date={date}>Escalate to QA</button></>}
   </>;
 }
 
@@ -197,6 +197,10 @@ function BigThree({ state, MES, variant = 'plan' }) {
   const collapsed = hangar && (Object.hasOwn(collapsedBy, snap.username) ? collapsedBy[snap.username] : readBig3Collapsed(snap.username));
   const hasPlan = !!source.planner.days[snap.username]?.[date];
   const displayDate = value => new Date(`${value}T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+  // A saved slot whose record no longer has an open blocker was resolved in the record; plannerStatus returns the saved
+  // day as stored, so mark it here the same way plannerView does before any action is offered.
+  const openIds = new Set([...(source.blockers || []).filter(row => row.status === 'Open').map(row => row.id), ...snap.candidates.map(candidate => candidate.id)]);
+  const isResolved = slot => !!slot.done || !!(slot.ref && !openIds.has(slot.ref.id));
   const slots = hasPlan ? snap.day.big3 : snap.candidates.slice(0, 3);
   const headingId = hangar ? 'hangar-big3-heading' : 'big3-heading';
   const accepted = hasPlan ? snap.day.big3.filter(slot => slot.t && slot.status === 'accepted').length : 0;
@@ -204,9 +208,9 @@ function BigThree({ state, MES, variant = 'plan' }) {
   const status = hasPlan ? `${accepted} of ${set} accepted` : snap.candidates.length ? 'Not set for today' : 'Nothing assigned';
   const toggle = () => { const next = !collapsed; writeBig3Collapsed(snap.username, next); setCollapsedBy(value => ({ ...value, [snap.username]: next })); };
   const bodyId = 'hangar-big3-body';
-  const canCarry = hasPlan && snap.day.big3.some(slot => slot.status === 'accepted' && !slot.done);
-  const actions = <>{!hasPlan && snap.candidates.length > 0 && <button className="btn primary" data-action="big3-create">Set today's Big Three</button>}
-    {canCarry && <button className="btn" data-action="big3-carry">Carry accepted tasks to tomorrow</button>}</>;
+  const canCarry = hasPlan && snap.day.big3.some(slot => slot.status === 'accepted' && !isResolved(slot));
+  const actions = <>{!hasPlan && snap.candidates.length > 0 && <button className="btn primary" data-action="big3-create" data-date={date}>Set today's Big Three</button>}
+    {canCarry && <button className="btn" data-action="big3-carry" data-date={date}>Carry accepted tasks to tomorrow</button>}</>;
   return <section className={`panel big3-panel fr-big3${hangar ? ' fr-big3-hangar' : ''}${collapsed ? ' is-collapsed' : ''}`} aria-labelledby={headingId} data-big3-variant={variant}>
     {hangar ? <div className="panel-head"><div className="fr-big3-title"><h2 id={headingId}>Today's Big Three</h2><span className="fr-big3-owner">Your day · {snap.username}</span></div>
       <div className="fr-big3-head-tools"><span className="fr-big3-date"><span className="fr-big3-day">{displayDate(date)} · </span><span data-big3-status>{status}</span> · {snap.total} open blocker{snap.total === 1 ? '' : 's'}</span>{actions}</div>
@@ -216,7 +220,7 @@ function BigThree({ state, MES, variant = 'plan' }) {
     {slots.length ? <ol className="big3-list">{slots.map((slot, index) => {
       const item = hasPlan ? slot : null;
       const task = item ? snap.candidates.find(candidate => candidate.id === item.ref?.id) : slot;
-      const resolved = !!item?.done;
+      const resolved = !!item && isResolved(item);
       const block = item?.ref && source.planner.calendar.blocks.find(record => record.username === snap.username && record.date === date && record.blockerId === item.ref.id && record.status !== 'Declined');
       const title = item ? item.t : task.title;
       const why = item ? item.why : `${task.kind.replaceAll('-', ' ')} · ${task.priority}${task.aog && task.priority !== 'AOG' ? ' · AOG' : ''}`;
@@ -227,11 +231,11 @@ function BigThree({ state, MES, variant = 'plan' }) {
         </div>
         {!hasPlan && task && !hangar && <span className="fr-big3-priority">Priority {index + 1}</span>}
         {hasPlan && !resolved && item?.t && (hangar ? <div className="big3-slot-actions fr-big3-quick">
-          <BigThreeAccept item={item} index={index}/>
-          <details className="fr-big3-more"><summary>Decline or schedule</summary><div className="fr-big3-more-body"><BigThreeSlotActions index={index} block={block}/></div></details>
+          <BigThreeAccept item={item} index={index} date={date}/>
+          <details className="fr-big3-more"><summary>Decline or schedule</summary><div className="fr-big3-more-body"><BigThreeSlotActions index={index} block={block} date={date}/></div></details>
         </div> : <div className="big3-slot-actions">
-          <BigThreeAccept item={item} index={index}/>
-          <BigThreeSlotActions index={index} block={block}/>
+          <BigThreeAccept item={item} index={index} date={date}/>
+          <BigThreeSlotActions index={index} block={block} date={date}/>
         </div>)}
       </li>;
     })}</ol> : <p className="muted fr-big3-empty">No open tasks are assigned to your capabilities.{hangar && ' Your Big Three fills in when a record needs an action your role can take.'}</p>}

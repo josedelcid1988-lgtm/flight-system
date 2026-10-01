@@ -88,9 +88,24 @@ try {
   await quality.locator('#big3-start-2').fill('09:00');
   await quality.locator('#big3-end-2').fill('10:00');
   await big3.locator('[data-action="big3-time-propose"][data-index="2"]').click();
-  const block = await quality.evaluate(date => state.planner.calendar.blocks.find(item => item.username === 'quality' && item.date === date && item.status === 'Proposed'), today());
+  let block = await quality.evaluate(date => state.planner.calendar.blocks.find(item => item.username === 'quality' && item.date === date && item.status === 'Proposed'), today());
   check(!!block && block.start === '09:00' && block.end === '10:00', 'a proposed start time from the Hangar is stored for the account');
   check(await big3.locator('.big3-slot').nth(2).locator('.pill').filter({ hasText: 'Proposed time · 09:00 to 10:00' }).count() === 1, 'the Hangar shows the proposed time on the slot');
+  // Codex review on #360: Decline time needs a reason field wired to the engine, which refuses a decline without one.
+  const blockStatus = id => quality.evaluate(blockId => state.planner.calendar.blocks.find(item => item.id === blockId)?.status, id);
+  await big3.locator('.big3-slot').nth(2).locator('summary').click();
+  await big3.locator('[data-action="big3-time-decide"][data-index="2"][data-decision="decline"]').click();
+  check(await blockStatus(block.id) === 'Proposed', 'declining a proposed time without a reason is refused');
+  check(/Give a short reason for declining the time block\./.test(await quality.locator('body').innerText()), 'the time-decline refusal says what to give');
+  await quality.locator('#big3-time-reason-2').fill('Bench is booked then');
+  await big3.locator('[data-action="big3-time-decide"][data-index="2"][data-decision="decline"]').click();
+  check(await blockStatus(block.id) === 'Declined', 'declining a proposed time with a reason on the Hangar records the decline');
+  await big3.locator('.big3-slot').nth(2).locator('summary').click();
+  await quality.locator('#big3-start-2').fill('10:00');
+  await quality.locator('#big3-end-2').fill('11:00');
+  await big3.locator('[data-action="big3-time-propose"][data-index="2"]').click();
+  block = await quality.evaluate(date => state.planner.calendar.blocks.find(item => item.username === 'quality' && item.date === date && item.status === 'Proposed'), today());
+  check(!!block && block.start === '10:00', 'a new time can be proposed after a declined one');
   check(await big3.locator('[data-action="big3-escalate"]').count() === 0, 'Quality (no post-notice) is not offered escalation on the Hangar');
   const escalation = await quality.evaluate(() => { const before = state.planner.calendar.escalations.length, result = MES.escalateBigThree(state, new Date().toISOString().slice(0, 10), 0, 'Needs QA follow-up'); return { result, unchanged: state.planner.calendar.escalations.length === before }; });
   check(escalation.result.ok === false && /post-notice holder/.test(escalation.result.message) && escalation.unchanged, 'the engine refuses escalation without post-notice and records nothing');
@@ -107,7 +122,22 @@ try {
   await big3.locator('[data-action="big3-carry"]').click();
   const tomorrow = new Date(`${today()}T00:00:00Z`); tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
   check(await quality.evaluate(date => state.planner.days.quality?.[date]?.big3.filter(slot => slot.src === 'carried').length === 2, tomorrow.toISOString().slice(0, 10)), 'Carry on the Hangar moves both accepted tasks to tomorrow');
-  check(await quality.evaluate(() => MES.validate(state).ok !== false), 'the workspace still validates after the Hangar actions');
+  check(await quality.evaluate(() => MES.validate(state)) === true, 'the workspace still validates after the Hangar actions');
+
+  // Codex review on #360: a Hangar left open past midnight UTC must not act on today's slots from yesterday's buttons.
+  const staleBefore = await quality.evaluate(() => JSON.stringify(state.planner));
+  await big3.locator('[data-action="big3-decide"][data-decision="accept"]').first().evaluate(button => { button.dataset.date = '2000-01-01'; });
+  await big3.locator('[data-action="big3-decide"][data-decision="accept"]').first().click();
+  check(await quality.evaluate(prior => JSON.stringify(state.planner) === prior, staleBefore), 'a Big Three button drawn for another day changes nothing');
+  check(/The day changed\. Today's Big Three is shown now\./.test(await quality.locator('body').innerText()), 'the refusal says the day changed and today is shown');
+  check(await panel(quality).locator('[data-action="big3-decide"]').first().getAttribute('data-date') === today(), 'the redrawn panel carries today');
+
+  // Codex review on #360: a saved task whose record was resolved shows as resolved, with no actions offered.
+  const resolvedRef = await quality.evaluate(date => { const slot = state.planner.days.quality[date].big3[2], prior = slot.ref.id; slot.ref.id = 'BLK-99999'; view = 'home'; render(); return prior; }, today());
+  const resolvedSlot = panel(quality).locator('.big3-slot').nth(2);
+  check(/Resolved in the record/.test(await resolvedSlot.innerText()) && await resolvedSlot.locator('[data-action]').count() === 0, 'a task resolved in its record shows as resolved with no Accept, Decline or scheduling');
+  await quality.evaluate(([date, prior]) => { state.planner.days.quality[date].big3[2].ref.id = prior; view = 'home'; render(); }, [today(), resolvedRef]);
+  big3 = panel(quality);
 
   // 3. Collapse is remembered per person.
   await big3.locator('.fr-big3-toggle').click();
