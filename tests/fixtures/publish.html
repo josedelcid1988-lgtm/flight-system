@@ -5133,7 +5133,7 @@ const OP_BOM_MAX = 12;
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
     if (!['Draft', 'Kitting', 'Building'].includes(order.status)) return fail('Operations can only be added before the work order reaches Quality.');
-    if (!pendingSequenceChange(order)) order.sequenceBaseline = JSON.parse(JSON.stringify(order.operations));
+    if (!pendingSequenceChange(order)) { const over = baselineBudgetError(state, order); if (over) return fail(over); order.sequenceBaseline = JSON.parse(JSON.stringify(order.operations)); }
     if (engineeringChange(order)) return fail(engineeringHoldMessage);
     if (order.operations.length >= 20) return fail('A work order can have up to 20 operations.');
     const classification = input?.classification;
@@ -5236,7 +5236,7 @@ const OP_BOM_MAX = 12;
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
     if (!['Draft', 'Kitting', 'Building'].includes(order.status)) return fail('Operations can only be removed before the work order reaches Quality.');
-    if (!pendingSequenceChange(order)) order.sequenceBaseline = JSON.parse(JSON.stringify(order.operations));
+    if (!pendingSequenceChange(order)) { const over = baselineBudgetError(state, order); if (over) return fail(over); order.sequenceBaseline = JSON.parse(JSON.stringify(order.operations)); }
     if (engineeringChange(order)) return fail(engineeringHoldMessage);
     const op = order.operations.find(item => item.id === opId);
     if (!op) return fail('Operation not found.');
@@ -5265,7 +5265,7 @@ const OP_BOM_MAX = 12;
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
     if (!['Draft', 'Kitting', 'Building'].includes(order.status)) return fail('Operations can only be edited before the work order reaches Quality.');
-    if (!pendingSequenceChange(order)) order.sequenceBaseline = JSON.parse(JSON.stringify(order.operations));
+    if (!pendingSequenceChange(order)) { const over = baselineBudgetError(state, order); if (over) return fail(over); order.sequenceBaseline = JSON.parse(JSON.stringify(order.operations)); }
     if (engineeringChange(order)) return fail(engineeringHoldMessage);
     const op = order.operations.find(item => item.id === opId);
     if (!op) return fail('Operation not found.');
@@ -6460,6 +6460,8 @@ const OP_BOM_MAX = 12;
   const recordFileBytes = state => plain(state.maneuver) ? Object.values(state.maneuver).reduce((total, records) => total + listOf(records).reduce((sum, rec) => sum + heldBytes(rec), 0), 0) : 0;
   // A pending sequence change keeps a copy of every operation, files included, until QA decides; that copy is stored too.
   const baselineBytes = order => listOf(order.sequenceBaseline).reduce((n, op) => n + (plain(op) ? ['attachments', 'evidence', 'quarantinedAttachments', 'quarantinedEvidence'].reduce((m, key) => m + JSON.stringify(listOf(op[key])).length, 0) : 0), 0);
+  // Starting a sequence change copies every operation, files included, so the copy must fit the workspace limit too.
+  const baselineBudgetError = (state, order) => attachmentBytes(state) + baselineBytes({ sequenceBaseline: order.operations }) > MAX_ATTACHMENTS_TOTAL + FILE_RECORD_HEADROOM ? 'Changing the operation sequence keeps a copy of this order\u2019s files until QA decides, and that copy would pass the workspace attachment limit. Remove files the order no longer needs, or keep large files in the controlled document system and reference them, then change the sequence.' : null;
   const attachmentBytes = state => recordFileBytes(state) + state.orders.reduce((total, order) => total + baselineBytes(order) + fileBytes(listOf(order.kitFiles)) + fileBytes(listOf(order.quarantinedKitFiles)) + order.operations.reduce((sum, op) => sum + heldBytes(op), 0) + listOf(order.tickets).reduce((sum, t) => sum + heldBytes(t), 0), 0);
   // A split copies the order's live files onto the new order, so the copy must fit the workspace limit too.
   const splitBudgetError = (state, child) => attachmentBytes(state) + fileBytes(listOf(child.kitFiles)) + listOf(child.operations).reduce((sum, op) => sum + fileBytes(listOf(op.attachments)) + fileBytes(listOf(op.evidence)), 0) > MAX_ATTACHMENTS_TOTAL ? 'Splitting would copy this order\u2019s files onto the new order past the workspace attachment limit. Keep the larger files in the controlled document system and reference them here, then split.' : null;
@@ -6486,7 +6488,7 @@ const OP_BOM_MAX = 12;
   // The signer of a removal is the remover: name, role, credential and the signed-in account (or none), all recorded
   // in the signed subject, and a removal made in the browser is never presented as server authenticated.
   const signingAccount = () => { const acct = accountActor(); return acct && typeof acct.account === 'string' ? acct.account : null; };
-  const signerBound = (m, by) => plain(m.signer) && profileValid(by) && m.authenticated === false && (m.subject.signerAccount === null || (typeof m.subject.signerAccount === 'string' && str(m.subject.signerAccount, 60))) && canonical(m.signer) === canonical({ name: by.name, role: by.role, credentialId: by.credentialId, account: m.subject.signerAccount });
+  const signerBound = (m, by) => plain(m.signer) && profileValid(by) && m.authenticated === false && buildStampValid(m.build) && canonical(m.build) === canonical(m.subject.build) && (m.subject.signerAccount === null || (typeof m.subject.signerAccount === 'string' && str(m.subject.signerAccount, 60))) && canonical(m.signer) === canonical({ name: by.name, role: by.role, credentialId: by.credentialId, account: m.subject.signerAccount });
   const laterThan = addedAt => new Date(Math.max(Date.now(), Number.isFinite(Date.parse(addedAt)) ? Date.parse(addedAt) : 0)).toISOString();
   const removedAfterAdded = f => f.addedAt === undefined || f.addedAt === null || Date.parse(f.removedAt) >= Date.parse(f.addedAt);
   function fileQuarantine(state, file, reason, where, held) {
@@ -6497,7 +6499,7 @@ const OP_BOM_MAX = 12;
     // A file stored before sizes were checked keeps a whole, non-negative size and a storage mode that matches its
     // content once removed, so a malformed record can always be removed with a reason and is signed as kept.
     file = { ...file, size: Number.isInteger(file.size) && file.size >= 0 ? file.size : 0, storage: typeof file.dataUrl === 'string' ? 'inline' : 'reference' };
-    const subject = { ...where, fileId: file.id, name: file.name, type: String(file.type || ''), size: file.size, storage: file.storage, addedAt: file.addedAt ?? null, addedBy: file.addedBy ?? null, contentSha256: typeof file.dataUrl === 'string' ? sha256(file.dataUrl) : null, removedAt: at, removedBy: by, removeReason: text, signerAccount: signingAccount() };
+    const subject = { ...where, fileId: file.id, name: file.name, type: String(file.type || ''), size: file.size, storage: file.storage, addedAt: file.addedAt ?? null, addedBy: file.addedBy ?? null, contentSha256: typeof file.dataUrl === 'string' ? sha256(file.dataUrl) : null, removedAt: at, removedBy: by, removeReason: text, signerAccount: signingAccount(), build: buildStamp() };
     return { entry: { ...file, removedAt: at, removedBy: by, removeReason: text, manifest: signManifest(state, QUARANTINE_MEANING, subject, at) } };
   }
   const QUARANTINE_KEYS = ['quarantinedAttachments', 'quarantinedKitFiles'];
@@ -6549,14 +6551,18 @@ const OP_BOM_MAX = 12;
     const text = typeof reason === 'string' ? reason.trim() : '';
     if (!str(text, REMOVE_REASON_MAX) || text.length < REMOVE_REASON_MIN) return { error: `Give the reason for removing this recording (${REMOVE_REASON_MIN} to ${REMOVE_REASON_MAX} characters). The recording is kept in quarantine on the record with your reason.` };
     const at = laterThan(evidence.addedAt), by = actor(state);
-    const subject = { ...where, evidenceId: evidence.id, evidence: evidenceRecord(evidence), removedAt: at, removedBy: by, removeReason: text, signerAccount: signingAccount() };
+    const subject = { ...where, evidenceId: evidence.id, evidence: evidenceRecord(evidence), removedAt: at, removedBy: by, removeReason: text, signerAccount: signingAccount(), build: buildStamp() };
     return { entry: { ...evidence, removedAt: at, removedBy: by, removeReason: text, manifest: signManifest(state, EVIDENCE_QUARANTINE_MEANING, subject, at) } };
   }
   const evidenceQuarantineBound = e => plain(e) && plain(e.manifest) && e.manifest.meaning === EVIDENCE_QUARANTINE_MEANING && plain(e.manifest.subject) && e.manifest.algorithm === 'SHA-256' && /^[0-9a-f]{64}$/.test(String(e.manifest.hash || '')) && sha256(canonical(e.manifest.subject)) === e.manifest.hash && e.manifest.at === e.removedAt && plain(e.removedBy) && signerBound(e.manifest, e.removedBy) && e.manifest.subject.evidenceId === e.id && canonical(e.manifest.subject.evidence) === canonical(evidenceSignedAs(e, e.manifest.subject.evidence)) && e.manifest.subject.removedAt === e.removedAt && e.manifest.subject.removeReason === e.removeReason && canonical(e.manifest.subject.removedBy) === canonical(e.removedBy);
   const signedEvidence = list => listOf(list).filter(e => plain(e) && e.manifest !== undefined);
-  const quarantinedEvidenceValid = (e, holder) => plain(e) && typeof e.id === 'string' && (e.manifest === undefined || (timestamp(e.removedAt) && profileValid(e.removedBy) && typeof e.removeReason === 'string' && e.removeReason.trim().length >= REMOVE_REASON_MIN && e.removeReason.length <= REMOVE_REASON_MAX && evidenceValid(evidenceRecord(e)) && removedAfterAdded(e) && evidenceQuarantineBound(e) && quarantineHeldBy(e, holder)));
+  // A removal saved before recordings were signed has no manifest; it still needs a removal time, a full remover and
+  // a reason, and like every removal it is unique and never also live (checked on the list), so dropping a manifest
+  // cannot bring a removed recording back.
+  const legacyEvidenceRemovalValid = e => timestamp(e.removedAt) && profileValid(e.removedBy) && typeof e.removeReason === 'string' && e.removeReason.trim().length >= REMOVE_REASON_MIN && e.removeReason.length <= REMOVE_REASON_MAX;
+  const quarantinedEvidenceValid = (e, holder) => plain(e) && typeof e.id === 'string' && (e.manifest === undefined ? legacyEvidenceRemovalValid(e) : (timestamp(e.removedAt) && profileValid(e.removedBy) && typeof e.removeReason === 'string' && e.removeReason.trim().length >= REMOVE_REASON_MIN && e.removeReason.length <= REMOVE_REASON_MAX && evidenceValid(evidenceRecord(e)) && removedAfterAdded(e) && evidenceQuarantineBound(e) && quarantineHeldBy(e, holder)));
   // Signed removals are capped like removed files, unique, never also live, and signed for this operation.
-  const evidenceQuarantineValid = (order, op) => { const list = op.quarantinedEvidence; if (list === undefined) return true; if (!Array.isArray(list)) return false; const signed = signedEvidence(list); return signed.length <= MAX_QUARANTINED && unique(signed.map(e => e.id)) && liveAndQuarantinedDisjoint(op.evidence, signed) && list.every(e => quarantinedEvidenceValid(e, evidenceHolder(order, op))); };
+  const evidenceQuarantineValid = (order, op) => { const list = op.quarantinedEvidence; if (list === undefined) return true; if (!Array.isArray(list)) return false; return signedEvidence(list).length <= MAX_QUARANTINED && unique(list.map(e => e && e.id)) && liveAndQuarantinedDisjoint(op.evidence, list) && list.every(e => quarantinedEvidenceValid(e, evidenceHolder(order, op))); };
   const orderQuarantineValid = order => order.operations.every(op => evidenceQuarantineValid(order, op)) && liveAndQuarantinedDisjoint(order.kitFiles, order.quarantinedKitFiles) && order.operations.every(op => liveAndQuarantinedDisjoint(op.attachments, op.quarantinedAttachments)) && listOf(order.tickets).every(t => !t || liveAndQuarantinedDisjoint(t.attachments, t.quarantinedAttachments)) && validQuarantineList(order.quarantinedKitFiles, { scope: 'kit', orderId: order.id }) && order.operations.every(op => validQuarantineList(op.quarantinedAttachments, { scope: 'operation', orderId: order.id, operationId: op.id })) && listOf(order.tickets).every(t => validQuarantineList(t && t.quarantinedAttachments, ticketHolder(order, t)));
 
   // Operation attachments follow the step media on the same operation: the person running it (operate-steps) or

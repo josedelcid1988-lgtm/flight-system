@@ -525,6 +525,37 @@ function surfaces(state) {
   check('a stored file with a negative size can still be removed; it is kept with size 0 and the workspace verifies', removed.ok && !!kept && kept.size === 0 && kept.manifest.subject.size === 0 && MES.validate(structuredClone(state)) && MES.verifyManifests(state).ok);
 }
 
+// ---- engine: a signed removal cannot be downgraded to an unsigned one, and its build stamp is signed ----
+{
+  const state = curated();
+  const { order, op } = recordingTarget(state);
+  host.withAccount(technician, () => MES.attachEvidence(state, order.id, op.id, clip(evId(970))), state);
+  host.withAccount(technician, () => MES.removeEvidence(state, order.id, op.id, evId(970), REASON), state);
+  const at = copy => copy.orders.find(o => o.id === order.id).operations.find(x => x.id === op.id);
+  { const copy = structuredClone(state), o = at(copy), e = o.quarantinedEvidence.find(x => x.id === evId(970)); delete e.manifest; o.evidence.push(evidenceRecordOf(e));
+    check('a signed recording removal stripped of its manifest cannot be brought back live', !MES.validate(copy)); }
+  { const copy = structuredClone(state), o = at(copy), e = o.quarantinedEvidence.find(x => x.id === evId(970)); delete e.manifest; o.quarantinedEvidence.push({ ...e });
+    check('removed recordings stay unique, signed or not', !MES.validate(copy)); }
+  { const copy = structuredClone(state), e = at(copy).quarantinedEvidence.find(x => x.id === evId(970)); delete e.manifest; e.removedBy = { name: 'Nobody' };
+    check('an unsigned recording removal still needs a full remover', !MES.validate(copy)); }
+  check('a removal signs the build it was made on', (() => { const e = at(state).quarantinedEvidence.find(x => x.id === evId(970)); return MES.canonical(e.manifest.build) === MES.canonical(e.manifest.subject.build); })());
+  for (const [label, edit] of [['build stamp is malformed', m => { m.build = { version: '', sha256: 'zz' }; }], ['build stamp was swapped', m => { m.build = { version: 'v1', sha256: 'unstamped' }; }]]) {
+    const copy = structuredClone(state); edit(at(copy).quarantinedEvidence.find(x => x.id === evId(970)).manifest);
+    check(`validation refuses a removal whose ${label}`, !MES.validate(copy) && !MES.verifyManifests(copy).ok);
+  }
+}
+
+// ---- engine: a sequence change that would copy files past the workspace limit is refused before anything changes ----
+{
+  const state = curated();
+  const order = state.orders.find(o => ['Kitting', 'Building'].includes(o.status) && !MES.pendingSequenceChange(o) && !MES.engineeringChange(o) && o.operations.some(x => !x.done));
+  const op = order.operations.find(x => !x.done);
+  op.attachments = [...(op.attachments || []), { id: `ATT-${op.id}-BIG`, name: 'big.bin', type: 'application/octet-stream', size: 1, storage: 'inline', addedAt: new Date().toISOString(), addedBy: { name: 'Flight Master', role: 'Master Access', credentialId: 'ACCT-admin' }, dataUrl: 'data:,' + 'a'.repeat(1900000) }];
+  const before = JSON.stringify(state);
+  const changed = host.withAccount(me, () => MES.addOrderOperation(state, order.id, { title: 'Install placard', description: 'Install the data placard.', steps: 'Clean surface\nInstall placard', position: order.operations.length, buyoffType: 'Technician', classification: 'Manufacturing', callouts: [] }), state);
+  check('a sequence change whose captured copy would pass the workspace limit is refused with what to do, and nothing changes', changed.ok === false && /would pass the workspace attachment limit/.test(changed.message) && JSON.stringify(state) === before);
+}
+
 // ---- engine: a sequence change never drops files, and its captured copy is counted, then discarded on release ----
 {
   const state = curated(), qmUser = { username: 'quar-qm', displayName: 'Quincy Manager', role: 'qm' };
