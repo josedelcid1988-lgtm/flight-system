@@ -3267,9 +3267,39 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // the manifest stored. The FAIR's own content is compared with what the verifier signed, box 22 must chain to the
   // verified FAIR, and the Skyryse QA approval must chain to box 22. Any edit to a signed field after signing fails.
   // A stock NC migrated from a closed escape record keeps that record's unsigned closure: it was never a signed approval.
-  // The migration shape: resolved with no disposition or affected record (an NC resolved in Flight Maneuver always has a
-  // disposition), an escape record, a closure with no manifest key, and the system migration entry dated at or after the closure.
-  const migratedEscape = t => plain(t) && t.status === 'Resolved' && t.dispo === null && t.affected === null && plain(t.escape) && plain(t.resolution) && !Object.hasOwn(t.resolution, 'manifest') && Array.isArray(t.history) && t.history.some(e => plain(e) && e.actor === 'system' && /^Migrated from escape \S+\.$/.test(String(e.action || '')) && typeof e.at === 'string' && typeof t.resolution.at === 'string' && t.resolution.at <= e.at);
+  // The exemption keys only on the structured record the migration writes on the closure (resolution.legacy), never on
+  // history text (#305): resolved with no disposition or affected record (an NC resolved in Flight Maneuver always has one),
+  // an escape record, a closure with no manifest key, and a legacy record naming the escape, dated at or after the closure.
+  const legacyEscapeValid = mk => plain(mk) && Object.keys(mk).length === 3 && mk.source === 'escape' && typeof mk.escapeId === 'string' && /^\S{1,40}$/.test(mk.escapeId) && typeof mk.migratedAt === 'string' && !Number.isNaN(Date.parse(mk.migratedAt));
+  const migratedEscape = t => plain(t) && t.status === 'Resolved' && t.dispo === null && t.affected === null && plain(t.escape) && plain(t.resolution) && !Object.hasOwn(t.resolution, 'manifest') && legacyEscapeValid(t.resolution.legacy) && typeof t.resolution.at === 'string' && t.resolution.at <= t.resolution.legacy.migratedAt;
+  // NCs migrated before the migration wrote that record get it once, on load, from the same shape and the system migration
+  // entry. The server accepts the record only when it is written this way against its own stored copy (legacyEscapeChanges),
+  // so a history entry added later grants nothing: a write that adds the record to any other NC is refused.
+  const ESCAPE_MIGRATION_RE = /^Migrated from escape (\S{1,40})\.$/;
+  function legacyEscapeBackfill(t) {
+    if (!plain(t) || t.status !== 'Resolved' || t.dispo !== null || t.affected !== null || !plain(t.escape) || !plain(t.resolution) || Object.hasOwn(t.resolution, 'manifest') || Object.hasOwn(t.resolution, 'legacy') || typeof t.resolution.at !== 'string' || !Array.isArray(t.history)) return null;
+    const e = t.history.find(e => plain(e) && e.actor === 'system' && ESCAPE_MIGRATION_RE.test(String(e.action || '')) && typeof e.at === 'string' && !Number.isNaN(Date.parse(e.at)) && t.resolution.at <= e.at);
+    return e ? { source: 'escape', escapeId: ESCAPE_MIGRATION_RE.exec(e.action)[1], migratedAt: e.at } : null;
+  }
+  // Server write gate: every NC that carries a legacy escape record in the new workspace must hold the same closure in the
+  // stored copy, or be the stored record with only the backfilled record added, or come from a closed escape the stored
+  // copy still holds (the migration itself). Anything else is refused. An initial upload has no stored copy to compare.
+  function legacyEscapeChanges(prev, next) {
+    if (!plain(prev)) return null;
+    const pm = plain(prev.maneuver) ? prev.maneuver : {}, before = new Map((Array.isArray(pm.ncs) ? pm.ncs : []).filter(plain).map(t => [t.id, t]));
+    const escapes = new Map((Array.isArray(pm.escapes) ? pm.escapes : []).filter(plain).map(e => [e.id, e]));
+    for (const t of (plain(next) && plain(next.maneuver) && Array.isArray(next.maneuver.ncs) ? next.maneuver.ncs : [])) {
+      if (!plain(t) || !plain(t.resolution) || !Object.hasOwn(t.resolution, 'legacy')) continue;
+      const was = before.get(t.id);
+      if (was && plain(was.resolution) && canonicalPayload(was.resolution) === canonicalPayload(t.resolution)) continue;
+      const filled = was ? legacyEscapeBackfill(was) : null;
+      if (filled && canonicalPayload({ ...was.resolution, legacy: filled }) === canonicalPayload(t.resolution)) continue;
+      const esc = !was && legacyEscapeValid(t.resolution.legacy) ? escapes.get(t.resolution.legacy.escapeId) : null;
+      if (esc && esc.status === 'Closed') continue;
+      return `${t.id} carries a migrated-escape record that the shared workspace does not hold. Only the migration of a closed escape writes that record, and an NC closed in Flight Maneuver needs a signed approval. Nothing was saved.`;
+    }
+    return null;
+  }
   // Box 22 became mandatory before the Skyryse QA approval on this date (commit 42103cb). An approval recorded since then
   // must keep its box 22 review, even one signed before the approval bound the box 22 hash.
   const FAIR_BOX22_REQUIRED_FROM = '2026-09-26T06:17:24.000Z';
@@ -3314,11 +3344,19 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // The CAR closure subject. Closures signed by this build bind the complete closure evidence: each action's evidence and
   // completer, and the whole containment, root cause (five whys, fishbone), verification and effectiveness records
   // (actionEvidence: true, inside the hash). Closures signed before carry no marker and are checked in that older form.
-  const carClosureSubject = (car, note, actionEvidence) => actionEvidence ? { id: car.id, title: car.title, severity: car.severity, containment: car.containment ?? null, rootCause: car.rootCause ?? null, actions: (Array.isArray(car.actions) ? car.actions : []).map(a => ({ id: a.id, description: a.description, owner: a.owner, dueDate: a.dueDate ?? null, completedAt: a.completedAt, evidence: a.evidence, completedBy: a.completedBy ?? null })), verification: car.verification ?? null, effectiveness: car.effectiveness ?? null, note, actionEvidence: true } : ({ id: car.id, title: car.title, severity: car.severity, rootCause: plain(car.rootCause) ? car.rootCause.statement : undefined, actions: (Array.isArray(car.actions) ? car.actions : []).map(a => ({ id: a.id, description: a.description, completedAt: a.completedAt, ...(actionEvidence ? { evidence: a.evidence, completedBy: plain(a.completedBy) ? a.completedBy.credentialId : undefined } : {}) })), verification: plain(car.verification) ? car.verification.at : undefined, effectiveness: plain(car.effectiveness) ? car.effectiveness.result : undefined, note, ...(actionEvidence ? { actionEvidence: true } : {}) });
+  const carClosureSubject = (car, note, actionEvidence, by, at) => actionEvidence ? { id: car.id, title: car.title, severity: car.severity, containment: car.containment ?? null, rootCause: car.rootCause ?? null, actions: (Array.isArray(car.actions) ? car.actions : []).map(a => ({ id: a.id, description: a.description, owner: a.owner, dueDate: a.dueDate ?? null, completedAt: a.completedAt, evidence: a.evidence, completedBy: a.completedBy ?? null })), verification: car.verification ?? null, effectiveness: car.effectiveness ?? null, note, actionEvidence: true, ...signedBy(by, at) } : ({ id: car.id, title: car.title, severity: car.severity, rootCause: plain(car.rootCause) ? car.rootCause.statement : undefined, actions: (Array.isArray(car.actions) ? car.actions : []).map(a => ({ id: a.id, description: a.description, completedAt: a.completedAt, ...(actionEvidence ? { evidence: a.evidence, completedBy: plain(a.completedBy) ? a.completedBy.credentialId : undefined } : {}) })), verification: plain(car.verification) ? car.verification.at : undefined, effectiveness: plain(car.effectiveness) ? car.effectiveness.result : undefined, note, ...(actionEvidence ? { actionEvidence: true } : {}) });
   // The MRB board decision subject. Decisions signed by this build also bind each voter's full identity, each vote's
   // rationale and the board summary
   // (rationale: true, inside the hash); decisions signed before carry no marker and are checked in that older form.
-  const mrbDecisionSubject = (m, status, note, rationale) => ({ id: m.id, orderId: m.orderId, ticketId: m.ticketId, partNumber: m.partNumber, serials: m.serials, proposed: m.proposed, votes: (Array.isArray(m.votes) ? m.votes : []).map(v => ({ seat: v.seat, vote: v.vote, by: rationale ? (v.by ?? null) : (plain(v.by) ? v.by.credentialId : undefined), at: v.at, ...(rationale ? { note: v.note ?? null } : {}) })), status, note, ...(rationale ? { summary: m.summary ?? null, rationale: true } : {}) });
+  const mrbDecisionSubject = (m, status, note, rationale, by, at) => ({ id: m.id, orderId: m.orderId, ticketId: m.ticketId, partNumber: m.partNumber, serials: m.serials, proposed: m.proposed, votes: (Array.isArray(m.votes) ? m.votes : []).map(v => ({ seat: v.seat, vote: v.vote, by: rationale ? (v.by ?? null) : (plain(v.by) ? v.by.credentialId : undefined), at: v.at, ...(rationale ? { note: v.note ?? null } : {}) })), status, note, ...(rationale ? { summary: m.summary ?? null, rationale: true, ...signedBy(by, at) } : {}) });
+  // Signatures made by this build bind who signed and when inside the hashed subject (signer and signedAt), so changing the
+  // recorded signer or time together with the manifest metadata still fails. A subject without signedAt is an older form.
+  const signerOf_ = by => plain(by) ? { name: by.name ?? null, role: by.role ?? null, credentialId: by.credentialId ?? null } : null;
+  const signedBy = (by, at) => ({ signer: signerOf_(by), signedAt: at ?? null });
+  const bindsSigner = m => plain(m) && plain(m.subject) && Object.hasOwn(m.subject, 'signedAt');
+  // The stock NC disposition approval subject. Approvals signed by this build also bind the disposition record (decision,
+  // note, who recorded it and when) and the approver; older ones bind only the decision and are checked in that form.
+  const ncApprovalSubject = (t, note, by, at, current) => { const a = plain(t.affected) ? t.affected : {}; return { id: t.id, partNumber: t.partNumber, serial: t.serial, lot: t.lot, disposition: plain(t.dispo) ? t.dispo.decision : undefined, defect: { defectCode: a.defectCode, defectName: a.defectName, subCode: a.subCode, subName: a.subName }, quantity: a.quantity, mrbId: t.mrbId, note, ...(current ? { dispo: plain(t.dispo) ? { decision: t.dispo.decision, note: t.dispo.note ?? null, by: signerOf_(t.dispo), at: t.dispo.at ?? null } : null, ...signedBy(by, at) } : {}) }; };
   // The recorded signer and time of a signed record must be the manifest's.
   const signerMismatch = (rec, m) => !plain(rec.by) || !plain(m.signer) || rec.by.credentialId !== m.signer.credentialId || rec.by.name !== m.signer.name || rec.at !== m.at;
   function verifyManifests(state) {
@@ -3367,8 +3405,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       if (plain(fair) && plain(fair.verified) && plain(fair.verified.manifest) && !plain(fair.verified.manifest.subject) && (String(fair.verified.at || '') >= MANIFEST_SUBJECTS_FROM || fair.verified.manifest.build !== undefined)) failures.push({ where: `${order.id} FAIR verification`, reason: 'the verification signature has lost its signed FAIR content' });
       // Box 22 chains to the verified FAIR, and an approval signed since box 22 was bound into it chains to box 22.
       // An approval signed before that carries no reviewed key and is checked as it was signed.
-      if (plain(fair) && plain(fair.reviewed) && plain(fair.reviewed.manifest) && plain(fair.verified) && plain(fair.verified.manifest)) { recomputed++; const rm = fair.reviewed.manifest, current = plain(rm.subject) && Object.hasOwn(rm.subject, 'reviewer'); const sub = current ? fairReviewSubject(order, fair, fair.reviewed.by, fair.reviewed.at, rm.override) : { fair: fairId(order), verified: fair.verified.manifest.hash, ...(rm.override ? { override: rm.override } : {}) }; if (sha256(canonical(sub)) !== fair.reviewed.manifest.hash) failures.push({ where: `${order.id} FAIR box 22`, reason: 'box 22 does not chain to the verified FAIR' }); }
-      if (plain(fair) && plain(fair.approved) && plain(fair.approved.manifest) && plain(fair.verified) && plain(fair.verified.manifest)) { recomputed++; const bindsReview = plain(fair.approved.manifest.subject) && Object.hasOwn(fair.approved.manifest.subject, 'reviewed'); const sub = { fair: fairId(order), verified: fair.verified.manifest.hash, ...(bindsReview ? { reviewed: plain(fair.reviewed) && plain(fair.reviewed.manifest) ? fair.reviewed.manifest.hash : null } : {}), ...(fair.approved.manifest.override ? { override: fair.approved.manifest.override } : {}) }; if (sha256(canonical(sub)) !== fair.approved.manifest.hash) failures.push({ where: `${order.id} FAIR approval`, reason: bindsReview ? 'approval does not chain to the verified FAIR and its box 22 review' : 'approval does not chain to the verified FAIR' }); }
+      if (plain(fair) && plain(fair.reviewed) && plain(fair.reviewed.manifest) && plain(fair.verified) && plain(fair.verified.manifest)) { recomputed++; const rm = fair.reviewed.manifest, current = plain(rm.subject) && Object.hasOwn(rm.subject, 'reviewer'); const sub = current ? fairReviewSubject(order, fair, fair.reviewed.by, fair.reviewed.at, rm.override, Object.hasOwn(rm.subject, 'reviewerStamp')) : { fair: fairId(order), verified: fair.verified.manifest.hash, ...(rm.override ? { override: rm.override } : {}) }; if (sha256(canonical(sub)) !== fair.reviewed.manifest.hash) failures.push({ where: `${order.id} FAIR box 22`, reason: 'box 22 does not chain to the verified FAIR' }); }
+      if (plain(fair) && plain(fair.approved) && plain(fair.approved.manifest) && plain(fair.verified) && plain(fair.verified.manifest)) { recomputed++; const bindsReview = plain(fair.approved.manifest.subject) && Object.hasOwn(fair.approved.manifest.subject, 'reviewed'); const sub = { fair: fairId(order), verified: fair.verified.manifest.hash, ...(bindsReview ? { reviewed: plain(fair.reviewed) && plain(fair.reviewed.manifest) ? fair.reviewed.manifest.hash : null } : {}), ...(plain(fair.approved.manifest.subject) && Object.hasOwn(fair.approved.manifest.subject, 'stamp') ? { stamp: plain(fair.approved.by) ? (fair.approved.by.stamp ?? null) : null } : {}), ...(bindsSigner(fair.approved.manifest) ? signedBy(fair.approved.by, fair.approved.at) : {}), ...(fair.approved.manifest.override ? { override: fair.approved.manifest.override } : {}) }; if (sha256(canonical(sub)) !== fair.approved.manifest.hash) failures.push({ where: `${order.id} FAIR approval`, reason: bindsReview ? 'approval does not chain to the verified FAIR and its box 22 review' : 'approval does not chain to the verified FAIR' }); }
       // FAIR verification (blocks 20 and 21): the FAIR's own content (Forms 1 to 3 as entered on the FAIR) must still
       // match what the verifier signed. Order-level fields in the snapshot (serials, quantity) may change later.
       if (plain(fair) && plain(fair.verified) && plain(fair.verified.manifest) && plain(fair.verified.manifest.subject) && plain(fair.verified.manifest.subject.form1)) {
@@ -3377,6 +3415,9 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
         // A FAIR verified by this build signs the raw reasons too (rawReasons) and must keep them exactly. One verified before
         // signed only the Form 1 reasons, which before the reason normalization were the raw reasons: either form matches.
         if (Object.hasOwn(vs, 'rawReasons')) { if (!same(vs.rawReasons, fair.reasons)) drift.push('reasons'); }
+        // A FAIR verified by this build also signs the verifier's inspection stamp (verifierStamp); the recorded stamp must be that one.
+        if (Object.hasOwn(vs, 'verifierStamp') && !same(vs.verifierStamp, plain(fair.verified.by) ? (fair.verified.by.stamp ?? null) : null)) drift.push('verifier stamp');
+        if (Object.hasOwn(vs, 'signedAt') && !same({ signer: vs.signer, signedAt: vs.signedAt }, signedBy(fair.verified.by, fair.verified.at))) drift.push('verifier or verification time');
         else if (!same(vs.form1.reasons, fairSnapshot(state, order).form1.reasons) && !same(vs.form1.reasons, fair.reasons)) drift.push('reasons');
         if (drift.length) failures.push({ where: `${order.id} FAIR verification`, reason: `FAIR content changed after verification: ${drift.join(', ')}` });
       }
@@ -3386,25 +3427,25 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
         if (!plain(p)) return;
         const pm = plain(p.form) && plain(p.form.prepared) ? p.form.prepared.manifest : null;
         // An 8130-9 signed by this build also binds the preparer's inspection stamp (preparedStamp in the hash); older ones do not.
-        if (plain(pm) && plain(p.form)) recheck(`${order.id} ${p.serial} 8130-9`, pm, { order: order.id, ...p.form, prepared: undefined, ...(plain(pm.subject) && Object.hasOwn(pm.subject, 'preparedStamp') ? { preparedStamp: plain(p.form.prepared) && plain(p.form.prepared.by) ? (p.form.prepared.by.stamp ?? null) : null } : {}), ...(pm.override ? { override: pm.override } : {}) });
+        if (plain(pm) && plain(p.form)) recheck(`${order.id} ${p.serial} 8130-9`, pm, { order: order.id, ...p.form, prepared: undefined, ...(plain(pm.subject) && Object.hasOwn(pm.subject, 'preparedStamp') ? { preparedStamp: plain(p.form.prepared) && plain(p.form.prepared.by) ? (p.form.prepared.by.stamp ?? null) : null } : {}), ...(bindsSigner(pm) ? signedBy(p.form.prepared.by, p.form.prepared.at) : {}), ...(pm.override ? { override: pm.override } : {}) });
         if (plain(pm) && plain(p.form.prepared.by) && plain(pm.signer) && (p.form.prepared.by.credentialId !== pm.signer.credentialId || p.form.prepared.by.name !== pm.signer.name || p.form.prepared.at !== pm.at)) failures.push({ where: `${order.id} ${p.serial} 8130-9`, reason: 'the recorded preparer (credential or name) or time does not match the 8130-9 signature' });
         const am = plain(p.aqi) ? p.aqi.manifest : null;
         if (plain(am) && plain(p.aqi.by) && plain(am.signer) && (p.aqi.by.credentialId !== am.signer.credentialId || p.aqi.by.name !== am.signer.name || p.aqi.at !== am.at)) failures.push({ where: `${order.id} ${p.serial} 8130-9 AQI signature`, reason: 'the recorded AQI signer (credential or name) or time does not match the AQI signature' });
         if (aqiSelfSignMismatch(p)) failures.push({ where: `${order.id} ${p.serial} 8130-9 AQI signature`, reason: 'the AQI self-signature record does not match who completed the 8130-9' });
-        if (plain(am)) recheck(`${order.id} ${p.serial} 8130-9 AQI signature`, am, { order: order.id, serial: p.serial, form: plain(pm) ? pm.hash : null, ...(plain(am.subject) && Object.hasOwn(am.subject, 'stamp') ? { stamp: plain(p.aqi.by) ? (p.aqi.by.stamp ?? null) : null } : {}), ...(p.aqi.selfSigned ? { selfSigned: true } : {}), ...(am.override ? { override: am.override } : {}) });
+        if (plain(am)) recheck(`${order.id} ${p.serial} 8130-9 AQI signature`, am, { order: order.id, serial: p.serial, form: plain(pm) ? pm.hash : null, ...(plain(am.subject) && Object.hasOwn(am.subject, 'stamp') ? { stamp: plain(p.aqi.by) ? (p.aqi.by.stamp ?? null) : null } : {}), ...(bindsSigner(am) ? signedBy(p.aqi.by, p.aqi.at) : {}), ...(p.aqi.selfSigned ? { selfSigned: true } : {}), ...(am.override ? { override: am.override } : {}) });
         const dm = plain(p.darApproval) ? p.darApproval.manifest : null;
         // The DAR recorder is the profile snapshot of whoever recorded the acceptance (a stamp profile when signed in, so not the
         // signing account): it must be present, and the recorded time must be the signature time.
         if (plain(dm) && (!plain(p.darApproval.by) || typeof p.darApproval.by.credentialId !== 'string' || !p.darApproval.by.credentialId.trim() || p.darApproval.at !== dm.at)) failures.push({ where: `${order.id} ${p.serial} DAR acceptance`, reason: 'the DAR acceptance recorder is missing or its time does not match the signature' });
-        if (plain(dm)) recheck(`${order.id} ${p.serial} DAR acceptance`, dm, { order: order.id, serial: p.serial, name: p.darApproval.name, designation: p.darApproval.designation, date: p.darApproval.date, form: plain(pm) ? pm.hash : null, aqi: plain(am) ? am.hash : null });
+        if (plain(dm)) recheck(`${order.id} ${p.serial} DAR acceptance`, dm, { order: order.id, serial: p.serial, name: p.darApproval.name, designation: p.darApproval.designation, date: p.darApproval.date, form: plain(pm) ? pm.hash : null, aqi: plain(am) ? am.hash : null, ...(bindsSigner(dm) ? signedBy(p.darApproval.by, p.darApproval.at) : {}) });
       });
     });
     // Flight Maneuver signatures: the MRB board decision, the CAR closure and the stock NC disposition approval are
     // recomputed from the stored record, the same way the work order signatures are.
     const fm = kind => plain(state.maneuver) && Array.isArray(state.maneuver[kind]) ? state.maneuver[kind].filter(plain) : [];
-    fm('mrb').forEach(m => { const d = m.decision; if (!plain(d) || !plain(d.manifest)) return; if (signerMismatch(d, d.manifest)) failures.push({ where: `${m.id} board decision`, reason: 'the recorded board decision signer or time does not match the signature' }); recheck(`${m.id} board decision`, d.manifest, mrbDecisionSubject(m, d.status, d.note, plain(d.manifest.subject) && d.manifest.subject.rationale === true)); });
-    fm('cars').forEach(car => { const c = car.closure; if (!plain(c) || !plain(c.manifest)) return; if (signerMismatch(c, c.manifest)) failures.push({ where: `${car.id} closure`, reason: 'the recorded closure signer or time does not match the signature' }); recheck(`${car.id} closure`, c.manifest, carClosureSubject(car, c.note, plain(c.manifest.subject) && c.manifest.subject.actionEvidence === true)); });
-    fm('ncs').forEach(t => { const r = t.resolution; if (!plain(r) || !plain(r.manifest)) return; if (signerMismatch(r, r.manifest)) failures.push({ where: `${t.id} disposition approval`, reason: 'the recorded approver or time does not match the signature' }); const a = plain(t.affected) ? t.affected : {}; recheck(`${t.id} disposition approval`, r.manifest, { id: t.id, partNumber: t.partNumber, serial: t.serial, lot: t.lot, disposition: plain(t.dispo) ? t.dispo.decision : undefined, defect: { defectCode: a.defectCode, defectName: a.defectName, subCode: a.subCode, subName: a.subName }, quantity: a.quantity, mrbId: t.mrbId, note: r.note }); });
+    fm('mrb').forEach(m => { const d = m.decision; if (!plain(d) || !plain(d.manifest)) return; if (signerMismatch(d, d.manifest)) failures.push({ where: `${m.id} board decision`, reason: 'the recorded board decision signer or time does not match the signature' }); recheck(`${m.id} board decision`, d.manifest, mrbDecisionSubject(m, d.status, d.note, plain(d.manifest.subject) && d.manifest.subject.rationale === true, d.by, d.at)); });
+    fm('cars').forEach(car => { const c = car.closure; if (!plain(c) || !plain(c.manifest)) return; if (signerMismatch(c, c.manifest)) failures.push({ where: `${car.id} closure`, reason: 'the recorded closure signer or time does not match the signature' }); recheck(`${car.id} closure`, c.manifest, carClosureSubject(car, c.note, plain(c.manifest.subject) && c.manifest.subject.actionEvidence === true, c.by, c.at)); });
+    fm('ncs').forEach(t => { const r = t.resolution; if (!plain(r) || !plain(r.manifest)) return; if (signerMismatch(r, r.manifest)) failures.push({ where: `${t.id} disposition approval`, reason: 'the recorded approver or time does not match the signature' }); recheck(`${t.id} disposition approval`, r.manifest, ncApprovalSubject(t, r.note, r.by, r.at, bindsSigner(r.manifest))); });
     return { ok: failures.length === 0, complete: legacy === 0, legacy, checked, recomputed, failures };
   }
   const actor = state => { const acct = accountActor(); return acct ? { name: acct.name, role: acct.role, credentialId: acct.credentialId } : profileSnapshot(state.profile); };
@@ -5920,8 +5961,8 @@ const OP_BOM_MAX = 12;
     const { order, fair, error } = fairOpen(state, id); if (error) return fail(error);
     const gaps = fairReview(state, order); if (gaps.length) return fail(gaps.join(' '));
     const v = inspectorSign(state, INSPECTION_BUYOFF_TYPES, execution); if (!v.ok) return v;
-    const at = new Date().toISOString(), snap = fairSnapshot(state, order);
-    fair.verified = { by: signerOf(state, v), at, manifest: signManifest(state, 'AS9102 FAIR verified (blocks 20 and 21)', { ...snap, rawReasons: [...fair.reasons], ...(v.override ? { override: v.override } : {}) }, at) };
+    const at = new Date().toISOString(), snap = fairSnapshot(state, order), by = signerOf(state, v);
+    fair.verified = { by, at, manifest: signManifest(state, 'AS9102 FAIR verified (blocks 20 and 21)', { ...snap, rawReasons: [...fair.reasons], verifierStamp: by.stamp ?? null, ...signedBy(by, at), ...(v.override ? { override: v.override } : {}) }, at) };
     fair.status = 'Verified';
     record(state, order, `AS9102 FAIR ${fairId(order)} verified (blocks 20 and 21): ${fair.type} FAI, ${fair.chars.length} characteristics, nonconformance ${snap.form1.nonconformance}.`);
     return { ok: true, message: 'FAIR verified. A second person reviews and approves it in box 22 next.' };
@@ -5934,7 +5975,8 @@ const OP_BOM_MAX = 12;
   // The person who verified a FAIR (boxes 20 and 21) does not sign box 22. The engine refuses it and validation refuses a
   // saved or imported FAIR that records it.
   const fairSelfReview = (fair, by) => !!(fair && plain(fair.verified) && plain(by) && ((plain(fair.verified.by) && by.credentialId === fair.verified.by.credentialId) || (plain(fair.verified.manifest) && plain(fair.verified.manifest.signer) && by.credentialId === fair.verified.manifest.signer.credentialId)));
-  const fairReviewSubject = (order, fair, by, at, override) => ({ fair: fairId(order), verified: fair.verified.manifest.hash, reviewer: plain(by) ? by.credentialId : null, reviewedAt: at, ...(override ? { override } : {}) });
+  // Box 22 signed by this build also binds the reviewer's inspection stamp (reviewerStamp, inside the hash); older ones do not.
+  const fairReviewSubject = (order, fair, by, at, override, withStamp = true) => ({ fair: fairId(order), verified: fair.verified.manifest.hash, reviewer: plain(by) ? by.credentialId : null, reviewedAt: at, ...(withStamp ? { reviewerStamp: plain(by) ? (by.stamp ?? null) : null, ...signedBy(by, at) } : {}), ...(override ? { override } : {}) });
   function reviewFair(state, id, execution) {
     { const d = denied('approve-wo', 'review the FAIR (box 22)'); if (d) return d; }
     const { order, fair, error } = fairOpen(state, id, true); if (error) return fail(error);
@@ -5954,8 +5996,8 @@ const OP_BOM_MAX = 12;
     if (fair.status !== 'Verified') return fail('Verify the FAIR first (blocks 20 and 21).');
     if (!plain(fair.reviewed)) return fail('Box 22 is not signed. A second person reviews and approves the FAIR in box 22 before the Skyryse QA approval.');
     const v = inspectorSign(state, ['Quality', '8130-9 Authorized Inspector'], execution); if (!v.ok) return v;
-    const at = new Date().toISOString();
-    fair.approved = { by: signerOf(state, v), at, manifest: signManifest(state, 'AS9102 FAIR Skyryse QA approval', { fair: fairId(order), verified: fair.verified.manifest.hash, reviewed: fair.reviewed.manifest.hash, ...(v.override ? { override: v.override } : {}) }, at) };
+    const at = new Date().toISOString(), by = signerOf(state, v);
+    fair.approved = { by, at, manifest: signManifest(state, 'AS9102 FAIR Skyryse QA approval', { fair: fairId(order), verified: fair.verified.manifest.hash, reviewed: fair.reviewed.manifest.hash, stamp: by.stamp ?? null, ...signedBy(by, at), ...(v.override ? { override: v.override } : {}) }, at) };
     fair.status = 'Approved';
     record(state, order, `AS9102 FAIR ${fairId(order)} approved by Skyryse QA.`);
     return { ok: true, message: `FAIR ${fairId(order)} approved.` };
@@ -6167,7 +6209,7 @@ const OP_BOM_MAX = 12;
     const form = { section, item, make, model, serial: p.serial, registration, checkDate: ['B', 'D'].includes(item) ? checkDate : '', partNumber: order.partNumber, revision: order.revision, description: order.title, basis,
       deviations: p.nc === 'Yes' ? `Final conformity IDR ${p.finalIdr}${a.deviations.length ? `: ${a.deviations.join(', ')}` : ''}` : 'None', rfc: p.rfc, mdl: `AA-CRT-0001 Rev ${p.mdlRev}`, bom: a.bom };
     form.prepared = { by: signerOf(state, v), at };
-    form.prepared.manifest = signManifest(state, 'FAA Form 8130-9 completed (SOP-860-002 Step 6.1)', { order: order.id, ...form, prepared: undefined, preparedStamp: form.prepared.by.stamp ?? null, ...(v.override ? { override: v.override } : {}) }, at);
+    form.prepared.manifest = signManifest(state, 'FAA Form 8130-9 completed (SOP-860-002 Step 6.1)', { order: order.id, ...form, prepared: undefined, preparedStamp: form.prepared.by.stamp ?? null, ...signedBy(form.prepared.by, at), ...(v.override ? { override: v.override } : {}) }, at);
     p.form = form; p.status = '8130-9 completed'; delete p.checks['6.1'];
     record(state, order, `FAA Form 8130-9 completed for S/N ${p.serial} against RFC ${p.rfc} (Section ${section === 'Aircraft' ? 'I' : section === 'Engine' ? 'II' : 'III'}, item ${item}). Deviations: ${form.deviations}.`);
     return { ok: true, message: '8130-9 completed. Confirm it matches the RFC, then the AQI review (Step 6.2).' };
@@ -6193,7 +6235,7 @@ const OP_BOM_MAX = 12;
     if (selfSigned && !(execution && (execution.selfSignAck === true || execution.selfSignAck === 'on'))) return { ok: false, warning: 'aqi-self-sign', message: 'Warning: you completed this 8130-9. The AQI review is normally given by a second qualified inspector (Step 6.2). Confirm you are signing your own 8130-9 as the AQI; the signature will record it.' };
     const at = new Date().toISOString();
     const aqiBy = signerOf(state, v);
-    p.aqi = { by: aqiBy, at, title: 'Authorized Quality Inspector', ...(selfSigned ? { selfSigned: true } : {}), manifest: signManifest(state, 'FAA Form 8130-9 Signature of Certifier (AQI, SOP-860-002 Step 6.2)', { order: order.id, serial: p.serial, form: p.form.prepared.manifest.hash, stamp: aqiBy.stamp ?? null, ...(selfSigned ? { selfSigned: true } : {}), ...(v.override ? { override: v.override } : {}) }, at) };
+    p.aqi = { by: aqiBy, at, title: 'Authorized Quality Inspector', ...(selfSigned ? { selfSigned: true } : {}), manifest: signManifest(state, 'FAA Form 8130-9 Signature of Certifier (AQI, SOP-860-002 Step 6.2)', { order: order.id, serial: p.serial, form: p.form.prepared.manifest.hash, stamp: aqiBy.stamp ?? null, ...signedBy(aqiBy, at), ...(selfSigned ? { selfSigned: true } : {}), ...(v.override ? { override: v.override } : {}) }, at) };
     p.status = 'AQI signed';
     record(state, order, `AQI review of the conformity package for S/N ${p.serial} accepted; 8130-9 signed by ${p.aqi.by.name}, ${v.override ? 'Master Access override' : 'stamp ' + v.holder.number}${selfSigned ? '; self-signed by the person who completed the 8130-9, warning acknowledged' : ''}.`);
     return { ok: true, message: 'AQI signed. Tag the LRU with F-860-004 and photograph it (Step 6.3).' };
@@ -6241,7 +6283,8 @@ const OP_BOM_MAX = 12;
     if (!(input?.aqiPresent === true || input?.aqiPresent === 'on')) return fail('Confirm the AQI was with the DAR for the whole visit (Step 7.3).');
     if (!(input?.fieldsSigned === true || input?.fieldsSigned === 'on')) return fail('Confirm the DAR signed and dated every required field on the 8130-9 (Step 7.6).');
     const at = new Date().toISOString();
-    p.darApproval = { name, designation, date, by: profileSnapshot(state.profile), at, manifest: signManifest(state, 'DAR acceptance of the 8130-9 recorded (SOP-860-002 Step 7.6)', { order: order.id, serial: p.serial, name, designation, date, form: p.form.prepared.manifest.hash, aqi: p.aqi.manifest.hash }, at) };
+    const darBy = profileSnapshot(state.profile);
+    p.darApproval = { name, designation, date, by: darBy, at, manifest: signManifest(state, 'DAR acceptance of the 8130-9 recorded (SOP-860-002 Step 7.6)', { order: order.id, serial: p.serial, name, designation, date, form: p.form.prepared.manifest.hash, aqi: p.aqi.manifest.hash, ...signedBy(darBy, at) }, at) };
     p.darName = name; p.darDesignation = designation; p.status = 'Conformed';
     record(state, order, `DAR ${name} (${designation}) accepted the conformity package and signed the 8130-9 for S/N ${p.serial} on ${date}. LRU CONFORMED.`);
     return { ok: true, message: `S/N ${p.serial} is CONFORMED. Update the ERP status and notify Certification.` };
@@ -8766,7 +8809,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   MES.seed = () => { const state = ensurePlanner(seedWithPlanner()); ['audits','certifications','supplierApprovals','qualityValues','qualityVerdicts','controlledDocuments','modelAdapterHistory','aiActionLog','aiSkillDrafts','aiSkillTriggers','aiSkillTriggerHistory','calibrationLog'].forEach(key=>{if(!Array.isArray(state[key]))state[key]=[];}); if(!plain(state.modelAdapter))state.modelAdapter=emptyModelAdapter(); ensureInventoryLedger(state); ensureResources(state); ensureProjects(state); syncPlanningBlockers(state); return state; };
   const upgradeWithPlanner = MES.upgrade;
   MES.upgrade = state => { const upgraded = upgradeWithPlanner(state); if (!upgraded) return null; ensurePlanner(upgraded); if(!Array.isArray(upgraded.controlledDocuments))upgraded.controlledDocuments=[];if(!Array.isArray(upgraded.modelAdapterHistory))upgraded.modelAdapterHistory=[];if(!Array.isArray(upgraded.aiActionLog))upgraded.aiActionLog=[];if(!Array.isArray(upgraded.aiSkillDrafts))upgraded.aiSkillDrafts=[];if(!Array.isArray(upgraded.aiSkillTriggers))upgraded.aiSkillTriggers=[];if(!Array.isArray(upgraded.aiSkillTriggerHistory))upgraded.aiSkillTriggerHistory=[];if(!Array.isArray(upgraded.calibrationLog))upgraded.calibrationLog=[];if(!plain(upgraded.modelAdapter))upgraded.modelAdapter=emptyModelAdapter(); ensureInventoryLedger(upgraded); ensureResources(upgraded); ensureProjects(upgraded); retireOutOfBoundSprints(upgraded); syncPlanningBlockers(upgraded); return upgraded; };
-  Object.assign(MES, { missingSignatures, carClosureSubject, mrbDecisionSubject, archivable, archiveOrders, archivedOrderValid, ownWorkRefusal, coveredBuildOps, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, verifyManifests, reviewFair, NFF, recordTraining, personTraining, trainingCurrentFor, trainingCertificateValid, ownWorkHit, OWN_WORK_EXEMPT_PEDIGREES, scryptHex, PIN_KDF, saveTraining, trainingCatalog, requiredTrainings, trainingDef, TRAINING_CODE_RE, importStamps, stampRegisterCsv, nextStampNumber, isPlaceholderStamp, STAMP_NUMBER_RE, wiAuthors, wiAuthorRefusal, wiPeerReviewRefusal, buildStamp, buildStampValid, supportActor, supportGrant, logSupport, SUPPORT_RULES, SUPPORT_KINDS, recordSupportAccess, noteDemoBypassRemoved, supportLogValid, recordCalibration, importCalibrations, updateCalibration, calibrationStatus, calibrationChainProblem, calibrationEntryHash, calibrationLegacyHash, calibrationLogChanges, recordCalibrationArchive, calibrationArchivable, calibrationArchiveSummary, calibrationArchivedEntries, calibrationArchiveHeldProblem, calibrationCapacity, CALIBRATION_LOG_LIMIT, calibrationCurrentIds, calibratedToolChecks, toolUseRecords, calibrationEntryValid, CALIBRATION_STATUSES });
+  Object.assign(MES, { missingSignatures, ncApprovalSubject, legacyEscapeValid, legacyEscapeBackfill, legacyEscapeChanges, carClosureSubject, mrbDecisionSubject, archivable, archiveOrders, archivedOrderValid, ownWorkRefusal, coveredBuildOps, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, verifyManifests, reviewFair, NFF, recordTraining, personTraining, trainingCurrentFor, trainingCertificateValid, ownWorkHit, OWN_WORK_EXEMPT_PEDIGREES, scryptHex, PIN_KDF, saveTraining, trainingCatalog, requiredTrainings, trainingDef, TRAINING_CODE_RE, importStamps, stampRegisterCsv, nextStampNumber, isPlaceholderStamp, STAMP_NUMBER_RE, wiAuthors, wiAuthorRefusal, wiPeerReviewRefusal, buildStamp, buildStampValid, supportActor, supportGrant, logSupport, SUPPORT_RULES, SUPPORT_KINDS, recordSupportAccess, noteDemoBypassRemoved, supportLogValid, recordCalibration, importCalibrations, updateCalibration, calibrationStatus, calibrationChainProblem, calibrationEntryHash, calibrationLegacyHash, calibrationLogChanges, recordCalibrationArchive, calibrationArchivable, calibrationArchiveSummary, calibrationArchivedEntries, calibrationArchiveHeldProblem, calibrationCapacity, CALIBRATION_LOG_LIMIT, calibrationCurrentIds, calibratedToolChecks, toolUseRecords, calibrationEntryValid, CALIBRATION_STATUSES });
   Object.assign(MES, { SOURCE_INSPECTION_CLASS, SOURCE_INSPECTION_CODES, CONFORMITY_SUBCODES, TEST_SUBCODES, operationType, migrateOperationTypes, sourceInspectionCodes, conformitySubcodes, testSubcodes, operationSubcodes, operationSubcode, saveSourceInspectionCodes, saveOperationSubcodes, mrbTrainingTiers, saveMrbTrainingTiers, recordSourceInspection, sourceInspectionHolds, sourceInspectionWorkspaceValid });
   MES.roleDeniedMessage = roleDeniedMessage;
   const validateWithSourceInspection = MES.validate;
@@ -9063,7 +9106,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (!(t.escape === null || (plain(t.escape) && ESCAPED_FROM.includes(t.escape.from) && str(t.escape.detectedAt ?? '', 60, 0)))) return false;
     if (!(t.dispo === null || (plain(t.dispo) && MES.DISPOSITIONS.includes(t.dispo.decision) && text(t.dispo.note, 500) && snapshotValid(t.dispo) && timestamp(t.dispo.at)))) return false;
     if (!(t.affected === null || (plain(t.affected) && str(t.affected.defectCode, 12) && str(t.affected.defectName, 80) && (t.affected.subCode === null || str(t.affected.subCode, 12)) && Number.isInteger(t.affected.quantity) && Array.isArray(t.affected.serials) && t.affected.serials.every(x => str(x, 60))))) return false;
-    if (!(t.resolution === null || (plain(t.resolution) && text(t.resolution.note, 1500) && actorValid(t.resolution.by) && timestamp(t.resolution.at)))) return false;
+    if (!(t.resolution === null || (plain(t.resolution) && text(t.resolution.note, 1500) && actorValid(t.resolution.by) && timestamp(t.resolution.at) && (t.resolution.legacy === undefined || (MES.legacyEscapeValid(t.resolution.legacy) && !Object.hasOwn(t.resolution, 'manifest')))))) return false;
     if ((t.status === 'Resolved') !== (t.resolution !== null)) return false;
     return (t.mrbId === null || str(t.mrbId, 24)) && (t.carId === null || str(t.carId, 24)) && (t.reworkOrderId === null || str(t.reworkOrderId, 24)) && Array.isArray(t.dispoReturns || []);
   }
@@ -9080,6 +9123,8 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     (Array.isArray(m.ncs) ? m.ncs : []).forEach(t => { if (plain(t) && t.type === 'IDR') t.type = 'NC'; });
     (Array.isArray(m.cars) ? m.cars : []).forEach(c => { if (plain(c) && c.sourceType === 'IDR') c.sourceType = 'NC'; });
     (Array.isArray(state.orders) ? state.orders : []).forEach(o => (plain(o) && Array.isArray(o.tickets) ? o.tickets : []).forEach(t => { if (plain(t) && t.type === 'IDR') t.type = 'NC'; }));
+    // A stock NC migrated from a closed escape before the migration recorded it gets its legacy record (MES.legacyEscapeBackfill).
+    (Array.isArray(m.ncs) ? m.ncs : []).forEach(t => { const mk = MES.legacyEscapeBackfill(t); if (mk) t.resolution.legacy = mk; });
     if (m.__ticketsV2 === 2) return;
     const h = (at, action, who) => ({ at, action, actor: who });
     if (Array.isArray(m.fracas)) {
@@ -9088,7 +9133,8 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     }
     if (Array.isArray(m.escapes)) {
       const base = Math.max(9000, ...[...(state.orders || []).flatMap(o => (o.tickets || []).map(t => Number(String(t.id).split('-')[1]) || 0)), ...(Array.isArray(m.ncs) ? m.ncs : []).map(t => Number(String(t.id).split('-')[1]) || 0)]);
-      m.ncs = [...(Array.isArray(m.ncs) ? m.ncs : []), ...m.escapes.map((e, i) => ({ id: `NC-${String(base + i + 1).padStart(4, '0')}`, type: 'NC', title: e.title, description: e.description, status: e.status === 'Closed' ? 'Resolved' : 'Open', hold: false, partNumber: e.partNumber, revision: '', serial: (e.serials || [])[0] || '', lot: '', quantity: Math.max(1, (e.serials || []).length), foundAt: ({ 'Receiving inspection': 'Receiving inspection', Customer: 'Customer', 'Flight test': 'Field' })[e.detectedAt] || 'Other', pedigree: 'Production', escape: { from: e.escapedFrom, detectedAt: e.detectedAt || '' }, createdAt: e.raisedAt, raisedBy: e.raisedBy, dispo: null, dispoReturns: [], affected: null, resolution: e.status === 'Closed' ? (e.closure || { note: 'Closed before migration.', by: e.raisedBy, at: e.raisedAt }) : null, mrbId: null, carId: e.carId || null, reworkOrderId: null, containment: e.containment || null, attachments: e.attachments || [], history: [...(e.history || []), h(now(), `Migrated from escape ${e.id}.`, 'system')] }))];
+      const migratedAt = now();
+      m.ncs = [...(Array.isArray(m.ncs) ? m.ncs : []), ...m.escapes.map((e, i) => ({ id: `NC-${String(base + i + 1).padStart(4, '0')}`, type: 'NC', title: e.title, description: e.description, status: e.status === 'Closed' ? 'Resolved' : 'Open', hold: false, partNumber: e.partNumber, revision: '', serial: (e.serials || [])[0] || '', lot: '', quantity: Math.max(1, (e.serials || []).length), foundAt: ({ 'Receiving inspection': 'Receiving inspection', Customer: 'Customer', 'Flight test': 'Field' })[e.detectedAt] || 'Other', pedigree: 'Production', escape: { from: e.escapedFrom, detectedAt: e.detectedAt || '' }, createdAt: e.raisedAt, raisedBy: e.raisedBy, dispo: null, dispoReturns: [], affected: null, resolution: e.status === 'Closed' ? { ...(e.closure || { note: 'Closed before migration.', by: e.raisedBy, at: e.raisedAt }), legacy: { source: 'escape', escapeId: String(e.id), migratedAt } } : null, mrbId: null, carId: e.carId || null, reworkOrderId: null, containment: e.containment || null, attachments: e.attachments || [], history: [...(e.history || []), h(migratedAt, `Migrated from escape ${e.id}.`, 'system')] }))];
       delete m.escapes;
     }
     if (Array.isArray(m.feedback)) {
@@ -9435,7 +9481,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const who = actor(state);
     if (sameActor(who, car.rootCause.by)) return fail('Separation of duties: the person who recorded the root cause cannot close the request. Use another Quality credential.');
     const at = now();
-    const subject = MES.carClosureSubject(car, note, true);
+    const subject = MES.carClosureSubject(car, note, true, who, at);
     car.closure = { note, by: who, at, manifest: MES.signManifest(state, 'Corrective action closure', subject, at) };
     car.status = 'Closed';
     log(state, car, `Closed: ${note}`);
@@ -9507,9 +9553,9 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (missing.length) return fail(`Every seat votes before the decision. Waiting on ${missing.join(', ')}.`);
     note = clean(note); if (!text(note, 2000)) return fail('Record the board decision rationale (1 to 2,000 characters).');
     const status = m.votes.every(v => v.vote === 'Approve') ? 'Approved' : 'Rejected';
-    const at = now();
-    const subject = MES.mrbDecisionSubject(m, status, note, true);
-    m.decision = { status, note, by: actor(state), at, manifest: MES.signManifest(state, `MRB ${status.toLowerCase()}`, subject, at) };
+    const at = now(), decidedBy = actor(state);
+    const subject = MES.mrbDecisionSubject(m, status, note, true, decidedBy, at);
+    m.decision = { status, note, by: decidedBy, at, manifest: MES.signManifest(state, `MRB ${status.toLowerCase()}`, subject, at) };
     m.status = status;
     log(state, m, `Board decision ${status}: ${note}`);
     const hit = findTicket(state, m.orderId, m.ticketId);
@@ -9660,7 +9706,7 @@ const ATTACH_KINDS = Object.freeze(['mrb','cars','ncs','sprs']);
     const qty = Number(input && input.quantity || t.quantity); if (!Number.isInteger(qty) || qty < 1 || qty > t.quantity) return fail(`Affected quantity is 1 to ${t.quantity}.`);
     t.affected = { ...code, quantity: qty, serials: t.serial ? [t.serial] : [] };
     const at = now();
-    const subject = { id: t.id, partNumber: t.partNumber, serial: t.serial, lot: t.lot, disposition: t.dispo.decision, defect: code, quantity: qty, mrbId: t.mrbId, note };
+    const subject = MES.ncApprovalSubject(t, note, who, at, true);
     t.resolution = { note, by: who, at, manifest: MES.signManifest(state, 'NC disposition approval', subject, at) };
     t.status = 'Resolved';
     if (t.dispo.decision === 'Use for Dev' && t.pedigree === 'Production') { t.pedigree = 'Development'; log(state, t, 'Pedigree downgraded Production to Development by QA Manager approval of Use for Dev.'); }
@@ -11941,6 +11987,9 @@ try{const raw=localStorage.getItem(KEY);
           loadProblem=why&&why.detail?why.detail:'The saved workspace does not match the current record format.';
         }
       }
+      // Every signature is recomputed before the saved copy is used, as the server does on every write (#315). This runs before the
+      // calibration seal below is written back, so a copy that fails here is refused with the stored copy unchanged.
+      if(saved){const mv=MES.verifyManifests(saved);if(!mv.ok){const f=mv.failures[0]||{};saved=null;loadProblem='A signed record failed verification at '+(f.where||'an unknown record')+': '+(f.reason||'invalid manifest')+'.';}}
       // A calibration log from before the chain is sealed by MES.upgrade. Standalone, the seal is written back before the
       // workspace is used, so the baseline it records is durable from the first load and a later reload cannot reseal a
       // shortened log (#116, #117). The calibration start marker added on upgrade is written back the same way (#162).
@@ -11950,8 +11999,6 @@ try{const raw=localStorage.getItem(KEY);
       if(saved&&!(window.skServer&&window.skServer.active)&&(addedSeal||addedStart)&&MES.validate(saved)){
         try{localStorage.setItem(KEY,JSON.stringify(saved));}catch(e){saved=null;loadProblem=addedSeal?'The calibration log needs a one-time seal for this build, but browser storage refused to save it (it may be full). Free browser storage, then try again.':'The calibration log needs a start marker added for this build, but browser storage refused to save it (it may be full). Free browser storage, then try again.';}
       }
-      // Every signature is recomputed before the saved copy is used, as the server does on every write (#315).
-      if(saved){const mv=MES.verifyManifests(saved);if(!mv.ok){const f=mv.failures[0]||{};saved=null;loadProblem='A signed record failed verification at '+(f.where||'an unknown record')+': '+(f.reason||'invalid manifest')+'.';}}
       if(saved){
         state=saved;
         const aside=(saved.quarantine||[]).map(q=>q&&q.order&&q.order.id).filter(Boolean);
