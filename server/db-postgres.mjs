@@ -166,11 +166,12 @@ export async function restorePostgres(connectionString, archivePath, options = {
   const listPath = path.join(dir, 'restore.list');
   try {
     fs.writeFileSync(listPath, list, { mode: 0o600 });
-    const args = ['--exit-on-error', '--single-transaction', '--no-owner', '--use-list', listPath, '--dbname', connectionString];
+    const target = pgRestoreTarget(connectionString);
+    const args = ['--exit-on-error', '--single-transaction', '--no-owner', '--use-list', listPath, '--dbname', target.dbname];
     if (options.clean) args.push('--clean', '--if-exists');
     if (Array.isArray(options.extraArgs)) args.push(...options.extraArgs);
     args.push(archivePath);
-    await runPgRestore(args);
+    await runPgRestore(args, false, target.env);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   return 0;
 }
@@ -182,9 +183,33 @@ export async function restoreListWithoutSessions(archivePath) {
   return list.split('\n').filter(line => !/^\d+;.*\bTABLE DATA \S+ sessions\b/.test(line)).join('\n');
 }
 
-function runPgRestore(args, capture = false) {
+// The --dbname argument without its password, and the password for the child's PGPASSWORD (#234). Anyone who can read
+// the process table sees a program's arguments while it runs, so the password goes to pg_restore and pg_dump through their own
+// environment instead. Both connection string forms are read: a postgres:// or postgresql:// URI (the password part of
+// its user info), and keyword=value pairs (password=... or password='...'). A string with no password is passed unchanged.
+export function pgRestoreTarget(connectionString) {
+  const raw = String(connectionString);
+  if (/^postgres(ql)?:\/\//i.test(raw)) {
+    let url;
+    try { url = new URL(raw); } catch { return { dbname: raw, env: {} }; }
+    // A password can also ride in the query string (?password=...).
+    const query = url.searchParams.get('password');
+    if (!url.password && query === null) return { dbname: raw, env: {} };
+    const password = url.password ? decodeURIComponent(url.password) : query;
+    url.password = '';
+    url.searchParams.delete('password');
+    return { dbname: url.href, env: { PGPASSWORD: password } };
+  }
+  const keyword = /(^|\s)password\s*=\s*('(?:\\.|[^'\\])*'|[^\s']\S*)/;
+  const match = raw.match(keyword);
+  if (!match) return { dbname: raw, env: {} };
+  const value = match[2].startsWith("'") ? match[2].slice(1, -1).replace(/\\(.)/g, '$1') : match[2];
+  return { dbname: raw.replace(keyword, '$1').trim(), env: { PGPASSWORD: value } };
+}
+
+function runPgRestore(args, capture = false, env = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn('pg_restore', args, { stdio: ['ignore', capture ? 'pipe' : 'ignore', 'ignore'] });
+    const child = spawn('pg_restore', args, { stdio: ['ignore', capture ? 'pipe' : 'ignore', 'ignore'], env: { ...process.env, ...env } });
     let out = '';
     if (capture) child.stdout.on('data', chunk => { out += chunk; });
     child.once('error', reject);
@@ -344,7 +369,9 @@ function makeStore(pool, query, inTransaction, connectionString) {
     async supersedeEvidence(id, by, reason) { const r = await query('UPDATE evidence SET superseded_by=$1,superseded_at=$2,superseded_reason=$3 WHERE id=$4 AND superseded_by IS NULL', [by,now(),reason,id]); return r.rowCount ? store.evidenceMeta(id) : null; },
     async backup(destination) {
       return new Promise((resolve, reject) => {
-        const child = spawn('pg_dump', ['--format=custom', '--file', destination, '--dbname', connectionString], { stdio: 'ignore' });
+        // The password goes through the child's environment, not its arguments (#234; see pgRestoreTarget).
+        const target = pgRestoreTarget(connectionString);
+        const child = spawn('pg_dump', ['--format=custom', '--file', destination, '--dbname', target.dbname], { stdio: 'ignore', env: { ...process.env, ...target.env } });
         child.once('error', reject);
         child.once('exit', (code, signal) => {
           if (code === 0) resolve(0);

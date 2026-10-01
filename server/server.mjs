@@ -1113,7 +1113,7 @@ export function createServer(options = {}) {
         send(res, r.status, r.body); return;
       }
       if (route === '/auth/hash-report' && m === 'GET') { if (!manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can read the password hash report.' }); return; } await wrapped; send(res, 200, { params: SCRYPT, ...await hashReport() }); return; }
-      if (route === '/audit' && m === 'GET') { if (!manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can read the audit log.' }); return; } send(res, 200, { rows: await store.auditRows(Number(url.searchParams.get('limit')) || 200) }); return; }
+      if (route === '/audit' && m === 'GET') { if (!manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can read the audit log.' }); return; } send(res, 200, { rows: await store.auditRows(pageLimit(url.searchParams.get('limit'), 200)) }); return; }
       send(res, 404, { error: 'Not found' });
     } catch (e) {
       if (e.status === 413) { send(res, 413, { error: e.message, limit: MAX_REQUEST_BYTES }, { Connection: 'close' }); return; }
