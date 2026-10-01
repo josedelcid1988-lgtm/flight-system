@@ -59,6 +59,7 @@ failing suite, `tests/suite_<name>.log`. `--only a,b` runs named suites.
 | --- | --- |
 | `node tests/qa_full.mjs` | 310 checks: engine rules, guards, signature manifest verification, UI flows, rendering at 1440 and 375 px. Current target: 310 pass, 0 skip, 0 fail. |
 | `node tests/qa_e2e.mjs` | 30 end-to-end flows: every order type and every ticket type driven to closure, with actions, typed fields, role handoffs and gates counted per flow. Writes `qa_e2e_results.json`. |
+| `node tests/test_suite_judge.mjs` | The suite runner's verdict: `qa_e2e` fails when its final workspace does not pass `MES.validate` (`valid false`), or when its result line no longer says whether it is valid, even if every flow passed; `qa_e2e` also exits non-zero on an invalid final workspace. |
 | `node tests/qa_multi.mjs` | 165 checks across modules (Flight Control, Flight Plan, Flight Maneuver). |
 | `node tests/pilot_rehearsal.mjs` | Three scenarios run through the real pilot accounts. |
 | `node tests/stable_test.mjs` | Table layout stability across both builds, four widths and eight views (64 checks). Seeds its own Master Access account; no file on disk is needed. |
