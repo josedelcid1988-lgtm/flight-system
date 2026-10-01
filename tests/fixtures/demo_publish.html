@@ -3336,6 +3336,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // Box 22 became mandatory before the Skyryse QA approval on this date (commit 42103cb). An approval recorded since then
   // must keep its box 22 review, even one signed before the approval bound the box 22 hash.
   const FAIR_BOX22_REQUIRED_FROM = '2026-09-26T06:17:24.000Z';
+  // signManifest has stored the signed subject on every manifest since this date (commit 222d5bc).
+  const MANIFEST_SUBJECTS_FROM = '2026-09-27T18:09:39.000Z';
   // The AQI self-signature flag must match whether the AQI signer completed the 8130-9.
   const aqiSelfSignMismatch = p => false /* DEMO D-38 */ && plain(p) && plain(p.form) && plain(p.form.prepared) && plain(p.form.prepared.by) && plain(p.aqi) && plain(p.aqi.by) && (p.aqi.by.credentialId === p.form.prepared.by.credentialId) !== (p.aqi.selfSigned === true);
   // A signed record whose signature (or the record itself) is missing, for a stage the record has reached. These are
@@ -3414,7 +3416,10 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       if (plain(order.closure) && plain(order.closure.manifest)) recheck(`${order.id} closure`, order.closure.manifest, closureSubject(state, order));
       const fair = order.fair;
       if (plain(fair) && plain(fair.approved) && plain(fair.approved.manifest) && signerMismatch(fair.approved, fair.approved.manifest)) failures.push({ where: `${order.id} FAIR approval`, reason: 'the recorded approver or time does not match the approval signature' });
-      if (plain(fair) && plain(fair.verified) && plain(fair.verified.manifest) && plain(fair.verified.by) && plain(fair.verified.manifest.signer) && fair.verified.by.credentialId !== fair.verified.manifest.signer.credentialId) failures.push({ where: `${order.id} FAIR verification`, reason: 'the recorded verifier does not match the verification signature' });
+      if (plain(fair) && plain(fair.verified) && plain(fair.verified.manifest) && signerMismatch(fair.verified, fair.verified.manifest)) failures.push({ where: `${order.id} FAIR verification`, reason: 'the recorded verifier or verification time does not match the verification signature' });
+      // Manifests have stored their signed subject since MANIFEST_SUBJECTS_FROM. A FAIR verification signed since then must keep it,
+      // or the content comparison below would be skipped.
+      if (plain(fair) && plain(fair.verified) && plain(fair.verified.manifest) && !plain(fair.verified.manifest.subject) && String(fair.verified.at || '') >= MANIFEST_SUBJECTS_FROM) failures.push({ where: `${order.id} FAIR verification`, reason: 'the verification signature has lost its signed FAIR content' });
       // Box 22 chains to the verified FAIR, and an approval signed since box 22 was bound into it chains to box 22.
       // An approval signed before that carries no reviewed key and is checked as it was signed.
       if (plain(fair) && plain(fair.reviewed) && plain(fair.reviewed.manifest) && plain(fair.verified) && plain(fair.verified.manifest)) { recomputed++; const rm = fair.reviewed.manifest, current = plain(rm.subject) && Object.hasOwn(rm.subject, 'reviewer'); const sub = current ? fairReviewSubject(order, fair, fair.reviewed.by, fair.reviewed.at, rm.override) : { fair: fairId(order), verified: fair.verified.manifest.hash, ...(rm.override ? { override: rm.override } : {}) }; if (sha256(canonical(sub)) !== fair.reviewed.manifest.hash) failures.push({ where: `${order.id} FAIR box 22`, reason: 'box 22 does not chain to the verified FAIR' }); }
@@ -3440,6 +3445,9 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
         if (aqiSelfSignMismatch(p)) failures.push({ where: `${order.id} ${p.serial} 8130-9 AQI signature`, reason: 'the AQI self-signature record does not match who completed the 8130-9' });
         if (plain(am)) recheck(`${order.id} ${p.serial} 8130-9 AQI signature`, am, { order: order.id, serial: p.serial, form: plain(pm) ? pm.hash : null, ...(p.aqi.selfSigned ? { selfSigned: true } : {}), ...(am.override ? { override: am.override } : {}) });
         const dm = plain(p.darApproval) ? p.darApproval.manifest : null;
+        // The DAR recorder is the profile snapshot of whoever recorded the acceptance (a stamp profile when signed in, so not the
+        // signing account): it must be present, and the recorded time must be the signature time.
+        if (plain(dm) && (!plain(p.darApproval.by) || typeof p.darApproval.by.credentialId !== 'string' || !p.darApproval.by.credentialId.trim() || p.darApproval.at !== dm.at)) failures.push({ where: `${order.id} ${p.serial} DAR acceptance`, reason: 'the DAR acceptance recorder is missing or its time does not match the signature' });
         if (plain(dm)) recheck(`${order.id} ${p.serial} DAR acceptance`, dm, { order: order.id, serial: p.serial, name: p.darApproval.name, designation: p.darApproval.designation, date: p.darApproval.date, form: plain(pm) ? pm.hash : null, aqi: plain(am) ? am.hash : null });
       });
     });

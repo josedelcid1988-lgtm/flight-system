@@ -37,6 +37,8 @@ await expectFail('changing the recorded 8130-9 preparer away from the form signe
 await expectFail('changing the recorded AQI signer away from the AQI signature fails',pkg+"p.aqi.by={...p.aqi.by,credentialId:'ACCT-other'};",'8130-9 AQI signature');
 await expectFail('removing the completed 8130-9 from a conformed package fails rather than skipping its AQI and DAR checks',pkg+"p.form=null;",'8130-9');
 await expectFail('removing the AQI signature from a conformed package fails',pkg+"p.aqi=null;",'8130-9 AQI signature');
+await expectFail('removing who recorded the DAR acceptance fails',pkg+"delete p.darApproval.by;",'DAR acceptance');
+await expectFail('changing when the DAR acceptance was recorded fails',pkg+"p.darApproval.at='2026-01-01T00:00:00.000Z';",'DAR acceptance');
 await expectFail('removing the DAR acceptance from a conformed package fails',pkg+"p.darApproval=null;",'DAR acceptance');
 await expectFail('removing the AQI signature from a package marked AQI signed fails',pkg+"p.status='AQI signed';p.darApproval=null;p.aqi=null;",'8130-9 AQI signature');
 await expectFail('removing the DAR acceptance from a closed package fails',pkg+"p.status='Closed';p.darApproval=null;",'DAR acceptance');
@@ -92,6 +94,10 @@ await expectFail('changing the FAI reasons after verification fails',F+"f.reason
 await expectFail('removing box 22 after the approval fails',F+"delete f.reviewed;",'FAIR approval');
 await expectFail('removing the Skyryse QA approval from an Approved FAIR fails',F+"f.approved=null;",'FAIR approval');
 await expectFail('removing the verification from a Verified or Approved FAIR fails',F+"f.verified=null;",'FAIR verification');
+await expectFail('changing when the FAIR was verified fails',F+"f.verified.at='2026-01-01T00:00:00.000Z';",'FAIR verification');
+await expectFail('deleting the signed content of a current FAIR verification fails rather than skipping the content check',F+"delete f.verified.manifest.subject;f.chars=[];",'FAIR verification');
+r=await run(([id])=>{const s=structuredClone(state),f=s.orders.find(o=>o.id===id).fair;const at='2026-09-22T10:00:00.000Z';f.verified={...f.verified,at,manifest:{...f.verified.manifest,at}};delete f.verified.manifest.subject;const v=MES.verifyManifests(s);return v.failures.filter(x=>/FAIR verification/.test(x.where)).map(x=>x.reason);},[fair.id]);
+ok('a FAIR verified before manifests stored their subject (no subject, verified before 2026-09-27) is not failed for the missing subject',!r.some(x=>/lost its signed FAIR content/.test(x)),JSON.stringify(r));
 await expectFail('changing who gave the Skyryse QA approval fails',F+"f.approved.by={...f.approved.by,credentialId:'ACCT-other',name:'Someone Else'};",'FAIR approval');
 r=await run(([id])=>{const s=structuredClone(state),f=s.orders.find(o=>o.id===id).fair;f.approved=null;return {valid:MES.validate(s)};},[fair.id]);
 ok('MES.validate refuses an Approved FAIR with no approval record',r.valid===false,JSON.stringify(r));
