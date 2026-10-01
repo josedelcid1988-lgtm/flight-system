@@ -504,6 +504,20 @@ await check('a change whose audit row fails is not committed', async () => {
   } finally { restore(); atomic.store.close(); }
 });
 
+// #334: an identity-provider account refuses a password sign-in with the same text and the same password work as an
+// unknown account, so neither the message nor the response time tells an attacker the username exists.
+await check('an identity-provider account takes as long to refuse as an unknown account', async () => {
+  await server.store.upsertAccount({ username: 'sso-timing', displayName: 'SSO Timing', salt: '', hash: '', role: 'tech', roles: ['tech'], sso: true });
+  const timed = async username => { const t = process.hrtime.bigint(); const r = await api('POST', '/auth/session', { body: { username, password: 'not-the-password-1' } }); return { ms: Number(process.hrtime.bigint() - t) / 1e6, status: r.status, error: r.json && r.json.error }; };
+  const median = list => [...list].sort((x, y) => x - y)[Math.floor(list.length / 2)];
+  const sso = [], unknown = [];
+  for (let i = 0; i < 3; i += 1) { sso.push(await timed('sso-timing')); unknown.push(await timed(`no-such-user-${i}`)); }
+  assert.ok([...sso, ...unknown].every(r => r.status === 401), 'both are refused with 401');
+  assert.equal(new Set([...sso, ...unknown].map(r => r.error)).size, 1, 'both get the same refusal text');
+  const s = median(sso.map(r => r.ms)), u = median(unknown.map(r => r.ms));
+  assert.ok(s >= u * 0.5, `identity-provider refusal took ${s.toFixed(1)} ms against ${u.toFixed(1)} ms for an unknown account`);
+});
+
 // #27: with no host named, the server listens on loopback only; a wider bind must be asked for.
 await check('the server binds 127.0.0.1 unless a host is named', async () => {
   assert.equal(DEFAULT_HOST, '127.0.0.1');

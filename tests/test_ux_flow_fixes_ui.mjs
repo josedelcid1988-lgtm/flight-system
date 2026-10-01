@@ -382,6 +382,14 @@ try {
     }));
     ok('the engine recording refusal says operation on a non-Installation order', /before this operation can be bought off/.test(engRec[0]) && !/installation/i.test(engRec[0]), engRec[0]);
     ok('the engine recording refusal keeps installation on an Installation order', /before this installation operation can be bought off/.test(engRec[1]), engRec[1]);
+    // Codex P2 on 81e6402: Edit Op shows the PO fields for External Testing too, so its PO can be corrected and other edits are not refused.
+    const editPO = await page.evaluate(() => {
+      const o = state.orders.find(x => x.id === 'WO-10006'), op = o.operations.find(x => !x.done), keep = { c: op.classification, po: op.externalPO };
+      op.classification = MES.EXTERNAL_CLASSES.find(c => c !== MES.EXTERNAL_CLASS); op.externalPO = { number: 'PO-777', line: '1' };
+      try { openOrder(o.id); sequenceEditDialog(op.id); const f = document.getElementById('edit-po-number'); return { shown: !!f, value: f ? f.value : null }; }
+      finally { document.querySelector('dialog[open] [data-action="close-dialog"], dialog[open] .dialog-close')?.click(); document.querySelectorAll('dialog[open]').forEach(d => d.close()); op.classification = keep.c; op.externalPO = keep.po; }
+    });
+    ok('Edit Op shows the PO number for an External Testing operation', editPO.shown && editPO.value === 'PO-777', JSON.stringify(editPO));
     // Codex security P1: the engine refuses a buy-off on an external work center until Quality's receipt is accepted. A missing receipt is not a pass.
     const extGate = await page.evaluate(() => {
       const attempt = receipt => {
