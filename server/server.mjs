@@ -203,7 +203,12 @@ const TRAINING_TAIL = `<script id="flight-training">(function(){var MARK=${JSON.
   + 'var sf=window.saveFile;if(typeof sf==="function")window.saveFile=async function(blob,name){var n=/^TRAINING-/.test(String(name))?name:"TRAINING-"+name;if(blob&&/html/i.test(blob.type||"")){try{blob=new Blob([mark(await blob.text())],{type:blob.type});}catch(e){}}trust++;try{return await sf(blob,n);}finally{trust--;}};'
   + 'var click=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){'
   + 'if(this.hasAttribute("download")){if(this.download&&!/^TRAINING-/.test(this.download))this.download="TRAINING-"+this.download;'
-  + 'var b=blobs.get(this.href);if(b&&!trusted.has(this.href)&&(/html/i.test(b.type||"")||/\\.html?$/i.test(this.download))){var u=make.call(URL,new Blob([MARK,b],{type:b.type||"text/html"}));this.href=u;setTimeout(function(){revoke.call(URL,u);},60000);}}'
+  // Any other HTML file is saved as a wrapper page: the mark, then the original document escaped into a sandboxed
+  // frame with no permissions, so its own CSS or script cannot hide or remove the mark.
+  + 'var b=blobs.get(this.href);if(b&&!trusted.has(this.href)&&(/html/i.test(b.type||"")||/\\.html?$/i.test(this.download))){var name=this.download;'
+  + 'b.text().then(function(t){var src=t.replace(/&/g,"&amp;").replace(/"/g,"&quot;");'
+  + 'var page="<!doctype html><html><head><meta charset=\\"utf-8\\"><title>TRAINING, NOT THE RECORD</title><style>html,body{margin:0;height:100%}iframe{display:block;border:0;width:100%;height:calc(100vh - 120px)}</style></head><body>"+MARK+"<iframe sandbox title=\\"Downloaded document\\" srcdoc=\\""+src+"\\"></iframe></body></html>";'
+  + 'var a=document.createElement("a");trust++;try{a.href=URL.createObjectURL(new Blob([page],{type:"text/html"}));}finally{trust--;}a.download=name;click.call(a);var u=a.href;setTimeout(function(){URL.revokeObjectURL(u);},60000);});return;}}'
   + 'return click.apply(this,arguments);};'
   + `function strip(){if(document.body&&!document.querySelector(".training-banner")){var d=document.createElement("div");d.className="training-banner";d.setAttribute("role","note");d.textContent=${JSON.stringify(TRAINING_MARK)};document.body.appendChild(d);}}`
   + 'function title(){if(!/^Training \\u00b7 /.test(document.title))document.title="Training \\u00b7 "+document.title;}'
