@@ -288,6 +288,18 @@ function surfaces(state) {
     const removed = host.withAccount(me, () => MES.removeOrderOperation(ev, evOrder.id, first.id, 'Not needed on this build.'), ev);
     check('a standard rework pair whose partner holds a recording is refused before either operation is removed', removed.ok === false && /standard rework pair holds files/.test(removed.message) && JSON.stringify(ev) === before);
   }
+  // A split copies the order's captured sequence baseline too; removal records stay on the parent there as well.
+  {
+    const bl = structuredClone(state), admin = { username: 'quar-admin', displayName: 'Flight Master', role: 'admin' };
+    const bOrder = bl.orders.find(o => ['Draft', 'Kitting'].includes(o.status) && o.quantity >= 2 && !MES.engineeringChange(o) && !MES.pendingSequenceChange(o));
+    const bOp = bOrder.operations[0];
+    host.withAccount(admin, () => MES.addAttachment(bl, bOrder.id, bOp.id, photo), bl);
+    host.withAccount(admin, () => MES.removeAttachment(bl, bOrder.id, bOp.id, bOp.attachments.at(-1).id, REASON), bl);
+    bOrder.sequenceBaseline = structuredClone(bOrder.operations);
+    const split = host.withAccount(admin, () => MES.splitOrder(bl, bOrder.id, 1), bl);
+    const child = split.ok && bl.orders.find(o => o.splitFrom === bOrder.id);
+    check('a split leaves no parent removal record in the new order\u2019s captured sequence baseline', !!child && (!Array.isArray(child.sequenceBaseline) || child.sequenceBaseline.every(op => op.quarantinedAttachments === undefined)) && bOp.quarantinedAttachments.length >= 1 && MES.validate(bl));
+  }
   // A split request copies files as a plain split does, so it is held to the same workspace limit.
   {
     const heavyReq = structuredClone(state), admin = { username: 'quar-admin', displayName: 'Flight Master', role: 'admin' };
@@ -317,7 +329,7 @@ function surfaces(state) {
   check('every removal manifest verifies', verified.ok && verified.recomputed > 0);
   const tampered = structuredClone(state), op = tampered.orders.flatMap(o => o.operations).find(x => (x.quarantinedAttachments || []).length);
   op.quarantinedAttachments[0].dataUrl = 'data:image/png;base64,AAAA';
-  check('a quarantined file whose content changed fails manifest verification', MES.verifyManifests(tampered).failures.some(f => /quarantined file content does not match/.test(f.reason)));
+  check('a quarantined file whose content changed fails validation, so a browser save refuses it, and fails manifest verification', !MES.validate(tampered) && MES.verifyManifests(tampered).failures.some(f => /does not match its (signed )?removal record/.test(f.reason)));
   const edited = structuredClone(state), edOp = edited.orders.flatMap(o => o.operations).find(x => (x.quarantinedAttachments || []).length);
   edOp.quarantinedAttachments[0].manifest.subject.removeReason = 'Changed later.';
   check('a removal record edited after signing fails manifest verification', !MES.verifyManifests(edited).ok);

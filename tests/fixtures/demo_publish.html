@@ -3348,7 +3348,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
           // A quarantined file must still hold the content its removal record signed.
           if (QUARANTINE_KEYS.includes(k) && Array.isArray(node[k])) node[k].forEach((f, i) => {
             if (!plain(f) || !quarantineBound(f)) { failures.push({ where: `${path}.${k}[${i}]`, reason: 'quarantined file does not match its signed removal record' }); return; }
-            const want = f.manifest.subject.contentSha256; if (want && sha256(f.dataUrl) !== want) failures.push({ where: `${path}.${k}[${i}]`, reason: 'quarantined file content does not match its removal record' });
+            const want = f.manifest.subject.contentSha256; if (want && contentSha256(f.dataUrl) !== want) failures.push({ where: `${path}.${k}[${i}]`, reason: 'quarantined file content does not match its removal record' });
           });
           walk(node[k], `${path}.${k}`);
         }
@@ -6531,12 +6531,17 @@ const OP_BOM_MAX = 12;
     return { entry: { ...file, removedAt: at, removedBy: by, removeReason: text, manifest: signManifest(state, QUARANTINE_MEANING, subject, at) } };
   }
   const QUARANTINE_KEYS = ['quarantinedAttachments', 'quarantinedKitFiles'];
+  // The stored content of a quarantined file must still hash to what its removal record signed. Validation runs on
+  // every write, so hashes are remembered by the exact content string: changed content never matches a remembered
+  // hash, and unchanged content is not hashed again.
+  const contentHashes = new Map();
+  const contentSha256 = text => { let hash = contentHashes.get(text); if (hash === undefined) { hash = sha256(text); if (contentHashes.size >= 256) contentHashes.clear(); contentHashes.set(text, hash); } return hash; };
   // A quarantine list is optional; when present each entry is a kept file with its removal record.
   // Quality record files may be larger than operation files (900,000 characters); a kept file keeps its size.
   const MAX_QUARANTINED_FILE = 900000;
   // The removal record shown on the entry must be the one that was signed: every displayed field is compared with
   // the manifest subject, so editing the reason, the remover, the time or the file afterwards fails validation.
-  const quarantineBound = f => plain(f.manifest) && f.manifest.meaning === QUARANTINE_MEANING && plain(f.manifest.subject) && f.manifest.algorithm === 'SHA-256' && /^[0-9a-f]{64}$/.test(String(f.manifest.hash || '')) && f.manifest.at === f.removedAt && plain(f.manifest.signer) && plain(f.removedBy) && f.manifest.signer.name === f.removedBy.name && f.manifest.signer.credentialId === f.removedBy.credentialId && f.manifest.subject.fileId === f.id && f.manifest.subject.name === f.name && f.manifest.subject.type === String(f.type || '') && f.manifest.subject.addedAt === (f.addedAt ?? null) && canonical(f.manifest.subject.addedBy) === canonical(f.addedBy ?? null) && f.manifest.subject.size === f.size && f.manifest.subject.storage === f.storage && f.manifest.subject.removedAt === f.removedAt && f.manifest.subject.removeReason === f.removeReason && canonical(f.manifest.subject.removedBy) === canonical(f.removedBy) && (f.manifest.subject.contentSha256 === null ? f.dataUrl === undefined : typeof f.dataUrl === 'string');
+  const quarantineBound = f => plain(f.manifest) && f.manifest.meaning === QUARANTINE_MEANING && plain(f.manifest.subject) && f.manifest.algorithm === 'SHA-256' && /^[0-9a-f]{64}$/.test(String(f.manifest.hash || '')) && f.manifest.at === f.removedAt && plain(f.manifest.signer) && plain(f.removedBy) && f.manifest.signer.name === f.removedBy.name && f.manifest.signer.credentialId === f.removedBy.credentialId && f.manifest.subject.fileId === f.id && f.manifest.subject.name === f.name && f.manifest.subject.type === String(f.type || '') && f.manifest.subject.addedAt === (f.addedAt ?? null) && canonical(f.manifest.subject.addedBy) === canonical(f.addedBy ?? null) && f.manifest.subject.size === f.size && f.manifest.subject.storage === f.storage && f.manifest.subject.removedAt === f.removedAt && f.manifest.subject.removeReason === f.removeReason && canonical(f.manifest.subject.removedBy) === canonical(f.removedBy) && (f.manifest.subject.contentSha256 === null ? f.dataUrl === undefined : typeof f.dataUrl === 'string' && contentSha256(f.dataUrl) === f.manifest.subject.contentSha256);
   // The original attachment's provenance is kept: when and by whom it was added, and its type, all signed.
   const quarantinedFileValid = f => plain(f) && str(f.id, 60) && str(f.name, 160) && str(f.type ?? '', 80, 0) && (f.addedAt === undefined || (typeof f.addedAt === 'string' && Number.isFinite(Date.parse(f.addedAt)))) && (f.addedBy === undefined || (plain(f.addedBy) && str(f.addedBy.name, 80))) && (f.dataUrl === undefined || (typeof f.dataUrl === 'string' && f.dataUrl.length <= MAX_QUARANTINED_FILE)) && timestamp(f.removedAt) && plain(f.removedBy) && str(f.removedBy.name, 80) && str(f.removedBy.credentialId, 40) && typeof f.removeReason === 'string' && f.removeReason.trim().length >= REMOVE_REASON_MIN && f.removeReason.length <= REMOVE_REASON_MAX && quarantineBound(f);
   // A removal record belongs to the record it was made on: the signed scope and record identifiers must name the
@@ -7491,7 +7496,9 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     let backToDraftNote = '';
     Object.assign(child, { id, quantity: qty, serial: `${order.serial.replace(/-Split-\d+$/, '')}-Split-${seq}`, history: [], tickets: [], reports: [], releaseApproval: null, splitFrom: order.id, splitAt: new Date().toISOString() });
     delete child.engineeringChanges; delete child.splitInto; delete child.quarantinedKitFiles;
-    // Removal records stay on the order the file was removed from; the split starts with none.
+    // Removal records stay on the order the file was removed from; the split starts with none, in its captured
+    // sequence baseline as well.
+    if (Array.isArray(child.sequenceBaseline)) child.sequenceBaseline.forEach(op => { if (op) delete op.quarantinedAttachments; });
     child.operations = child.operations.map(op => { const { quarantinedAttachments, ...rest } = op; return { ...rest, done: false, note: '', buyoff: null, evidence: [], stepChecks: {}, stepPerformers: [] }; });
     { const over = splitBudgetError(state, child); if (over) return fail(over); }
     const approvalReset = order.releaseApproval !== null && order.releaseApproval !== undefined;
@@ -7538,6 +7545,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     delete child.closureRequest; delete child.pedigreeChange; delete child.sequenceChange;
     // Removal records stay on the order the file was removed from; the split starts with none.
     delete child.quarantinedKitFiles; child.operations.forEach(op => { delete op.quarantinedAttachments; });
+    if (Array.isArray(child.sequenceBaseline)) child.sequenceBaseline.forEach(op => { if (op) delete op.quarantinedAttachments; });
     // Completed work carries over: these units were built alongside the rest up to this point.
     // Evidence ids are unique workspace-wide, so the child's copies are re-keyed; the recordings
     // themselves stay stored against the parent order's ids.
