@@ -180,6 +180,9 @@ try {
   // ---- Hangar holds link and queue footer -----------------------------------------------------------------------
   {
     const { context, page } = await open();
+    // Filters left on All work orders (column filter, aircraft, flagged, WI) must not hide held orders from View all holds.
+    await page.evaluate(() => { skTable.state('orders').filters.Pedigree = ['No such pedigree']; aircraftFilter = MES.AIRCRAFT[0]; flaggedOnly = true; });
+    check('the stale column filter is in place before the link is used', await page.evaluate(() => skTable.selected('orders', 'Pedigree').length === 1));
     await show(page, 'home');
     const holds = page.locator('.fr-holds');
     const held = await page.evaluate(() => state.orders.filter(o => o.status !== 'Closed' && (MES.blockingTickets(o).length || MES.sourceInspectionHolds(state, o).length)).length);
