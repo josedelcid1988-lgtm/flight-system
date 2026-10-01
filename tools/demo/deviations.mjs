@@ -11,7 +11,9 @@
 export const PILOT_SEATS = Object.freeze(['tech', 'quality', 'mfgeng', 'operations', 'engineering']);
 const FULL = "(typeof window!=='undefined'&&window.__demoFull&&window.__demoFull())";
 const NEVER = id => `=== '__demo_never_matches__' /* DEMO ${id} */`;
-const PRINT_MARK = '<div class="demo-print-mark" style="margin:0 0 8px;padding:6px 10px;border:2px solid #7a1f00;color:#7a1f00;font:700 14px/18px sans-serif;text-align:center;letter-spacing:.06em">DEMO, NOT FOR ACCEPTANCE</div>';
+const PRINT_MARK = '<div class="demo-print-mark" style="margin:0 0 8px;padding:6px 10px;border:2px solid #7a1f00;color:#7a1f00;font:700 14px/18px sans-serif;text-align:center;letter-spacing:.06em">DEMO, NOT FOR ACCEPTANCE</div>'
+  // On screen the preview's fixed Print button sits at the top right; start the mark below it. Print is unchanged.
+  + '<style>@media screen{.demo-print-mark{margin-top:56px!important}}</style>';
 
 const LIST = [
   { area: 'Identity', title: 'Page title reads Flight System Demo',
@@ -127,7 +129,7 @@ const LIST = [
     find: 'function markDocument(html){', count: 1,
     replace: (ctx, m, id) => `function markDocument(html){/* DEMO ${id} */{const mark=${JSON.stringify(PRINT_MARK)};html=/<body[^>]*>/i.test(html)?html.replace(/<body[^>]*>/i,b=>b+mark):mark+html;}` },
   { area: 'Marking', title: 'Demo overlay appended',
-    why: 'Loads the sample workspace once, issues stamps to the pilot accounts, seeds a PFMEA example, activates the generic role stamps and shows DEMO, NOT FOR ACCEPTANCE on every page. Source: tools/demo/overlay.js.',
+    why: 'Loads the sample workspace once, issues stamps to the pilot accounts, seeds a PFMEA example, activates the generic role stamps and shows DEMO, NOT FOR ACCEPTANCE on every page, the sign-in screen included, with a note there giving the demo accounts and their password. Source: tools/demo/overlay.js.',
     find: /<\/body><\/html>\n?$/, count: 1,
     replace: (ctx, m, id) => `<script>\n${ctx.overlay.replace('DEMO OVERLAY', `DEMO ${id}`)}</script>\n</body></html>\n` },
   // Appended after the overlay so the ids above stay stable (ids come from list position).
