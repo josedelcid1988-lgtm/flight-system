@@ -1,6 +1,7 @@
 // Item 4: the demo is built from index.html by tools/build-demo.mjs and nothing else.
 // Checks the build is current, every deviation applies exactly, the refusal paths of --check,
-// the pilot seats keeping their real role, and DEMO, NOT FOR ACCEPTANCE on pages and prints.
+// the pilot seats keeping their real role, DEMO, NOT FOR ACCEPTANCE on pages and prints, and the demo's
+// separate account and mirror storage (it never seeds production accounts or reaches a production mirror).
 import {chromium} from 'playwright';
 import fs from 'fs';
 import path from 'path';
@@ -47,6 +48,17 @@ ok('demo carries the stamp prompt submit fix',curated.includes('credential&&cred
 ok('demo NC review shows the approval form to the disposition author',curated.includes('if(true/* DEMO '));
 ok('production keeps the NC review hand-off',prod.includes('if(t.dispo?.credentialId!==skActorId())return ticketQualityReviewForm(o,t);'));
 
+// ---- the demo never reaches a production mirror ----
+{const url='https://mes-mirror.example:8787',token='prod-mirror-token-'+'x'.repeat(24);
+ const configured=prod.replace(/(window\.SK_MIRROR = window\.SK_MIRROR \|\| \{\n  url: )''/,`$1'${url}'`).replace(/(\n  token: )''/,`$1'${token}'`);
+ ok('the refusal case is real: the production file can carry a mirror address and token',configured.includes(url)&&configured.includes(token));
+ const built=buildDemo(configured,'curated');
+ ok('a mirror address and token set in index.html are not carried into the demo',!built.includes(url)&&!built.includes(token)&&/window\.SK_MIRROR = window\.SK_MIRROR \|\| \{\n  url: '', \/\* DEMO D-\d+ \*\/[^\n]*\n  token: '',/.test(built));
+ ok('the demo still takes a mirror set before the page loads (the --mirror test run)',/window\.SK_MIRROR = window\.SK_MIRROR \|\| \{/.test(built));
+ ok('the demo keeps its mirror queue under separate keys',!/['"]skyryse-mes-sync-(queue|sent|client)-v1['"]/.test(curated)&&/'skyryse-mes-demo-sync-queue-v1'/.test(curated));
+ ok('production keeps its frozen mirror queue keys',/'skyryse-mes-sync-queue-v1'/.test(prod));}
+ok('the demo reads and writes accounts only under skyryse-mes-demo-auth-v1',!/['"]skyryse-mes-auth-v1['"]/.test(curated)&&(curated.match(/['"]skyryse-mes-demo-auth-v1['"]/g)||[]).length===4);
+
 // ---- in the browser ----
 const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{});
 const errs=[];
@@ -72,6 +84,16 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
 {const {p,ctx}=await open('tests/fixtures/publish.html',null);
  const r=await p.evaluate(()=>({banner:!!document.querySelector('.demo-banner'),mark:markDocument('<html><body><p>x</p></body></html>'),title:document.title}));
  ok('production shows no demo banner and prints carry the build line but no demo mark',!r.banner&&!/NOT FOR ACCEPTANCE/.test(r.mark)&&/^<html><body><p>x<\/p><div class="fs-build-line"/.test(r.mark)&&/^Flight System(?! Demo)/.test(r.title),JSON.stringify(r));await ctx.close();}
+// Demo and production opened in the same browser: the demo's known-password accounts stay out of the production
+// account list, so master / demo1234 never signs in to the production page.
+{const ctx=await b.newContext({viewport:{width:1440,height:1000}});const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));
+ await p.goto('file://'+FIXTURES+'demo_publish.html');await p.waitForFunction(()=>!!localStorage.getItem('skyryse-mes-demo-auth-v1'));
+ const demoSide=await p.evaluate(()=>({demo:JSON.parse(localStorage.getItem('skyryse-mes-demo-auth-v1')).users.map(u=>u.username),prod:localStorage.getItem('skyryse-mes-auth-v1')}));
+ ok('opening the demo loads its accounts under the demo key and writes nothing under the production key',demoSide.demo.includes('master')&&demoSide.prod===null,JSON.stringify(demoSide));
+ await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(900);
+ const prodSide=await p.evaluate(()=>({prod:JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')||'{"users":[]}').users.map(u=>u.username),setup:!!document.querySelector('#sk-boot')}));
+ ok('the production page in the same browser holds no demo account after the demo was opened',!prodSide.prod.includes('master')&&!prodSide.prod.includes('demo')&&prodSide.setup,JSON.stringify(prodSide));
+ await ctx.close();}
 ok('no page errors',errs.length===0,errs.join(' | '));
 await b.close();
 console.log('errors',errs,'FAILS',JSON.stringify(fails));

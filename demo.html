@@ -1588,7 +1588,7 @@ window.SK_IDENTITY = window.SK_IDENTITY || {
 (function () {
   'use strict';
   var cfg = window.SK_IDENTITY;
-  var AUTH_KEY = 'skyryse-mes-auth-v1', SESSION_KEY = 'skyryse-mes-session-v1', TOKEN_KEY = 'skyryse-mes-oidc-v1';
+  var AUTH_KEY = 'skyryse-mes-demo-auth-v1'/* DEMO D-38 */, SESSION_KEY = 'skyryse-mes-session-v1', TOKEN_KEY = 'skyryse-mes-oidc-v1';
   function b64url(bytes) { return btoa(String.fromCharCode.apply(null, bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
   function randomString(n) { var b = new Uint8Array(n); crypto.getRandomValues(b); return b64url(b); }
   function sha256(text) { return crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)).then(function (buf) { return b64url(new Uint8Array(buf)); }); }
@@ -1685,14 +1685,14 @@ window.SK_IDENTITY = window.SK_IDENTITY || {
 <script>/* DEMO D-4: demo accounts and the pilot seat list, loaded before the sign-in gate. */
 window.__DEMO_PILOT=["tech","quality","mfgeng","operations","engineering"];
 window.__demoFull=function(){try{var u=sessionStorage.getItem('skyryse-mes-session-v1');return !!u&&window.__DEMO_PILOT.indexOf(u)<0;}catch(e){return false;}};
-try{var A="skyryse-mes-auth-v1",cur=JSON.parse(localStorage.getItem(A)||"null");var demo={"users":[{"username":"demo","displayName":"Demo User","salt":"00","hash":"2e82950b567b14b51e406c5f3fdde137869a99e7b3552408e4725c9c69a7ff16","role":"qm","createdAt":"2026-09-17T00:00:00.000Z","createdBy":"demo build"},{"username":"master","displayName":"Master Access","salt":"00","hash":"2e82950b567b14b51e406c5f3fdde137869a99e7b3552408e4725c9c69a7ff16","role":"admin","createdAt":"2026-09-17T00:00:00.000Z","createdBy":"demo build"},{"username":"mfgeng","displayName":"Manufacturing Engineer","salt":"00","hash":"2e82950b567b14b51e406c5f3fdde137869a99e7b3552408e4725c9c69a7ff16","role":"me","createdAt":"2026-09-17T00:00:00.000Z","createdBy":"demo build"},{"username":"operations","displayName":"Operations","salt":"00","hash":"2e82950b567b14b51e406c5f3fdde137869a99e7b3552408e4725c9c69a7ff16","role":"operator","createdAt":"2026-09-17T00:00:00.000Z","createdBy":"demo build"},{"username":"tech","displayName":"Technician","salt":"00","hash":"2e82950b567b14b51e406c5f3fdde137869a99e7b3552408e4725c9c69a7ff16","role":"technician","createdAt":"2026-09-17T00:00:00.000Z","createdBy":"demo build"},{"username":"quality","displayName":"Quality","salt":"00","hash":"2e82950b567b14b51e406c5f3fdde137869a99e7b3552408e4725c9c69a7ff16","role":"qe","createdAt":"2026-09-17T00:00:00.000Z","createdBy":"demo build"},{"username":"engineering","displayName":"Engineering","salt":"00","hash":"2e82950b567b14b51e406c5f3fdde137869a99e7b3552408e4725c9c69a7ff16","role":"swe","createdAt":"2026-09-17T00:00:00.000Z","createdBy":"demo build"},{"username":"safety","displayName":"Safety Team","salt":"00","hash":"2e82950b567b14b51e406c5f3fdde137869a99e7b3552408e4725c9c69a7ff16","role":"safety","createdAt":"2026-09-17T00:00:00.000Z","createdBy":"demo build"},{"username":"certification","displayName":"Certification","salt":"00","hash":"2e82950b567b14b51e406c5f3fdde137869a99e7b3552408e4725c9c69a7ff16","role":"cert","createdAt":"2026-09-17T00:00:00.000Z","createdBy":"demo build"}]};
+try{var A="skyryse-mes-demo-auth-v1"/* DEMO D-38 */,cur=JSON.parse(localStorage.getItem(A)||"null");var demo={"users":[{"username":"demo","displayName":"Demo User","salt":"00","hash":"2e82950b567b14b51e406c5f3fdde137869a99e7b3552408e4725c9c69a7ff16","role":"qm","createdAt":"2026-09-17T00:00:00.000Z","createdBy":"demo build"},{"username":"master","displayName":"Master Access","salt":"00","hash":"2e82950b567b14b51e406c5f3fdde137869a99e7b3552408e4725c9c69a7ff16","role":"admin","createdAt":"2026-09-17T00:00:00.000Z","createdBy":"demo build"},{"username":"mfgeng","displayName":"Manufacturing Engineer","salt":"00","hash":"2e82950b567b14b51e406c5f3fdde137869a99e7b3552408e4725c9c69a7ff16","role":"me","createdAt":"2026-09-17T00:00:00.000Z","createdBy":"demo build"},{"username":"operations","displayName":"Operations","salt":"00","hash":"2e82950b567b14b51e406c5f3fdde137869a99e7b3552408e4725c9c69a7ff16","role":"operator","createdAt":"2026-09-17T00:00:00.000Z","createdBy":"demo build"},{"username":"tech","displayName":"Technician","salt":"00","hash":"2e82950b567b14b51e406c5f3fdde137869a99e7b3552408e4725c9c69a7ff16","role":"technician","createdAt":"2026-09-17T00:00:00.000Z","createdBy":"demo build"},{"username":"quality","displayName":"Quality","salt":"00","hash":"2e82950b567b14b51e406c5f3fdde137869a99e7b3552408e4725c9c69a7ff16","role":"qe","createdAt":"2026-09-17T00:00:00.000Z","createdBy":"demo build"},{"username":"engineering","displayName":"Engineering","salt":"00","hash":"2e82950b567b14b51e406c5f3fdde137869a99e7b3552408e4725c9c69a7ff16","role":"swe","createdAt":"2026-09-17T00:00:00.000Z","createdBy":"demo build"},{"username":"safety","displayName":"Safety Team","salt":"00","hash":"2e82950b567b14b51e406c5f3fdde137869a99e7b3552408e4725c9c69a7ff16","role":"safety","createdAt":"2026-09-17T00:00:00.000Z","createdBy":"demo build"},{"username":"certification","displayName":"Certification","salt":"00","hash":"2e82950b567b14b51e406c5f3fdde137869a99e7b3552408e4725c9c69a7ff16","role":"cert","createdAt":"2026-09-17T00:00:00.000Z","createdBy":"demo build"}]};
 if(!cur||!Array.isArray(cur.users)||!demo.users.every(function(d){return cur.users.some(function(u){return u.username===d.username;});})){var have=(cur&&Array.isArray(cur.users)?cur.users:[]);localStorage.setItem(A,JSON.stringify({users:have.concat(demo.users.filter(function(d){return !have.some(function(u){return u.username===d.username;});}))}));}}catch(e){}
 </script>
 <script>
 function skBoot(){
  var el=document.getElementById('sk-boot');if(!el)return;
  // ---- local sign-in gate (hashed in-browser; a real deployment authenticates against a server) ----
- var AUTH_KEY='skyryse-mes-auth-v1',SESSION_KEY='skyryse-mes-session-v1';
+ var AUTH_KEY='skyryse-mes-demo-auth-v1'/* DEMO D-38 */,SESSION_KEY='skyryse-mes-session-v1';
  var SERVER=window.FLIGHT_SERVER&&window.FLIGHT_SERVER.api?window.FLIGHT_SERVER:null,SERVER_TOKEN='skyryse-mes-server-token-v1';
  function serverToken(){try{return sessionStorage.getItem(SERVER_TOKEN)||'';}catch(e){return '';}}
  function serverApi(route,options){options=options||{};var headers={'Content-Type':'application/json'},token=serverToken();if(token)headers.Authorization='Bearer '+token;if(options.headers)Object.keys(options.headers).forEach(function(k){headers[k]=options.headers[k];});return fetch(SERVER.api+route,{method:options.method||'GET',headers:headers,body:options.body===undefined?undefined:JSON.stringify(options.body)}).then(function(response){return response.text().then(function(body){var json=null;try{json=body?JSON.parse(body):null;}catch(e){}return {ok:response.ok,status:response.status,json:json,etag:response.headers.get('etag'),archived:response.headers.get('x-flight-archived')};});});}
@@ -13799,7 +13799,7 @@ function holdActionButtons(o,h){const me=skActorId();const out=[];
    they are retried with backoff until the server confirms them. Passwords, stamp PINs and their hashes
    and salts are never queued or sent; accounts are mirrored as name, role and Support Access only. */
 window.SK_MIRROR = window.SK_MIRROR || {
-  url: '',        // e.g. https://mes-mirror.internal:8787  (IT). Empty: the mirror is off.
+  url: '', /* DEMO D-39 */        // e.g. https://mes-mirror.internal:8787  (IT). Empty: the mirror is off.
   token: '',      // sent as Authorization: Bearer <token> when the server requires one
   batchSize: 50   // records per POST
 };
@@ -13807,7 +13807,7 @@ window.SK_MIRROR = window.SK_MIRROR || {
   'use strict';
   var cfg = window.SK_MIRROR || {};
   var base = String(cfg.url || '').trim().replace(/\/+$/, '');
-  var QUEUE_KEY = 'skyryse-mes-sync-queue-v1', SENT_KEY = 'skyryse-mes-sync-sent-v1', CLIENT_KEY = 'skyryse-mes-sync-client-v1', AUTH_KEY = 'skyryse-mes-auth-v1';
+  var QUEUE_KEY = 'skyryse-mes-demo-sync-queue-v1'/* DEMO D-40 */, SENT_KEY = 'skyryse-mes-demo-sync-sent-v1'/* DEMO D-40 */, CLIENT_KEY = 'skyryse-mes-demo-sync-client-v1'/* DEMO D-40 */, AUTH_KEY = 'skyryse-mes-demo-auth-v1'/* DEMO D-38 */;
   var off = { enabled: false, commit: function () {}, status: function () { return { enabled: false, unsynced: 0, rejected: 0 }; }, flush: function () { return Promise.resolve(); } };
   if (!base) { window.skMirror = off; return; }
 

@@ -169,6 +169,18 @@ const LIST = [
         .replace(/^const CAL_SNAPSHOT = '[^']*';/, () => `/* DEMO ${id} */ const DEMO_CAL = (${ctx.calRebase})(${snapshot}, (typeof window !== 'undefined' && window.__DEMO_SEED) || null, ${firstLoad});\n  const CAL_SNAPSHOT = DEMO_CAL.snapshot;`)
         .replace(/Object\.freeze\(\{ tag, description, serial, expires, status, location \}\)\)\);$/, () => 'Object.freeze({ tag, description, serial, expires: DEMO_CAL.expires(expires), status, location })));');
     } },
+  { area: 'Accounts', title: 'Separate account storage key',
+    why: 'The demo keeps its known-password accounts (D-4) under skyryse-mes-demo-auth-v1, so opening the demo in a browser that also holds the production build never adds master, demo or any other demo1234 account to the production account list, and the production page never sees a demo account. The production key stays frozen.',
+    find: /(['"])skyryse-mes-auth-v1\1/g, count: 4,
+    replace: (ctx, m, id) => `${m[0]}skyryse-mes-demo-auth-v1${m[0]}/* DEMO ${id} */` },
+  { area: 'Data', title: 'Never the production mirror',
+    why: 'A mirror address or token set in the production file is not carried into the demo: the demo default is always an empty address, so the demo never sends records made under its relaxed gates to the production retention database and never holds the production mirror token. The demo mirrors only when SK_MIRROR is set before the page loads (tools/run-suites.mjs --mirror does this with its own throwaway server).',
+    find: /window\.SK_MIRROR = window\.SK_MIRROR \|\| \{\n  url: '[^'\n]*',([^\n]*)\n  token: '[^'\n]*',/g, count: 1,
+    replace: (ctx, m, id) => m.replace(/url: '[^'\n]*',/, `url: '', /* DEMO ${id} */`).replace(/token: '[^'\n]*',/, "token: '',") },
+  { area: 'Data', title: 'Separate mirror queue keys',
+    why: 'Records the demo queues for a mirror are kept under skyryse-mes-demo-sync-*, so a production page in the same browser never sends a demo record to its mirror.',
+    find: /(['"])skyryse-mes-sync-(?:queue|sent|client)-v1\1/g, count: 3,
+    replace: (ctx, m, id) => `${m.replace('skyryse-mes-sync-', 'skyryse-mes-demo-sync-')}/* DEMO ${id} */` },
 ];
 
 export const DEVIATIONS = LIST.map((d, i) => Object.freeze({ ...d, id: `D-${i + 1}` }));
