@@ -120,8 +120,17 @@
   })();
 
   // ---- DEMO, NOT FOR ACCEPTANCE on every page ---------------------------------------------------
+  // A strip along the bottom of the content area, from the rail's right edge. The page reserves its
+  // height, and the sticky next action, toasts and idle warning sit above it, so it covers nothing.
+  // The sign-in screen hides everything but itself; the strip is exempt so the first screen is marked.
+  var STRIP = 24;
   var style = document.createElement('style');
-  style.textContent = '.demo-banner{position:fixed;left:50%;bottom:8px;transform:translateX(-50%);z-index:2147483000;pointer-events:none;padding:4px 12px;border-radius:999px;background:#7a1f00;color:#fff;font:700 12px/16px -apple-system,BlinkMacSystemFont,sans-serif;letter-spacing:.04em;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.25)}@media print{.demo-banner{position:static;transform:none;display:block;text-align:center;margin:0 auto 8px}}'
+  style.textContent = '.demo-banner{position:fixed;left:var(--fs-rail,0px);right:0;bottom:0;height:' + STRIP + 'px;z-index:2147483000;pointer-events:none;display:flex;align-items:center;justify-content:center;background:#7a1f00;color:#fff;font:700 12px/16px -apple-system,BlinkMacSystemFont,sans-serif;letter-spacing:.04em;white-space:nowrap}'
+    + 'body{padding-bottom:' + STRIP + 'px}html .next-action{bottom:' + STRIP + 'px}html .toast,html .sk-idle-warning{bottom:' + (STRIP + 24) + 'px}'
+    + '@media(min-width:1181px){html .next-action{bottom:' + (STRIP + 28) + 'px}}'
+    + 'body:has(#sk-boot)>.demo-banner{visibility:visible!important;left:0}'
+    + '.demo-login-hint{margin:8px 0 0;padding:8px 10px;border:1px solid rgba(242,169,0,.6);border-radius:8px;color:#fff;font:12px/16px var(--font)}.demo-login-hint b{font-weight:700}'
+    + '@media print{body{padding-bottom:0}.demo-banner{position:static;height:auto;display:block;text-align:center;margin:0 auto 8px;background:none;color:#7a1f00}}'
     + '.demo-chip{display:inline-flex;align-items:center;gap:var(--s-1);margin-left:var(--s-2);padding:var(--s-1) var(--s-2);border-radius:var(--r-full);background:var(--warn-soft);color:var(--warn);font:600 12px/16px var(--font);white-space:nowrap}.demo-chip::before{content:"";width:7px;height:7px;border-radius:50%;background:#F2A900}@media(max-width:700px){.demo-chip{display:none}}';
   document.head.appendChild(style);
   function markPage() {
@@ -130,6 +139,13 @@
       banner.className = 'demo-banner'; banner.setAttribute('role', 'note');
       banner.textContent = 'DEMO, NOT FOR ACCEPTANCE';
       document.body.appendChild(banner);
+    }
+    var note = document.getElementById('sk-login-note');
+    if (note && !document.querySelector('.demo-login-hint')) {
+      var hint = document.createElement('p');
+      hint.className = 'demo-login-hint';
+      hint.innerHTML = 'Demo accounts (demo, tech, quality, mfgeng, operations, engineering and the rest) use the password <b>demo1234</b>.';
+      note.insertAdjacentElement('afterend', hint);
     }
     var bar = document.querySelector('.breadcrumbs');
     if (bar && !bar.querySelector('.demo-chip')) {
