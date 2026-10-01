@@ -47,6 +47,15 @@ try {
     const unknown = await signInError(page, 'nobody-here', 'wrong-password');
     ok('unknown account gets the same generic refusal', unknown === GENERIC, unknown);
     ok('the refusal never says whether the account exists', !/No account|Incorrect password/.test(wrong + unknown));
+    // An identity-provider (SSO) account answers the same as an unknown one, and counts toward lockout; the note says where those accounts sign in.
+    await page.evaluate(() => { const k = 'skyryse-mes-auth-v1', au = JSON.parse(localStorage.getItem(k)); au.users.push({ username: 'sso-person', displayName: 'SSO Person', sso: true, role: 'general', createdAt: new Date().toISOString() }); localStorage.setItem(k, JSON.stringify(au)); localStorage.removeItem('skyryse-mes-lockout-v1'); });
+    await page.reload(); await page.waitForSelector('#sk-login:not([hidden])');
+    const sso = await signInError(page, 'sso-person', 'any-password');
+    ok('an identity-provider account gets the same generic refusal', sso === GENERIC, sso);
+    ok('an identity-provider account counts toward lockout', await page.evaluate(() => (JSON.parse(localStorage.getItem('skyryse-mes-lockout-v1') || '{}')['sso-person'] || {}).fails === 1));
+    ok('the sign-in note says where identity-provider accounts sign in', /company identity provider sign in through it/.test(await page.locator('#sk-login-note').innerText()));
+    await page.evaluate(() => { const k = 'skyryse-mes-auth-v1', au = JSON.parse(localStorage.getItem(k)); au.users = au.users.filter(u => u.username !== 'sso-person'); localStorage.setItem(k, JSON.stringify(au)); localStorage.removeItem('skyryse-mes-lockout-v1'); });
+    await page.reload(); await page.waitForSelector('#sk-login:not([hidden])');
     // Lockout is unchanged: the fifth failure locks, the next attempt is refused with the wait time.
     await page.evaluate(() => localStorage.removeItem('skyryse-mes-lockout-v1'));
     let last = '';
@@ -252,6 +261,7 @@ try {
         source: run(op => { op.classification = MES.SOURCE_INSPECTION_CLASS; op.sourceInspection = null; }),
         push: run(op => { op.atp = { repo: 'https://example.invalid/r', pushes: [{ sha: 'abc', status: 'Pending' }] }; }),
         po: run(op => { op.classification = MES.EXTERNAL_CLASS; op.externalPO = null; }),
+        poTest: run(op => { op.classification = MES.EXTERNAL_CLASSES.find(c => c !== MES.EXTERNAL_CLASS); op.externalPO = null; }),
         fod: run(op => { op.fodLevel = 'critical'; op.fodChecklist = {}; }),
         recording: run(op => { op.requiresRecording = true; }),
         rejected: run(op => { op.evidence = [{ id: 'EV-1', rejectedAt: new Date().toISOString() }]; }),
@@ -262,6 +272,7 @@ try {
     ok('source inspection branch', branches.source.some(t => /source inspection for this operation\. > \[data-action="source-inspection-record"\]/.test(t)), JSON.stringify(branches.source));
     ok('pending ATP software push branch', branches.push.some(t => /Software Engineering .* > \.atp-pushes/.test(t)), JSON.stringify(branches.push));
     ok('external PO branch', branches.po.some(t => /NetSuite PO .* > \.po-request-block/.test(t)), JSON.stringify(branches.po));
+    ok('external PO branch covers External Testing too', branches.poTest.some(t => /NetSuite PO .* > \.po-request-block/.test(t)), JSON.stringify(branches.poTest));
     ok('FOD checklist branch', branches.fod.some(t => /FOD checklist .* > \.fod-checklist/.test(t)), JSON.stringify(branches.fod));
     ok('installation recording branch', branches.recording.some(t => /installation recording\. > \.installation-evidence/.test(t)), JSON.stringify(branches.recording));
     ok('rejected recording branch', branches.rejected.some(t => /rejected recording/.test(t)), JSON.stringify(branches.rejected));
