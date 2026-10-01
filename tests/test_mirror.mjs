@@ -513,13 +513,14 @@ const OTHER='skyryse-mes-sync-ack-v1:page-other-tab';let staged=false;const e0=(
  // Another tab, open since before the recovery, saves its older client record (without the pending recovery) and
  // then commits once the saved workspace is valid again: it still runs the pending recovery.
  const r1=count();const snapsBefore=snapshots().length;
- const savedValid=await p.evaluate(()=>{const ws=MES.validate(state)?state:lastSaved;localStorage.setItem(KEY,JSON.stringify(ws));return MES.validate(JSON.parse(localStorage.getItem(KEY)));});
- ok('the workspace saved for the other tab is valid again',savedValid);
- await tabB.evaluate(()=>{const c=JSON.parse(localStorage.getItem('skyryse-mes-sync-client-v1'));delete c.recoveryPending;localStorage.setItem('skyryse-mes-sync-client-v1',JSON.stringify(c));window.skMirror.commit(JSON.parse(localStorage.getItem(KEY)));});
+ const savedValid=await tabB.evaluate(()=>{const c=JSON.parse(localStorage.getItem('skyryse-mes-sync-client-v1'));delete c.recoveryPending;localStorage.setItem('skyryse-mes-sync-client-v1',JSON.stringify(c));
+   const ws=structuredClone(lastSaved);localStorage.setItem(KEY,JSON.stringify(ws));const valid=MES.validate(JSON.parse(localStorage.getItem(KEY)));window.skMirror.commit(ws);return valid;});
+ ok('the workspace the other tab saves is valid',savedValid);
  const sb=await tabB.evaluate(async()=>{for(let i=0;i<80&&window.skMirror.status().unsynced;i++){await window.skMirror.flush();await new Promise(r=>setTimeout(r,100));}return window.skMirror.status();});
  const after=await p.evaluate(()=>localStorage.getItem('skyryse-mes-sync-recovery-v1'));
  ok('a tab with an older client record still runs the pending recovery once the workspace is valid: a snapshot is sent and nothing is left pending',snapshots().length>snapsBefore&&after===null&&sb.unsynced===0&&count()>r1,JSON.stringify({before:snapsBefore,now:snapshots().length,after,sb}));
- await tabB.close();await p.evaluate(()=>{save();});await drain();}
+ // Tab B's write marked this tab stale; take the saved workspace as this tab's own, as a reload would.
+ await tabB.close();await p.evaluate(()=>{storageBlocked=false;state=JSON.parse(localStorage.getItem(KEY));lastSaved=structuredClone(state);save();});await drain();}
 // A device with nothing queued still finds a restore: it probes the mirror, which no longer holds its last
 // confirmed row, and sends everything again (#374).
 {const w6=await mkOrder(p);await drain();const bk3=m.backup();
