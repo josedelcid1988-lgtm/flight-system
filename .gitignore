@@ -12,6 +12,7 @@ server/backups/
 tests/qa_e2e_results.json
 tests/qa_full_results.json
 tests/qa_results.json
+tests/qa_demo_solo_master_results.json
 tests/shots/
 
 tests/suite_results.json
