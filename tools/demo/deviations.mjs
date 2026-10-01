@@ -169,6 +169,10 @@ const LIST = [
         .replace(/^const CAL_SNAPSHOT = '[^']*';/, () => `/* DEMO ${id} */ const DEMO_CAL = (${ctx.calRebase})(${snapshot}, (typeof window !== 'undefined' && window.__DEMO_SEED) || null, ${firstLoad});\n  const CAL_SNAPSHOT = DEMO_CAL.snapshot;`)
         .replace(/Object\.freeze\(\{ tag, description, serial, expires, status, location \}\)\)\);$/, () => 'Object.freeze({ tag, description, serial, expires: DEMO_CAL.expires(expires), status, location })));');
     } },
+  { area: 'Separation of duties', title: 'A PFMEA contributor may give the Safety Team buy-off',
+    why: 'One person can review operations as no-risk, close actions, complete the analysis and give the Safety Team buy-off, so a critical safety WI can be walked alone. Production refuses this to every role, Master Access and Support Access included.',
+    find: '    if (MES.pfmeaContributors(t).has(actor(state).credentialId)) return fail(', count: 1,
+    replace: (ctx, m, id) => `    if (false /* DEMO ${id} */ && MES.pfmeaContributors(t).has(actor(state).credentialId)) return fail(` },
 ];
 
 export const DEVIATIONS = LIST.map((d, i) => Object.freeze({ ...d, id: `D-${i + 1}` }));
