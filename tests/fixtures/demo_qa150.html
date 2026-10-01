@@ -5094,6 +5094,28 @@ const OP_BOM_MAX = 12;
       return false;
     });
   }
+  // A quantity change rescales the BOM: every operation BOM line and every kit line an operation's BOM put in the kit
+  // (forOps), rounded up. A kit line already issued keeps what was issued, so a change that would alter it is refused
+  // with the way forward. Nothing changes unless every line fits; apply() makes the change.
+  function bomRescalePlan(order, from, to) {
+    if (!count(from) || !count(to) || from === to) return { apply() {} };
+    const scale = required => Math.ceil(required * to / from), changes = [];
+    for (const m of Array.isArray(order.materials) ? order.materials : []) {
+      if (!Array.isArray(m.forOps) || !m.forOps.length || !Number.isInteger(m.required)) continue;
+      const next = scale(m.required);
+      if (next === m.required) continue;
+      if (m.ready) return { error: `${m.name} (${m.partNumber}) is already issued to this order for ${from} units, and an issued kit line can't be rescaled. ${order.status === 'Kitting' ? 'Mark it missing on the Kitting tab so its lot goes back to stock, then QA re-release the change.' : to > from ? `Create a work order for the extra ${to - from} units instead of changing the quantity.` : 'Split the units off this work order instead of changing the quantity.'}` };
+      if (next > 999) return { error: `At a quantity of ${to}, ${m.partNumber} would need ${next}, and a kit line holds up to 999. Create a second work order for the extra units instead.` };
+      changes.push([m, next]);
+    }
+    for (const op of order.operations) for (const line of Array.isArray(op.materials) ? op.materials : []) {
+      if (!line || !Number.isInteger(line.required)) continue;
+      const next = scale(line.required);
+      if (next > 999) return { error: `At a quantity of ${to}, ${line.partNumber} on Op ${opNumber(order, op.id)} would need ${next}, and a BOM line holds up to 999. Create a second work order for the extra units instead.` };
+      if (next !== line.required) changes.push([line, next]);
+    }
+    return { changed: changes.length > 0, apply() { changes.forEach(([line, next]) => { line.required = next; }); } };
+  }
   // A split divides the kit and operation BOM requirements between the two orders by quantity. Each side rounds up,
   // so neither order is left asking for less than its units need.
   function splitKitQuantities(order, child, keep, moved) {
@@ -7066,9 +7088,12 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (!change || change.status !== 'Awaiting QA') return fail('An engineering edit must finish its required ECR approval before QA re-release.');
     if (change.requestedBy.credentialId === '__demo_never_matches__' /* DEMO D-20 */) return fail(selfApprovalMessage);
     if (blockingTickets(order).length) return fail('Resolve every open hold before QA re-release.');
+    const bomPlan = bomRescalePlan(order, order.quantity, change.after.quantity);
+    if (bomPlan.error) return fail(bomPlan.error);
     change.qaApproval = { ...actor(state), at: new Date(Math.max(Date.now(), Date.parse(change.ecrApproval?.at || change.requestedAt))).toISOString(), virtual: true };
     order.revision = change.after.revision;
     order.quantity = change.after.quantity;
+    bomPlan.apply();
     for (const instruction of change.after.instructions) order.operations.find(operation => operation.id === instruction.operationId).description = instruction.description;
     change.status = 'Applied';
     // The drawing rev follows the part revision the engineering change applied.
@@ -7076,6 +7101,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const revChanges = [];
     if (change.before.revision !== change.after.revision) revChanges.push(`Part / drawing revision ${change.before.revision} → ${change.after.revision}`);
     if (change.before.quantity !== change.after.quantity) revChanges.push(`Planned quantity ${change.before.quantity} → ${change.after.quantity}`);
+    if (bomPlan.changed) revChanges.push(`BOM and kit requirements rescaled for ${change.after.quantity} units`);
     for (const instruction of change.after.instructions) {
       const was = change.before.instructions.find(item => item.operationId === instruction.operationId);
       if (!was || was.description !== instruction.description) revChanges.push(`Instruction updated on Op ${opNumber(order, instruction.operationId)}`);

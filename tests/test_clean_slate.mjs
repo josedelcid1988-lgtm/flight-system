@@ -95,6 +95,25 @@ const prod = createHost(here('../index.html'));
     const removed = prod.withAccount(admin, () => MES.removeOrderOperation(qtyState, fiveOrder.id, fiveOrder.operations[0].id, 'Not needed on this order'), qtyState);
     check('removing an operation takes its share off a kit line it shares: 9 less 6 leaves 3', removed.ok && kitOf(fiveOrder, 'BOM-001') === 3 && kitOf(fiveOrder, 'BOM-002') === 9 && MES.validate(qtyState) === true, removed.message);
   }
+  {
+    const ecState = load(prod, MES.seed());
+    ecState.masterWIs = JSON.parse(JSON.stringify(qtyState.masterWIs));
+    const make = () => { const r = mk(ecState, 5); return r.ok ? MES.getOrder(ecState, r.id) : null; };
+    const changeQty = (o, quantity) => {
+      const sub = prod.withAccount(me, () => MES.submitEngineeringChange(ecState, o.id, { reason: 'Customer changed the quantity.', quantity }), ecState);
+      if (!sub.ok) return sub;
+      if (MES.engineeringChange(o).status === 'Awaiting ECR') { const ecr = prod.withAccount(qa, () => MES.approveECR(ecState, o.id), ecState); if (!ecr.ok) return ecr; }
+      return prod.withAccount(qa, () => MES.approveEngineeringChange(ecState, o.id), ecState);
+    };
+    const kitOf = (o, part) => (o.materials.find(m => m.partNumber === part) || {}).required;
+    const up = make(), upResult = up ? changeQty(up, 10) : { message: 'order not created' };
+    check('an engineering change from 5 to 10 units rescales the kit and the operation BOM: 15 becomes 30', upResult.ok && up.quantity === 10 && kitOf(up, 'BOM-001') === 30 && kitOf(up, 'BOM-002') === 30 && (up.operations[0].materials || [])[0]?.required === 20 && MES.validate(ecState) === true, upResult.message);
+    const issued = make();
+    if (issued) { const line = issued.materials.find(m => m.partNumber === 'BOM-001'); line.lot = 'LOT-EC-1'; line.ready = true; }
+    const issuedBefore = issued && JSON.stringify({ materials: issued.materials, ops: issued.operations.map(op => op.materials || null), quantity: issued.quantity });
+    const refused = issued ? changeQty(issued, 10) : { message: 'order not created' };
+    check('an engineering quantity change that would rescale an issued kit line is refused at QA re-release, nothing changed', !refused.ok && /already issued to this order for 5 units/.test(refused.message) && JSON.stringify({ materials: issued.materials, ops: issued.operations.map(op => op.materials || null), quantity: issued.quantity }) === issuedBefore, refused.message);
+  }
   const before = JSON.stringify(qtyState);
   const tooMany = mk(qtyState, 400);
   check('an order that would need more than 999 of one part is refused before anything is created', !tooMany.ok && /a kit line holds up to 999/.test(tooMany.message) && JSON.stringify(qtyState) === before, tooMany.message);
