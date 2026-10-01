@@ -49,8 +49,10 @@ authenticated server supports local SQLite and PostgreSQL. Whole-workspace
 writes are role-authorized: `PUT /api/workspace` lets only a QA Manager or
 Master Access account initialize an empty server. Once the workspace exists,
 other roles are refused with 403, a manager request needs the current ETag in
-`If-Match` (428 without it, 409 when it is stale), and a changed snapshot is
-then refused with 403. Each 403 refusal is recorded in the security audit. After
+`If-Match` (428 without it, 409 when it is stale). With the current ETag, a
+snapshot identical to the stored workspace is an audited no-op (204) and a
+changed snapshot is refused with 403. Each 403 refusal is recorded in the
+security audit. After
 initialization, shared records change only through server-side engine writes
 that run the same checks as the page: the MES actions at
 `POST /api/workspace/actions/...` and, when the Jira connector is enabled, the
