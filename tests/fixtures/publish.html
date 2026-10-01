@@ -56,30 +56,38 @@ function purgeLegacyDemoState(){
   // Every other queued account record waits outside the queue: an account the older demo changed or made under a
   // production name cannot be told apart, so none is mirrored before the review. Closing the review queues the
   // reviewed account list instead (the sent index is cleared, so every account is sent again).
-  try{var acctRows=queued.filter(accountRecord);if(acctRows.length){var held=get(LEGACY_ACCOUNT_QUEUE);put(LEGACY_ACCOUNT_QUEUE,(Array.isArray(held)?held:[]).concat(acctRows));put(QK,queued.filter(function(r){return !accountRecord(r);}));accountRowsHeld=acctRows.length;}}catch(e){}
+  // If storage refuses either write, the mirror client still sends no account record while the review is pending.
+  var acctRows=queued.filter(accountRecord);
+  if(acctRows.length){try{var held=get(LEGACY_ACCOUNT_QUEUE);put(LEGACY_ACCOUNT_QUEUE,(Array.isArray(held)?held:[]).concat(acctRows));accountRowsHeld=acctRows.length;}catch(e){}
+   try{put(QK,queued.filter(function(r){return !accountRecord(r);}));}catch(e){}}
   try{var lk=get(LK);if(lk&&typeof lk==='object'&&Object.keys(lk).length){put(LEGACY_LOCKS,lk);var active={};Object.keys(lk).forEach(function(n){if(lk[n]&&Number(lk[n].until)>Date.now())active[n]={fails:0,until:lk[n].until};});put(LK,active);locksReset=Object.keys(lk).length-Object.keys(active).length;}}catch(e){}
   // Accounts a production user created while a demo page was open carry no mark the cleanup can find, so a QA
   // Manager reviews the account list. The review stays required, across reloads and sign-in, until it is done and
   // logged: on a standalone page every account is confirmed on the sign-in screen first (skBoot).
-  // If browser storage refuses the review record, this page holds it in memory and in this tab's session storage,
-  // so the review is still required here and nothing can be confirmed until storage is freed.
-  var reviewRecord={foundAt:new Date().toISOString(),accounts:removed,queuedRecords:dropped,securityEvents:moved,draftsMoved:draftsMoved,mirrorSentIndexCleared:sentCleared},reviewSaved=false;
-  try{put(REVIEW,reviewRecord);reviewSaved=!!get(REVIEW);}catch(e){}
-  if(!reviewSaved){window.__skLegacyReviewUnsaved=reviewRecord;try{sessionStorage.setItem(REVIEW,JSON.stringify(reviewRecord));}catch(e){}}
-  window.addEventListener('DOMContentLoaded',function(){try{window.dispatchEvent(new CustomEvent('sk-security',{detail:{type:'legacy-demo-removed',at:new Date().toISOString(),accounts:removed,queuedRecords:dropped,securityEvents:moved,draftsMoved:draftsMoved,lockoutsReset:locksReset,mirrorSentIndexCleared:sentCleared,accountsMovedToDemo:toDemo,accountsSetAside:setAside,accountsNotCopied:notCopied,accountRecordsHeld:accountRowsHeld,reviewSaved:reviewSaved}}));}catch(e){}});}
+  // If browser storage refuses the review record, it is written into the account store instead (which every open
+  // page watches), and failing that this page holds it in memory and in this tab's session storage and tells every
+  // other open page, which then holds it too. The review stays required, and nothing can be confirmed until storage
+  // is freed.
+  var reviewRecord={foundAt:new Date().toISOString(),accounts:removed,queuedRecords:dropped,securityEvents:moved,draftsMoved:draftsMoved,mirrorSentIndexCleared:sentCleared},reviewSaved=false,reviewStore=null;
+  try{put(REVIEW,reviewRecord);if(get(REVIEW)){reviewSaved=true;reviewStore='review';}}catch(e){}
+  if(!reviewSaved){try{var au=get(AUTH);if(au&&Array.isArray(au.users)){au.legacyDemoReview=reviewRecord;put(AUTH,au);if((get(AUTH)||{}).legacyDemoReview){reviewSaved=true;reviewStore='accounts';}}}catch(e){}}
+  if(!reviewSaved){window.__skLegacyReviewUnsaved=reviewRecord;try{sessionStorage.setItem(REVIEW,JSON.stringify(reviewRecord));}catch(e){}try{var bc=new BroadcastChannel(REVIEW);bc.postMessage(reviewRecord);bc.close();}catch(e){}}
+  window.addEventListener('DOMContentLoaded',function(){try{window.dispatchEvent(new CustomEvent('sk-security',{detail:{type:'legacy-demo-removed',at:new Date().toISOString(),accounts:removed,queuedRecords:dropped,securityEvents:moved,draftsMoved:draftsMoved,lockoutsReset:locksReset,mirrorSentIndexCleared:sentCleared,accountsMovedToDemo:toDemo,accountsSetAside:setAside,accountsNotCopied:notCopied,accountRecordsHeld:accountRowsHeld,reviewSaved:reviewSaved,reviewStore:reviewStore}}));}catch(e){}});}
   showLegacyDemoReview();
 }
 // The review record and its audit. A step of the review counts only once its security log entry is stored, so a full
 // browser storage never closes the review without a record of who did it.
 function legacyDemoReviewApi(){
- var REVIEW='skyryse-mes-legacy-demo-review-v1';
+ var REVIEW='skyryse-mes-legacy-demo-review-v1',AUTH='skyryse-mes-auth-v1';
+ function inAccounts(){try{var a=JSON.parse(localStorage.getItem(AUTH)||'null');return a&&a.legacyDemoReview&&typeof a.legacyDemoReview==='object'?a.legacyDemoReview:null;}catch(e){return null;}}
  return {
-  pending:function(){var v=null;try{v=JSON.parse(localStorage.getItem(REVIEW)||'null');}catch(e){}if(!v){try{v=JSON.parse(sessionStorage.getItem(REVIEW)||'null');}catch(e){}}return v||window.__skLegacyReviewUnsaved||null;},
+  AUTH:AUTH,
+  pending:function(){var v=null;try{v=JSON.parse(localStorage.getItem(REVIEW)||'null');}catch(e){}if(!v)v=inAccounts();if(!v){try{v=JSON.parse(sessionStorage.getItem(REVIEW)||'null');}catch(e){}}return v||window.__skLegacyReviewUnsaved||null;},
   audit:function(detail){var at=new Date().toISOString(),d={at:at};Object.keys(detail).forEach(function(k){d[k]=detail[k];});try{window.dispatchEvent(new CustomEvent('sk-security',{detail:d}));}catch(e){}
    var log=[];try{log=window.skSecurityLog&&window.skSecurityLog.read?window.skSecurityLog.read():[];}catch(e){}
    return Array.isArray(log)&&log.some(function(e){return !!e&&e.type===d.type&&e.at===at&&e.by===d.by;});},
   save:function(v){try{localStorage.setItem(REVIEW,JSON.stringify(v));return true;}catch(e){return false;}},
-  done:function(){try{localStorage.removeItem(REVIEW);sessionStorage.removeItem(REVIEW);window.__skLegacyReviewUnsaved=null;return !localStorage.getItem(REVIEW)&&!sessionStorage.getItem(REVIEW);}catch(e){return false;}},
+  done:function(){try{localStorage.removeItem(REVIEW);sessionStorage.removeItem(REVIEW);window.__skLegacyReviewUnsaved=null;var a=JSON.parse(localStorage.getItem(AUTH)||'null');if(a&&a.legacyDemoReview){delete a.legacyDemoReview;localStorage.setItem(AUTH,JSON.stringify(a));}return !localStorage.getItem(REVIEW)&&!sessionStorage.getItem(REVIEW)&&!inAccounts();}catch(e){return false;}},
   // Queue the reviewed account list for the mirror, when one is configured.
   release:function(){try{window.dispatchEvent(new CustomEvent('sk-auth-saved'));}catch(e){}}
  };
@@ -89,8 +97,14 @@ function legacyDemoReviewApi(){
 // own account list is what signs people in.
 function showLegacyDemoReview(){
  var R=window.skLegacyDemoReview=legacyDemoReviewApi(),pending=R.pending();
- // A standalone tab that was already open when another tab found an older demo's leftovers reloads onto the review.
- window.addEventListener('storage',function(e){if(e.key==='skyryse-mes-legacy-demo-review-v1'&&e.newValue&&!(window.FLIGHT_SERVER&&window.FLIGHT_SERVER.api))location.reload();});
+ // A standalone tab that was already open when another tab found an older demo's leftovers reloads onto the review,
+ // whether that tab stored the review record, wrote it into the account store, or could store it nowhere and said so.
+ function standalone(){return !(window.FLIGHT_SERVER&&window.FLIGHT_SERVER.api);}
+ // The storage event is the prompt; a check every 2 seconds catches an event a busy or background tab did not get.
+ function recheck(){if(standalone()&&!pending&&R.pending())location.reload();}
+ window.addEventListener('storage',function(e){if(e.key==='skyryse-mes-legacy-demo-review-v1'||e.key===R.AUTH)recheck();});
+ setInterval(recheck,2000);
+ try{var ch=new BroadcastChannel('skyryse-mes-legacy-demo-review-v1');ch.onmessage=function(e){if(!standalone()||pending||!e.data||typeof e.data!=='object'||typeof e.data.foundAt!=='string')return;window.__skLegacyReviewUnsaved=e.data;try{sessionStorage.setItem('skyryse-mes-legacy-demo-review-v1',JSON.stringify(e.data));}catch(x){}location.reload();};}catch(e){}
  if(!pending)return;
  window.addEventListener('DOMContentLoaded',function(){try{
   if(!(window.FLIGHT_SERVER&&window.FLIGHT_SERVER.api))return;
@@ -14583,7 +14597,8 @@ window.SK_MIRROR = window.SK_MIRROR || {
       paint(); schedule(0);
     } catch (e) { lastError = 'Mirror could not queue this change: ' + e.message; paint(); }
   }
-  function pending() { return queue.filter(function (r) { return !r.rejected; }); }
+  // While an older demo's account review is pending, no account record is sent: the accounts are not yet reviewed.
+  function pending() { var hold = !!(window.skLegacyDemoReview && window.skLegacyDemoReview.pending()); return queue.filter(function (r) { return !r.rejected && !(hold && r.entityType === 'account'); }); }
   function schedule(ms) { if (retryTimer) return; retryTimer = setTimeout(function () { retryTimer = null; flush(); }, ms); }
   function flush() {
     if (inflight) return inflight;

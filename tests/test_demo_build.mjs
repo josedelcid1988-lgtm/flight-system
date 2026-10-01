@@ -59,7 +59,7 @@ ok('production keeps the NC review hand-off',prod.includes('if(t.dispo?.credenti
  ok('the demo takes a mirror only from the suite runner\'s own setting, recorded before any of the file runs',curated.indexOf('window.__demoMirrorPreset=window.__FS_SUITE_DEMO_MIRROR__||null;')>0&&curated.indexOf('window.__demoMirrorPreset=window.__FS_SUITE_DEMO_MIRROR__||null;')<curated.indexOf('<script id="sk-mirror">'));
  ok('the demo keeps its mirror queue under separate keys',!/['"]skyryse-mes-sync-(queue|sent|client)-v1['"]/.test(curated)&&/'skyryse-mes-demo-sync-queue-v1'/.test(curated));
  ok('production keeps its frozen mirror queue keys',/'skyryse-mes-sync-queue-v1'/.test(prod));}
-ok('the demo reads and writes accounts only under skyryse-mes-demo-auth-v1',!/['"]skyryse-mes-auth-v1['"]/.test(curated)&&(curated.match(/['"]skyryse-mes-demo-auth-v1['"]\/\* DEMO D-\d+ \*\//g)||[]).length===5);
+ok('the demo reads and writes accounts only under skyryse-mes-demo-auth-v1',!/['"]skyryse-mes-auth-v1['"]/.test(curated)&&(curated.match(/['"]skyryse-mes-demo-auth-v1['"]\/\* DEMO D-\d+ \*\//g)||[]).length===6);
 {const shared=['session','lockout','security','oidc','server-token','drafts','evidence'];
  ok('the demo keeps its session, lockout, security log, sign-in tokens, drafts and evidence under demo keys',shared.every(k=>!new RegExp(`['"]skyryse-mes-${k}-v1['"]`).test(curated)&&new RegExp(`['"]skyryse-mes-demo-${k}-v1['"]`).test(curated)),shared.filter(k=>new RegExp(`['"]skyryse-mes-${k}-v1['"]`).test(curated)).join(','));
  ok('production keeps those keys unchanged',shared.every(k=>new RegExp(`['"]skyryse-mes-${k}-v1['"]`).test(prod)));}
@@ -276,16 +276,46 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  const open=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),user:window.skAuth&&skAuth.user()&&skAuth.user().username}));
  ok('an already open tab reloads onto the review when another tab records it, and its non-reviewer session ends',open.gate&&!open.user,JSON.stringify(open));
  await ctx.close();}
-// When browser storage refuses the review record, the page that found the leftovers still requires the review.
-{const ctx=await b.newContext({viewport:{width:1440,height:1000}});const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));
- await ctx.addInitScript(()=>{const real=Storage.prototype.setItem;Storage.prototype.setItem=function(k,v){if(this===window.localStorage&&k==='skyryse-mes-legacy-demo-review-v1')throw new DOMException('full','QuotaExceededError');return real.call(this,k,v);};
-  if(sessionStorage.getItem('seeded'))return;sessionStorage.setItem('seeded','1');
-  real.call(localStorage,'skyryse-mes-auth-v1',JSON.stringify({users:[{username:'mlee',displayName:'Morgan Lee',salt:'01',hash:'ecad7597c83a96d133e45f9e9d271cbb0d1815dbae29b38b5148be7822799576',role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'master',displayName:'Master Access',salt:'00',hash:'f'.repeat(64),role:'admin',createdAt:'2026-09-17T00:00:00.000Z',createdBy:'demo build'}]}));});
+// When browser storage refuses the review record, the review is still required: on the page that found the leftovers
+// and on a page already open in another tab. First the record goes into the account store instead; when that is
+// refused too, the page tells the other open pages directly.
+for(const refuseAccounts of [false,true]){
+ const ctx=await b.newContext({viewport:{width:1440,height:1000}});
+ const H={salt:'01',hash:'ecad7597c83a96d133e45f9e9d271cbb0d1815dbae29b38b5148be7822799576'};
+ await ctx.addInitScript(([H,refuseAccounts])=>{const real=Storage.prototype.setItem;
+  Storage.prototype.setItem=function(k,v){if(this===window.localStorage&&window.__refuseReview&&(k==='skyryse-mes-legacy-demo-review-v1'||(refuseAccounts&&k==='skyryse-mes-auth-v1'&&String(v).includes('legacyDemoReview'))))throw new DOMException('full','QuotaExceededError');return real.call(this,k,v);};
+  if(localStorage.getItem('seeded'))return;real.call(localStorage,'seeded','1');
+  real.call(localStorage,'skyryse-mes-auth-v1',JSON.stringify({users:[{username:'ops9',displayName:'Ops Nine',...H,role:'ops',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'mlee',displayName:'Morgan Lee',...H,role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'}]}));},[H,refuseAccounts]);
+ // A tab already open and signed in as an Operations account.
+ const open=await ctx.newPage();open.on('pageerror',e=>errs.push(e.message));
+ await open.addInitScript(()=>{if(sessionStorage.getItem('signed'))return;sessionStorage.setItem('signed','1');sessionStorage.setItem('skyryse-mes-session-v1','ops9');});
+ await open.goto('file://'+FIXTURES+'publish.html');await open.waitForFunction(()=>!document.getElementById('sk-boot')&&window.skAuth&&skAuth.user(),null,{timeout:20000});
+ // An older demo's account appears, and a second page finds it with the review record refused. The account is written
+ // by that page itself before it loads: a write from the open tab reaches another tab's storage asynchronously.
+ const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));
+ await p.addInitScript(()=>{window.__refuseReview=true;if(window.__seededMaster)return;window.__seededMaster=true;const a=JSON.parse(localStorage.getItem('skyryse-mes-auth-v1'));if(!a.users.some(u=>u.username==='master')&&!sessionStorage.getItem('masterAdded')){sessionStorage.setItem('masterAdded','1');a.users.push({username:'master',displayName:'Master Access',salt:'00',hash:'f'.repeat(64),role:'admin',createdAt:'2026-09-17T00:00:00.000Z',createdBy:'demo build'});localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify(a));}});
  await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(900);
- const f1=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),stored:localStorage.getItem('skyryse-mes-legacy-demo-review-v1'),users:JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.map(u=>u.username),ev:JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').find(e=>e.type==='legacy-demo-removed')}));
- ok('the review record could not be stored, yet the page opens on the review and the removal records that',f1.gate&&f1.stored===null&&JSON.stringify(f1.users)==='["mlee"]'&&f1.ev&&f1.ev.reviewSaved===false,JSON.stringify(f1));
+ const f1=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),stored:localStorage.getItem('skyryse-mes-legacy-demo-review-v1'),auth:JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')),ev:JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').find(e=>e.type==='legacy-demo-removed')}));
+ const label=refuseAccounts?'with the account store refused too':'kept in the account store';
+ ok(`review record refused, ${label}: the page that found the leftovers opens on the review and the removal says where the record is`,f1.gate&&f1.stored===null&&JSON.stringify(f1.auth.users.map(u=>u.username))==='["ops9","mlee"]'&&!!f1.ev&&f1.ev.reviewSaved===!refuseAccounts&&f1.ev.reviewStore===(refuseAccounts?null:'accounts')&&!!f1.auth.legacyDemoReview===!refuseAccounts,JSON.stringify({gate:f1.gate,stored:f1.stored,ev:f1.ev,field:!!f1.auth.legacyDemoReview}));
+ await open.waitForFunction(()=>!!document.getElementById('sk-legacy-review'),null,{timeout:10000}).catch(()=>{});
+ const o=await open.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),user:window.skAuth&&skAuth.user()&&skAuth.user().username}));
+ ok(`review record refused, ${label}: a tab already open reloads onto the review and its Operations session ends`,o.gate&&!o.user,JSON.stringify(o));
  await p.reload();await p.waitForTimeout(900);
- ok('a reload of that tab still opens on the review',await p.evaluate(()=>!!document.getElementById('sk-legacy-review')));
+ ok(`review record refused, ${label}: a reload of the finding tab still opens on the review`,await p.evaluate(()=>!!document.getElementById('sk-legacy-review')));
+ await ctx.close();}
+// Queued account records are never sent to the mirror while the review is pending, even when storage refuses to move
+// them out of the queue; the workspace records in the same queue are sent.
+{const ctx=await b.newContext({viewport:{width:1440,height:1000}});const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));
+ const posts=[];await ctx.route(/mirror-hold\.test|\/api\/v1\/writes/,route=>{try{posts.push(...(JSON.parse(route.request().postData()||'{}').records||[]));}catch(e){}route.fulfill({status:500,contentType:'application/json',body:'{"ok":false}'});});
+ await ctx.addInitScript(()=>{window.SK_MIRROR={url:'http://mirror-hold.test',token:'hold-token',batchSize:50};const real=Storage.prototype.setItem;
+  Storage.prototype.setItem=function(k,v){if(this===window.localStorage&&(k==='skyryse-mes-legacy-demo-account-queue-v1'||(k==='skyryse-mes-sync-queue-v1'&&!window.__queueOk)))throw new DOMException('full','QuotaExceededError');return real.call(this,k,v);};
+  if(sessionStorage.getItem('seeded'))return;sessionStorage.setItem('seeded','1');
+  real.call(localStorage,'skyryse-mes-auth-v1',JSON.stringify({users:[{username:'mlee',displayName:'Morgan Lee',salt:'01',hash:'e'.repeat(64),role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'master',displayName:'Master Access',salt:'00',hash:'f'.repeat(64),role:'admin',createdAt:'2026-09-17T00:00:00.000Z',createdBy:'demo build'}]}));
+  real.call(localStorage,'skyryse-mes-sync-queue-v1',JSON.stringify([{clientWriteId:'prod-w1',storeKey:'skyryse-mes-work-order-v1',entityType:'order',entityId:'WO-1',operation:'upsert',payloadJson:'{}'},{clientWriteId:'prod-a1',storeKey:'skyryse-mes-auth-v1',entityType:'account',entityId:'mlee',operation:'upsert',payloadJson:JSON.stringify({username:'mlee',role:'admin',createdBy:'mlee'})}]));});
+ await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(2500);
+ const r=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),queue:JSON.parse(localStorage.getItem('skyryse-mes-sync-queue-v1')||'[]').map(x=>x.clientWriteId)}));
+ ok('storage refused moving the account record out of the queue: it stays queued, the review is required, and the mirror is sent the workspace record but no account record',r.gate&&r.queue.includes('prod-a1')&&posts.some(x=>x.clientWriteId==='prod-w1')&&!posts.some(x=>x.entityType==='account'),JSON.stringify({r,posts:posts.map(x=>x.clientWriteId)}));
  await ctx.close();}
 // With the server, the notice is shown and a QA Manager signed in to the server marks the review done, but only once
 // its security log entry is stored.

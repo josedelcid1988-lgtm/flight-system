@@ -51,9 +51,10 @@ redirects. Only a QA Manager or Master Access account signs in to it (anyone els
 switching account is refused); they confirm each account they recognize, and nobody confirms their own account,
 so a browser with a single QA Manager or Master Access account cannot finish the review: move its workspace to
 the server (`docs/MIGRATION.md`) or clear its site data. A tab already open when the review is found reloads onto
-it, and if browser storage refuses the review record the page that found the leftovers still requires it. Queued
-account records wait outside the mirror queue under `skyryse-mes-legacy-demo-account-queue-v1` until the review
-closes, which queues the reviewed account list instead. An account nobody recognizes is never confirmed: clear
+it. If browser storage refuses the review record, it is written into the account store instead, and failing that
+the page holds it and tells every other open page, which holds it too. Queued account records wait outside the
+mirror queue under `skyryse-mes-legacy-demo-account-queue-v1`, and the mirror sends no account record at all while
+the review is pending; closing the review queues the reviewed account list instead. An account nobody recognizes is never confirmed: clear
 the browser's site data, or use the server, before production use. Each step counts only once its security log entry is stored
 (`legacy-demo-accounts-confirmed`, then `legacy-demo-reviewed` when every account is confirmed). With the server,
 sign-in and accounts are the server's, so a notice stays on every page until a QA Manager or Master Access account

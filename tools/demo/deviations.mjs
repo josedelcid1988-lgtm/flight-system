@@ -173,7 +173,7 @@ const LIST = [
     } },
   { area: 'Accounts', title: 'Separate account storage key',
     why: 'The demo keeps its known-password accounts (D-4) under skyryse-mes-demo-auth-v1, so opening the demo in a browser that also holds the production build never adds master, demo or any other demo1234 account to the production account list, and the production page never sees a demo account. The production key stays frozen.',
-    find: /(['"])skyryse-mes-auth-v1\1/g, count: 5,
+    find: /(['"])skyryse-mes-auth-v1\1/g, count: 6,
     replace: (ctx, m, id) => `${m[0]}skyryse-mes-demo-auth-v1${m[0]}/* DEMO ${id} */` },
   { area: 'Data', title: 'Never the production mirror',
     why: 'Whatever mirror address and token the production file sets (the fallback object or a direct window.SK_MIRROR assignment), the demo replaces the whole setting with the one present before the page loaded, or an empty address. The demo never sends records made under its relaxed gates to the production retention database and never holds the production mirror token. tools/run-suites.mjs --mirror gives the demo its own throwaway server through __FS_SUITE_DEMO_MIRROR__, which D-42 captures.',
