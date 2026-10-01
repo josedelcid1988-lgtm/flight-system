@@ -317,6 +317,90 @@ try {
   assert.equal(await page.locator('#flight-server-recovery').count(), 0, 'a recovery copy is removed rather than exposed to another account');
   assert.equal(await page.evaluate(() => sessionStorage.getItem('skyryse-mes-work-order-v1-unconfirmed-server-recovery-v1')), null);
 
+  // #292: the recovery banner clears once the same account has a later write confirmed by the server, and only then.
+  const RECOVERY_STORAGE_KEY = 'skyryse-mes-work-order-v1-unconfirmed-server-recovery-v1';
+  const recoveryPriorityChange = refuse => page.evaluate(refuse => {
+    const order = state.orders.find(item => item.status === 'Building');
+    if (!order) throw new Error('No Building order is available for the recovery banner check.');
+    const next = order.priority === 'AOG' ? 'Normal' : 'AOG';
+    if (!window.__recoveryApi) {
+      const api = window.skServer.api.bind(window.skServer);
+      window.__recoveryApi = true;
+      window.skServer.api = async (path, options) => {
+        if (window.__refusePriority && String(path).includes('/workspace/actions/MES.setPriority')) {
+          window.__refusePriority = false;
+          return { status: 403, json: { error: 'Controlled recovery banner refusal' } };
+        }
+        return api(path, options);
+      };
+    }
+    window.__refusePriority = refuse;
+    window.skServer.sync = { status: 'pending-check', message: '' };
+    const result = MES.setPriority(state, order.id, next);
+    if (!result.ok) throw new Error(result.message);
+    save();
+  }, refuse);
+  const recoveryState = () => page.evaluate(key => ({
+    banner: !!document.querySelector('#flight-server-recovery'),
+    memory: !!unconfirmedServerRecovery,
+    stored: sessionStorage.getItem(key) !== null
+  }), RECOVERY_STORAGE_KEY);
+
+  const recoveryStartPriority = await page.evaluate(() => state.orders.find(item => item.status === 'Building')?.priority);
+  await recoveryPriorityChange(true);
+  await page.waitForFunction(() => window.skServer?.sync?.status === 'error', null, { timeout: 10000 });
+  await page.locator('#flight-server-recovery').waitFor({ state: 'visible', timeout: 10000 });
+  await recoveryPriorityChange(true);
+  await page.waitForFunction(() => window.skServer?.sync?.status === 'error', null, { timeout: 10000 });
+  assert.deepEqual(await recoveryState(), { banner: true, memory: true, stored: true }, 'a second refused change keeps the recovery banner and its copy');
+  await recoveryPriorityChange(false);
+  await page.waitForFunction(() => window.skServer?.sync?.status === 'synced', null, { timeout: 10000 });
+  assert.deepEqual(await recoveryState(), { banner: false, memory: false, stored: false }, 'a later change confirmed by the server for the same account clears the recovery banner and its copy');
+
+  // A confirmed write clears only a copy that belongs to the signed-in account and existed when the write was sent.
+  // (Reloading the shared workspace already removes another account's copy from view; this checks the clear itself.)
+  await recoveryPriorityChange(true);
+  await page.waitForFunction(() => window.skServer?.sync?.status === 'error', null, { timeout: 10000 });
+  await page.locator('#flight-server-recovery').waitFor({ state: 'visible', timeout: 10000 });
+  const guarded = await page.evaluate(() => {
+    const own = unconfirmedServerRecovery;
+    const other = { ...own, username: 'different-account' };
+    unconfirmedServerRecovery = other;
+    sessionStorage.setItem(SERVER_RECOVERY_KEY, JSON.stringify(other));
+    clearConfirmedServerRecovery(other);
+    const otherKept = unconfirmedServerRecovery === other && sessionStorage.getItem(SERVER_RECOVERY_KEY) !== null && !!document.querySelector('#flight-server-recovery');
+    unconfirmedServerRecovery = own;
+    sessionStorage.setItem(SERVER_RECOVERY_KEY, JSON.stringify(own));
+    clearConfirmedServerRecovery({ ...own });
+    const staleKept = unconfirmedServerRecovery === own && sessionStorage.getItem(SERVER_RECOVERY_KEY) !== null;
+    clearConfirmedServerRecovery(null);
+    const noneKept = unconfirmedServerRecovery === own && sessionStorage.getItem(SERVER_RECOVERY_KEY) !== null;
+    return { otherKept, staleKept, noneKept };
+  });
+  assert.deepEqual(guarded, { otherKept: true, staleKept: true, noneKept: true }, "a confirmed write does not clear another account's recovery copy, a newer copy, or a copy made after it was sent");
+  // A batch the page sends on its own (here the AOG broadcast tick, with the server's acceptance stubbed) is not the
+  // person's change, so its confirmation leaves the recovery copy in place.
+  const automatic = await page.evaluate(async () => {
+    const own = unconfirmedServerRecovery, api = window.skServer.api;
+    window.skServer.api = async (path, options) => String(path) === '/workspace/actions/MES.logAogBroadcast'
+      ? { status: 200, etag: serverEtag, json: {} }
+      : api(path, options);
+    try {
+      serverActionQueue.push({ action: 'MES.logAogBroadcast', args: [state.orders[0].id] });
+      flushServerActions();
+      await serverActionChain;
+    } finally { window.skServer.api = api; }
+    return { status: window.skServer.sync.status, kept: unconfirmedServerRecovery === own && sessionStorage.getItem(SERVER_RECOVERY_KEY) !== null && !!document.querySelector('#flight-server-recovery') };
+  });
+  assert.deepEqual(automatic, { status: 'synced', kept: true }, 'a confirmed automatic AOG broadcast does not clear the recovery copy');
+  await page.evaluate(() => document.querySelector('[data-action="dismiss-server-recovery"]').click());
+  assert.deepEqual(await recoveryState(), { banner: false, memory: false, stored: false }, 'Dismiss still clears the recovery banner and its copy');
+  // Put the order back so the page's own AOG tick does not send a broadcast during the checks that follow.
+  if (await page.evaluate(() => state.orders.find(item => item.status === 'Building')?.priority) !== recoveryStartPriority) {
+    await recoveryPriorityChange(false);
+    await page.waitForFunction(() => window.skServer?.sync?.status === 'synced', null, { timeout: 10000 });
+  }
+
   const snapshotRefusal = await page.evaluate(() => {
     const order = state.orders.find(item => item.status === 'Building');
     if (!order) throw new Error('No Building order is available for the snapshot refusal check.');
