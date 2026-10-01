@@ -53,6 +53,12 @@ try {
     for (let i = 0; i < 5; i++) last = await signInError(page, 'demo', 'wrong-password-' + i);
     ok('fifth failure still locks the account', last === GENERIC + ' Account locked for 5 minutes.', last);
     const blocked = await signInError(page, 'demo', 'demo1234');
+    // The fifth failure on an unknown account reads the same as on a real one, so the lockout text cannot be used to find accounts.
+    let lastUnknown = '';
+    for (let i = 0; i < 5; i++) lastUnknown = await signInError(page, 'nobody-here', 'wrong-password-' + i);
+    ok('fifth failure on an unknown account reads the same as on a real account', lastUnknown === last, JSON.stringify({ lastUnknown, last }));
+    const blockedUnknown = await signInError(page, 'nobody-here', 'wrong-password');
+    ok('a locked unknown account reads the same as a locked real account', blockedUnknown === blocked, JSON.stringify({ blockedUnknown, blocked }));
     ok('locked account is still refused with the wait time', /^Too many failed attempts\. Try again in 5 minutes\.$/.test(blocked), blocked);
     await page.evaluate(() => localStorage.removeItem('skyryse-mes-lockout-v1'));
     await page.locator('#sk-username').fill('demo'); await page.locator('#sk-password').fill('demo1234'); await page.locator('#sk-login-submit').click();
