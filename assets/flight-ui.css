@@ -41,6 +41,22 @@
 .fr-wo-card .fr-order-blocked{display:inline-flex;padding:5px 8px;border-radius:7px;background:#b53648;color:#fff;font-size:12px;font-weight:650}
 .fr-wo-card-title{margin:8px 0 2px;font-size:15px;font-weight:650;line-height:1.3;overflow-wrap:anywhere}
 .fr-wo-card-part{margin:0;color:var(--fr-muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;overflow-wrap:anywhere}
+.fr-wo-card-warning{margin:6px 0 0;color:#9a5807;font-size:12px;font-weight:650}
+.fr-wo-cards.fr-compact{gap:6px}
+.fr-wo-cards.fr-compact .fr-wo-card{padding:10px 12px}
+.fr-wo-cards.fr-compact .fr-wo-card-title{margin-top:4px;font-size:14px}
+.fr-wo-cards.fr-compact .fr-wo-card-fields{gap:4px 12px;margin-top:8px}
+.fr-wo-cards.fr-compact .fr-wo-card-actions{margin-top:8px}
+.fr-order-page .fr-has-cards>table.fr-order-table{position:relative;display:block;width:100%;min-width:0!important;margin:0 0 10px}
+.fr-order-page .fr-order-table>tbody{display:none}
+.fr-order-page .fr-order-table>thead{display:block}
+.fr-order-page .fr-order-table>thead>tr{display:flex;flex-wrap:wrap;gap:6px}
+.fr-order-page .fr-order-table th{display:block;max-width:100%;padding:0;border:1px solid var(--fr-line);border-radius:10px;background:#fff;white-space:normal}
+.fr-order-page .fr-order-table th,.fr-order-page .fr-order-table th .log-menu{position:static}
+.fr-order-page .fr-order-table th .log-th-inner{min-height:44px;padding:0 4px 0 10px}
+.fr-order-page .fr-order-table th .log-sort{min-height:44px;text-align:left}
+.fr-order-page .fr-order-table th .log-menu summary{width:40px;height:40px}
+.fr-order-page .fr-order-table th .log-menu-body{top:100%;left:0;right:0;width:auto;max-width:none;margin-top:6px}
 .fr-wo-card-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px 12px;margin:12px 0 0}
 .fr-wo-card-fields>div{min-width:0}
 .fr-wo-card-fields .fr-wo-card-next{grid-column:1/-1}
@@ -58,6 +74,8 @@
 .fr-queue .fr-search kbd{display:none}
 .fr-queue .fr-filter button,.fr-queue .fr-density{min-height:44px}
 .fr-queue .fr-filter-select select,.fr-queue .fr-order-flag{min-height:44px}
+.fr-order-page .fr-controls>.fr-filter-select{flex:1 1 90px;min-width:90px}
+.fr-order-page .fr-filter-select select{padding:0 26px 0 8px;text-overflow:ellipsis}
 .fr-page-heading{flex-wrap:wrap;gap:12px}
 .fr-page-heading>*{min-width:0;max-width:100%}
 .fr-dispatch>.fr-section-heading{flex-direction:column;align-items:stretch}

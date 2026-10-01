@@ -111,7 +111,7 @@ try {
       await check(`${at} ${route}: work orders render as cards`, async () => {
         await show(page, route);
         const list = page.locator('#main .fr-has-cards');
-        assert.equal(await list.locator('table').isVisible(), false, 'the table is hidden below 700px');
+        assert.equal(await list.locator('table tbody tr').first().isVisible(), false, 'the table rows are hidden below 700px');
         const cards = list.locator('.fr-wo-card');
         const count = await cards.count();
         assert.ok(count > 0, 'cards are shown');
@@ -140,6 +140,52 @@ try {
         await page.getByRole('button', { name: 'Close record details' }).click();
       });
     }
+    await check(`${at} home: the Hangar keeps no table header on a phone`, async () => {
+      await show(page, 'home');
+      assert.equal(await page.locator('#main .fr-has-cards > table').isVisible(), false, 'the Hangar table, header included, is hidden');
+    });
+    await check(`${at} orders: column sort and filter controls stay reachable above the cards`, async () => {
+      await show(page, 'orders');
+      const header = page.locator('#main .fr-order-table thead');
+      assert.equal(await header.isVisible(), true, 'the column controls are shown');
+      const sorts = await header.locator('[data-tbl-sort]').evaluateAll(els => els.map(el => ({ label: el.getAttribute('aria-label'), height: el.getBoundingClientRect().height, right: el.getBoundingClientRect().right })));
+      assert.ok(sorts.length >= 6, 'every sortable column has a control');
+      for (const sort of sorts) { assert.ok(sort.height >= 44, `${sort.label} is at least 44px tall`); assert.ok(sort.right <= size.width, `${sort.label} fits the screen`); }
+      await header.getByRole('button', { name: 'Sort by Due' }).click();
+      await header.getByRole('button', { name: 'Sort by Due' }).click();
+      assert.equal(await page.locator('#main .fr-order-table [data-col="Due"] .log-arrow').innerText(), '▼', 'Due is sorted descending');
+      const order = await page.evaluate(() => ({ cards: [...document.querySelectorAll('#main .fr-wo-card')].map(el => el.dataset.woCard), rows: [...document.querySelectorAll('#main .fr-order-table tbody tr')].map(el => el.dataset.orderRow) }));
+      assert.deepEqual(order.cards, order.rows, 'the cards follow the sorted order');
+      const dues = await page.evaluate(ids => ids.map(id => MES.getOrder(state, id).due || ''), order.cards);
+      assert.deepEqual(dues, [...dues].sort().reverse(), 'the cards run from the latest due date');
+      await header.locator('summary[aria-label="Filter Priority"]').click();
+      const menu = await header.locator('.log-menu[open] .log-menu-body').evaluate(el => { const box = el.getBoundingClientRect(); return { left: box.left, right: box.right }; });
+      assert.ok(menu.left >= 0 && menu.right <= size.width, 'the filter menu opens inside the screen');
+      await assertNoSideScroll(page, 'orders with a filter menu open');
+      await header.locator('.log-menu[open] [data-tbl-filter][data-value="Low"]').click();
+      const shown = await page.locator('#main .fr-wo-card').count();
+      assert.equal(shown, await page.evaluate(() => state.orders.filter(o => o.priority === 'Low' && !MES.aogActive(o)).length), 'the priority filter narrows the cards');
+      await page.evaluate(() => { skTable.reset('orders'); render(); });
+    });
+    await check(`${at} orders: a held card names the holds and a superseded revision is marked`, async () => {
+      await show(page, 'orders');
+      const held = page.locator('#main .fr-wo-card.is-held').first();
+      assert.ok(await held.count(), 'the sample has a held work order');
+      assert.match(await held.locator('.fr-wo-card-next dd').innerText(), /^Resolve holds before continuing/, 'a held card asks for its holds, not an operation');
+      const id = await page.evaluate(() => state.orders.find(o => o.status !== 'Closed').id);
+      await page.evaluate(orderId => { window.__revisionLabel = MES.revisionLabel; MES.revisionLabel = o => o.id === orderId ? 'Superseded' : window.__revisionLabel(o); render(); }, id);
+      assert.equal(await page.locator(`#main [data-wo-card="${id}"] .fr-wo-card-warning`).innerText(), 'Superseded revision');
+      await page.evaluate(() => { MES.revisionLabel = window.__revisionLabel; render(); });
+    });
+    await check(`${at} orders: Compact changes the cards`, async () => {
+      await show(page, 'orders');
+      const padding = () => page.locator('#main .fr-wo-card').first().evaluate(el => parseFloat(getComputedStyle(el).paddingTop));
+      const before = await padding();
+      await page.locator('#main .fr-density').click();
+      assert.equal(await page.locator('#main .fr-wo-cards').evaluate(el => el.classList.contains('fr-compact')), true);
+      assert.ok(await padding() < before, 'compact cards are tighter');
+      await page.locator('#main .fr-density').click();
+    });
     await check(`${at} orders: a priority change on a card keeps focus on that card`, async () => {
       await show(page, 'orders');
       const select = page.locator('#main .fr-wo-card select[data-priority-order]:not([disabled])').first();
