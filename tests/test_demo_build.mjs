@@ -135,7 +135,9 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
 // known-password accounts and its queued workspace records once, keeps its own, and records that it did.
 {const ctx=await b.newContext({viewport:{width:1440,height:1000}});const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));
  // A mirror is configured but unreachable, so what production queues for it stays in the queue to be read.
- await ctx.route(/mirror-legacy\.test/,route=>route.abort());
+ // The suite runner's --mirror run sets its own mirror in the page head, so writes are caught by their path, recorded
+ // and refused, whichever mirror the page names: what was queued stays in the queue.
+ const mirrorPosts=[];await ctx.route(/mirror-legacy\.test|\/api\/v1\/writes/,route=>{try{mirrorPosts.push(...(JSON.parse(route.request().postData()||'{}').records||[]));}catch(e){}route.abort();});
  await ctx.addInitScript(()=>{window.SK_MIRROR={url:'http://mirror-legacy.test',token:'legacy-mirror-token',batchSize:50};});
  const demoUsers=JSON.parse(fs.readFileSync(path.join(ROOT,'tools/demo/accounts.json'),'utf8')).users;
  await ctx.addInitScript(users=>{if(sessionStorage.getItem('seeded'))return;sessionStorage.setItem('seeded','1');
@@ -156,6 +158,7 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  ok('the refusal case is real: the older demo accounts include master',demoUsers.some(u=>u.username==='master'&&u.createdBy==='demo build'));
  ok('production opened first removes every account an older demo build created, and every account those created, and keeps its own',JSON.stringify(r.users)==='["mlee","ops1","qa2"]',JSON.stringify(r.users));
  ok('production opened first drops the older demo\'s queued workspace and account records before its mirror can send them, and keeps its own workspace records',JSON.stringify(r.queue)==='["prod-1"]',JSON.stringify(r.queue));
+ ok('no account record is sent to the mirror while the review is pending',!mirrorPosts.some(x=>x.entityType==='account'),JSON.stringify(mirrorPosts.map(x=>x.clientWriteId)));
  ok('every other queued account record is held outside the queue until the review, not sent and not deleted',JSON.stringify(r.heldAccounts.map(x=>x.clientWriteId))==='["prod-acct-1","prod-acct-2"]',JSON.stringify(r.heldAccounts));
  const prodLog=JSON.parse(r.log||'[]');
  ok('security events a demo page wrote leave the production security log; production events stay',!prodLog.some(e=>/demo\.html$/.test(e.page||''))&&prodLog.some(e=>e.type==='signin'&&e.username==='mlee'),r.log.slice(0,400));
@@ -211,7 +214,7 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  g=await gateState();
  {const done=g.log.filter(e=>e.type==='legacy-demo-reviewed');
  ok('once every account is confirmed the review closes, is logged with who closed it, and the page opens normally',!g.flag&&!g.gate&&done.length===1&&done[0].by==='qa2'&&done[0].accounts.includes('qa.boss')&&JSON.stringify(done[0].confirmedAccounts.sort())==='["mlee","ops1","qa2"]',JSON.stringify({g,done}));}
- {const q=await p.evaluate(()=>JSON.parse(localStorage.getItem('skyryse-mes-sync-queue-v1')||'[]').filter(x=>x.entityType==='account').map(x=>x.entityId+':'+x.operation));
+ {const q=(await p.evaluate(()=>JSON.parse(localStorage.getItem('skyryse-mes-sync-queue-v1')||'[]'))).concat(mirrorPosts).filter(x=>x.entityType==='account').map(x=>x.entityId+':'+x.operation);
  ok('closing the review queues the reviewed account list for the mirror, and no older-demo account',['mlee:upsert','ops1:upsert','qa2:upsert'].every(x=>q.includes(x))&&!q.some(x=>/^(qa\.boss|master|tech\.two)/.test(x)),JSON.stringify(q));}
  await p.reload();await p.waitForTimeout(700);
  ok('once reviewed, no review is shown after a reload',await p.evaluate(()=>!document.getElementById('sk-legacy-review')&&!document.getElementById('sk-legacy-demo-notice')));
