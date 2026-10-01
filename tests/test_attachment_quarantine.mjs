@@ -419,6 +419,31 @@ function surfaces(state) {
   check(`removing a recording with the longest fields and reason does not grow the counted workspace (${charged} to ${MES.workspaceFileBytes(state)})`, removed.ok && MES.workspaceFileBytes(state) <= charged);
 }
 
+// ---- engine: filling quality records with name-only files and then removing every one stays within the budget ----
+// The reproduction from the review: many records, name-only references added until the workspace refuses more, then
+// every file removed with a reason. Each removal fits the room charged when its file was added, so removals are never
+// refused and the counted total never passes the limit.
+{
+  const state = curated(); FlightManeuver.ensure(state);
+  const LIMIT = 3000000 + 500000, held = [];
+  let refused = null;
+  for (let n = 0; n < 200 && !refused; n++) {
+    const raised = host.withAccount(qm, () => FlightManeuver.raiseNC(state, { sourceType: 'Serial number', type: 'NC', title: `Flood check ${n}`, description: 'Name-only reference flood check.', partNumber: 'SR-IH-040', revision: 'A', serial: `IH-040-FL${n}`, quantity: 1, foundAt: 'Stock', pedigree: 'Production', escaped: 'no' }), state);
+    if (!raised.ok) { refused = raised.message; break; }
+    for (let i = 0; i < 50; i++) {
+      const r = host.withAccount(technician, () => FlightManeuver.addRecordFile(state, 'ncs', raised.id, { name: `ref-${n}-${i}-${'n'.repeat(120)}.pdf`, type: 'application/pdf', size: 1000 }), state);
+      if (!r.ok) { if (/as many file records/.test(r.message)) refused = 'budget'; break; }
+      held.push(raised.id);
+    }
+  }
+  const peak = MES.workspaceFileBytes(state);
+  check(`name-only references are refused once the workspace budget is reached (${held.length} added, ${peak} bytes counted)`, refused === 'budget' && peak <= LIMIT);
+  let failed = 0;
+  for (const id of new Set(held)) { const rec = FlightManeuver.get(state, 'ncs', id); for (const f of [...(rec.attachments || [])]) { const r = host.withAccount(qe, () => FlightManeuver.removeRecordFile(state, 'ncs', id, f.id, REASON), state); if (!r.ok) failed++; } }
+  const after = MES.workspaceFileBytes(state);
+  check(`every one of those files can still be removed with a reason, and the counted total stays within the limit (${peak} to ${after})`, failed === 0 && after <= peak && after <= LIMIT && MES.validate(structuredClone(state)) && MES.verifyManifests(state).ok);
+}
+
 // ---- engine: a kept file must keep the full shape of the attachment it was, under a re-signed manifest too ----
 {
   const state = curated();

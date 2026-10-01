@@ -6461,7 +6461,9 @@ const OP_BOM_MAX = 12;
   const splitBudgetError = (state, child) => attachmentBytes(state) + fileBytes(listOf(child.kitFiles)) + listOf(child.operations).reduce((sum, op) => sum + fileBytes(listOf(op.attachments)) + fileBytes(listOf(op.evidence)), 0) > MAX_ATTACHMENTS_TOTAL ? 'Splitting would copy this order\u2019s files onto the new order past the workspace attachment limit. Keep the larger files in the controlled document system and reference them here, then split.' : null;
   // Content is held to the workspace attachment limit. A file logged by name only still adds a record (and, once
   // removed, its quarantine entry), so records have a fixed headroom above that limit; past it no file is added.
-  const FILE_RECORD_ALLOWANCE = 2000, FILE_RECORD_HEADROOM = 500000;
+  // The allowance covers the full charge of the largest single record (a recording with the longest file name and
+  // description), twice for its future removal copy, plus the removal growth, so an add never passes the limit.
+  const FILE_RECORD_ALLOWANCE = 2 * 5000 + QUARANTINE_GROWTH, FILE_RECORD_HEADROOM = 500000;
   const fileBudgetError = (state, dataUrl) => {
     const used = attachmentBytes(state);
     if (dataUrl && used + dataUrl.length > MAX_ATTACHMENTS_TOTAL) return 'This workspace is near its attachment limit, and removed files stay in quarantine. Log this file by name only, or keep it in the controlled document system and reference it here.';
