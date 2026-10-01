@@ -173,10 +173,6 @@ const LIST = [
     why: 'The demo lifts the 8130-9 preparer and AQI comparison (D-20), so a demo AQI signature by the person who completed the form records no self-signature. Verification does not flag that pairing in the demo. Production records and checks it.',
     find: '  const aqiSelfSignMismatch = p => ', count: 1,
     replace: (ctx, m, id) => `  const aqiSelfSignMismatch = p => false /* DEMO ${id} */ && ` },
-  { area: 'Separation of duties', title: 'A stock NC dispositioned and approved by one person stays valid',
-    why: 'The demo lets one person record and approve a stock NC disposition (D-20), so validation does not refuse that pairing in the demo. Production refuses it on every load and save.',
-    find: '  const ncSelfApproved = t => ', count: 1,
-    replace: (ctx, m, id) => `  const ncSelfApproved = t => false /* DEMO ${id} */ && ` },
 ];
 
 export const DEVIATIONS = LIST.map((d, i) => Object.freeze({ ...d, id: `D-${i + 1}` }));

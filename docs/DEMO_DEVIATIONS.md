@@ -19,7 +19,7 @@ The accounts `tech`, `quality`, `mfgeng`, `operations`, `engineering` are pilot 
 their real role (Technician, Quality, Manufacturing Engineering, Operations, Engineering) so a pilot
 can rehearse the real hand-offs. Every other demo account (`demo`, `master`, `safety`,
 `certification` and any account a person creates) has full access (D-6 to D-36). The stamp,
-PIN and separation-of-duties relaxations (D-13 to D-19; D-20 to D-39) apply to every
+PIN and separation-of-duties relaxations (D-13 to D-19; D-20 to D-38) apply to every
 demo account so no scenario stalls. Sign in with any account and the password `demo1234`.
 
 Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-28 to D-29).
@@ -76,4 +76,3 @@ Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-2
 | D-36 | Roles | Any named signer role may sign a calibration entry | The full-access demo accounts (D-6) hold configure-qms whatever their role, so their calibration entries record and validate. Production accepts only the Quality Manager and System Administrator signer roles. Pilot seats are still refused by the configure-qms gate. | 1 |
 | D-37 | Data | Calibrated tool snapshot follows the first-load day | The demo seeds carry no calibration log, so demo tool checks read the Calibrated Tool Log snapshot shipped in the production file, and every snapshot tool would expire within a year of capture and block every operation that needs tooling. The snapshot label and every snapshot tool expiry move forward by the same days as the seed dates (D-35), counted from the day the browser first loaded the demo, so the spacing between tools is kept and tools still come due as days pass. Signed buy-offs keep the tool expiries they recorded. Production keeps the shipped snapshot. Source: tools/demo/seed-dates.mjs. | 1 |
 | D-38 | Separation of duties | An 8130-9 completed and AQI-signed by one person needs no self-signature record | The demo lifts the 8130-9 preparer and AQI comparison (D-20), so a demo AQI signature by the person who completed the form records no self-signature. Verification does not flag that pairing in the demo. Production records and checks it. | 1 |
-| D-39 | Separation of duties | A stock NC dispositioned and approved by one person stays valid | The demo lets one person record and approve a stock NC disposition (D-20), so validation does not refuse that pairing in the demo. Production refuses it on every load and save. | 1 |
