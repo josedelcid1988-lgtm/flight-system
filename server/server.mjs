@@ -231,20 +231,33 @@ export function createServer(options = {}) {
   const noteFailure = async username => { const r = await store.noteFailedSignin(username, LOCK_AFTER, Date.now() + LOCK_MS); if (r.locked) await store.audit(username, 'lockout', { minutes: LOCK_MS / 60000 }); return { n: r.fails, until: r.until }; };
 
   // The document as the engine sees it: upgraded, blockers synced, validated. Returns the state or a problem.
-  const loadState = async () => { const row = await store.getDoc(TENANT); if (!row) return { state: null, etag: null }; const parsed = JSON.parse(row.json); const state = host.MES.upgrade(structuredClone(parsed)); return { state, etag: row.etag, raw: parsed, problem: state ? null : (host.MES.diagnose(parsed) || {}).detail || 'The document does not match the current record format.' }; };
+  // registers names a stored stamp register or planned-order list that exists but is damaged. It is read from the
+  // stored copy before any engine code runs, because some actions run the initializer themselves (issueStamp calls
+  // ensureStamps; addPlannedOrder replaces a value that is not a list), and the write gate would only see the
+  // replacement (Codex review of #220). A write path refuses when it is set; reads are unaffected.
+  const registerProblem = state => host.MES.stampRegisterProblem?.(state) || host.FlightPlan.plannedOrdersProblem?.(state) || null;
+  // A damaged planned-order value can make MES.upgrade itself throw (planning blockers read it as a list); that is
+  // reported as the same plain register problem, not an unexpected failure (Codex review of #220).
+  const loadState = async () => { const row = await store.getDoc(TENANT); if (!row) return { state: null, etag: null }; const parsed = JSON.parse(row.json); let state; try { state = host.MES.upgrade(structuredClone(parsed)); } catch (e) { const damaged = registerProblem(parsed); if (damaged) return { state: null, etag: row.etag, raw: parsed, registers: damaged, problem: damaged }; throw e; } return { state, etag: row.etag, raw: parsed, registers: state ? registerProblem(state) : null, problem: state ? null : (host.MES.diagnose(parsed) || {}).detail || 'The document does not match the current record format.' }; };
   // Derived-state convergence: the browser engine recomputes these on boot, refresh and render
   // without ever queuing them as commands (planning blockers, assignment auto-close, master WI /
   // plan / maneuver defaults). The server runs them here, inside every commit path, before
   // validation, so the shared record always leaves with the same derived state any device would
-  // compute, and a convergence defect fails the write instead of persisting.
+  // compute, and a convergence defect fails the write instead of persisting. A stamp register or planned
+  // order list that exists but is damaged is refused before its initializer runs: the initializer would replace
+  // the whole list with seed records, and MES.validate covers neither, so the loss would commit (Codex #17).
+  // Returns a problem, or null.
   const convergeDerivedState = state => {
+    const stamps = host.MES.stampRegisterProblem?.(state); if (stamps) return stamps;
     host.MES.ensureMasterWIs?.(state);
+    const plan = host.FlightPlan.plannedOrdersProblem?.(state); if (plan) return plan;
     host.FlightPlan.ensure?.(state);
     host.FlightManeuver.ensure?.(state);
     host.MES.syncAssignments?.(state);
     host.MES.syncBlockers?.(state);
+    return null;
   };
-  const validState = state => { convergeDerivedState(state); if (Array.isArray(state.orders) && state.orders.filter(order => order.status !== 'Closed').length > 1000) return 'The workspace exceeds the 1,000 open work order limit. Close or archive work before adding more orders.'; if (!host.MES.validate(state)) return (host.MES.diagnose(state) || {}).detail || 'The workspace is invalid.'; const manifested = host.MES.verifyManifests(state); if (!manifested.ok) { const f = manifested.failures[0] || {}; return `A signed record failed verification at ${f.where || 'an unknown record'}: ${f.reason || 'invalid manifest'}.`; } return null; };
+  const validState = state => { const unconverged = convergeDerivedState(state); if (unconverged) return unconverged; if (Array.isArray(state.orders) && state.orders.filter(order => order.status !== 'Closed').length > 1000) return 'The workspace exceeds the 1,000 open work order limit. Close or archive work before adding more orders.'; if (!host.MES.validate(state)) return (host.MES.diagnose(state) || {}).detail || 'The workspace is invalid.'; const manifested = host.MES.verifyManifests(state); if (!manifested.ok) { const f = manifested.failures[0] || {}; return `A signed record failed verification at ${f.where || 'an unknown record'}: ${f.reason || 'invalid manifest'}.`; } return null; };
 
   // Evidence integrity on every write, beside the engine's validation. The engine refuses a buy-off
   // without a stored copy and hash and refuses edits to signed evidence (MES.evidenceChanges); the
@@ -298,6 +311,54 @@ export function createServer(options = {}) {
     send(res, 403, { error: `${row.id} is not attached to a record yet. Until it is saved on an operation, only the account that uploaded it, a QA Manager, or a Master Access account can open it. Ask the uploader to save it on its operation, or ask a QA Manager or Master Access account to open it.` });
   };
 
+  // Whether the calibration archive table holds exactly the entries the workspace's signed archive records name (#130):
+  // each stored row matches the SHA-256 it was stored with, and MES.calibrationArchiveHeldProblem checks its record id,
+  // summary and the record digest. Run when a workspace initializes the server and when the server starts on a stored
+  // workspace, so history left from another workspace or brought back by a partial restore is refused, not served.
+  // Returns a plain refusal or null.
+  const CALIBRATION_ARCHIVE_SCAN_PAGE = 1000;
+  const calibrationArchiveProblem = async (state, from = store) => {
+    const named = (state && state.calibrationLogHead && Array.isArray(state.calibrationLogHead.archived) ? state.calibrationLogHead.archived : []).flatMap(record => (record && record.manifest && record.manifest.subject && Array.isArray(record.manifest.subject.entries) ? record.manifest.subject.entries : []).map(summary => summary && summary.id));
+    // Read the whole table in pages of CALIBRATION_ARCHIVE_SCAN_PAGE rows, not one query per entry, then check in memory.
+    const rows = new Map();
+    for (let after = ''; ;) {
+      const page = await from.calibrationArchiveRows(after, CALIBRATION_ARCHIVE_SCAN_PAGE);
+      for (const row of page) rows.set(row.id, row);
+      if (page.length < CALIBRATION_ARCHIVE_SCAN_PAGE) break;
+      after = page[page.length - 1].id;
+    }
+    const held = [];
+    for (const id of named) {
+      const row = rows.get(id);
+      if (!row) continue;
+      if (sha256hex(JSON.stringify(row.entry)) !== row.sha256) return `Archived calibration entry ${id} on this server no longer matches the SHA-256 it was stored with. Restore the server database from a good backup. Nothing was saved.`;
+      // The indexed tool column is what the listing filters on, so it must be the signed entry's tool.
+      if (row.tag !== (row.entry && row.entry.tag)) return `Archived calibration entry ${id} on this server is filed under tool ${row.tag}, but the signed entry is for ${row.entry && row.entry.tag}. Restore the server database from a good backup. Nothing was saved.`;
+      held.push({ id, recordId: row.recordId, entry: row.entry });
+    }
+    const heldProblem = host.MES.calibrationArchiveHeldProblem(state, held);
+    if (heldProblem) return heldProblem;
+    // Every row in the table must be one the workspace's archive records name: rows from elsewhere are not this history.
+    const namedIds = new Set(named), unnamed = [...rows.keys()].filter(id => !namedIds.has(id));
+    if (unnamed.length) return `This server's calibration archive holds ${unnamed.length} entr${unnamed.length === 1 ? 'y' : 'ies'} that no archive record in the workspace names, starting with ${unnamed.slice(0, 5).join(', ')}. They belong to other history. Restore the server database that holds this workspace's calibration archive. Nothing was saved.`;
+    return null;
+  };
+  // At startup: a stored workspace that names archived calibration entries must find them intact, or the server refuses
+  // to start, as it does for a tampered audit chain.
+  const verifyStoredCalibrationArchive = async () => {
+    // Read the workspace and the archive in one transaction under the workspace lock, so a write another process
+    // commits between the two reads cannot make a consistent database look inconsistent. Nothing is written.
+    let problem = null;
+    await store.transaction(async tx => {
+      await tx.lockDoc(TENANT);
+      const row = await tx.getDoc(TENANT);
+      if (!row) return false;
+      let doc = null; try { doc = JSON.parse(row.json); } catch { return false; }
+      problem = await calibrationArchiveProblem(doc, tx);
+      return false;
+    });
+    if (problem) { log('calibration archive check failed:', problem); throw new Error(`The calibration archive does not match the stored workspace, so the server did not start. ${problem}`); }
+  };
   // Stores a validated state. Closed work orders nothing live points at move to the archive table in the
   // same transaction as the document write, each validated like a live order first. Archiving happens on
   // close: the write that closes an order (or the next write after it) moves it. Returns { etag, archived }
@@ -315,18 +376,31 @@ export function createServer(options = {}) {
     // The calibration log is append-only against the stored copy: a write that drops, changes or reorders an entry
     // the server holds is refused, whatever the head in the new document says (#116, #117).
     { const changed = host.MES.calibrationLogChanges(beforeState, state); if (changed) return { problem: changed }; }
+    // Superseded calibration entries an archive record in this write moved out of the live log (#130) go to the
+    // calibration archive exactly as the stored log held them, in the same transaction as the document write.
+    const calibrationRows = host.MES.calibrationArchivedEntries(beforeState, state).map(({ entry, recordId }) => { const json = JSON.stringify(entry); return { id: entry.id, tag: entry.tag, recordId, json, sha256: sha256hex(json), by: username }; });
     const rows = r.archived.map(e => { const json = JSON.stringify({ order: e.order, activity: e.activity }); return { id: e.order.id, json, sha256: sha256hex(json), schema: state.version, keys: e.keys, by: username }; });
-    let etag = null, clash = null, queuedExports = [];
+    let etag = null, clash = null, initProblem = null, queuedExports = [];
     await store.transaction(async tx => {
+      // Take the workspace lock before probing the archive tables, so concurrent writers wait here and the later one sees
+      // the rows the earlier one stored (a clash or a changed ETag) instead of failing on a duplicate insert.
+      await tx.lockDoc(TENANT);
       if (expectedEtag === null && await tx.getDoc(TENANT)) return false;
+      // A workspace that already names archived entries can only start on a server that holds exactly those entries,
+      // checked under the lock so the archive cannot change between this check and the write.
+      if (!beforeState) { initProblem = await calibrationArchiveProblem(state, tx); if (initProblem) return false; }
       for (const row of rows) { if (await tx.archivedSha(row.id)) { clash = row.id; return false; } await tx.putArchived(row); }
+      for (const row of calibrationRows) { if (await tx.calibrationArchived(row.id)) { clash = row.id; return false; } await tx.putCalibrationArchived(row); }
       etag = await tx.putDoc(TENANT, JSON.stringify(state), expectedEtag, username);
       if (!etag) return false;
       queuedExports = await queueNewFinalRecords(beforeState, exportState, username, tx);
       for (const row of rows) await tx.audit(username, 'archive', { orderId: row.id, sha256: row.sha256 });
+      // One bounded row per archive record: the audit detail is capped at 4,000 characters, so it carries the record id, the count, the signed digest and a sample of entry ids, not every entry.
+      for (const recordId of new Set(calibrationRows.map(row => row.recordId))) { const moved = calibrationRows.filter(row => row.recordId === recordId), record = state.calibrationLogHead.archived.find(x => x.id === recordId); await tx.audit(username, 'calibration-archive', { recordId, count: moved.length, digest: record.manifest.subject.digest, entries: moved.slice(0, 20).map(row => row.id), ...(moved.length > 20 ? { lastEntry: moved[moved.length - 1].id } : {}) }); }
       for (const entry of audits) await tx.audit(username, entry.action, typeof entry.detail === 'function' ? entry.detail(etag) : entry.detail);
       return true;
     });
+    if (initProblem) return { problem: initProblem };
     if (clash) return { problem: `${clash} is already in the archive. Reload to continue.` };
     if (!etag) return { conflict: true };
     namedEvidenceCache = null;
@@ -695,8 +769,9 @@ export function createServer(options = {}) {
         const body = await readJson(req), recordType = String(body.recordType || '').toUpperCase(), recordId = String(body.recordId || '').trim();
         if (!['ECR', 'SPR', 'SCAR'].includes(recordType) || !/^[A-Z0-9-]{3,40}$/.test(recordId)) { send(res, 400, { error: 'Choose a supported Flight Jira record and its record ID.' }); return; }
         const loaded = await loadState();
-        if (!loaded.state) { send(res, 404, { error: 'The shared workspace is not initialized.' }); return; }
+        if (!loaded.state && !loaded.problem) { send(res, 404, { error: 'The shared workspace is not initialized.' }); return; }
         if (loaded.problem) { send(res, 422, { error: `The shared workspace cannot be used: ${loaded.problem}` }); return; }
+        if (loaded.registers) { send(res, 422, { error: `The shared workspace cannot be used: ${loaded.registers}` }); return; }
         const state = loaded.state;
         let record, issue, capability, linkAction;
         if (recordType === 'ECR') {
@@ -799,7 +874,7 @@ export function createServer(options = {}) {
         { const stale = await dropArchived(doc); if (stale) { send(res, 409, { error: stale, code: 'ARCHIVED' }); return; } }
         const state = host.MES.upgrade(structuredClone(doc));
         if (!state) { send(res, 422, { error: (host.MES.diagnose(doc) || {}).detail || 'The document does not match the current record format.' }); return; }
-        convergeDerivedState(state);
+        { const unconverged = convergeDerivedState(state); if (unconverged) { send(res, 422, { error: unconverged }); return; } }
         const accountProfile = host.withAccount(session.account, () => host.MES.profileOptions(state)?.[0], state);
         if (accountProfile) state.profile = { name: accountProfile.name, role: accountProfile.role, credentialId: accountProfile.credentialId };
         const cur = await store.getDoc(TENANT);
@@ -827,8 +902,9 @@ export function createServer(options = {}) {
           if (!modelAdapterSettings.includes(settingName) || !String(process.env[settingName] || '').trim()) { send(res, 422, { error: 'The named server environment setting is not configured for the model adapter. Ask the server operator to set it and list it in FLIGHT_MODEL_ADAPTER_SETTINGS. The model adapter remains off.' }); return; }
           args.push(true); // This flag is derived by the server, never accepted from the client.
         }
-        const { state, etag, problem, raw } = await loadState();
+        const { state, etag, problem, raw, registers } = await loadState();
         if (!state) { send(res, problem ? 422 : 404, { error: problem || 'No workspace yet.' }); return; }
+        if (registers) { send(res, 422, { error: registers }); return; }
         const ifMatch = req.headers['if-match'] || null;
         if (!ifMatch) { send(res, 428, { error: 'Include the current workspace ETag in If-Match before running an action.' }); return; }
         if (ifMatch && ifMatch !== etag) { send(res, 409, { error: 'The workspace changed on another device. Reload to continue.', etag }); return; }
@@ -916,6 +992,24 @@ export function createServer(options = {}) {
         const found = state && host.MES.traceSearch ? host.MES.traceSearch(state, q) : null;
         const live = found && Array.isArray(found.orders) ? found.orders.map(o => ({ ...(host.MES.traceKeys ? host.MES.traceKeys(state, host.MES.getOrder(state, o.id) || o) : { orderId: o.id }), why: o.why, source: 'live' })) : [];
         send(res, 200, { query: q, results: [...live, ...await store.archiveSearch(q, 1000)] }); return;
+      }
+      // -- calibration archive: superseded calibration entries out of the live log, read-only (#130) --
+      // A page of 1 to 1,000 entries; anything else (missing, zero, negative, not a whole number) reads the default 500.
+      const calibrationArchiveLimit = raw => { const n = Number(raw); return Number.isInteger(n) && n >= 1 ? Math.min(1000, n) : 500; };
+      // Pages in entry id order: after names the last entry id of the previous page, and next is the cursor for the
+      // following page, or null at the end.
+      if (route === '/calibration-archive' && m === 'GET') {
+        const after = url.searchParams.get('after') || '';
+        if (after && !/^CALLOG-\d{5}$/.test(after)) { send(res, 400, { error: 'The after cursor is a calibration entry id such as CALLOG-00042, from the next value of the previous page.' }); return; }
+        const limit = calibrationArchiveLimit(url.searchParams.get('limit'));
+        const entries = await store.calibrationArchiveList(url.searchParams.get('tag') || '', limit, after);
+        send(res, 200, { entries, next: entries.length === limit ? entries[entries.length - 1].id : null, readOnly: true }); return;
+      }
+      const calArc = /^\/calibration-archive\/(CALLOG-\d{5})$/.exec(route);
+      if (calArc && m === 'GET') {
+        const a = await store.calibrationArchived(calArc[1]);
+        if (!a) { send(res, 404, { error: `${calArc[1]} is not in the calibration archive. An entry that was never archived is in the live calibration log under System QMS records.` }); return; }
+        send(res, 200, { entry: a.entry, sha256: a.sha256, recordId: a.recordId, archivedAt: a.archivedAt, archivedBy: a.archivedBy, readOnly: true }); return;
       }
       const arc = /^\/archive\/(WO-[A-Za-z0-9-]+)(\/print|\/export)?$/.exec(route);
       if (arc && m === 'GET') {
@@ -1040,7 +1134,7 @@ export function createServer(options = {}) {
   };
 
   server = http.createServer((req, res) => { handle(req, res); });
-  server.store = store; server.host = host; server.validState = validState; server.ready = storeReady.then(async () => { await wrapped; void drainExports(); });
+  server.store = store; server.host = host; server.validState = validState; server.ready = storeReady.then(async () => { await wrapped; await verifyStoredCalibrationArchive(); void drainExports(); });
   // Bind address: 127.0.0.1 unless options.host, FLIGHT_HOST or --host names another.
   // Once listening, the archive check starts on a later turn of the event loop, so startup does not wait for it.
   server.listenAsync = async (port, host = options.host || process.env.FLIGHT_HOST || DEFAULT_HOST) => {
@@ -1087,8 +1181,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
     // Stop the server first when restoring into its database.
     if (!databaseUrl) { console.error('Restore targets PostgreSQL only: pass --database-url <connection string>.'); process.exit(1); }
     const { restorePostgres } = await import('./db-postgres.mjs');
-    try { await restorePostgres(databaseUrl, restoreFrom); console.log(`Restored ${restoreFrom} into the PostgreSQL database. Start the server normally; it verifies the audit chain on startup and refuses a tampered restore.`); }
-    catch (e) { console.error(`Restore failed: ${e.message}`); process.exit(1); }
+    try { await restorePostgres(databaseUrl, restoreFrom); console.log(`Restored ${restoreFrom} into the PostgreSQL database. Every session in the backup was ended, so everyone signs in again. Start the server normally; it verifies the audit chain on startup and refuses a tampered restore.`); }
+    catch (e) { console.error(`Restore failed: ${e.message} The restore runs as one transaction, so it left the database unchanged.`); process.exit(1); }
   } else {
   const host = arg('host', process.env.FLIGHT_HOST || DEFAULT_HOST);
   const server = createServer({ dbPath, databaseUrl, host, ...(process.argv.includes('--serve-demo') ? { serveDemo: true } : {}) });
