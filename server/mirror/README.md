@@ -165,8 +165,9 @@ of that disk.
    deleted, and one `snapshot` record listing every entity key it holds. The device builds these from
    the workspace saved in the browser, not from one tab's memory, so a tab that has not yet heard of
    another tab's change never leaves that change out; when the saved workspace fails validation it
-   sends no snapshot. Anything from that device
-   absent from its latest snapshot is deleted, including deletions made before this build. Intermediate versions written
+   sends no snapshot and keeps the recovery pending until a valid workspace is saved. The snapshot's list is
+   rebuilt from the saved workspace just before it is sent. Anything from that device
+   absent from its latest snapshot, and last written before that snapshot's `takenAt`, is deleted, including deletions made before this build. Intermediate versions written
    between the backup and the restore are only in the database you moved aside. Before deciding anything about them, compare:
    ```bash
    node server/mirror/restore-test.mjs <backup>.sqlite --against <the database you moved aside> \

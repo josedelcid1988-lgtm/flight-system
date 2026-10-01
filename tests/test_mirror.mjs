@@ -101,6 +101,7 @@ await m.close();
  ok('the mirror refuses to listen beyond loopback in plain HTTP',/TLS-terminating reverse proxy/.test(refusal({...SECURE,host:'0.0.0.0'})),refusal({...SECURE,host:'0.0.0.0'}));
  ok('beyond loopback is allowed once a TLS proxy is stated',refusal({...SECURE,host:'0.0.0.0',behindTlsProxy:true})==='');
  ok('running with no token is refused beyond loopback, even behind a proxy',/only on loopback/.test(refusal({allowNoToken:true,host:'0.0.0.0',behindTlsProxy:true})));
+ ok('a malformed numeric host is not loopback, so tokenless mode is refused there',/only on loopback/.test(startRefusal({allowNoToken:true,host:'127.999.999.999'})||'')&&startRefusal({allowNoToken:true,host:'127.0.0.2'})===null&&startRefusal({...SECURE,host:'127.1.2.300'})!==null,String(startRefusal({allowNoToken:true,host:'127.999.999.999'})));
  ok('loopback names are recognised',[ '127.0.0.1','127.0.0.2','localhost','::1'].every(h=>startRefusal({...SECURE,host:h})===null)&&startRefusal({...SECURE,host:'10.0.0.5'})!==null);
  ok('the environment names the write token, the proxy statement and the anchor',(()=>{const e=settings([],{FS_MIRROR_WRITE_TOKEN:'w',FS_MIRROR_BEHIND_TLS_PROXY:'1',FS_MIRROR_ANCHOR:'/x/a.json'});return e.writeToken==='w'&&e.behindTlsProxy===true&&e.anchorPath==='/x/a.json';})());}
 
@@ -506,7 +507,11 @@ const snapshots=()=>m.db.prepare("SELECT id,payload_json FROM records WHERE enti
  const added=m.db.prepare('SELECT entity_type t,operation o FROM records WHERE id>?').all(r0);
  ok('the refusal case is real: the saved workspace fails validation',await p.evaluate(()=>!MES.validate(JSON.parse(localStorage.getItem(KEY)))));
  ok('with an invalid saved workspace no snapshot is sent and no order is marked deleted',snapshots().length===before&&!added.some(x=>x.t==='order'&&x.o==='delete')&&added.some(x=>x.t==='account')&&st3.unsynced===0,JSON.stringify({added:added.slice(0,8),st3}));
- await p.evaluate(()=>{save();});await drain();}
+ const pendingFlag=await p.evaluate(()=>JSON.parse(localStorage.getItem('skyryse-mes-sync-client-v1')).recoveryPending===true);
+ ok('the refusal case is real: the recovery is left pending while the saved workspace is invalid',pendingFlag);
+ const snapsBefore=snapshots().length;await p.evaluate(()=>{save();});await drain();
+ const after=await p.evaluate(()=>JSON.parse(localStorage.getItem('skyryse-mes-sync-client-v1')).recoveryPending);
+ ok('once a valid workspace is saved, the pending recovery runs: a snapshot is sent and nothing is left pending',snapshots().length>snapsBefore&&after===false,JSON.stringify({before:snapsBefore,now:snapshots().length,after}));}
 // A device with nothing queued still finds a restore: it probes the mirror, which no longer holds its last
 // confirmed row, and sends everything again (#374).
 {const w6=await mkOrder(p);await drain();const bk3=m.backup();
@@ -566,6 +571,19 @@ const snapshots=()=>m.db.prepare("SELECT id,payload_json FROM records WHERE enti
  const st6=await p.evaluate(async()=>{for(let i=0;i<100&&!(window.skMirror.status().ack&&!window.skMirror.status().unsynced);i++)await new Promise(r=>setTimeout(r,100));return window.skMirror.status();});
  ok('the refusal case is real: the reloaded device has confirmed records and nothing queued',pre.sent>0&&pre.queued===0,JSON.stringify(pre));
  ok('with no edit, the idle upgraded device sends its baseline and gets an acknowledgement',!!st6.resentAt&&!!st6.ack&&st6.unsynced===0&&count()-r0>=pre.sent,JSON.stringify({st6,added:count()-r0,sent:pre.sent}));}
+// A snapshot that waits in the queue is rebuilt from the saved workspace just before it is sent: an order another
+// tab saved after the recovery began is listed, with a takenAt after it was saved.
+{const OTHER='skyryse-mes-sync-ack-v1:page-other-tab';const e0=(await devAck()).epoch;let phase=0;
+ await ctx.route(/\/api\/v1\/writes$/,async route=>{if(phase===0){phase=1;const resp=await route.fetch();await p.evaluate(([k,v])=>localStorage.setItem(k,JSON.stringify(v)),[OTHER,{epoch:e0+1,ack:null,at:Date.now()}]);await route.fulfill({response:resp});}else if(phase===1)await route.abort();else await route.continue();});
+ await mkOrder(p);
+ await p.waitForFunction(()=>(JSON.parse(localStorage.getItem('skyryse-mes-sync-queue-v1')||'[]')).some(r=>r.entityType==='snapshot'),null,{timeout:15000});
+ const queued=await p.evaluate(()=>JSON.parse(JSON.parse(localStorage.getItem('skyryse-mes-sync-queue-v1')).find(r=>r.entityType==='snapshot').payloadJson));
+ const made=await p.evaluate(()=>{const ws=structuredClone(state);const wi=ws.masterWIs.find(x=>x.status==='Released');const r=MES.addOrder(ws,{masterWI:wi.id+'|'+wi.revision,pedigree:'Production',subcategory:'Mfg.',quantity:1,aircraft:MES.AIRCRAFT[0],site:MES.SITES[0]});localStorage.setItem(KEY,JSON.stringify(ws));return {id:r.id,at:new Date().toISOString()};});
+ ok('the refusal case is real: the queued snapshot was built before the other tab saved its order',!queued.keys.includes('order|'+made.id),String(queued.keys.length));
+ phase=2;await drain();await ctx.unroute(/\/api\/v1\/writes$/);
+ const sent=snapshots().pop();const sk=sent?JSON.parse(sent.payload_json):{keys:[]};
+ ok('the snapshot sent lists the order saved while it waited, with a takenAt after that save',sk.keys.includes('order|'+made.id)&&sk.takenAt>=made.at,JSON.stringify({takenAt:sk.takenAt,made}));
+ await p.evaluate(()=>{state=JSON.parse(localStorage.getItem(KEY));lastSaved=structuredClone(state);});}
 // When the browser refuses to save an acknowledgement, the tab keeps it in memory and still names it on its next
 // post, so a restore during that session is still found.
 {const before=await devAck();

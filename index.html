@@ -14469,6 +14469,7 @@ window.SK_MIRROR = window.SK_MIRROR || {
       lastWs = ws;
       enqueue(entities(ws, storeKey), ['*']);
       enqueue(accountEntities(), ['account']);
+      retryRecovery();
       paint(); schedule(0);
     } catch (e) { lastError = 'Mirror could not queue this change: ' + e.message; paint(); }
   }
@@ -14478,6 +14479,8 @@ window.SK_MIRROR = window.SK_MIRROR || {
   // device with nothing to send still learns that the mirror was restored (see PROBE_MS below).
   function flush(probe) {
     if (inflight) return inflight;
+    var head = pending().slice(0, Math.max(1, Math.min(500, Number(cfg.batchSize) || 50)));
+    if (head.some(function (r) { return r.entityType === 'snapshot'; })) { refreshSnapshots(); persist(); }
     var batch = pending().slice(0, Math.max(1, Math.min(500, Number(cfg.batchSize) || 50)));
     var sentWith = currentAck(), reqEpoch = sentWith.epoch;
     if (!batch.length && !(probe === true && sentWith.ack)) { paint(); return Promise.resolve(); }
@@ -14546,14 +14549,41 @@ window.SK_MIRROR = window.SK_MIRROR || {
     // Without a trusted workspace only account deletions are re-sent: a workspace entity this tab deleted may have
     // been made again by another tab. The next committed write queues every workspace entity again (sent is empty).
     Object.keys(tombs).forEach(function (key) { if (!sent[key] && (ws || key.indexOf('account|') === 0)) pushDelete(key, acct, b, now); });
-    // A snapshot record lists every entity this device holds now. A reader of the mirror treats anything from
-    // this device absent from it as deleted, which also covers deletions made before tombstones existed.
-    if (!ws) { resentAt = new Date().toISOString(); persist(); return; }
-    var json = JSON.stringify({ snapshot: true, clientId: client.id, takenAt: now, keys: Object.keys(sent).sort() });
+    // A snapshot record lists every entity this device holds. A reader of the mirror treats an entity from this
+    // device as deleted when it is absent from the snapshot and its last record was written before takenAt, which
+    // also covers deletions made before tombstones existed. Its list is rebuilt from the saved workspace just
+    // before it is sent (refreshSnapshots), so another tab's entity saved meanwhile is listed, and one saved after
+    // that read carries a later time. Without a trusted workspace the recovery stays pending (client.recoveryPending)
+    // and runs again once one is available, so the deletions and snapshot are not lost.
+    if (!ws) { client.recoveryPending = true; resentAt = new Date().toISOString(); persist(); return; }
+    client.recoveryPending = false;
     pageSeq += 1;
-    queue.push({ clientWriteId: client.id + '-' + pageId + '-' + pageSeq, storeKey: typeof KEY !== 'undefined' ? KEY : 'skyryse-mes-work-order-v1', entityType: 'snapshot', entityId: client.id, operation: 'upsert', payloadJson: json, payloadSha256: hash(json), actor: acct ? acct.name + ' · ' + acct.credentialId : null, credential: acct ? acct.credentialId : null, clientTs: now, buildVersion: b.version, buildSha256: b.sha256, manifests: [], synced: false });
+    queue.push({ clientWriteId: client.id + '-' + pageId + '-' + pageSeq, storeKey: wsKey, entityType: 'snapshot', entityId: client.id, operation: 'upsert', payloadJson: '', payloadSha256: '', actor: acct ? acct.name + ' · ' + acct.credentialId : null, credential: acct ? acct.credentialId : null, clientTs: now, buildVersion: b.version, buildSha256: b.sha256, manifests: [], synced: false });
     resentAt = new Date().toISOString();
+    refreshSnapshots();
     persist();
+  }
+  // Rebuilds each queued snapshot from the saved workspace as it is now. A snapshot whose list changed gets a new
+  // write id (the server refuses an id reused for another payload). With no trusted workspace the snapshot is
+  // dropped and the recovery is left pending.
+  function refreshSnapshots() {
+    if (!queue.some(function (r) { return r.entityType === 'snapshot' && !r.rejected; })) return;
+    var wsKey = typeof KEY !== 'undefined' ? KEY : 'skyryse-mes-work-order-v1', ws = recoveryWorkspace(wsKey);
+    if (!ws) { queue = queue.filter(function (r) { return r.entityType !== 'snapshot'; }); client.recoveryPending = true; return; }
+    var keys = Object.keys(entities(ws, wsKey)).concat(Object.keys(accountEntities())).sort();
+    queue.forEach(function (r) {
+      if (r.entityType !== 'snapshot' || r.rejected) return;
+      var old = null; try { old = r.payloadJson ? JSON.parse(r.payloadJson) : null; } catch (e) { old = null; }
+      if (old && JSON.stringify(old.keys) === JSON.stringify(keys)) return;
+      var now = new Date().toISOString(), json = JSON.stringify({ snapshot: true, clientId: client.id, takenAt: now, keys: keys });
+      if (old) { pageSeq += 1; r.clientWriteId = client.id + '-' + pageId + '-' + pageSeq; }
+      r.payloadJson = json; r.payloadSha256 = hash(json); r.clientTs = now;
+    });
+  }
+  // A recovery left pending (no trusted workspace when it ran) runs once one is available.
+  function retryRecovery() {
+    if (!client.recoveryPending) return;
+    if (recoveryWorkspace(typeof KEY !== 'undefined' ? KEY : 'skyryse-mes-work-order-v1')) resendAll();
   }
   function status() { return { enabled: true, ack: currentAck().ack, unsynced: queue.length, rejected: queue.filter(function (r) { return r.rejected; }).length, lastError: lastError, lastSyncAt: lastSyncAt, clientId: client.id, memoryOnly: memoryOnly, url: base, resentAt: resentAt }; }
   function paint() {
@@ -14583,6 +14613,7 @@ window.SK_MIRROR = window.SK_MIRROR || {
   // acknowledgement to probe with from then on.
   var probe = function () {
     if (needBaseline && !pending().length && !currentAck().ack) { needBaseline = false; resendAll(); return flush(); }
+    if (client.recoveryPending) { retryRecovery(); if (pending().length) return flush(); }
     return pending().length ? flush() : flush(true);
   };
   window.addEventListener('online', function () { attempt = 0; if (pending().length) schedule(0); else probe(); });

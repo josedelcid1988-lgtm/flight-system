@@ -20,6 +20,7 @@
 // goes into the page. The server listens on loopback only unless the operator states it is behind a
 // TLS-terminating reverse proxy, so records and tokens never cross the network in plain HTTP.
 import http from 'node:http';
+import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -84,7 +85,9 @@ export function openDatabase(dbPath) {
   return db;
 }
 
-export const LOOPBACK = host => host === 'localhost' || host === '::1' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(String(host));
+// Loopback only when the address really is one: 'localhost', ::1, or an IPv4 address in 127.0.0.0/8 that
+// net.isIP accepts. A malformed numeric host such as 127.999.999.999 is a host name to Node, resolved by DNS.
+export const LOOPBACK = host => host === 'localhost' || host === '::1' || (net.isIP(String(host)) === 4 && String(host).split('.')[0] === '127');
 export const defaultAnchorPath = dbPath => dbPath + '.anchor.json';
 
 // The SHA-256 of a record's signature manifests in the order they were stored. It is a column of the row,
