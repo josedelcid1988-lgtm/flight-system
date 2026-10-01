@@ -86,7 +86,10 @@ every print and HTML download, the archive print included; printing a screen put
 and repeats the strip at the foot of every sheet. Every file the page saves is named `TRAINING-<name>`, and an archive
 print or export carries `"training": "TRAINING, NOT THE RECORD"` inside the content its extract hash covers, so the
 mark cannot be removed without breaking the hash. A training server sends nothing outward: the Jira connector reads as
-not configured and record exports are neither configured, queued nor delivered. Without the option nothing is added
+not configured, record exports are neither configured, queued nor delivered, and in the browser the persistence
+mirror and the integration bridge (NetSuite, GitHub, Slack) stay off whatever the deployed build configures. Every
+workspace a training server saves carries a `trainingServer` mark, and a production server refuses to initialize from
+a workspace that carries it. Without the option nothing is added
 and the page is served as before. `FLIGHT_TRAINING` accepts 1, true,
 yes or on, and 0, false, no or off; any other value stops the server so a misspelled setting never starts an unmarked
 training server.

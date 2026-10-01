@@ -21,7 +21,7 @@ const count = (text, needle) => text.split(needle).length - 1;
 // ---- the page and print helpers ------------------------------------------------------------------------------
 {
   const page = trainingPage('<!doctype html><html><head><title>x</title></head><body><p>app</p><script>/*</body>*/</script></body></html>');
-  ok('trainingPage adds the style in the head', /<head><style id="flight-training-style">/.test(page), page.slice(0, 120));
+  ok('trainingPage puts the connector guard first in the head, then the style', /<head><script id="flight-training-connectors">[^<]*<\/script><style id="flight-training-style">/.test(page), page.slice(0, 160));
   ok('trainingPage adds the strip and its script before the last </body>', /<div class="training-banner" role="note">TRAINING, NOT THE RECORD<\/div><script id="flight-training">[\s\S]*<\/script><\/body><\/html>$/.test(page), page.slice(-200));
   ok('trainingPage puts a print-only mark first in the body', /<body><div class="training-print-top" aria-hidden="true">TRAINING, NOT THE RECORD<\/div><p>app<\/p>/.test(page), page.slice(0, 400));
   ok('trainingPrintMark puts the mark right after <body>', /^<html><body[^>]*><div class="training-print-mark"[^>]*>TRAINING, NOT THE RECORD<\/div>/.test(trainingPrintMark('<html><body class="x"><p>r</p></body></html>')));
@@ -113,6 +113,70 @@ async function serverCase(training) {
   const exportSetting = await fetch(`${base}/api/record-exports/settings`, { method: 'PUT', headers: auth, body: JSON.stringify({ recordType: 'work-order', enabled: true, destinationKind: 'folder', destination: 'exports', namingPattern: '{recordId}', rationale: 'Training test setting.' }) });
   ok('a training server refuses to configure record exports', exportSetting.status === 409 && /off on a training server/.test((await exportSetting.json()).error || ''), String(exportSetting.status));
   await server.closeAsync();
+}
+
+// ---- a workspace saved by a training server cannot initialize a production server ------------------------------
+{
+  const { createHost } = await import('../server/mes-host.mjs');
+  const engine = createHost(path.join(ROOT, 'index.html')).MES;
+  const boot = async training => {
+    const server = createServer({ dbPath: ':memory:', quiet: true, training, setupCode: 'provenance-code' });
+    const port = await server.listenAsync(0, '127.0.0.1'), base = `http://127.0.0.1:${port}`;
+    await fetch(`${base}/api/auth/accounts`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ setupCode: 'provenance-code', users: [{ username: 'lead', displayName: 'Training Lead', role: 'admin', password: 'provenance-password-1' }] }) });
+    const { token } = await (await fetch(`${base}/api/auth/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'lead', password: 'provenance-password-1' }) })).json();
+    const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+    return { server, base, headers };
+  };
+  const seed = engine.seed(); engine.ensureMasterWIs(seed);
+  const t = await boot(true);
+  const init = await fetch(`${t.base}/api/workspace`, { method: 'PUT', headers: t.headers, body: JSON.stringify(seed) });
+  const saved = await (await fetch(`${t.base}/api/workspace`, { headers: t.headers })).json();
+  ok('a training server marks the workspace it saves', init.status === 204 && saved.trainingServer?.mark === TRAINING_MARK && engine.validate(engine.upgrade(structuredClone(saved))) === true, `${init.status} ${JSON.stringify(saved.trainingServer)}`);
+  await t.server.closeAsync();
+  const p = await boot(false);
+  const refused = await fetch(`${p.base}/api/workspace`, { method: 'PUT', headers: p.headers, body: JSON.stringify(saved) });
+  const refusal = await refused.json().catch(() => ({}));
+  const audit = await p.server.store.auditRows(20);
+  ok('a production server refuses to initialize from a training workspace, and records the refusal', refused.status === 422 && /saved by a training server/.test(refusal.error || '') && audit.some(row => row.action === 'workspace-put-refused') && !(await p.server.store.getDoc('default')), `${refused.status} ${refusal.error}`);
+  const plainInit = await fetch(`${p.base}/api/workspace`, { method: 'PUT', headers: p.headers, body: JSON.stringify(seed) });
+  ok('a production server still initializes from a workspace with no training mark', plainInit.status === 204, String(plainInit.status));
+  const prodSaved = await (await fetch(`${p.base}/api/workspace`, { headers: p.headers })).json();
+  ok('a production server does not mark its workspace', !Object.hasOwn(prodSaved, 'trainingServer'));
+  await p.server.closeAsync();
+}
+
+// ---- browser-side connectors stay off on a training server whatever the build configures -------------------------
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flight-training-connectors-'));
+  const configured = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8')
+    .replace("  url: '',        // e.g. https://mes-mirror.internal:8787", "  url: 'http://127.0.0.1:9/mirror',        // e.g. https://mes-mirror.internal:8787")
+    .replace("  mode: 'local',            // 'local' keeps", "  mode: 'mcp',            // 'local' keeps")
+    .replace("  endpoint: '',             // e.g. https://mes-bridge.internal/mcp", "  endpoint: 'http://127.0.0.1:9/bridge',             // e.g. https://mes-bridge.internal/mcp");
+  const indexPath = path.join(dir, 'index.html');
+  fs.writeFileSync(indexPath, configured);
+  const browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
+  try {
+    for (const training of [true, false]) {
+      const server = createServer({ dbPath: ':memory:', quiet: true, training, setupCode: 'connector-ui', indexPath });
+      const port = await server.listenAsync(0, '127.0.0.1');
+      const page = await browser.newPage();
+      const outbound = [];
+      page.on('request', request => { if (/127\.0\.0\.1:9\//.test(request.url())) outbound.push(request.url()); });
+      page.on('pageerror', error => errors.push(`connectors ${training}: ${error.message}`));
+      await page.goto(`http://127.0.0.1:${port}/`);
+      await page.locator('#sk-login').waitFor({ state: 'visible', timeout: 15000 });
+      const seen = await page.evaluate(async () => {
+        window.SK_MIRROR = { url: 'http://127.0.0.1:9/later', token: 'x' };
+        if (window.SK_INTEGRATIONS) window.SK_INTEGRATIONS.mode = 'mcp';
+        const bridge = await window.skIntegrations.netsuite.itemAvailability(['TRN-1']);
+        return { mirror: window.skMirror.enabled, url: window.SK_MIRROR.url, mode: window.SK_INTEGRATIONS.mode, endpoint: window.SK_INTEGRATIONS.endpoint, manual: bridge.manual === true };
+      });
+      if (training) ok('on a training server the configured mirror and integration bridge stay off and nothing is posted', seen.mirror === false && seen.url === '' && seen.mode === 'local' && seen.endpoint === '' && seen.manual && outbound.length === 0, JSON.stringify({ seen, outbound }));
+      else ok('the same build on a production server keeps its configured mirror and bridge (the test configuration is real)', seen.mirror === true && seen.mode === 'mcp' && seen.endpoint === 'http://127.0.0.1:9/bridge', JSON.stringify(seen));
+      await page.close();
+      await server.closeAsync();
+    }
+  } finally { await browser.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 }
 
 // ---- the command line flag and the environment setting ------------------------------------------------------

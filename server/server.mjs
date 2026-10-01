@@ -150,12 +150,26 @@ export function servedIndex(indexPath) {
 // script runs and a browser cannot opt out of it. Production default: off, and the served page is unchanged.
 export const TRAINING_MARK = 'TRAINING, NOT THE RECORD';
 export const TRAINING_DESIGNATION = 'training-database';
+// Every workspace a training server saves carries this, and a production server refuses to load a workspace that
+// does, so a training workspace downloaded from GET /api/workspace cannot initialize a production server.
+export const TRAINING_PROVENANCE = Object.freeze({ mark: TRAINING_MARK, note: 'Saved by a Flight System training server. Not a quality record.' });
 const TRAINING_STRIP = 24;
 const TRAINING_PRINT_MARK = `<div class="training-print-mark" style="margin:0 0 8px;padding:6px 10px;border:2px solid #0b3a6e;color:#0b3a6e;font:700 14px/18px sans-serif;text-align:center;letter-spacing:.06em">${TRAINING_MARK}</div>`
   // On screen the print preview's fixed Print button sits at the top right; start the mark below it. Print is unchanged.
   + '<style>@media screen{.training-print-mark{margin-top:56px!important}}</style>';
 export const trainingPrintMark = html => /<body[^>]*>/i.test(html) ? html.replace(/<body[^>]*>/i, b => b + TRAINING_PRINT_MARK) : TRAINING_PRINT_MARK + html;
-const TRAINING_HEAD = '<style id="flight-training-style">'
+// Runs before the app's scripts: the browser-side connectors stay off on a training server whatever the deployed
+// build configures. The persistence mirror always sees an empty url, and the integration bridge always reads mode
+// local with no endpoint, so no training record is posted to a mirror, NetSuite, GitHub or Slack.
+const TRAINING_CONNECTORS = '<script id="flight-training-connectors">(function(){'
+  + 'var mirror={url:"",token:"",batchSize:50};'
+  + 'Object.defineProperty(window,"SK_MIRROR",{configurable:false,get:function(){return mirror;},set:function(v){mirror=Object.assign({},v&&typeof v==="object"?v:{},{url:"",token:""});}});'
+  + 'var bridge=null;function local(o){if(!o||typeof o!=="object")return o;'
+  + 'Object.defineProperty(o,"mode",{configurable:false,enumerable:true,get:function(){return "local";},set:function(){}});'
+  + 'Object.defineProperty(o,"endpoint",{configurable:false,enumerable:true,get:function(){return "";},set:function(){}});return o;}'
+  + 'Object.defineProperty(window,"SK_INTEGRATIONS",{configurable:false,get:function(){return bridge;},set:function(v){bridge=local(v);}});'
+  + '})();</script>';
+const TRAINING_HEAD = TRAINING_CONNECTORS + '<style id="flight-training-style">'
   + `.training-banner{position:fixed;left:var(--fs-rail,0px);right:0;bottom:0;height:${TRAINING_STRIP}px;z-index:2147483000;pointer-events:none;display:flex;align-items:center;justify-content:center;background:#0b3a6e;color:#fff;font:700 12px/16px -apple-system,BlinkMacSystemFont,sans-serif;letter-spacing:.06em;white-space:nowrap}`
   + `body{padding-bottom:${TRAINING_STRIP}px}html .next-action{bottom:${TRAINING_STRIP}px}html .toast,html .sk-idle-warning{bottom:${TRAINING_STRIP + 24}px}`
   + `@media(min-width:1181px){html .next-action{bottom:${TRAINING_STRIP + 28}px}}`
@@ -447,6 +461,7 @@ export function createServer(options = {}) {
   // whose detail may be a function of the new ETag) are written in the same transaction: a change is never kept
   // without its audit row, and an audit row never names a change that was rolled back.
   const commitState = async (state, expectedEtag, username, audits = []) => {
+    if (training) state.trainingServer = { ...TRAINING_PROVENANCE };
     const exportState = structuredClone(state);
     const beforeRow = await store.getDoc(TENANT);
     const beforeState = beforeRow ? JSON.parse(beforeRow.json) : null;
@@ -946,6 +961,7 @@ export function createServer(options = {}) {
         // This closes the authorization bypass where a manager could replace records wholesale.
         const currentWorkspace = await store.getDoc(TENANT);
         const doc = await readJson(req), ifMatch = req.headers['if-match'] || null;
+        if (!training && doc && typeof doc === 'object' && Object.hasOwn(doc, 'trainingServer')) { await store.audit(session.username, 'workspace-put-refused', { reason: 'training workspace' }); send(res, 422, { error: 'This workspace was saved by a training server. Training records cannot be loaded into a production server.' }); return; }
         if (!manages(session.account)) { await store.audit(session.username, 'workspace-put-refused', { reason: currentWorkspace ? 'initialized workspace is action-only' : 'only QA Manager or Master Access may initialize' }); send(res, 403, { error: currentWorkspace ? 'The shared workspace is initialized and cannot be replaced as a snapshot. Use a server-authorized record action or the approved migration procedure.' : 'Only QA Manager or Master Access can initialize the shared workspace.' }); return; }
         if (currentWorkspace) {
           if (!ifMatch) { send(res, 428, { error: 'Include the current workspace ETag in If-Match.' }); return; }
