@@ -10747,7 +10747,7 @@ function wiReviseDialog(wi){
     <div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Cancel</button><button class="btn primary" type="submit">Start Rev ${esc(next)}</button></div></form>`);
 }
 document.addEventListener('click',e=>{
-  const b=e.target.closest('[data-action="ecr-from"],[data-action="ecr-new"],[data-action="ecr-open"],[data-action="ecr-wo-edit"],[data-action="ecr-jira"],[data-action="ecr-copy"],[data-action="ecr-process-wi"]');if(!b)return;
+  const b=e.target.closest('[data-action="ecr-from"],[data-action="ecr-new"],[data-action="ecr-open"],[data-action="ecr-wo-edit"],[data-action="ecr-jira"],[data-action="ecr-eco"],[data-action="ecr-copy"],[data-action="ecr-process-wi"]');if(!b)return;
   if(b.dataset.action==='ecr-from'){
     const kind=b.dataset.kind, id=b.dataset.ref, ord=b.dataset.order||'';
     if($('#dialog').open)$('#dialog').close();

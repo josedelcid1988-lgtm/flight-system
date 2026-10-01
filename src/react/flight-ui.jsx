@@ -181,7 +181,7 @@ function BigThree({ state, MES }) {
       const block = item?.ref && state.planner.calendar.blocks.find(record => record.username === snap.username && record.date === date && record.blockerId === item.ref.id && record.status !== 'Declined');
       const title = item ? item.t : task.title;
       const why = item ? item.why : `${task.kind.replaceAll('-', ' ')} · ${task.priority}${task.aog ? ' · AOG' : ''}`;
-      return <li className={`big3-slot${resolved ? ' is-done' : ''}`} key={item?.ref?.id || task.id || index}>
+      return <li className={`big3-slot${resolved ? ' is-done' : ''}`} key={item?.ref?.id || task?.id || index}>
         <div className="big3-slot-copy"><strong>{index + 1}. {title || 'Open priority slot'}</strong>{why && <span>{why}</span>}
           {task?.due && <time dateTime={task.due}>Due {displayDate(task.due)}</time>}{resolved && <span>Resolved in the record</span>}
           {block && <span className={`pill${block.status === 'Accepted' ? ' accepted' : ''}`}>{block.status} time · {block.start} to {block.end}</span>}
