@@ -320,11 +320,11 @@ function PlanningNav() {
 function PlanKanban({ state, MES, FlightPlan }) {
   const [compact, setCompact] = useState(() => { try { return localStorage.getItem(densityKey) === 'compact'; } catch { return false; } });
   const all = FlightPlan.list(state);
-  const covered = item => !item.netsuite || item.netsuite.onHand >= item.quantity;
+  const covered = item => !!item.netsuite && item.netsuite.onHand >= item.quantity;
   const columns = [
     { title: 'Created', hint: 'Planned, not yet firmed.', rows: all.filter(item => item.status === 'Planned') },
-    { title: 'Pending materials', hint: 'Firm, with a recorded NetSuite shortage.', rows: all.filter(item => item.status === 'Firm' && !covered(item)) },
-    { title: 'Pending work order', hint: 'Firm and covered. Conversion creates the Flight Control work order.', rows: all.filter(item => item.status === 'Firm' && covered(item)) },
+    { title: 'Pending materials', hint: 'Firm, with a NetSuite shortage or no NetSuite stock read. Check stock before converting.', rows: all.filter(item => item.status === 'Firm' && !covered(item)) },
+    { title: 'Pending work order', hint: 'Firm, and the NetSuite read covers the quantity. Conversion creates the Flight Control work order.', rows: all.filter(item => item.status === 'Firm' && covered(item)) },
     { title: 'Converted', hint: 'Linked to a Flight Control work order.', rows: all.filter(item => item.status === 'Converted') }
   ];
   const displayDate = value => value ? new Date(`${value}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : 'Not scheduled';
@@ -345,7 +345,7 @@ function PlanKanban({ state, MES, FlightPlan }) {
             <p>{item.masterWI?.id} Rev {item.masterWI?.revision} · {item.masterWI?.title}</p>
             <div className="fr-plan-card-meta"><span>Qty {item.quantity}</span><time dateTime={item.needDate}>Need {displayDate(item.needDate)}</time></div>
             {late && <span className="fr-overdue-label">Past need date</span>}
-            {item.netsuite && <p className={shortage ? 'fr-plan-shortage' : 'fr-plan-covered'}>NetSuite on hand {item.netsuite.onHand}{shortage ? ` · short ${shortage}` : ' · covered'}</p>}
+            {item.netsuite ? <p className={shortage ? 'fr-plan-shortage' : 'fr-plan-covered'}>NetSuite on hand {item.netsuite.onHand}{shortage ? ` · short ${shortage}` : ' · covered'}</p> : item.status === 'Firm' && <p className="fr-plan-shortage">No NetSuite stock read. Check stock before converting.</p>}
             <div className="fr-plan-card-actions">
               <button className="fr-text-action" data-action="plan-open" data-plan={item.id}>View details</button>
               {item.status === 'Planned' && <button className="fr-text-action" data-action="plan-firm" data-plan={item.id}>Firm</button>}
@@ -1140,7 +1140,7 @@ function PlanHome({ state, MES, FlightPlan, skCan }) {
   const me = (window.skAuth && window.skAuth.actor && window.skAuth.actor()) || { name: state.profile.name };
   const first = String(me.name || '').trim().split(/\s+/)[0] || 'there';
   const all = FlightPlan.list(state), open = all.filter(po => ['Planned', 'Firm'].includes(po.status));
-  const covered = po => !po.netsuite || po.netsuite.onHand >= po.quantity;
+  const covered = po => !!po.netsuite && po.netsuite.onHand >= po.quantity;
   let f = { explosion: [] }; try { f = FlightPlan.forecast(state); } catch (e) {}
   const shorts = (f.explosion || []).filter(d => d.short > 0).sort((a, b) => String(a.orderBy || '').localeCompare(String(b.orderBy || '')));
   const byNeed = l => l.slice().sort((a, b) => a.needDate.localeCompare(b.needDate) || a.id.localeCompare(b.id));

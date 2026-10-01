@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { createHost } from '../server/mes-host.mjs';
-import { SAMPLE_WIS } from './lib/production-sample.mjs';
+import { SAMPLE_WIS, loadSampleInPage } from './lib/production-sample.mjs';
 
 const here = rel => fileURLToPath(new URL(rel, import.meta.url));
 const read = rel => fs.readFileSync(here(rel), 'utf8');
@@ -86,6 +86,15 @@ const prod = createHost(here('../index.html'));
   const five = mk(qtyState, 5), fiveOrder = five.ok ? MES.getOrder(qtyState, five.id) : null;
   const need = part => (fiveOrder ? fiveOrder.materials.find(m => m.partNumber === part) || {} : {}).required;
   check('a quantity-5 order kits each WI BOM line times 5, one line per part', !!fiveOrder && fiveOrder.materials.length === 2 && need('BOM-001') === 15 && need('BOM-002') === 15 && MES.validate(qtyState) === true, five.message);
+  if (fiveOrder) {
+    const opNeed = (o, i, part) => ((o.operations[i].materials || []).find(m => m.partNumber === part) || {}).required;
+    const split = prod.withAccount(admin, () => MES.splitOrder(qtyState, fiveOrder.id, 2), qtyState);
+    const child = split.ok ? MES.getOrder(qtyState, split.id) : null, kitOf = (o, part) => (o.materials.find(m => m.partNumber === part) || {}).required;
+    check('splitting 2 of 5 units divides the kit by quantity: 9 stay, 6 move', !!child && fiveOrder.quantity === 3 && kitOf(fiveOrder, 'BOM-001') === 9 && kitOf(fiveOrder, 'BOM-002') === 9 && kitOf(child, 'BOM-001') === 6 && kitOf(child, 'BOM-002') === 6 && MES.validate(qtyState) === true, split.message);
+    check('the operation BOM lines are divided the same way', !!child && opNeed(fiveOrder, 0, 'BOM-001') === 6 && opNeed(child, 0, 'BOM-001') === 4 && opNeed(fiveOrder, 1, 'BOM-002') === 9 && opNeed(child, 1, 'BOM-002') === 6, split.message);
+    const removed = prod.withAccount(admin, () => MES.removeOrderOperation(qtyState, fiveOrder.id, fiveOrder.operations[0].id, 'Not needed on this order'), qtyState);
+    check('removing an operation takes its share off a kit line it shares: 9 less 6 leaves 3', removed.ok && kitOf(fiveOrder, 'BOM-001') === 3 && kitOf(fiveOrder, 'BOM-002') === 9 && MES.validate(qtyState) === true, removed.message);
+  }
   const before = JSON.stringify(qtyState);
   const tooMany = mk(qtyState, 400);
   check('an order that would need more than 999 of one part is refused before anything is created', !tooMany.ok && /a kit line holds up to 999/.test(tooMany.message) && JSON.stringify(qtyState) === before, tooMany.message);
@@ -222,6 +231,11 @@ const prod = createHost(here('../index.html'));
     await page.evaluate(() => document.getElementById('dialog').close());
     await page.getByRole('button', { name: 'Your credentials', exact: true }).click();
     check('the empty stamp register says how to load stamps', /No stamps issued\. Issue a stamp to each named person below, or import the current register from a CSV/.test(await page.locator('#dialog').innerText()));
+    await loadSampleInPage(page, { wis: true });
+    const firmed = await page.evaluate(() => { const wi = state.masterWIs.find(w => w.status === 'Released'); const r = FlightPlan.addPlannedOrder(state, { masterWI: `${wi.id}|${wi.revision}`, pedigree: 'Production', subcategory: 'Mfg.', aircraft: MES.AIRCRAFT[0], site: null, quantity: 1, needDate: '2026-12-01' }); const f = r.ok ? FlightPlan.firm(state, r.id) : r; if (typeof save === 'function') save(); return { ok: f.ok, message: f.message || r.message, netsuite: r.ok ? FlightPlan.get(state, r.id).netsuite : 'none' }; });
+    const kanban = await show('plan-kanban');
+    const lane = await page.evaluate(() => { const card = [...document.querySelectorAll('main article')].find(a => /No NetSuite stock read/.test(a.innerText)); const section = card && card.closest('section[aria-label]'); return section ? section.getAttribute('aria-label') : null; });
+    check('a firm planned order with no NetSuite read is not shown as covered: it waits under Pending materials and says the stock is unread', firmed.ok && firmed.netsuite === null && lane === 'Pending materials' && /No NetSuite stock read\. Check stock before converting/.test(kanban), JSON.stringify({ firmed, lane }));
     check('no page error on any screen', errors.length === 0, errors.join(' | '));
   } finally { await browser.close(); }
   console.log('errors ' + JSON.stringify(errors));

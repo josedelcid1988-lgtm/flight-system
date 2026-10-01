@@ -5072,16 +5072,40 @@ const OP_BOM_MAX = 12;
     }
     order.materials = [...kit, ...add];
   }
-  // Removing the operation removes what it alone put in the kit, as long as it is not drawn yet.
+  // What an operation's own BOM lines ask for of one part.
+  function opBOMShare(op, partNumber) {
+    return (Array.isArray(op?.materials) ? op.materials : []).filter(line => line && line.partNumber === partNumber).reduce((n, line) => n + (Number.isInteger(line.required) ? line.required : 0), 0);
+  }
+  // Removing the operation removes what it alone put in the kit, as long as it is not drawn yet. On a line it shares
+  // with other operations, its own share comes off the requirement, never below what the remaining operations ask for.
   function dropBOMFromKit(order, opId) {
     const kit = Array.isArray(order.materials) ? order.materials : [];
+    const op = order.operations.find(item => item.id === opId);
     order.materials = kit.filter(m => {
       const ops = m.forOps || [];
       if (!ops.includes(opId)) return true;
       if (m.ready || m.lot) return true;          // already drawn: it stays on the record
-      if (ops.length > 1) { m.forOps = ops.filter(x => x !== opId); return true; }
+      if (ops.length > 1) {
+        m.forOps = ops.filter(x => x !== opId);
+        const remaining = m.forOps.reduce((n, id) => n + opBOMShare(order.operations.find(item => item.id === id), m.partNumber), 0);
+        m.required = Math.min(999, Math.max(1, remaining, m.required - opBOMShare(op, m.partNumber)));
+        return true;
+      }
       return false;
     });
+  }
+  // A split divides the kit and operation BOM requirements between the two orders by quantity. Each side rounds up,
+  // so neither order is left asking for less than its units need.
+  function splitKitQuantities(order, child, keep, moved) {
+    const total = keep + moved, share = (required, units) => Math.min(999, Math.max(1, Math.ceil(required * units / total)));
+    const divide = (fromLines, toLines) => (Array.isArray(fromLines) ? fromLines : []).forEach((line, i) => {
+      if (!line || !Number.isInteger(line.required)) return;
+      const whole = line.required;
+      line.required = share(whole, keep);
+      if (toLines && toLines[i]) toLines[i].required = share(whole, moved);
+    });
+    divide(order.materials, child.materials);
+    order.operations.forEach(op => divide(op.materials, child.operations.find(item => item.id === op.id)?.materials));
   }
 
     // ---- Standard Rework operations (draft library, not approved) ----
@@ -7462,6 +7486,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     delete child.engineeringChanges; delete child.splitInto;
     child.operations = child.operations.map(op => ({ ...op, done: false, note: '', buyoff: null, evidence: [], stepChecks: {}, stepPerformers: [] }));
     const approvalReset = order.releaseApproval !== null && order.releaseApproval !== undefined;
+    splitKitQuantities(order, child, order.quantity - qty, qty);
     order.quantity -= qty;
     if (approvalReset) order.releaseApproval = null;
     delete child.closureRequest; delete child.pedigreeChange; delete child.sequenceChange; delete child.splitRequests;
@@ -7475,7 +7500,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     orderSerials(state, order).forEach((entry, n) => { entry.unit = n + 1; });
     ensureRevisions(state);
     record(state, child, `Split from ${order.id}: ${qty} of ${order.quantity + qty} units moved onto ${id}. Operations copied, none complete.${moving.length ? ` Serials moved: ${moving.map(e => e.serial).join(', ')}.` : ''}`);
-    record(state, order, `Quantity split: ${qty} units moved onto ${id}. ${order.quantity} remain on this order.${approvalReset ? ' QA release approval reset because the covered quantity changed.' : ''}`);
+    record(state, order, `Quantity split: ${qty} units moved onto ${id}. ${order.quantity} remain on this order.${(order.materials || []).length ? ' Kit requirements divided between the two orders by quantity.' : ''}${approvalReset ? ' QA release approval reset because the covered quantity changed.' : ''}`);
     return { ok: true, id, message: `${id} created with ${qty} units. ${order.quantity} remain on ${order.id}.` };
   }
   // Fulfils an open split request: moves the affected units onto their own work order at any
@@ -7524,6 +7549,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
       if (plain(child.tickets[0].manifest) && !plain(child.tickets[0].carriedFrom)) child.tickets[0].carriedFrom = { orderId: order.id };
       order.tickets = order.tickets.filter(item => item.id !== ticket.id);
     }
+    splitKitQuantities(order, child, order.quantity - qty, qty);
     order.quantity -= qty;
     order.splitInto = [...(Array.isArray(order.splitInto) ? order.splitInto : []), id];
     state.orders.splice(state.orders.indexOf(order) + 1, 0, child);
@@ -7536,7 +7562,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     ensureRevisions(state);
     Object.assign(sr, { status: 'Split completed', note: `${qty} unit${qty === 1 ? '' : 's'} moved onto ${id}.`, closedBy: actor(state), closedAt: new Date().toISOString(), orderId: id });
     record(state, child, `Split from ${order.id} for ${sr.id}: ${qty} of ${order.quantity + qty} units moved with their completed operations.${moving.length ? ` Serials moved: ${moving.map(e => e.serial).join(', ')}.` : ''}${ticket ? ` ${ticket.id} moved with these units.` : ''}${recopied ? ` ${recopied} evidence record${recopied === 1 ? '' : 's'} copied as metadata; the recordings stay on ${order.id}.` : ''}`);
-    record(state, order, `Split request ${sr.id} fulfilled: ${qty} affected unit${qty === 1 ? '' : 's'} moved onto ${id}. ${order.quantity} remain on this order.${ticket ? ` ${ticket.id} moved to ${id}, so this order continues without that hold.` : ''}`);
+    record(state, order, `Split request ${sr.id} fulfilled: ${qty} affected unit${qty === 1 ? '' : 's'} moved onto ${id}. ${order.quantity} remain on this order.${(order.materials || []).length ? ' Kit requirements divided between the two orders by quantity.' : ''}${ticket ? ` ${ticket.id} moved to ${id}, so this order continues without that hold.` : ''}`);
     return { ok: true, id, message: `${id} created with ${qty} unit${qty === 1 ? '' : 's'}${ticket ? ` and ${ticket.id}` : ''}. ${order.quantity} remain on ${order.id}.` };
   }
 
@@ -12167,11 +12193,11 @@ function renderPlanBoard(){
     return `<tr class="${late?'hold-row':''}" data-plan-row="${esc(po.id)}"><td><strong class="mono">${esc(po.id)}</strong>${late?'<span class="hold-label">Past need date</span>':''}</td><td><strong class="mono">${esc(po.masterWI.id)} Rev ${esc(po.masterWI.revision)}</strong><small>${esc(po.masterWI.title)}</small>${wi?wi.status!=='Released'?`<small class="revision-warning">Master is ${esc(wi.status)}</small>`:'':'<small class="revision-warning">Master not in library</small>'}</td><td><strong class="mono">${esc(c.partNumber)} / Rev ${esc(c.partRevision)}</strong><small>${esc(c.pedigree)} · ${esc(c.subcategory)}</small><small class="mono">${esc(c.site||'Unassigned')} · Aircraft ${esc(c.aircraft)}</small></td><td class="mono">${po.quantity}</td><td class="mono">${esc(String(po.createdAt||'').slice(0,10))}</td><td class="mono">${esc(po.needDate)}</td><td>${po.netsuite?`<span class="mono">${po.netsuite.onHand}</span><small>snapshot ${esc(po.netsuite.snapshotAt)}</small>`:'<span class="muted">Not read</span>'}</td><td>${planBadge(po.status)}</td><td>${po.workOrder?`<button class="order-link" data-action="open-order" data-order="${esc(po.workOrder.id)}">${esc(po.workOrder.id)}</button>`:'<span class="muted">Not converted</span>'}</td><td class="plan-actions">${po.status==='Planned'?`<button class="btn quiet" data-action="plan-firm" data-plan="${esc(po.id)}">Firm</button>`:''}${po.status==='Firm'?`<button class="btn quiet" data-action="plan-convert" data-plan="${esc(po.id)}">Convert</button>`:''}${['Planned','Firm'].includes(po.status)?`<button class="btn quiet" data-action="plan-cancel" data-plan="${esc(po.id)}">Cancel</button>`:''}</td></tr>`;
   }).join('')}</tbody></table></div><p class="table-count">${rows.length} planned ${rows.length===1?'order':'orders'}</p>`:`<div class="empty"><h2>No matching planned orders</h2><p>Try another search term or status.</p><button class="btn" data-action="plan-clear-filters">Clear filters</button></div>`}</div></section>`;
 }
-function planCard(po){const c=po.configuration,late=FlightPlan.overdue(po),short=po.netsuite?Math.max(0,po.quantity-po.netsuite.onHand):null;return `<article class="kanban-card ${late?'late':''}" data-plan-row="${esc(po.id)}"><header><strong class="mono">${esc(po.id)}</strong>${planBadge(po.status)}</header><p class="mono">${esc(c.partNumber)} / Rev ${esc(c.partRevision)}</p><p class="small muted">${esc(po.masterWI.id)} Rev ${esc(po.masterWI.revision)} · ${esc(c.pedigree)} · ${esc(c.subcategory)}</p><p class="small"><span class="mono">Qty ${po.quantity}</span> · need <span class="mono">${esc(po.needDate)}</span>${late?' <span class="hold-label">Past need date</span>':''}</p>${po.netsuite?`<p class="small ${short?'short':''}">NetSuite on hand ${po.netsuite.onHand}${short?` · short ${short}`:' · covered'}</p>`:''}${po.workOrder?`<p class="small"><button class="order-link" data-action="open-order" data-order="${esc(po.workOrder.id)}">${esc(po.workOrder.id)}</button></p>`:''}<footer class="plan-actions">${po.status==='Planned'?`<button class="btn quiet" data-action="plan-firm" data-plan="${esc(po.id)}">Firm</button>`:''}${po.status==='Firm'?`<button class="btn quiet" data-action="plan-convert" data-plan="${esc(po.id)}">Convert</button>`:''}${['Planned','Firm'].includes(po.status)?`<button class="btn quiet" data-action="plan-cancel" data-plan="${esc(po.id)}">Cancel</button>`:''}</footer></article>`;}
+function planCard(po){const c=po.configuration,late=FlightPlan.overdue(po),short=po.netsuite?Math.max(0,po.quantity-po.netsuite.onHand):null;return `<article class="kanban-card ${late?'late':''}" data-plan-row="${esc(po.id)}"><header><strong class="mono">${esc(po.id)}</strong>${planBadge(po.status)}</header><p class="mono">${esc(c.partNumber)} / Rev ${esc(c.partRevision)}</p><p class="small muted">${esc(po.masterWI.id)} Rev ${esc(po.masterWI.revision)} · ${esc(c.pedigree)} · ${esc(c.subcategory)}</p><p class="small"><span class="mono">Qty ${po.quantity}</span> · need <span class="mono">${esc(po.needDate)}</span>${late?' <span class="hold-label">Past need date</span>':''}</p>${po.netsuite?`<p class="small ${short?'short':''}">NetSuite on hand ${po.netsuite.onHand}${short?` · short ${short}`:' · covered'}</p>`:(po.status==='Firm'?'<p class="small short">No NetSuite stock read. Check stock before converting.</p>':'')}${po.workOrder?`<p class="small"><button class="order-link" data-action="open-order" data-order="${esc(po.workOrder.id)}">${esc(po.workOrder.id)}</button></p>`:''}<footer class="plan-actions">${po.status==='Planned'?`<button class="btn quiet" data-action="plan-firm" data-plan="${esc(po.id)}">Firm</button>`:''}${po.status==='Firm'?`<button class="btn quiet" data-action="plan-convert" data-plan="${esc(po.id)}">Convert</button>`:''}${['Planned','Firm'].includes(po.status)?`<button class="btn quiet" data-action="plan-cancel" data-plan="${esc(po.id)}">Cancel</button>`:''}</footer></article>`;}
 function renderPlanKanban(){
   FlightPlan.ensure(state);
-  const all=FlightPlan.list(state),covered=po=>!po.netsuite||po.netsuite.onHand>=po.quantity;
-  const cols=[['Created','Planned, not yet firmed.',all.filter(po=>po.status==='Planned')],['Pending materials','Firm, NetSuite on hand below quantity (stub read).',all.filter(po=>po.status==='Firm'&&!covered(po))],['Pending work order','Firm and covered. Convert creates the Flight Control work order.',all.filter(po=>po.status==='Firm'&&covered(po))],['Converted','Linked to a work order. Track it in Flight Control.',all.filter(po=>po.status==='Converted')]];
+  const all=FlightPlan.list(state),covered=po=>!!po.netsuite&&po.netsuite.onHand>=po.quantity;
+  const cols=[['Created','Planned, not yet firmed.',all.filter(po=>po.status==='Planned')],['Pending materials','Firm, with a NetSuite shortage or no NetSuite stock read. Check stock before converting.',all.filter(po=>po.status==='Firm'&&!covered(po))],['Pending work order','Firm, and the NetSuite read covers the quantity. Convert creates the Flight Control work order.',all.filter(po=>po.status==='Firm'&&covered(po))],['Converted','Linked to a work order. Track it in Flight Control.',all.filter(po=>po.status==='Converted')]];
   const sortRows=rows=>rows.slice().sort((a,b)=>a.needDate.localeCompare(b.needDate)||a.id.localeCompare(b.id));
   return `<section aria-labelledby="kanban-heading"><div class="page-heading"><div><h1 id="kanban-heading">Kanban</h1></div><button class="btn primary" data-action="plan-create">${icon('plus')} Plan from master WI</button></div>
   <div class="kanban">${cols.map(([title,hint,rows])=>`<section class="panel kanban-col" aria-label="${esc(title)}"><div class="panel-head"><h2>${esc(title)}</h2><span class="pill">${rows.length}</span></div><div class="kanban-cards">${rows.length?sortRows(rows).map(planCard).join(''):'<p class="muted small">Nothing here.</p>'}</div></section>`).join('')}</div>
@@ -13861,7 +13887,7 @@ function renderPlanDashboard(){
   FlightPlan.ensure(state);
   const me=window.skAuth?.actor?.()||{name:state.profile.name},first=String(me.name||'').trim().split(/\s+/)[0]||'there';
   const all=FlightPlan.list(state),open=all.filter(po=>['Planned','Firm'].includes(po.status));
-  const covered=po=>!po.netsuite||po.netsuite.onHand>=po.quantity;
+  const covered=po=>!!po.netsuite&&po.netsuite.onHand>=po.quantity;
   let f={explosion:[]};try{f=FlightPlan.forecast(state);}catch(e){}
   const shorts=(f.explosion||[]).filter(d=>d.short>0).sort((a,b)=>String(a.orderBy||'').localeCompare(String(b.orderBy||'')));
   const byNeed=l=>l.slice().sort((a,b)=>a.needDate.localeCompare(b.needDate)||a.id.localeCompare(b.id));
