@@ -148,7 +148,11 @@ async function serverCase(training) {
 // ---- browser-side connectors stay off on a training server whatever the build configures -------------------------
 {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flight-training-connectors-'));
-  const configured = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8')
+  // Start from the committed (unstamped) form, so the edited copy is stamped in memory like a checkout; a stamped copy
+  // edited here would be refused as changed after stamping.
+  const { clear, verify } = await import('../tools/stamp-build.mjs');
+  const source = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  const configured = clear(source, verify(source).build)
     .replace("  url: '',        // e.g. https://mes-mirror.internal:8787", "  url: 'http://127.0.0.1:9/mirror',        // e.g. https://mes-mirror.internal:8787")
     .replace("  mode: 'local',            // 'local' keeps", "  mode: 'mcp',            // 'local' keeps")
     .replace("  endpoint: '',             // e.g. https://mes-bridge.internal/mcp", "  endpoint: 'http://127.0.0.1:9/bridge',             // e.g. https://mes-bridge.internal/mcp");
