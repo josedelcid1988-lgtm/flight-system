@@ -147,6 +147,21 @@ const prod = createHost(here('../index.html'));
     const fewBefore = JSON.stringify(ledState);
     const few = o2 ? prod.withAccount(admin, () => MES.splitOrder(ledState, o2.id, 2), ledState) : { message: 'order not created' };
     check('a split that would leave the new order no share of an issued line is refused with the next step, nothing changed', !few.ok && /has 1 issued from lot LOT-HOLD-1 for 5 units/.test(few.message) && /Mark it missing on the Kitting tab/.test(few.message) && JSON.stringify(ledState) === fewBefore, few.message);
+    // A sub-assembly issued from another work order (Codex review on #331): a lot quantity divides between the orders,
+    // and both lines still cite the same source, so the source order's issued count is unchanged; a serialized one
+    // refuses the split, because the split can't tell which units carry which serials.
+    const r3 = prod.withAccount(admin, () => MES.addOrder(ledState, { masterWI: `${qtyWi.id}|${qtyWi.revision}`, pedigree: 'Production', subcategory: 'Mfg.', quantity: 5, aircraft: MES.AIRCRAFT[0], site: MES.SITES[0] }), ledState);
+    const o3 = r3.ok ? MES.getOrder(ledState, r3.id) : null;
+    const src = serials => ({ orderId: 'WO-SUB-1', lotNumber: 'LOT-SUB-1', serials, revision: 'A', issuedAt: now, issuedBy: { name: 'Go Live', role: 'Administrator', credentialId: 'ACCT-go-live' } });
+    if (o3) { toKitting(o3); const m = line(o3, 'BOM-002'); Object.assign(m, { ready: true, lot: 'LOT-SUB-1', required: 10, source: src([]) }); }
+    const subTotal = () => ledState.orders.flatMap(o => o.materials).filter(m => m.source && m.source.orderId === 'WO-SUB-1').reduce((n, m) => n + m.required, 0);
+    const lotSplit = o3 ? prod.withAccount(admin, () => MES.splitOrder(ledState, o3.id, 2), ledState) : { message: 'order not created' };
+    const c3 = lotSplit.ok ? MES.getOrder(ledState, lotSplit.id) : null;
+    check('splitting a sub-assembly issued by lot quantity divides it: 6 stay, 4 move, still 10 issued from the source order', !!c3 && line(o3, 'BOM-002').required === 6 && line(c3, 'BOM-002').required === 4 && subTotal() === 10 && MES.validate(ledState) === true, lotSplit.message);
+    if (o3) Object.assign(line(o3, 'BOM-002'), { source: src(['SUB-SN-1', 'SUB-SN-2']) });
+    const serialBefore = JSON.stringify(ledState);
+    const serialSplit = o3 ? prod.withAccount(admin, () => MES.splitOrder(ledState, o3.id, 1), ledState) : { message: 'order not created' };
+    check('a split over a serialized sub-assembly line is refused with the next step, nothing changed', !serialSplit.ok && /SUB-SN-1, SUB-SN-2/.test(serialSplit.message) && /Return it on the Kitting tab/.test(serialSplit.message) && JSON.stringify(ledState) === serialBefore, serialSplit.message);
   }
   const before = JSON.stringify(qtyState);
   const tooMany = mk(qtyState, 400);
@@ -159,6 +174,16 @@ const prod = createHost(here('../index.html'));
   const adhoc = prod.withAccount(admin, () => MES.addAdhocOrder(state, { pedigree: 'Production', subcategory: 'Mfg.', quantity: 1, aircraft: MES.AIRCRAFT[0], partNumber: 'GL-PART-001', title: 'First production order', revision: 'A' }), state);
   const first = adhoc.ok ? MES.getOrder(state, adhoc.id) : null;
   check('a production work order starts with an empty kit, not the sample kit lines, and validates', !!first && Array.isArray(first.materials) && first.materials.length === 0 && MES.validate(state) === true, adhoc.message);
+  if (first) {
+    // An empty kit is valid, so diagnose names the field that is actually wrong (Codex review on #331).
+    const broken = JSON.parse(JSON.stringify(state)), bad = broken.orders.find(o => o.id === first.id);
+    bad.history = 'not a list';
+    const why = MES.diagnose(broken);
+    check('diagnose does not blame a valid empty kit for another field\'s failure', MES.validate(broken) === false && !!why && !/\(materials\)/.test(why.detail), why && why.detail);
+    bad.history = first.history; bad.materials = [{ id: 'x' }];
+    const kitWhy = MES.diagnose(broken);
+    check('diagnose still names a malformed kit line as the materials', MES.validate(broken) === false && !!kitWhy && /\(materials\)/.test(kitWhy.detail), kitWhy && kitWhy.detail);
+  }
   check('a planned order is refused until a WI is released, with a plain reason', !po.ok && typeof po.message === 'string' && po.message.length > 0, po && po.message);
 }
 

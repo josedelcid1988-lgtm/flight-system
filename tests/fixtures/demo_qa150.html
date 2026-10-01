@@ -3595,7 +3595,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (!plain(order) || !str(order.id, 24) || !/^WO-\d{5,8}(?:-Split-\d{1,2})?$/.test(order.id) || !str(order.title, 120) || !str(order.partNumber, 50) || !str(order.serial, 60) || !str(order.revision, 24) || !PEDIGREES.includes(order.pedigree) || !PRIORITIES.includes(order.priority) || !count(order.quantity) || !STATUSES.includes(order.status) || !str(order.owner, 80) || !str(order.due, 10) || !/^\d{4}-\d{2}-\d{2}$/.test(order.due) || !Number.isFinite(Date.parse(order.due)) || new Date(order.due).toISOString().slice(0, 10) !== order.due) return false;
     if (Object.hasOwn(order, 'start') && !(str(order.start, 10) && /^\d{4}-\d{2}-\d{2}$/.test(order.start) && Number.isFinite(Date.parse(order.start)) && order.start <= order.due)) return false;
     if (Object.hasOwn(order, 'site') && order.site !== null && !SITES.includes(order.site)) return false;
-    if (!Array.isArray(order.materials) || order.materials.length > 20 || !unique(order.materials.map(item => item && item.id)) || !order.materials.every(item => plain(item) && str(item.id, 40) && str(item.name, 120) && str(item.partNumber, 50) && count(item.required) && typeof item.ready === 'boolean' && (item.lot === undefined || str(item.lot, 60, 0)) && (item.forOps === undefined || (Array.isArray(item.forOps) && item.forOps.length <= 20 && item.forOps.every(x => str(x, 40)))) && (item.consumable === undefined || typeof item.consumable === 'boolean') && (item.source === undefined || subSourceValid(item.source)))) return false;
+    if (!kitLinesValid(order.materials)) return false;
     if (!Array.isArray(order.operations) || order.operations.length < 1 || order.operations.length > 20 || !unique(order.operations.map(item => item && item.id)) || !order.operations.every(item => plain(item) && str(item.id, 40) && str(item.title, 120) && str(item.description, 400) && typeof item.done === 'boolean' && str(item.note, 500, item.done ? 1 : 0) && calloutsValid(item) && (item.standardHours === undefined || (Number.isFinite(item.standardHours) && item.standardHours >= 0 && item.standardHours <= 10000)) && workCenterValid(item.workCenterId) && externalReceiptValid(item.externalReceipt) && operationTimeValid(item))) return false;
     if (!order.operations.every(operationDiscussionValid)) return false;
     if (!order.operations.every(stepPerformersValid)) return false;
@@ -5131,6 +5131,10 @@ const OP_BOM_MAX = 12;
     order.operations.forEach(op => divide(op.materials, child.operations.find(item => item.id === op.id)?.materials));
   }
   // What an order has drawn from one lot on the inventory ledger: its issues less its returns.
+  // The kit-line rules, shared by validation and diagnose. An empty kit is valid: lines come from BOM lines and issues.
+  function kitLinesValid(materials) {
+    return Array.isArray(materials) && materials.length <= 20 && unique(materials.map(item => item && item.id)) && materials.every(item => plain(item) && str(item.id, 40) && str(item.name, 120) && str(item.partNumber, 50) && count(item.required) && typeof item.ready === 'boolean' && (item.lot === undefined || str(item.lot, 60, 0)) && (item.forOps === undefined || (Array.isArray(item.forOps) && item.forOps.length <= 20 && item.forOps.every(x => str(x, 40)))) && (item.consumable === undefined || typeof item.consumable === 'boolean') && (item.source === undefined || subSourceValid(item.source)));
+  }
   function issuedToOrder(state, orderId, partNumber, lot) {
     return -ensureInventoryLedger(state).transactions.filter(row => row.orderId === orderId && row.partNumber === partNumber && row.lot === lot && ['Issue', 'Return'].includes(row.type)).reduce((sum, row) => sum + row.quantity, 0);
   }
@@ -5140,7 +5144,16 @@ const OP_BOM_MAX = 12;
   function planIssuedKitSplit(state, order, keep, moved) {
     const total = keep + moved, moves = [];
     for (const [index, line] of (Array.isArray(order.materials) ? order.materials : []).entries()) {
-      if (!line || !line.ready || !line.lot || line.source) continue;
+      if (line && line.source) {
+        // A sub-assembly issued from another work order. A serialized one can't be divided without knowing which unit
+        // carries which serial, so the split waits for it; a lot quantity divides like an issued lot.
+        if (Array.isArray(line.source.serials) && line.source.serials.length) return { error: `${line.name} (${line.partNumber}) is filled from ${line.source.orderId} with serial${line.source.serials.length === 1 ? '' : 's'} ${line.source.serials.join(', ')}, and the split can't tell which units they go with. ${order.status === 'Kitting' ? 'Return it on the Kitting tab, split, then issue it again to the order that uses it.' : 'Close the split request as Not required and raise it with Manufacturing Engineering.'}` };
+        const childQty = Math.floor(line.required * moved / total);
+        if (childQty < 1) return { error: `${line.name} (${line.partNumber}) has ${line.required} issued from ${line.source.orderId} for ${total} units, too few to give the new order its share. ${order.status === 'Kitting' ? 'Return it on the Kitting tab, then split.' : 'Close the split request as Not required and raise the shortage with Manufacturing Engineering.'}` };
+        moves.push({ index, issued: line.required, childQty, sourced: true });
+        continue;
+      }
+      if (!line || !line.ready || !line.lot) continue;
       const issued = issuedToOrder(state, order.id, line.partNumber, line.lot);
       if (issued <= 0) continue;
       const childQty = Math.floor(issued * moved / total);
@@ -5149,13 +5162,15 @@ const OP_BOM_MAX = 12;
       if (!record || record.conformityStatus !== 'Accepted') return { error: `Lot ${line.lot} of ${line.partNumber} is ${record ? record.conformityStatus : 'not on the inventory ledger'} for conformity, so its issued parts can't move to the new order. Resolve the lot's conformity, then split.` };
       moves.push({ index, issued, childQty, partNumber: line.partNumber, lot: line.lot, name: line.name });
     }
-    if (moves.length && ensureInventoryLedger(state).transactions.length + moves.length * 2 > 20000) return { error: 'The inventory ledger has no room to move the issued kit to the new order.' };
+    const ledgerMoves = moves.filter(move => !move.sourced).length;
+    if (ledgerMoves && ensureInventoryLedger(state).transactions.length + ledgerMoves * 2 > 20000) return { error: 'The inventory ledger has no room to move the issued kit to the new order.' };
     return { moves };
   }
   function applyIssuedKitSplit(state, order, child, moves) {
     for (const move of moves) {
       order.materials[move.index].required = move.issued - move.childQty;
       child.materials[move.index].required = move.childQty;
+      if (move.sourced) continue;   // no ledger rows: both lines still cite the same source order, and their quantities add up
       const note = `Split: ${move.name} issued share moved from ${order.id} to ${child.id}.`;
       const back = postInventoryTransaction(state, { type: 'Return', partNumber: move.partNumber, lot: move.lot, quantity: move.childQty, orderId: order.id, location: order.site || null, note });
       if (!back.ok) return back;
@@ -8241,7 +8256,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
         return { where: id, detail: `${id} creation record (release approval, subcategory, or source) is malformed.`, fix: null };
       }
       if (!engineeringChangesValid(o)) return { where: id, detail: `${id} engineering change record is malformed.`, fix: null };
-      return { where: id, detail: `${id} fails validation (${!STATUSES.includes(o.status) ? 'status' : !PEDIGREES.includes(o.pedigree) ? 'pedigree' : !PRIORITIES.includes(o.priority) ? 'priority' : !str(o.due, 10) ? 'due date' : !Array.isArray(o.materials) || !o.materials.length ? 'materials' : 'state rules'}).`, fix: null };
+      return { where: id, detail: `${id} fails validation (${!STATUSES.includes(o.status) ? 'status' : !PEDIGREES.includes(o.pedigree) ? 'pedigree' : !PRIORITIES.includes(o.priority) ? 'priority' : !str(o.due, 10) ? 'due date' : !kitLinesValid(o.materials) ? 'materials' : 'state rules'}).`, fix: null };
     }
     const tix = state.orders.flatMap(o => o.tickets.map(t => t.id)); const dupT = tix.find((t, i) => tix.indexOf(t) !== i);
     if (dupT) return { where: dupT, detail: `Ticket id ${dupT} appears on more than one work order.`, fix: null };
