@@ -3275,6 +3275,9 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // A signed record whose signature (or the record itself) is missing, for a stage the record has reached. These are
   // structural checks, so MES.validate runs them on every load and save, standalone included; verifyManifests reports them too.
   const CONF_AQI_FROM = 2, CONF_DAR_FROM = 5;
+  // A complete signature: meaning, a parseable time, a named signer with a credential, and a SHA-256 hash. An empty or partial
+  // object is no signature. (Older manifests stored no subject, so the subject is not required here.)
+  const signed = m => plain(m) && typeof m.meaning === 'string' && !!m.meaning && typeof m.at === 'string' && !Number.isNaN(Date.parse(m.at)) && plain(m.signer) && typeof m.signer.name === 'string' && !!m.signer.name.trim() && typeof m.signer.credentialId === 'string' && !!m.signer.credentialId.trim() && m.algorithm === 'SHA-256' && /^[0-9a-f]{64}$/.test(String(m.hash));
   function missingSignatures(state) {
     const gaps = [];
     (plain(state) && Array.isArray(state.orders) ? state.orders : []).forEach(order => {
@@ -3283,24 +3286,24 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       if (plain(fair)) {
         if (['Verified', 'Approved'].includes(fair.status) && !plain(fair.verified)) gaps.push({ where: `${order.id} FAIR verification`, reason: `the FAIR is ${fair.status} but has no verification record` });
         if (fair.status === 'Approved' && !plain(fair.approved)) gaps.push({ where: `${order.id} FAIR approval`, reason: 'the FAIR is Approved but has no Skyryse QA approval record' });
-        [['verified', 'FAIR verification'], ['reviewed', 'FAIR box 22'], ['approved', 'FAIR approval']].forEach(([k, label]) => { if (plain(fair[k]) && !plain(fair[k].manifest)) gaps.push({ where: `${order.id} ${label}`, reason: `the ${label} has no signature manifest` }); });
+        [['verified', 'FAIR verification'], ['reviewed', 'FAIR box 22'], ['approved', 'FAIR approval']].forEach(([k, label]) => { if (plain(fair[k]) && !signed(fair[k].manifest)) gaps.push({ where: `${order.id} ${label}`, reason: `the ${label} has no complete signature manifest` }); });
         if (plain(fair.approved) && !plain(fair.reviewed) && String(fair.approved.at || '') >= FAIR_BOX22_REQUIRED_FROM) gaps.push({ where: `${order.id} FAIR approval`, reason: 'the Skyryse QA approval was recorded after box 22 became mandatory, but box 22 is missing' });
       }
       (Array.isArray(order.conformity) ? order.conformity : []).forEach(p => {
         if (!plain(p)) return;
         const stage = CONF_STATUS.indexOf(p.status), where = `${order.id} ${p.serial}`;
         if (!plain(p.form)) { if (stage > 0 || plain(p.aqi) || plain(p.darApproval)) gaps.push({ where: `${where} 8130-9`, reason: 'the package is past completion of the 8130-9, or carries an AQI or DAR signature, but has no completed 8130-9' }); }
-        else if (!plain(p.form.prepared) || !plain(p.form.prepared.manifest)) gaps.push({ where: `${where} 8130-9`, reason: 'the completed 8130-9 has no signature manifest' });
+        else if (!plain(p.form.prepared) || !signed(p.form.prepared.manifest)) gaps.push({ where: `${where} 8130-9`, reason: 'the completed 8130-9 has no complete signature manifest' });
         if (stage >= CONF_AQI_FROM && !plain(p.aqi)) gaps.push({ where: `${where} 8130-9 AQI signature`, reason: `the package is ${p.status} but has no AQI signature` });
         if (stage >= CONF_DAR_FROM && !plain(p.darApproval)) gaps.push({ where: `${where} DAR acceptance`, reason: `the package is ${p.status} but has no DAR acceptance` });
-        if (plain(p.aqi) && !plain(p.aqi.manifest)) gaps.push({ where: `${where} 8130-9 AQI signature`, reason: 'the AQI signature has no signature manifest' });
-        if (plain(p.darApproval) && !plain(p.darApproval.manifest)) gaps.push({ where: `${where} DAR acceptance`, reason: 'the DAR acceptance has no signature manifest' });
+        if (plain(p.aqi) && !signed(p.aqi.manifest)) gaps.push({ where: `${where} 8130-9 AQI signature`, reason: 'the AQI signature has no complete signature manifest' });
+        if (plain(p.darApproval) && !signed(p.darApproval.manifest)) gaps.push({ where: `${where} DAR acceptance`, reason: 'the DAR acceptance has no complete signature manifest' });
       });
     });
     const fm = kind => plain(state) && plain(state.maneuver) && Array.isArray(state.maneuver[kind]) ? state.maneuver[kind].filter(plain) : [];
-    fm('mrb').forEach(m => { if (plain(m.decision) && !plain(m.decision.manifest)) gaps.push({ where: `${m.id} board decision`, reason: 'the board decision has no signature manifest' }); });
-    fm('cars').forEach(car => { if (plain(car.closure) && !plain(car.closure.manifest)) gaps.push({ where: `${car.id} closure`, reason: 'the closure has no signature manifest' }); });
-    fm('ncs').forEach(t => { const r = t.resolution; if (!plain(r)) { if (t.status === 'Resolved') gaps.push({ where: `${t.id} disposition approval`, reason: 'the resolved NC has no approval record' }); } else if (!plain(r.manifest) && !migratedEscape(t)) gaps.push({ where: `${t.id} disposition approval`, reason: 'the disposition approval has no signature manifest' }); });
+    fm('mrb').forEach(m => { if (plain(m.decision) && !signed(m.decision.manifest)) gaps.push({ where: `${m.id} board decision`, reason: 'the board decision has no complete signature manifest' }); });
+    fm('cars').forEach(car => { if (plain(car.closure) && !signed(car.closure.manifest)) gaps.push({ where: `${car.id} closure`, reason: 'the closure has no complete signature manifest' }); });
+    fm('ncs').forEach(t => { const r = t.resolution; if (!plain(r)) { if (t.status === 'Resolved') gaps.push({ where: `${t.id} disposition approval`, reason: 'the resolved NC has no approval record' }); } else if (!signed(r.manifest) && !migratedEscape(t)) gaps.push({ where: `${t.id} disposition approval`, reason: 'the disposition approval has no complete signature manifest' }); });
     return gaps;
   }
   // The recorded signer and time of a signed record must be the manifest's.
