@@ -4294,13 +4294,13 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const wiRef = wi => ({ id: wi.id, revision: wi.revision, title: wi.title });
   const findWI = (state, id, revision) => (Array.isArray(state?.masterWIs) ? state.masterWIs: []).find(wi => wi.id === id && wi.revision === revision) || null;
   const nextWIRevision = (state, id) => { const last = state.masterWIs.filter(wi => wi.id === id).map(wi => wi.revision).sort().pop() || '@'; return /^[A-Y]$/.test(last) ? String.fromCharCode(last.charCodeAt(0) + 1) : last === '@' ? 'A' : `${last}1`; };
-  const wiLog = (state, wi, action) => { wi.history = [...(wi.history || []), { at: new Date().toISOString(), action, actor: `${actor(state).name} · ${actor(state).credentialId}` }].slice(-200); };
+  const wiLog = (state, wi, action) => { { const known = wiAuthors(wi), list = Array.isArray(wi.authors) ? wi.authors.filter(x => typeof x === 'string') : []; if (known.size > list.length) wi.authors = [...new Set([...list, ...known])]; } wi.history = [...(wi.history || []), { at: new Date().toISOString(), action, actor: `${actor(state).name} · ${actor(state).credentialId}` }].slice(-200); };
   // Separation of duties: the author of a WI cannot release it. Every edit to a draft revision records the
   // editor's credential in wi.authors; for a revision edited before that was recorded, the history entries of
   // its edits name them. The list keeps every author and is never trimmed, so an early author cannot age out. The check covers QA release, release against the drawing ECO and the Safety Team
   // buy-off release, and no role or override lifts it. An author cannot record the peer review either.
   const WI_EDIT_ACTIONS = /^(Draft created|Title updated|Revision \S+ started|Operations changed|Written to an unreleased drawing|Drawing |Flagged as a critical safety part|Critical safety part flag removed)/;
-  const noteWIAuthor = (state, wi) => { const c = actor(state).credentialId; const list = Array.isArray(wi.authors) ? wi.authors.filter(x => typeof x === 'string') : []; if (c && !list.includes(c)) wi.authors = [...list, c]; };
+  const noteWIAuthor = (state, wi) => { const c = actor(state).credentialId; const list = Array.isArray(wi.authors) ? wi.authors.filter(x => typeof x === 'string') : []; const known = [...new Set([...list, ...wiAuthors(wi)])]; if (c && !known.includes(c)) known.push(c); if (known.length !== list.length || known.some((x, i) => x !== list[i])) wi.authors = known; };
   const wiAuthors = wi => { const set = new Set(Array.isArray(wi.authors) ? wi.authors.filter(x => typeof x === 'string') : []); (Array.isArray(wi.history) ? wi.history : []).forEach(h => { if (h && WI_EDIT_ACTIONS.test(String(h.action || ''))) { const c = String(h.actor || '').split(' · ').pop().trim(); if (c) set.add(c); } }); return set; };
   const wiAuthorRefusal = (state, wi) => wiAuthors(wi).has(actor(state).credentialId) ? fail(`Separation of duties: you edited ${wiKey(wi)}, so you cannot release it. A different Quality credential releases it. No role or override lifts this.`) : null;
   const wiPeerReviewRefusal = (state, wi) => wiAuthors(wi).has(actor(state).credentialId) ? fail(`Separation of duties: you edited ${wiKey(wi)}, so you cannot peer-review it. Another Manufacturing Engineering credential records the peer review. No role or override lifts this.`) : null;
@@ -6208,12 +6208,15 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
         }
       }
       const stampNo = (() => { try { const c = stampCheck(state.profile); return c && c.ok && c.holder ? String(c.holder.number || '') : ''; } catch (e) { return ''; } })();
+      const check = { ...(masterAccess() || stepOverride ? actor(state) : profileSnapshot(state.profile)), ...(accountActor() ? { account: accountActor().account } : {}), ...(masterAccess() ? { override: masterOverride([operation.buyoffType || 'Technician']) } : stepOverride ? { override: stepOverride } : stampNo ? { stamp: stampNo } : {}), at: new Date().toISOString(), ...(torque ? { torque } : {}), ...(consumables ? { consumables } : {}) };
+      if (!performerFits(operation, check)) return fail(performersFullMessage);
       if (stepOverride) { stepOverride.requiredTypes = [operation.buyoffType]; logSupport(state, stepOverride, 'Inspection step', `${order.id} ${operation.id} ${stepLetter(index)}`); }
-      operation.stepChecks[stepId] = { ...(masterAccess() || stepOverride ? actor(state) : profileSnapshot(state.profile)), ...(accountActor() ? { account: accountActor().account } : {}), ...(masterAccess() ? { override: masterOverride([operation.buyoffType || 'Technician']) } : stepOverride ? { override: stepOverride } : stampNo ? { stamp: stampNo } : {}), at: new Date().toISOString(), ...(torque ? { torque } : {}), ...(consumables ? { consumables } : {}) };
+      operation.stepChecks[stepId] = check;
       if (stepOverride) record(state, order, `Step ${stepLetter(index)} of ${operation.title} checked off under a ${supportText(stepOverride)}.`);
       notePerformer(operation, operation.stepChecks[stepId]);
     } else {
       if (steps.slice(index + 1).some(step => operation.stepChecks[step.id])) return fail('Uncheck the later steps first.');
+      if (!notePerformer(operation, operation.stepChecks[stepId])) return fail(performersFullMessage);
       delete operation.stepChecks[stepId];
     }
     const remaining = steps.filter(step => !operation.stepChecks[step.id]).length;
@@ -6349,12 +6352,18 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   // then inspect their own work.
   const STEP_PERFORMERS_MAX = 200;
   const performerKey = p => `${p.account || ''}|${String(p.credentialId || '').toLowerCase()}`;
+  // The list is never trimmed: a new performer beyond the limit is refused rather than dropped.
+  const performersFullMessage = `This operation already records ${STEP_PERFORMERS_MAX} different step performers, the most it can hold. Ask Quality to review the operation before anyone else checks off or unchecks its steps.`;
+  const performerFits = (operation, p) => { const list = Array.isArray(operation.stepPerformers) ? operation.stepPerformers.filter(plain) : []; return list.some(x => performerKey(x) === performerKey(p)) || list.length < STEP_PERFORMERS_MAX; };
+  // Records the person on a check-off; returns false, changing nothing, when the list is full.
   function notePerformer(operation, check) {
-    if (!plain(check) || !check.credentialId) return;
+    if (!plain(check) || !check.credentialId) return true;
     const list = Array.isArray(operation.stepPerformers) ? operation.stepPerformers.filter(plain) : [];
-    const entry = { credentialId: String(check.credentialId), account: check.account || null, at: check.at };
-    if (list.some(p => performerKey(p) === performerKey(entry))) return;
-    operation.stepPerformers = [...list, entry].slice(0, STEP_PERFORMERS_MAX);
+    const entry = { credentialId: String(check.credentialId), account: check.account || null, at: timestamp(check.at) ? check.at : new Date().toISOString() };
+    if (list.some(p => performerKey(p) === performerKey(entry))) return true;
+    if (list.length >= STEP_PERFORMERS_MAX) return false;
+    operation.stepPerformers = [...list, entry];
+    return true;
   }
   const stepPerformersValid = op => op.stepPerformers === undefined || (Array.isArray(op.stepPerformers) && op.stepPerformers.length <= STEP_PERFORMERS_MAX && op.stepPerformers.every(p => plain(p) && str(p.credentialId, 80) && !!p.credentialId.trim() && (p.account === null || str(p.account, 60)) && timestamp(p.at)));
   const performersOf = op => [op.buyoff, ...Object.values(plain(op.stepChecks) ? op.stepChecks : {}), ...(Array.isArray(op.stepPerformers) ? op.stepPerformers : [])].filter(plain);

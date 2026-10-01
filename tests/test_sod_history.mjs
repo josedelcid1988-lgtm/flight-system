@@ -43,6 +43,16 @@ await as('rsupport');r=await refusal();ok('someone who never performed the work 
 r=await run(([W])=>{const bad=edit=>{const s=structuredClone(state),op=MES.getOrder(s,W.id).operations.find(x=>x.id===W.op);edit(op);return MES.validate(s);};return {notArray:bad(op=>{op.stepPerformers='ACCT-ttech';}),noCred:bad(op=>{op.stepPerformers=[{credentialId:'',account:null,at:new Date().toISOString()}];}),noTime:bad(op=>{op.stepPerformers=[{credentialId:'ACCT-ttech',account:'ttech',at:'never'}];}),ok:MES.validate(state)};},[W]);
 ok('validation refuses a malformed performer list',r.notArray===false&&r.noCred===false&&r.noTime===false&&r.ok===true,JSON.stringify(r));
 
+// A check made before stepPerformers existed is recorded when it is unchecked.
+r=await run(([W])=>{const s=structuredClone(state),o=MES.getOrder(s,W.id),op=o.operations.find(x=>x.id===W.op),st=op.steps[0].id;op.stepChecks={[st]:{name:'Pat Legacy',role:'Technician',credentialId:'ACCT-plegacy',account:'plegacy',at:new Date().toISOString()}};delete op.stepPerformers;const u=MES.setStepCheck(s,W.id,W.op,st,false,{});return {ok:u.ok,message:u.message,performers:(op.stepPerformers||[]).map(p=>p.account),valid:MES.validate(s)};},[W]);
+ok('unchecking a step checked before performers were recorded keeps that performer',r.ok===true&&r.performers.includes('plegacy')&&r.valid===true,JSON.stringify(r));
+// The performer list is never trimmed: a new performer past the limit is refused and nothing changes.
+r=await run(([W])=>{const s=structuredClone(state),o=MES.getOrder(s,W.id),op=o.operations.find(x=>x.id===W.op),st=op.steps[0].id;delete op.stepChecks[st];op.stepPerformers=Array.from({length:200},(_,i)=>({credentialId:'ACCT-p'+i,account:'p'+i,at:new Date().toISOString()}));const before=JSON.stringify(op);const res=MES.setStepCheck(s,W.id,W.op,st,true,{});return {ok:res.ok,message:res.message,unchanged:JSON.stringify(op)===before,valid:MES.validate(s)};},[W]);
+ok('a new performer past the 200-performer limit is refused and nothing changes',r.ok===false&&/200 different step performers/.test(r.message)&&r.unchanged&&r.valid,JSON.stringify(r));
+await as('vtech');
+r=await run(([W])=>{const s=structuredClone(state),o=MES.getOrder(s,W.id),op=o.operations.find(x=>x.id===W.op),st=op.steps[0].id;delete op.stepChecks[st];op.stepPerformers=[...Array.from({length:199},(_,i)=>({credentialId:'ACCT-p'+i,account:'p'+i,at:new Date().toISOString()})),{credentialId:'ACCT-vtech',account:'vtech',at:new Date().toISOString()}];const res=MES.setStepCheck(s,W.id,W.op,st,true,{});return {ok:res.ok,message:res.message,count:op.stepPerformers.length};},[W]);
+ok('a performer already on a full list may still check off a step',r.ok===true&&r.count===200,JSON.stringify(r));
+
 // ---- 2. a WI keeps every author ----
 await as('jdoe');
 const WI=await run(()=>{const wi=state.masterWIs.find(w=>w.status==='Draft');return wi?{id:wi.id,rev:wi.revision}:null;});
@@ -50,7 +60,12 @@ ok('fixture: a draft WI',!!WI,JSON.stringify(WI));
 // Engineer 0 edits once; forty-one others edit after; then enough further edits to roll the 200-entry history past Engineer 0.
 r=await run(([WI])=>{const out=[];for(let i=0;i<42;i++){sessionStorage.setItem('skyryse-mes-session-v1','me'+i);const res=MES.updateMasterWI(state,WI.id,WI.rev,{title:'Author list check '+i});if(!res.ok)out.push(res.message);}for(let k=0;k<210;k++){const res=MES.updateMasterWI(state,WI.id,WI.rev,{title:'Author list check rev '+k});if(!res.ok){out.push(res.message);break;}}save();const wi=state.masterWIs.find(w=>w.id===WI.id&&w.revision===WI.rev);return {errors:out,authors:(wi.authors||[]).length,historyHasFirst:(wi.history||[]).some(h=>/ACCT-me0$/.test(h.actor)),firstIsAuthor:MES.wiAuthors(wi).has('ACCT-me0')};},[WI]);
 ok('42 engineers edited the WI and its history no longer names the first one',r.errors.length===0&&r.historyHasFirst===false,JSON.stringify(r));
-ok('the WI still lists all 42 authors',r.authors===42&&r.firstIsAuthor===true,JSON.stringify(r));
+ok('the WI still lists all 42 authors (and its earlier authors, back-filled from the history)',r.authors>=42&&r.firstIsAuthor===true,JSON.stringify(r));
+// An author known only from the history (an older revision, or one dropped by the old 40-author limit) is moved to the
+// author list before the history can age the entry out.
+await as('jdoe');
+r=await run(([WI])=>{const s=structuredClone(state),wi=s.masterWIs.find(w=>w.id===WI.id&&w.revision===WI.rev);wi.authors=(wi.authors||[]).filter(c=>c!=='ACCT-hist');wi.history=[...(wi.history||[]),{at:new Date().toISOString(),action:'Title updated.',actor:'Hal Story · ACCT-hist'}];sessionStorage.setItem('skyryse-mes-session-v1','me41');for(let k=0;k<210;k++)MES.updateMasterWI(s,WI.id,WI.rev,{title:'History author check '+k});sessionStorage.setItem('skyryse-mes-session-v1','jdoe');const w2=s.masterWIs.find(w=>w.id===WI.id&&w.revision===WI.rev);return {historyHas:(w2.history||[]).some(h=>/ACCT-hist$/.test(h.actor)),listed:(w2.authors||[]).includes('ACCT-hist'),author:MES.wiAuthors(w2).has('ACCT-hist')};},[WI]);
+ok('a history-only author is kept after 210 more edits roll the history past them',r.historyHas===false&&r.listed===true&&r.author===true,JSON.stringify(r));
 await as('me0');
 r=await run(([WI])=>{const wi=state.masterWIs.find(w=>w.id===WI.id&&w.revision===WI.rev);const a=MES.wiPeerReviewRefusal(state,wi),b=MES.wiAuthorRefusal(state,wi);return {peer:a&&a.message,release:b&&b.message};},[WI]);
 ok('the first author still cannot peer-review the WI',/you edited .* so you cannot peer-review it/.test(r.peer||''),JSON.stringify(r));
