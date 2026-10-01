@@ -7737,7 +7737,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     for (const row of rows) if (row.status==='Open') {
       const next=wanted.get(plannerKey(row));
       if (next) { row.owner={...next.owner,exclude:[...next.owner.exclude]}; row.due=next.due; wanted.delete(plannerKey(row)); continue; }
-      const po=row.blocked.type==='planned-order'?(state.plannedOrders||[]).find(x=>x.id===row.blocked.id):null;
+      const po=row.blocked.type==='planned-order'?(Array.isArray(state.plannedOrders)?state.plannedOrders:[]).find(x=>x.id===row.blocked.id):null;
       const order=row.blocked.type==='work-order'?getOrder(state,row.blocked.id):null;
       row.status=(row.blocked.type==='planned-order'?(!po||po.status==='Cancelled'):(!order||order.status==='Closed'))?'Void':'Resolved';
       row.resolvedAt=at; row.resolvedBy=who; row.resolution=`${row.blocked.id} source record changed.`;
@@ -7762,7 +7762,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   function plannerCandidates(state, principal) {
     const caps=principal.can, exclude=principal.credentialId;
     const blockerRows = syncPlanningBlockers(state).filter(b=>(typeof caps!=='function'||caps(b.owner.cap))&&!b.owner.exclude.includes(exclude)).map(b=>{
-      const order=b.blocked.type==='work-order'?getOrder(state,b.blocked.id):null, po=b.blocked.type==='planned-order'?(state.plannedOrders||[]).find(x=>x.id===b.blocked.id):null;
+      const order=b.blocked.type==='work-order'?getOrder(state,b.blocked.id):null, po=b.blocked.type==='planned-order'?(Array.isArray(state.plannedOrders)?state.plannedOrders:[]).find(x=>x.id===b.blocked.id):null;
       const due=b.due, overdue=due<plannerToday(), priority=order?.priority||'Normal', aog=!!(order&&aogActive(order));
       return {id:b.id,kind:b.kind,title:b.unblock.action,blocked:b.blocked,owner:b.owner,due,partNumber:b.partNumber,overdue,aog,priority,createdAt:b.createdAt,source:order||po};
     });

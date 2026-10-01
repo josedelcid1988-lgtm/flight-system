@@ -164,7 +164,7 @@ try {
     const converged = structuredClone(base);
     MES.syncBlockers(converged);
     converged.plannedOrders = { damaged: true };
-    assert.throws(() => MES.upgrade(structuredClone(converged)), 'the engine upgrade throws on this workspace');
+    assert.doesNotThrow(() => MES.upgrade(structuredClone(converged)), 'the engine upgrade reads a planned-order value that is not a list as an empty list');
     const current = server.store.getDoc('default');
     const json = JSON.stringify(converged);
     const etag = server.store.putDoc('default', json, current.etag, 'converge-test');
@@ -172,6 +172,48 @@ try {
     assert.equal(result.status, 422, JSON.stringify(result.json));
     assert.match(result.json.error, /planned order/i);
     assert.equal(server.store.getDoc('default').json, json, 'the stored workspace is byte for byte unchanged');
+  });
+
+  // Codex review of #220 (r4151430888): reads on that stored workspace keep working; they used to see no workspace.
+  await check('reads on a stored workspace whose planned orders are not a list still see the workspace', async () => {
+    const converged = structuredClone(base);
+    MES.syncBlockers(converged);
+    converged.plannedOrders = { damaged: true };
+    const current = server.store.getDoc('default');
+    server.store.putDoc('default', JSON.stringify(converged), current.etag, 'converge-test');
+    const governance = await api('GET', '/governance', { token });
+    assert.equal(governance.status, 200, JSON.stringify(governance.json));
+  });
+
+  // Codex review of #220 (r4151430881): initializing an empty server from such a snapshot gets the plain refusal.
+  await check('initializing an empty server from a converged snapshot whose planned orders are not a list is refused with the plain reason', async () => {
+    const fresh = createServer({ dbPath: ':memory:', quiet: true, setupCode: SETUP_CODE });
+    const freshHandler = fresh.listeners('request')[0];
+    const call = async (method, url, { token: t, body } = {}) => {
+      const incoming = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]);
+      incoming.method = method; incoming.url = `/api${url}`;
+      incoming.headers = { 'content-type': 'application/json', ...(t ? { authorization: `Bearer ${t}` } : {}) };
+      const chunks = [];
+      const outgoing = new Writable({ write(chunk, encoding, callback) { chunks.push(Buffer.from(chunk)); callback(); } });
+      outgoing.writeHead = (status) => { outgoing.statusCode = status; return outgoing; };
+      const finished = new Promise((resolve, reject) => { outgoing.once('finish', resolve); outgoing.once('error', reject); });
+      freshHandler(incoming, outgoing);
+      await finished;
+      const text = Buffer.concat(chunks).toString('utf8');
+      return { status: outgoing.statusCode, json: text ? JSON.parse(text) : null };
+    };
+    try {
+      await fresh.ready;
+      assert.equal((await call('PUT', '/auth/accounts', { body: { setupCode: SETUP_CODE, users: [{ username: 'admin', displayName: 'Flight Admin', role: 'general', salt: 'salt', hash: sha('salt', 'converge-pass-123') }] } })).status, 200);
+      const freshToken = (await call('POST', '/auth/session', { body: { username: 'admin', password: 'converge-pass-123' } })).json.token;
+      const converged = structuredClone(base);
+      MES.syncBlockers(converged);
+      converged.plannedOrders = { damaged: true };
+      const result = await call('PUT', '/workspace', { token: freshToken, body: converged });
+      assert.equal(result.status, 422, JSON.stringify(result.json));
+      assert.match(result.json.error, /planned order/i);
+      assert.ok(!fresh.store.getDoc('default'), 'nothing was stored');
+    } finally { await fresh.store.close?.(); }
   });
 
   await check('the same action on an intact stored workspace is committed', async () => {
