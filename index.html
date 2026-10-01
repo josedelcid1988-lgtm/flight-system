@@ -7133,7 +7133,8 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (blockingTickets(order, opId).length) return fail('Resolve the open hold on this operation before recording completion.');
     if (atpPending(operation).length) return fail('A software push on this ATP operation is waiting for Software Engineering. It must be accepted or rejected before buy-off.');
     if (isExternal(operation.classification) && !operation.externalPO) return fail('Add the NetSuite PO for this sub-processing operation before buy-off.');
-    if (WORK_CENTERS.find(center => center.id === operation.workCenterId)?.external && !externalReceiptValid(operation.externalReceipt)) return fail('External work remains blocked until the ERP PO receipt, supplier inspection lot and receiving inspection are recorded.');
+    // A missing receipt is a well-formed "not received yet" for validation, never a pass for buy-off: external work needs Quality's accepted receipt.
+    if (WORK_CENTERS.find(center => center.id === operation.workCenterId)?.external && (operation.externalReceipt === undefined || !externalReceiptValid(operation.externalReceipt))) return fail('External work remains blocked until the ERP PO receipt, supplier inspection lot and receiving inspection are recorded.');
     if (operation.fodLevel === 'critical' && !fodChecklistComplete(operation)) return fail('Complete the FOD checklist (tools in, tools out, FOD sweep) before buying off this FOD Critical Area operation.');
     const rejectedClip = operation.evidence.find(item => item.rejectedAt);
     if (rejectedClip) return fail(`${rejectedClip.id} was rejected by ${rejectedClip.rejectedBy.name}: ${rejectedClip.rejectReason}. Remove it and attach a replacement recording before buy-off.`);

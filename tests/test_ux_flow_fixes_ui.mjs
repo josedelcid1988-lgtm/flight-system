@@ -382,6 +382,22 @@ try {
     }));
     ok('the engine recording refusal says operation on a non-Installation order', /before this operation can be bought off/.test(engRec[0]) && !/installation/i.test(engRec[0]), engRec[0]);
     ok('the engine recording refusal keeps installation on an Installation order', /before this installation operation can be bought off/.test(engRec[1]), engRec[1]);
+    // Codex security P1: the engine refuses a buy-off on an external work center until Quality's receipt is accepted. A missing receipt is not a pass.
+    const extGate = await page.evaluate(() => {
+      const attempt = receipt => {
+        const s = structuredClone(state), o = s.orders.find(x => x.id === 'WO-10006'), op = o.operations.find(x => !x.done);
+        op.classification = MES.EXTERNAL_CLASSES.find(c => c !== MES.EXTERNAL_CLASS); op.workCenterId = MES.WORK_CENTERS.find(c => c.external && c.site === o.site)?.id || MES.WORK_CENTERS.find(c => c.external).id;
+        op.externalPO = { number: 'PO-12345', line: '1' }; op.steps = []; op.stepChecks = {}; op.requiresRecording = false; op.evidence = [];
+        if (receipt === undefined) delete op.externalReceipt; else op.externalReceipt = receipt;
+        const valid = MES.validate(s);
+        const r = MES.completeOperation(s, o.id, op.id, '', { stampNumber: MES.buyoffCredential(s.profile, op.buyoffType).holder?.number });
+        return { valid, ok: r.ok, message: r.message || '' };
+      };
+      const accepted = { status: 'Accepted', level: 'Full', erpReceipt: 'ERP-1', supplierInspectionLot: 'LOT-1', inspectionRef: 'RI-1', by: { name: 'Quality Inspector', role: 'Quality', credentialId: 'Q-1' }, at: new Date().toISOString() };
+      return { missing: attempt(undefined), accepted: attempt(accepted) };
+    });
+    ok('an external work center buy-off with no receipt is refused by the engine', extGate.missing.valid && !extGate.missing.ok && /External work remains blocked/.test(extGate.missing.message), JSON.stringify(extGate.missing));
+    ok('an accepted receipt clears the receiving gate', extGate.accepted.valid && !/External work remains blocked/.test(extGate.accepted.message), JSON.stringify(extGate.accepted));
     // An operation with no steps held by an external PO: Complete operation is disabled and says why next to the button.
     await page.evaluate(() => { const o = state.orders.find(x => x.id === 'WO-10006'), op = o.operations.find(x => !x.done); op.steps = []; op.stepChecks = {}; op.classification = MES.EXTERNAL_CLASS; op.externalPO = null; openOrder(o.id); });
     await page.waitForTimeout(400);
