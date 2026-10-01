@@ -891,6 +891,8 @@ small,.rev-chip small,.meta dt,.meta .mono{font-size:12px!important;line-height:
 .next-action .btn.primary{min-height:48px;flex-shrink:0;max-width:60%}
 body.has-next-action .app{padding-bottom:88px}
 @media(min-width:1181px){.next-action{left:auto;right:28px;bottom:28px;border-radius:16px;min-width:380px;box-shadow:var(--shadow-2)}}
+/* Below 1181px the bar spans the page; start it at the rail's right edge so the rail does not hide its state label. */
+@media(max-width:1180px){.next-action{left:var(--fs-rail,0px)}}
 /* 'Inspection point' tag measured 4.0:1 (var(--accent) on var(--accent-soft)); 4.5:1 needed */
 .op-inspection{color:var(--accent-press)!important}
 /* operation callouts: ESD / FOD / MSDS */
@@ -8455,6 +8457,13 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     for (const key of ['projects', 'objectives', 'milestones', 'sprints']) if (!Array.isArray(state.projectPlan[key])) state.projectPlan[key] = [];
     return state.projectPlan;
   }
+  // The sprint shape every release before the date bound accepted: real dates with the end on or after the start, and
+  // no limit on the span. A live sprint must also pass sprintRangeProblem.
+  const sprintRowValid = row => plain(row) && /^SPT-\d{4,8}$/.test(row.id) && str(row.name, 100) && workCenterValid(row.workCenterId) && dateOnly(row.startDate) && dateOnly(row.endDate) && row.endDate >= row.startDate && Number.isFinite(row.capacityHours) && row.capacityHours >= 0 && row.capacityHours <= 10000 && Array.isArray(row.backlog) && row.backlog.length <= 500 && row.backlog.every(ref => plain(ref) && /^WO-\d{5,8}(?:-Split-\d{1,2})?$/.test(ref.workOrderId) && str(ref.operationId, 40)) && snapshotValid(row.by) && timestamp(row.at);
+  // A sprint saved before the date bound that falls outside it is kept, unchanged, as a retired record (see
+  // retireOutOfBoundSprints). It keeps the full shape it was valid with then and is never planned or reported. Like
+  // the sprint list before the bound, the retired list has no count limit; only the upgrade adds to it.
+  const retiredSprintValid = row => { if (!plain(row)) return false; const { retiredReason, retiredAt, ...sprint } = row; return sprintRowValid(sprint) && str(retiredReason, 300) && timestamp(retiredAt); };
   const projectPlanValid = state => {
     if (!Object.hasOwn(state, 'projectPlan')) return true;
     const p = state.projectPlan;
@@ -8462,7 +8471,8 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (!unique(p.projects.map(row => row && row.id)) || !p.projects.every(row => plain(row) && /^PRJ-\d{4,8}$/.test(row.id) && str(row.name, 100) && PROJECT_LIFECYCLES.includes(row.lifecycle) && PROJECT_SENSITIVITY.includes(row.sensitivity) && (row.parentId === null || p.projects.some(parent => parent.id === row.parentId)) && dateOnly(row.startDate) && dateOnly(row.dueDate) && row.dueDate >= row.startDate && Array.isArray(row.partNumbers) && row.partNumbers.length <= 100 && row.partNumbers.every(part => str(part, 50)) && (row.sensitivityHistory === undefined || (Array.isArray(row.sensitivityHistory) && row.sensitivityHistory.length <= 100 && row.sensitivityHistory.every(change => plain(change) && PROJECT_SENSITIVITY.includes(change.from) && PROJECT_SENSITIVITY.includes(change.to) && str(change.reason, 300) && change.reason.trim().length >= 3 && snapshotValid(change.by) && timestamp(change.at)))))) return false;
     if (!unique(p.objectives.map(row => row && row.id)) || !p.objectives.every(row => plain(row) && /^OBJ-\d{4,8}$/.test(row.id) && str(row.title, 120) && OBJECTIVE_STATUSES.includes(row.status) && dateOnly(row.dueDate) && snapshotValid(row.by) && timestamp(row.at))) return false;
     if (!unique(p.milestones.map(row => row && row.id)) || !p.milestones.every(row => plain(row) && /^MIL-\d{4,8}$/.test(row.id) && str(row.title, 120) && (row.projectId === null || p.projects.some(project => project.id === row.projectId)) && (row.objectiveId === null || p.objectives.some(objective => objective.id === row.objectiveId)) && dateOnly(row.dueDate) && ['Open', 'Done', 'Cancelled'].includes(row.status) && typeof row.mustStart === 'boolean' && (row.workOrderId === null || /^WO-\d{5,8}(?:-Split-\d{1,2})?$/.test(row.workOrderId)) && snapshotValid(row.by) && timestamp(row.at))) return false;
-    if (!unique(p.sprints.map(row => row && row.id)) || !p.sprints.every(row => plain(row) && /^SPT-\d{4,8}$/.test(row.id) && str(row.name, 100) && workCenterValid(row.workCenterId) && dateOnly(row.startDate) && dateOnly(row.endDate) && row.endDate >= row.startDate && Number.isFinite(row.capacityHours) && row.capacityHours >= 0 && row.capacityHours <= 10000 && Array.isArray(row.backlog) && row.backlog.length <= 500 && row.backlog.every(ref => plain(ref) && /^WO-\d{5,8}(?:-Split-\d{1,2})?$/.test(ref.workOrderId) && str(ref.operationId, 40)) && snapshotValid(row.by) && timestamp(row.at))) return false;
+    if (p.retiredSprints !== undefined && (!Array.isArray(p.retiredSprints) || !p.retiredSprints.every(retiredSprintValid))) return false;
+    if (!unique([...p.sprints, ...(p.retiredSprints || [])].map(row => row && row.id)) || !p.sprints.every(row => sprintRowValid(row) && !sprintRangeProblem(row.startDate, row.endDate))) return false;
     return true;
   };
   const nextPlanId = (rows, prefix) => `${prefix}-${String(Math.max(0, ...rows.map(row => Number(String(row.id).match(/(\d+)$/)?.[1]) || 0)) + 1).padStart(4, '0')}`;
@@ -8519,8 +8529,37 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const orders = (state.orders || []).filter(order => order.projectId === projectId), entries = orders.flatMap(order => order.operations.flatMap(operation => operation.timeEntries || []));
     return { projectId, workOrders: orders.length, minutes: entries.reduce((sum, entry) => sum + entry.minutes, 0), hours: Math.round(entries.reduce((sum, entry) => sum + entry.minutes, 0) / 60 * 100) / 100 };
   }
+  // A work-center sprint is a short planning window, at most one calendar quarter. The bound keeps capacity and
+  // burndown work proportional to a real sprint; a stored sprint outside it fails validation.
+  const SPRINT_MAX_DAYS = 92, SPRINT_EARLIEST = '2000-01-01', SPRINT_LATEST = '2099-12-31';
+  function sprintRangeProblem(startDate, endDate) {
+    if (!dateOnly(startDate) || !dateOnly(endDate)) return 'Enter the sprint start and end as real calendar dates.';
+    if (startDate < SPRINT_EARLIEST || endDate > SPRINT_LATEST) return `Sprint dates must fall between ${SPRINT_EARLIEST} and ${SPRINT_LATEST}.`;
+    if (endDate < startDate) return 'The sprint end date is before its start date. Choose an end date on or after the start.';
+    const days = Math.round((Date.parse(`${endDate}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`)) / 86400000) + 1;
+    if (days > SPRINT_MAX_DAYS) return `A sprint covers at most ${SPRINT_MAX_DAYS} days; this one covers ${days}. Split it into shorter sprints.`;
+    return '';
+  }
+  // Upgrade step: a workspace saved before the bound may hold a sprint that was valid then (real dates, end on or after
+  // start) but falls outside it now. Each one moves, unchanged, to projectPlan.retiredSprints with the reason, so the
+  // workspace stays valid and writable and the record is kept. Only a row that passes the full earlier sprint check
+  // moves; any other malformed row is left where it is for validation to refuse.
+  function retireOutOfBoundSprints(state) {
+    // A retired register that is present but not a list is invalid stored data: migrate nothing and leave it for
+    // validation to refuse, rather than replacing (and so discarding) it.
+    const p = state?.projectPlan; if (!plain(p) || !Array.isArray(p.sprints) || (Object.hasOwn(p, 'retiredSprints') && !Array.isArray(p.retiredSprints))) return;
+    const keep = [], retire = [];
+    for (const row of p.sprints) {
+      const problem = sprintRowValid(row) ? sprintRangeProblem(row.startDate, row.endDate) : '';
+      if (problem) retire.push({ ...row, retiredReason: `Retired on upgrade: Sprint ${row.id} runs ${row.startDate} to ${row.endDate}. ${problem} Create a new sprint of at most ${SPRINT_MAX_DAYS} days for this work.`.slice(0, 300), retiredAt: new Date().toISOString() });
+      else keep.push(row);
+    }
+    if (!retire.length) return;
+    p.sprints = keep;
+    p.retiredSprints = [...(p.retiredSprints || []), ...retire];
+  }
   function sprintCapacity(state, workCenterId, startDate, endDate) {
-    const center = WORK_CENTERS.find(row => row.id === workCenterId); if (!center || !dateOnly(startDate) || !dateOnly(endDate) || endDate < startDate) return null;
+    const center = WORK_CENTERS.find(row => row.id === workCenterId); if (!center || sprintRangeProblem(startDate, endDate)) return null;
     let workdays = 0; for (let day = new Date(`${startDate}T00:00:00Z`), end = new Date(`${endDate}T00:00:00Z`); day <= end; day.setUTCDate(day.getUTCDate() + 1)) if (day.getUTCDay() !== 0 && day.getUTCDay() !== 6) workdays++;
     const units = equipmentUnitsFor(state).filter(unit => unit.workCenterId === workCenterId && unit.active !== false), down = units.filter(unit => openMaintenanceFor(state, unit.tag)).length;
     return { workCenterId, startDate, endDate, workdays, units: units.length, unitsDown: down, capacityHours: center.hoursPerDay * workdays * Math.max(0, units.length - down) };
@@ -8529,12 +8568,13 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const d = denied('plan-order', 'create a work-center sprint'); if (d) return d;
     const p = ensureProjects(state), name = String(input?.name || '').trim(), workCenterId = input?.workCenterId, startDate = String(input?.startDate || ''), endDate = String(input?.endDate || '');
     if (!str(name, 100)) return fail('Enter a sprint name.');
+    const rangeProblem = sprintRangeProblem(startDate, endDate); if (rangeProblem) return fail(rangeProblem);
     const capacity = sprintCapacity(state, workCenterId, startDate, endDate); if (!capacity) return fail('Choose a registered work center and valid sprint dates.');
     const backlog = Array.isArray(input.backlog) ? input.backlog.map(row => ({ workOrderId: String(row.workOrderId || ''), operationId: String(row.operationId || '') })) : [];
     for (const ref of backlog) { const order = MES.getOrder(state, ref.workOrderId), op = order?.operations.find(item => item.id === ref.operationId); if (!op || op.done || op.workCenterId !== workCenterId) return fail('Every sprint backlog operation must be open and assigned to this work center.'); }
     const estimate = backlog.reduce((sum, ref) => { const order = MES.getOrder(state, ref.workOrderId), op = order.operations.find(item => item.id === ref.operationId); return sum + (Number.isFinite(op.standardHours) ? Math.max(0, op.standardHours * order.quantity - (MES.laborMinutes(op) || 0) / 60) : 0); }, 0);
     if (estimate > capacity.capacityHours) return fail(`Sprint backlog needs ${estimate} hours but only ${capacity.capacityHours} hours are available.`);
-    const row = { id: nextPlanId(p.sprints, 'SPT'), name, workCenterId, startDate, endDate, capacityHours: capacity.capacityHours, backlog, by: actor(state), at: new Date().toISOString() };
+    const row = { id: nextPlanId([...p.sprints, ...(Array.isArray(p.retiredSprints) ? p.retiredSprints : [])], 'SPT'), name, workCenterId, startDate, endDate, capacityHours: capacity.capacityHours, backlog, by: actor(state), at: new Date().toISOString() };
     p.sprints.push(row); return { ok: true, id: row.id, message: `${row.id} scheduled within ${capacity.capacityHours} available hours.`, sprint: row, estimateHours: estimate };
   }
   function sprintReport(state, sprintId) {
@@ -8545,12 +8585,19 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const byDay = new Map();
     for (const ref of sprint.backlog) { const op = MES.getOrder(state, ref.workOrderId)?.operations.find(item => item.id === ref.operationId); for (const entry of op?.timeEntries || []) { const day = entry.endedAt.slice(0, 10); byDay.set(day, (byDay.get(day) || 0) + entry.minutes / 60); } }
     const burndown = []; let remaining = totalHours;
-    for (let day = new Date(`${sprint.startDate}T00:00:00Z`), end = new Date(`${sprint.endDate}T00:00:00Z`); day <= end; day.setUTCDate(day.getUTCDate() + 1)) { const key = day.toISOString().slice(0, 10); if (day.getUTCDay() !== 0 && day.getUTCDay() !== 6) { remaining = Math.max(0, remaining - Math.min(remaining, byDay.get(key) || 0)); burndown.push({ date: key, remainingHours: Math.round(remaining * 100) / 100, actualHours: Math.round((byDay.get(key) || 0) * 100) / 100 }); } }
+    // Defensive bound: a stored sprint longer than SPRINT_MAX_DAYS fails validation, and the burndown never walks past it.
+    for (let day = new Date(`${sprint.startDate}T00:00:00Z`), end = new Date(`${sprint.endDate}T00:00:00Z`), steps = 0; day <= end && steps < SPRINT_MAX_DAYS; day.setUTCDate(day.getUTCDate() + 1), steps++) { const key = day.toISOString().slice(0, 10); if (day.getUTCDay() !== 0 && day.getUTCDay() !== 6) { remaining = Math.max(0, remaining - Math.min(remaining, byDay.get(key) || 0)); burndown.push({ date: key, remainingHours: Math.round(remaining * 100) / 100, actualHours: Math.round((byDay.get(key) || 0) * 100) / 100 }); } }
     const throughputByDay = new Map();
     for (const order of state.orders || []) for (const op of order.operations || []) if (op.workCenterId === sprint.workCenterId && op.done && op.buyoff?.at && op.buyoff.at.slice(0, 10) >= new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10)) { const day = op.buyoff.at.slice(0, 10); throughputByDay.set(day, (throughputByDay.get(day) || 0) + (Number.isFinite(op.standardHours) ? op.standardHours * order.quantity : 0)); }
     const measuredDays = [...throughputByDay.values()], measuredThroughputHoursPerDay = measuredDays.length ? Math.round(measuredDays.reduce((sum, hours) => sum + hours, 0) / measuredDays.length * 100) / 100 : null;
     let latestStartDate = null;
-    if (measuredThroughputHoursPerDay > 0) { let count = Math.ceil(Math.max(0, totalHours - completedHours) / measuredThroughputHoursPerDay), day = new Date(`${sprint.endDate}T00:00:00Z`); while (count > 0) { day.setUTCDate(day.getUTCDate() - 1); if (![0, 6].includes(day.getUTCDay())) count--; } latestStartDate = day.toISOString().slice(0, 10); }
+    if (measuredThroughputHoursPerDay > 0 && dateOnly(sprint.endDate)) {
+      // Whole weeks step back seven days at once, so the walk is at most a few days however much work remains.
+      let count = Math.ceil(Math.max(0, totalHours - completedHours) / measuredThroughputHoursPerDay); const day = new Date(`${sprint.endDate}T00:00:00Z`);
+      if (count > 5) { const weeks = Math.floor((count - 1) / 5); day.setUTCDate(day.getUTCDate() - weeks * 7); count -= weeks * 5; }
+      while (count > 0 && Number.isFinite(day.getTime())) { day.setUTCDate(day.getUTCDate() - 1); if (![0, 6].includes(day.getUTCDay())) count--; }
+      if (Number.isFinite(day.getTime()) && day.getUTCFullYear() >= 1 && day.getUTCFullYear() <= 9999) latestStartDate = day.toISOString().slice(0, 10);
+    }
     return { sprintId, backlog: sprint.backlog.length, totalHours, completedHours, remainingHours: Math.max(0, totalHours - completedHours), actualHours, capacityHours: sprint.capacityHours, overCapacity: totalHours > sprint.capacityHours, burndown, measuredThroughputHoursPerDay, latestStartDate };
   }
   function ensureInventoryLedger(state) {
@@ -8647,10 +8694,43 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   Object.assign(MES,{plannerStatus, WORK_CENTERS, EQUIPMENT_UNITS, equipmentUnitsFor, addEquipmentArea, addEquipmentUnit, MAINTENANCE_TYPES, PROJECT_LIFECYCLES, PROJECT_SENSITIVITY, OBJECTIVE_STATUSES, ensureProjects, createProject, addProjectObjective, addProjectMilestone, milestoneRisks, setProjectSensitivity, linkWorkOrderProject, projectLaborRollup, sprintCapacity, createSprint, sprintReport, recordMaintenance, closeMaintenance, recordExternalReceipt, equipmentValid, openMaintenanceFor, workCenterQueue, workCenterCapacity, clockOnOperation, clockOffOperation, laborMinutes, INVENTORY_TRANSACTION_TYPES, BUILD_CLASSES, LOT_CONFORMITY_STATUSES, ensureInventoryLedger, inventoryLedgerValid, inventoryLots, availableLotsFromLedger, postInventoryTransaction});
   const validateWithPlanner = MES.validate;
   MES.validate = state => validateWithPlanner(state) && plannerValid(state) && inventoryLedgerValid(state) && equipmentValid(state) && projectPlanValid(state);
+  const diagnoseWithPlanner = MES.diagnose;
+  MES.diagnose = state => {
+    const base = diagnoseWithPlanner(state); if (base) return base;
+    const sprints = plain(state?.projectPlan) && Array.isArray(state.projectPlan.sprints) ? state.projectPlan.sprints : [];
+    // The full sprint shape first: a sprint that is both out of range and malformed is reported for the malformed field,
+    // since correcting its dates alone would not make the workspace valid.
+    for (let i = 0; i < sprints.length; i += 1) {
+      const row = sprints[i], id = plain(row) && typeof row.id === 'string' ? row.id : `projectPlan.sprints[${i}]`;
+      if (!sprintRowValid(row)) return { where: id, detail: `Sprint ${id} has a missing or invalid field. Restore it from a backup or export of this workspace, then reload.`, fix: null };
+      const problem = sprintRangeProblem(row.startDate, row.endDate);
+      if (problem) return { where: id, detail: `Sprint ${id} runs ${row.startDate} to ${row.endDate}. ${problem}`, fix: null };
+    }
+    if (plain(state?.projectPlan) && Object.hasOwn(state.projectPlan, 'retiredSprints')) {
+      const retired = state.projectPlan.retiredSprints;
+      if (!Array.isArray(retired)) return { where: 'projectPlan.retiredSprints', detail: 'The retired sprint register (projectPlan.retiredSprints) is not a list. Restore it from a backup or export of this workspace, then reload.', fix: null };
+      for (let i = 0; i < retired.length; i += 1) if (!retiredSprintValid(retired[i])) { const id = plain(retired[i]) && typeof retired[i].id === 'string' ? retired[i].id : `projectPlan.retiredSprints[${i}]`; return { where: id, detail: `Retired sprint ${id} has a missing or invalid field. Restore it from a backup or export of this workspace, then reload.`, fix: null }; }
+      const live = new Set(sprints.map(row => row && row.id));
+      const clash = retired.find(row => live.has(row.id));
+      if (clash) return { where: clash.id, detail: `Sprint ID ${clash.id} is used by both a live and a retired sprint. Restore the workspace from a backup or export, then reload.`, fix: null };
+    }
+    // Any other repeated sprint ID (two live sprints, or two retired records).
+    const seen = new Set(), retiredRows = plain(state?.projectPlan) && Array.isArray(state.projectPlan.retiredSprints) ? state.projectPlan.retiredSprints : [];
+    for (const row of [...sprints, ...retiredRows]) { const id = row && row.id; if (seen.has(id)) return { where: String(id), detail: `Sprint ID ${id} is used by more than one sprint record. Restore the workspace from a backup or export, then reload.`, fix: null }; seen.add(id); }
+    return null;
+  };
+  // repair (the standalone save and load fallback) diagnoses with the engine's own rules. A workspace that passes those
+  // but fails a planner-layer rule (MES.validate) must be refused with the planner diagnosis, never reported repaired.
+  const repairWithPlanner = MES.repair;
+  MES.repair = (state, limit) => {
+    const result = repairWithPlanner(state, limit);
+    if (!result.ok || MES.validate(state)) return result;
+    return { ok: false, repairs: result.repairs, blocker: MES.diagnose(state) || { where: 'workspace', detail: 'The workspace fails a validation rule that could not be isolated.', fix: null } };
+  };
   const seedWithPlanner = MES.seed;
   MES.seed = () => { const state = ensurePlanner(seedWithPlanner()); ['audits','certifications','supplierApprovals','qualityValues','qualityVerdicts','controlledDocuments','modelAdapterHistory','aiActionLog','aiSkillDrafts','aiSkillTriggers','aiSkillTriggerHistory','calibrationLog'].forEach(key=>{if(!Array.isArray(state[key]))state[key]=[];}); if(!plain(state.modelAdapter))state.modelAdapter=emptyModelAdapter(); ensureInventoryLedger(state); ensureResources(state); ensureProjects(state); syncPlanningBlockers(state); return state; };
   const upgradeWithPlanner = MES.upgrade;
-  MES.upgrade = state => { const upgraded = upgradeWithPlanner(state); if (!upgraded) return null; ensurePlanner(upgraded); if(!Array.isArray(upgraded.controlledDocuments))upgraded.controlledDocuments=[];if(!Array.isArray(upgraded.modelAdapterHistory))upgraded.modelAdapterHistory=[];if(!Array.isArray(upgraded.aiActionLog))upgraded.aiActionLog=[];if(!Array.isArray(upgraded.aiSkillDrafts))upgraded.aiSkillDrafts=[];if(!Array.isArray(upgraded.aiSkillTriggers))upgraded.aiSkillTriggers=[];if(!Array.isArray(upgraded.aiSkillTriggerHistory))upgraded.aiSkillTriggerHistory=[];if(!Array.isArray(upgraded.calibrationLog))upgraded.calibrationLog=[];if(!plain(upgraded.modelAdapter))upgraded.modelAdapter=emptyModelAdapter(); ensureInventoryLedger(upgraded); ensureResources(upgraded); ensureProjects(upgraded); syncPlanningBlockers(upgraded); return upgraded; };
+  MES.upgrade = state => { const upgraded = upgradeWithPlanner(state); if (!upgraded) return null; ensurePlanner(upgraded); if(!Array.isArray(upgraded.controlledDocuments))upgraded.controlledDocuments=[];if(!Array.isArray(upgraded.modelAdapterHistory))upgraded.modelAdapterHistory=[];if(!Array.isArray(upgraded.aiActionLog))upgraded.aiActionLog=[];if(!Array.isArray(upgraded.aiSkillDrafts))upgraded.aiSkillDrafts=[];if(!Array.isArray(upgraded.aiSkillTriggers))upgraded.aiSkillTriggers=[];if(!Array.isArray(upgraded.aiSkillTriggerHistory))upgraded.aiSkillTriggerHistory=[];if(!Array.isArray(upgraded.calibrationLog))upgraded.calibrationLog=[];if(!plain(upgraded.modelAdapter))upgraded.modelAdapter=emptyModelAdapter(); ensureInventoryLedger(upgraded); ensureResources(upgraded); ensureProjects(upgraded); retireOutOfBoundSprints(upgraded); syncPlanningBlockers(upgraded); return upgraded; };
   Object.assign(MES, { archivable, archiveOrders, archivedOrderValid, ownWorkRefusal, coveredBuildOps, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, verifyManifests, reviewFair, NFF, recordTraining, personTraining, trainingCurrentFor, trainingCertificateValid, ownWorkHit, OWN_WORK_EXEMPT_PEDIGREES, scryptHex, PIN_KDF, saveTraining, trainingCatalog, requiredTrainings, trainingDef, TRAINING_CODE_RE, importStamps, stampRegisterCsv, nextStampNumber, isPlaceholderStamp, STAMP_NUMBER_RE, wiAuthors, wiAuthorRefusal, wiPeerReviewRefusal, buildStamp, buildStampValid, supportActor, supportGrant, logSupport, SUPPORT_RULES, SUPPORT_KINDS, recordSupportAccess, noteDemoBypassRemoved, supportLogValid, recordCalibration, importCalibrations, updateCalibration, calibrationStatus, calibrationChainProblem, calibrationEntryHash, calibrationLegacyHash, calibrationLogChanges, recordCalibrationArchive, calibrationArchivable, calibrationArchiveSummary, calibrationArchivedEntries, calibrationArchiveHeldProblem, calibrationCapacity, CALIBRATION_LOG_LIMIT, calibrationCurrentIds, calibratedToolChecks, toolUseRecords, calibrationEntryValid, CALIBRATION_STATUSES });
   Object.assign(MES, { SOURCE_INSPECTION_CLASS, SOURCE_INSPECTION_CODES, CONFORMITY_SUBCODES, TEST_SUBCODES, operationType, migrateOperationTypes, sourceInspectionCodes, conformitySubcodes, testSubcodes, operationSubcodes, operationSubcode, saveSourceInspectionCodes, saveOperationSubcodes, mrbTrainingTiers, saveMrbTrainingTiers, recordSourceInspection, sourceInspectionHolds, sourceInspectionWorkspaceValid });
   MES.roleDeniedMessage = roleDeniedMessage;
@@ -12806,7 +12886,7 @@ document.addEventListener('submit', event => {
 
 // Every printed or downloaded document passes through here. It carries the build id and the SHA-256 of index.html
 // so a printed record traces to the exact build that produced it. The demo build also marks it.
-function markDocument(html){/* DEMO D-28 */{const mark="<div class=\"demo-print-mark\" style=\"margin:0 0 8px;padding:6px 10px;border:2px solid #7a1f00;color:#7a1f00;font:700 14px/18px sans-serif;text-align:center;letter-spacing:.06em\">DEMO, NOT FOR ACCEPTANCE</div>";html=/<body[^>]*>/i.test(html)?html.replace(/<body[^>]*>/i,b=>b+mark):mark+html;}const b=MES.buildStamp(),line=`<div class="fs-build-line" style="font:10px/1.4 Menlo,Consolas,monospace;color:#555;margin-top:10px">Flight System build ${esc(b.version)} · index.html SHA-256 ${esc(b.sha256)}</div>`;return /<\/body>/i.test(html)?html.replace(/<\/body>(?![\s\S]*<\/body>)/i,line+'</body>'):html+line;}
+function markDocument(html){/* DEMO D-28 */{const mark="<div class=\"demo-print-mark\" style=\"margin:0 0 8px;padding:6px 10px;border:2px solid #7a1f00;color:#7a1f00;font:700 14px/18px sans-serif;text-align:center;letter-spacing:.06em\">DEMO, NOT FOR ACCEPTANCE</div><style>@media screen{.demo-print-mark{margin-top:56px!important}}</style>";html=/<body[^>]*>/i.test(html)?html.replace(/<body[^>]*>/i,b=>b+mark):mark+html;}const b=MES.buildStamp(),line=`<div class="fs-build-line" style="font:10px/1.4 Menlo,Consolas,monospace;color:#555;margin-top:10px">Flight System build ${esc(b.version)} · index.html SHA-256 ${esc(b.sha256)}</div>`;return /<\/body>/i.test(html)?html.replace(/<\/body>(?![\s\S]*<\/body>)/i,line+'</body>'):html+line;}
 function printRecord(html,name){html=markDocument(html);const doc=html.replace('<body>','<body><button class="print-action" type="button" onclick="window.print()" style="position:fixed;top:12px;right:12px;padding:8px 16px;font-weight:700">Print</button><style>@media print{.print-action{display:none}}</style>'),url=URL.createObjectURL(new Blob([doc],{type:'text/html'})),w=window.open(url,'_blank');if(w){w.opener=null;setTimeout(()=>URL.revokeObjectURL(url),60000);notify('Opened for printing. Use Print in the preview.');}else{URL.revokeObjectURL(url);dlHtml(name,html);notify('Pop-ups are blocked, so the record was downloaded as a file to print.');}}
 document.addEventListener('click',e=>{const b=e.target.closest('[data-action="fair-print"],[data-action="conf-8130-print"]');if(!b)return;e.preventDefault();e.stopPropagation();const o=MES.getOrder(state,b.dataset.order);if(!o)return;if(b.dataset.action==='fair-print'){printRecord(fairHtml(o),`FAIR-${o.id}.html`);return;}const pk=(o.conformity||[]).find(x=>x.serial===b.dataset.serial);if(pk&&pk.form)printRecord(conf8130Html(o,pk),`8130-9-${o.partNumber}-${pk.serial}.html`);},true);
 // Printable records for tickets raised outside a work order (stock NC, CAR, MRB, PFMEA).
@@ -16169,8 +16249,17 @@ function fsTicketAssignment(order,ticket){MES.syncAssignments(state);return (sta
   })();
 
   // ---- DEMO, NOT FOR ACCEPTANCE on every page ---------------------------------------------------
+  // A strip along the bottom of the content area, from the rail's right edge. The page reserves its
+  // height, and the sticky next action, toasts and idle warning sit above it, so it covers nothing.
+  // The sign-in screen hides everything but itself; the strip is exempt so the first screen is marked.
+  var STRIP = 24;
   var style = document.createElement('style');
-  style.textContent = '.demo-banner{position:fixed;left:50%;bottom:8px;transform:translateX(-50%);z-index:2147483000;pointer-events:none;padding:4px 12px;border-radius:999px;background:#7a1f00;color:#fff;font:700 12px/16px -apple-system,BlinkMacSystemFont,sans-serif;letter-spacing:.04em;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.25)}@media print{.demo-banner{position:static;transform:none;display:block;text-align:center;margin:0 auto 8px}}'
+  style.textContent = '.demo-banner{position:fixed;left:var(--fs-rail,0px);right:0;bottom:0;height:' + STRIP + 'px;z-index:2147483000;pointer-events:none;display:flex;align-items:center;justify-content:center;background:#7a1f00;color:#fff;font:700 12px/16px -apple-system,BlinkMacSystemFont,sans-serif;letter-spacing:.04em;white-space:nowrap}'
+    + 'body{padding-bottom:' + STRIP + 'px}html .next-action{bottom:' + STRIP + 'px}html .toast,html .sk-idle-warning{bottom:' + (STRIP + 24) + 'px}'
+    + '@media(min-width:1181px){html .next-action{bottom:' + (STRIP + 28) + 'px}}'
+    + 'body:has(#sk-boot)>.demo-banner{visibility:visible!important;left:0}'
+    + '.demo-login-hint{margin:8px 0 0;padding:8px 10px;border:1px solid rgba(242,169,0,.6);border-radius:8px;color:#fff;font:12px/16px var(--font)}.demo-login-hint b{font-weight:700}'
+    + '@media print{body{padding-bottom:0}.demo-banner{position:static;height:auto;display:block;text-align:center;margin:0 auto 8px;background:none;color:#7a1f00}}'
     + '.demo-chip{display:inline-flex;align-items:center;gap:var(--s-1);margin-left:var(--s-2);padding:var(--s-1) var(--s-2);border-radius:var(--r-full);background:var(--warn-soft);color:var(--warn);font:600 12px/16px var(--font);white-space:nowrap}.demo-chip::before{content:"";width:7px;height:7px;border-radius:50%;background:#F2A900}@media(max-width:700px){.demo-chip{display:none}}';
   document.head.appendChild(style);
   function markPage() {
@@ -16179,6 +16268,13 @@ function fsTicketAssignment(order,ticket){MES.syncAssignments(state);return (sta
       banner.className = 'demo-banner'; banner.setAttribute('role', 'note');
       banner.textContent = 'DEMO, NOT FOR ACCEPTANCE';
       document.body.appendChild(banner);
+    }
+    var note = document.getElementById('sk-login-note');
+    if (note && !document.querySelector('.demo-login-hint')) {
+      var hint = document.createElement('p');
+      hint.className = 'demo-login-hint';
+      hint.innerHTML = 'Demo accounts (demo, tech, quality, mfgeng, operations, engineering and the rest) use the password <b>demo1234</b>.';
+      note.insertAdjacentElement('afterend', hint);
     }
     var bar = document.querySelector('.breadcrumbs');
     if (bar && !bar.querySelector('.demo-chip')) {
