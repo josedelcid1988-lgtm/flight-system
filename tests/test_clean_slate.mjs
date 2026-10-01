@@ -96,6 +96,21 @@ const prod = createHost(here('../index.html'));
     check('removing an operation takes its share off a kit line it shares: 9 less 6 leaves 3', removed.ok && kitOf(fiveOrder, 'BOM-001') === 3 && kitOf(fiveOrder, 'BOM-002') === 9 && MES.validate(qtyState) === true, removed.message);
   }
   {
+    // Split rounding across operations (Codex review on #331): the kit is the sum of the rounded operation shares, so
+    // on each order the kit line and its operations' BOM lines agree. Stored op lines of 1 and 2 on a quantity-3 order.
+    const rs = load(prod, MES.seed());
+    rs.masterWIs = JSON.parse(JSON.stringify(qtyState.masterWIs));
+    const rw = rs.masterWIs.find(w => w.id === qtyWi.id && w.revision === qtyWi.revision);
+    rw.operations[0].materials = [{ partNumber: 'BOM-001', name: 'Bracket', required: 1 }];
+    rw.operations[1].materials = [{ partNumber: 'BOM-001', name: 'Bracket', required: 1 }];
+    const made = prod.withAccount(admin, () => MES.addOrder(rs, { masterWI: `${rw.id}|${rw.revision}`, pedigree: 'Production', subcategory: 'Mfg.', quantity: 3, aircraft: MES.AIRCRAFT[0], site: MES.SITES[0] }), rs);
+    const o = made.ok ? MES.getOrder(rs, made.id) : null;
+    if (o) { o.operations[0].materials[0].required = 1; o.operations[1].materials[0].required = 2; o.materials[0].required = 3; }
+    const sp = o ? prod.withAccount(admin, () => MES.splitOrder(rs, o.id, 1), rs) : { message: 'order not created' };
+    const c = sp.ok ? MES.getOrder(rs, sp.id) : null, opSum = x => x.operations.reduce((n, op) => n + (op.materials || []).filter(m => m.partNumber === 'BOM-001').reduce((k, m) => k + m.required, 0), 0);
+    check('a split derives each kit line from the rounded operation shares, so kit and operations agree on both orders', !!c && o.materials[0].required === opSum(o) && c.materials[0].required === opSum(c) && opSum(o) === 3 && opSum(c) === 2 && MES.validate(rs) === true, `${sp.message} ${o && o.materials[0].required}/${o && opSum(o)} ${c && c.materials[0].required}/${c && opSum(c)}`);
+  }
+  {
     const ecState = load(prod, MES.seed());
     ecState.masterWIs = JSON.parse(JSON.stringify(qtyState.masterWIs));
     const make = () => { const r = mk(ecState, 5); return r.ok ? MES.getOrder(ecState, r.id) : null; };
@@ -113,6 +128,17 @@ const prod = createHost(here('../index.html'));
     const issuedBefore = issued && JSON.stringify({ materials: issued.materials, ops: issued.operations.map(op => op.materials || null), quantity: issued.quantity });
     const refused = issued ? changeQty(issued, 10) : { message: 'order not created' };
     check('an engineering quantity change that would rescale an issued kit line is refused at QA re-release, nothing changed', !refused.ok && /already issued to this order for 5 units/.test(refused.message) && JSON.stringify({ materials: issued.materials, ops: issued.operations.map(op => op.materials || null), quantity: issued.quantity }) === issuedBefore, refused.message);
+    // Only the BOM share of a kit line rescales; what it holds beyond its operations' BOM lines stays (Codex on #331).
+    const based = make();
+    if (based) based.materials.find(m => m.partNumber === 'BOM-002').required += 1;
+    const basedResult = based ? changeQty(based, 10) : { message: 'order not created' };
+    check('a quantity change rescales only the BOM share of a kit line: 15 plus 1 becomes 30 plus 1', basedResult.ok && kitOf(based, 'BOM-002') === 31 && MES.validate(ecState) === true, `${basedResult.message} ${based && kitOf(based, 'BOM-002')}`);
+    // A quantity re-release waits for a sequence change awaiting QA, whose rollback would restore the old quantity.
+    const seq = make();
+    if (seq) seq.sequenceChange = { status: 'Awaiting QA', entries: [], requestedBy: { name: 'Robin Engineer', role: 'Manufacturing Engineer', credentialId: 'ACCT-me-lee' }, requestedAt: now };
+    const seqBefore = seq && JSON.stringify(seq);
+    const seqResult = seq ? changeQty(seq, 10) : { message: 'order not created' };
+    check('a quantity re-release is refused while a sequence change awaits QA, the order unchanged', !seqResult.ok && /sequence change on this order is awaiting QA/.test(seqResult.message) && seq.quantity === 5, seqResult.message);
   }
   {
     // A split moves the issued share of a kit line on the inventory ledger too (Codex review on #331): a return from
@@ -146,7 +172,21 @@ const prod = createHost(here('../index.html'));
     if (o2) { const m = line(o2, 'BOM-002'); const back = prod.withAccount(admin, () => MES.postInventoryTransaction(ledState, { type: 'Conformity', partNumber: 'BOM-002', lot: 'LOT-HOLD-1', quantity: 0, conformityStatus: 'Accepted', conformityRef: 'NS-HOLD-OK', note: 'Released after review' }), ledState); if (back.ok) { prod.withAccount(admin, () => MES.setMaterial(ledState, o2.id, m.id, false), ledState); m.required = 1; prod.withAccount(admin, () => MES.setMaterial(ledState, o2.id, m.id, true), ledState); } }
     const fewBefore = JSON.stringify(ledState);
     const few = o2 ? prod.withAccount(admin, () => MES.splitOrder(ledState, o2.id, 2), ledState) : { message: 'order not created' };
-    check('a split that would leave the new order no share of an issued line is refused with the next step, nothing changed', !few.ok && /has 1 issued from lot LOT-HOLD-1 for 5 units/.test(few.message) && /Mark it missing on the Kitting tab/.test(few.message) && JSON.stringify(ledState) === fewBefore, few.message);
+    check('a split whose issued quantity can\'t cover both orders\' rounded needs is refused with the next step, nothing changed', !few.ok && /has 1 issued from lot LOT-HOLD-1, but after the split the two orders need/.test(few.message) && /Mark it missing on the Kitting tab/.test(few.message) && JSON.stringify(ledState) === fewBefore, few.message);
+    // A ready kit line the ledger doesn't show as issued (an older workspace) refuses the split until it is reconciled.
+    const r5 = prod.withAccount(admin, () => MES.addOrder(ledState, { masterWI: `${qtyWi.id}|${qtyWi.revision}`, pedigree: 'Production', subcategory: 'Mfg.', quantity: 5, aircraft: MES.AIRCRAFT[0], site: MES.SITES[0] }), ledState);
+    const o5 = r5.ok ? MES.getOrder(ledState, r5.id) : null;
+    // LOT-SPLIT-1 is on the ledger (received above), so a ready line citing it must show this order's issue.
+    if (o5) { toKitting(o5); Object.assign(line(o5, 'BOM-001'), { ready: true, lot: 'LOT-SPLIT-1' }); }
+    const oldBefore = JSON.stringify(ledState);
+    const oldSplit = o5 ? prod.withAccount(admin, () => MES.splitOrder(ledState, o5.id, 2), ledState) : { message: 'order not created' };
+    check('a split over a ready kit line with no ledger issue is refused until it is reconciled, nothing changed', !oldSplit.ok && /ledger shows no issue of it to this order/.test(oldSplit.message) && /verify it again so the issue is recorded/.test(oldSplit.message) && JSON.stringify(ledState) === oldBefore, oldSplit.message);
+    // A lot the ledger doesn't track at all (an older workspace, or the demo sample) has nothing to move: the split
+    // divides the line's requirement and posts no ledger rows.
+    if (o5) Object.assign(line(o5, 'BOM-001'), { lot: 'LOT-NOT-ON-LEDGER' });
+    const rowsBefore = ledState.inventoryLedger.transactions.length;
+    const untracked = o5 ? prod.withAccount(admin, () => MES.splitOrder(ledState, o5.id, 2), ledState) : { message: 'order not created' };
+    check('a split over a ready line whose lot the ledger does not track divides the requirement and posts no ledger rows', untracked.ok && ledState.inventoryLedger.transactions.length === rowsBefore && MES.validate(ledState) === true, untracked.message);
     // A split waits for a pending sequence change, as a split request already does (Codex review on #331).
     const r4 = prod.withAccount(admin, () => MES.addOrder(ledState, { masterWI: `${qtyWi.id}|${qtyWi.revision}`, pedigree: 'Production', subcategory: 'Mfg.', quantity: 5, aircraft: MES.AIRCRAFT[0], site: MES.SITES[0] }), ledState);
     const o4 = r4.ok ? MES.getOrder(ledState, r4.id) : null;

@@ -5103,7 +5103,8 @@ const OP_BOM_MAX = 12;
     const scale = required => Math.ceil(required * to / from), changes = [];
     for (const m of Array.isArray(order.materials) ? order.materials : []) {
       if (!Array.isArray(m.forOps) || !m.forOps.length || !Number.isInteger(m.required)) continue;
-      const next = scale(m.required);
+      // Only the operations' BOM share scales; what the line holds beyond it (its baseline) stays as it is.
+      const base = kitBOMBaseline(order, m), next = Math.max(1, base + m.forOps.reduce((n, id) => n + (order.operations.find(item => item.id === id)?.materials || []).reduce((sum, line) => sum + (line && line.partNumber === m.partNumber && Number.isInteger(line.required) ? scale(line.required) : 0), 0), 0));
       if (next === m.required) continue;
       if (m.ready) return { error: `${m.name} (${m.partNumber}) is already issued to this order for ${from} units, and an issued kit line can't be rescaled. ${order.status === 'Kitting' ? 'Mark it missing on the Kitting tab so its lot goes back to stock, then QA re-release the change.' : to > from ? `Create a work order for the extra ${to - from} units instead of changing the quantity.` : 'Split the units off this work order instead of changing the quantity.'}` };
       if (next > 999) return { error: `At a quantity of ${to}, ${m.partNumber} would need ${next}, and a kit line holds up to 999. Create a second work order for the extra units instead.` };
@@ -5117,51 +5118,75 @@ const OP_BOM_MAX = 12;
     }
     return { changed: changes.length > 0, apply() { changes.forEach(([line, next]) => { line.required = next; }); } };
   }
-  // A split divides the kit and operation BOM requirements between the two orders by quantity. Each side rounds up,
-  // so neither order is left asking for less than its units need.
-  function splitKitQuantities(order, child, keep, moved) {
-    const total = keep + moved, share = (required, units) => Math.min(999, Math.max(1, Math.ceil(required * units / total)));
-    const divide = (fromLines, toLines) => (Array.isArray(fromLines) ? fromLines : []).forEach((line, i) => {
-      if (!line || !Number.isInteger(line.required)) return;
-      const whole = line.required;
-      line.required = share(whole, keep);
-      if (toLines && toLines[i]) toLines[i].required = share(whole, moved);
-    });
-    divide(order.materials, child.materials);
-    order.operations.forEach(op => divide(op.materials, child.operations.find(item => item.id === op.id)?.materials));
+  // What a kit line holds beyond its operations' BOM lines (a line issued or kept apart from any BOM). A rescale or a
+  // split changes only the BOM share and keeps this part as it is.
+  function kitBOMBaseline(order, m) {
+    return Math.max(0, m.required - m.forOps.reduce((n, id) => n + opBOMShare(order.operations.find(item => item.id === id), m.partNumber), 0));
   }
-  // What an order has drawn from one lot on the inventory ledger: its issues less its returns.
+  // A split divides the operation BOM requirements between the two orders by quantity, each side rounding up so neither
+  // order is left asking for less than its units need. A kit line put in the kit by operation BOM lines is then the sum
+  // of those rounded operation shares (plus its baseline), so the kit and the operations agree on both orders; any other
+  // kit line divides the same way. Returns [this order, new order] for each line; nothing changes here.
+  function splitKitShares(order, keep, moved) {
+    const total = keep + moved, cap = n => Math.min(999, Math.max(1, n)), share = (required, units) => cap(Math.ceil(required * units / total));
+    const ops = order.operations.map(op => (Array.isArray(op.materials) ? op.materials : []).map(line => line && Number.isInteger(line.required) ? [share(line.required, keep), share(line.required, moved)] : null));
+    const opSum = (m, side) => m.forOps.reduce((n, id) => {
+      const k = order.operations.findIndex(item => item.id === id);
+      return k < 0 ? n : n + (order.operations[k].materials || []).reduce((sum, line, j) => sum + (line && line.partNumber === m.partNumber && ops[k][j] ? ops[k][j][side] : 0), 0);
+    }, 0);
+    const kit = (Array.isArray(order.materials) ? order.materials : []).map(m => {
+      if (!m || !Number.isInteger(m.required)) return null;
+      if (!Array.isArray(m.forOps) || !m.forOps.length) return [share(m.required, keep), share(m.required, moved)];
+      const base = kitBOMBaseline(order, m);
+      return [0, 1].map(side => cap((base ? Math.ceil(base * (side ? moved : keep) / total) : 0) + opSum(m, side)));
+    });
+    return { kit, ops };
+  }
+  function splitKitQuantities(order, child, keep, moved) {
+    const plan = splitKitShares(order, keep, moved);
+    (Array.isArray(order.materials) ? order.materials : []).forEach((m, i) => { const p = plan.kit[i]; if (!p) return; m.required = p[0]; if (child.materials && child.materials[i]) child.materials[i].required = p[1]; });
+    order.operations.forEach((op, k) => {
+      const into = child.operations.find(item => item.id === op.id)?.materials;
+      (Array.isArray(op.materials) ? op.materials : []).forEach((line, j) => { const p = plan.ops[k][j]; if (!p) return; line.required = p[0]; if (into && into[j]) into[j].required = p[1]; });
+    });
+  }
   // The kit-line rules, shared by validation and diagnose. An empty kit is valid: lines come from BOM lines and issues.
   function kitLinesValid(materials) {
     return Array.isArray(materials) && materials.length <= 20 && unique(materials.map(item => item && item.id)) && materials.every(item => plain(item) && str(item.id, 40) && str(item.name, 120) && str(item.partNumber, 50) && count(item.required) && typeof item.ready === 'boolean' && (item.lot === undefined || str(item.lot, 60, 0)) && (item.forOps === undefined || (Array.isArray(item.forOps) && item.forOps.length <= 20 && item.forOps.every(x => str(x, 40)))) && (item.consumable === undefined || typeof item.consumable === 'boolean') && (item.source === undefined || subSourceValid(item.source)));
   }
+  // What an order has drawn from one lot on the inventory ledger: its issues less its returns.
   function issuedToOrder(state, orderId, partNumber, lot) {
     return -ensureInventoryLedger(state).transactions.filter(row => row.orderId === orderId && row.partNumber === partNumber && row.lot === lot && ['Issue', 'Return'].includes(row.type)).reduce((sum, row) => sum + row.quantity, 0);
   }
-  // A kit line already issued from stock moves with the units: the new order takes its share of what was issued, and the
-  // ledger records it as a return from this order and an issue to the new one, so each order holds exactly what it was
-  // issued. Worked out before anything changes; a split that can't divide an issued line is refused with the reason.
+  // A kit line already issued from stock moves with the units: the new order takes what its rounded share needs, the
+  // ledger records it as a return from this order and an issue to the new one, and this order keeps the rest, so each
+  // order holds what it was issued. Worked out before anything changes; a split that can't cover both orders from what
+  // was issued, or a ready line the ledger doesn't show as issued, is refused with the next step.
   function planIssuedKitSplit(state, order, keep, moved) {
-    const total = keep + moved, moves = [];
+    const moves = [], shares = splitKitShares(order, keep, moved).kit, kitting = order.status === 'Kitting';
     for (const [index, line] of (Array.isArray(order.materials) ? order.materials : []).entries()) {
       if (line && line.source) {
         // A sub-assembly issued from another work order. The kit line records what the order needs, not what the source
-        // order issued, so the split can't divide it; it waits until the line is returned, or until the units go on.
+        // order issued, so the split can't divide it; it waits until the line is returned.
         const what = Array.isArray(line.source.serials) && line.source.serials.length ? `serial${line.source.serials.length === 1 ? '' : 's'} ${line.source.serials.join(', ')}` : `lot ${line.source.lotNumber}`;
-        return { error: `${line.name} (${line.partNumber}) is filled from ${line.source.orderId} with ${what}, and the split can't tell which units it goes with. ${order.status === 'Kitting' ? 'Return it on the Kitting tab, split, then issue it again to the order that uses it.' : 'Close the split request as Not required and raise it with Manufacturing Engineering.'}` };
+        return { error: `${line.name} (${line.partNumber}) is filled from ${line.source.orderId} with ${what}, and the split can't tell which units it goes with. ${kitting ? 'Return it on the Kitting tab, split, then issue it again to the order that uses it.' : 'Close the split request as Not required and raise it with Manufacturing Engineering.'}` };
       }
       if (!line || !line.ready || !line.lot) continue;
       const issued = issuedToOrder(state, order.id, line.partNumber, line.lot);
-      if (issued <= 0) continue;
-      const childQty = Math.floor(issued * moved / total);
-      if (childQty < 1) return { error: `${line.name} (${line.partNumber}) has ${issued} issued from lot ${line.lot} for ${total} units, too few to give the new order its share. ${order.status === 'Kitting' ? 'Mark it missing on the Kitting tab so its lot goes back to stock, then split.' : 'Close the split request as Not required and raise the shortage with Manufacturing Engineering.'}` };
       const record = inventoryLotRecords(state, line.partNumber).find(item => item.lot === line.lot);
+      // A lot the ledger doesn't track at all (a workspace from before the ledger, or the demo sample) has nothing to
+      // move: the split divides its requirement as for any line. A tracked lot must show this order's issue.
+      if (!record && issued <= 0) continue;
+      if (issued <= 0) return { error: `${line.name} (${line.partNumber}) is verified with lot ${line.lot}, but the inventory ledger shows no issue of it to this order, so the split can't move its share. ${kitting ? 'Mark it missing on the Kitting tab and verify it again so the issue is recorded, then split.' : 'Close the split request as Not required and raise it with Manufacturing Engineering so the kit is reconciled with the ledger.'}` };
+      const [keepNeed, moveNeed] = shares[index];
+      if (issued < keepNeed + moveNeed) return { error: `${line.name} (${line.partNumber}) has ${issued} issued from lot ${line.lot}, but after the split the two orders need ${keepNeed} and ${moveNeed}. ${kitting ? 'Mark it missing on the Kitting tab so its lot goes back to stock, split, then kit each order.' : 'Close the split request as Not required and raise the shortage with Manufacturing Engineering.'}` };
       if (!record || record.conformityStatus !== 'Accepted') return { error: `Lot ${line.lot} of ${line.partNumber} is ${record ? record.conformityStatus : 'not on the inventory ledger'} for conformity, so its issued parts can't move to the new order. Resolve the lot's conformity, then split.` };
-      moves.push({ index, issued, childQty, partNumber: line.partNumber, lot: line.lot, name: line.name });
+      moves.push({ index, issued, childQty: moveNeed, partNumber: line.partNumber, lot: line.lot, name: line.name });
     }
     if (moves.length && ensureInventoryLedger(state).transactions.length + moves.length * 2 > 20000) return { error: 'The inventory ledger has no room to move the issued kit to the new order.' };
     return { moves };
   }
+  // Runs after splitKitQuantities: the new order's line asks for exactly what moves; this order keeps the rest of the issue.
   function applyIssuedKitSplit(state, order, child, moves) {
     for (const move of moves) {
       order.materials[move.index].required = move.issued - move.childQty;
@@ -7133,6 +7158,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (!change || change.status !== 'Awaiting QA') return fail('An engineering edit must finish its required ECR approval before QA re-release.');
     if (change.requestedBy.credentialId === '__demo_never_matches__' /* DEMO D-20 */) return fail(selfApprovalMessage);
     if (blockingTickets(order).length) return fail('Resolve every open hold before QA re-release.');
+    if (change.after.quantity !== order.quantity && pendingSequenceChange(order)) return fail('A sequence change on this order is awaiting QA, and changing the quantity now would leave its rollback at the old quantity. Release or reject the sequence change first, then QA re-release this change.');
     const bomPlan = bomRescalePlan(order, order.quantity, change.after.quantity);
     if (bomPlan.error) return fail(bomPlan.error);
     change.qaApproval = { ...actor(state), at: new Date(Math.max(Date.now(), Date.parse(change.ecrApproval?.at || change.requestedAt))).toISOString(), virtual: true };
