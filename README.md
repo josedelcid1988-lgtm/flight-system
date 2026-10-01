@@ -46,16 +46,20 @@ End-user workflows are summarized in [`docs/USER_MANUAL.md`](docs/USER_MANUAL.md
 Okta, NetSuite, Jira, PDM, LMS, and Slack connections still require external
 configuration or bridge services. Standalone browser mode is available. The
 authenticated server supports local SQLite and PostgreSQL. Whole-workspace
-writes are role-authorized: `PUT /workspace` lets only a QA Manager or Master
-Access account initialize an empty server, and once the workspace exists it
-refuses any changed snapshot from every role with 403 and records the refusal
-in the security audit. Shared records change only through server-authorized
-actions (`POST /workspace/actions/...`), which run the same engine checks as
-the page. The remaining gap is coverage, not authorization: some direct field
-edits and legacy workflows are not yet bridged to a server action. On the
-server those edits are refused rather than saved; the browser keeps an
-unconfirmed recovery copy and reloads the shared workspace. Do not use the
-server as the authoritative production system until that bridge is complete
+writes are role-authorized: `PUT /api/workspace` lets only a QA Manager or
+Master Access account initialize an empty server. Once the workspace exists,
+other roles are refused with 403, a manager request needs the current ETag in
+`If-Match` (428 without it, 409 when it is stale), and a changed snapshot is
+then refused with 403. Every refusal is recorded in the security audit. After
+initialization, shared records change only through server-side engine writes
+that run the same checks as the page: the MES actions at
+`POST /api/workspace/actions/...` and, when the Jira connector is enabled, the
+record link written by `POST /api/jira/issue`. The remaining gap is coverage,
+not authorization: some direct field edits and legacy workflows are not yet
+bridged to a server action. The server refuses those edits rather than saving
+them; the browser keeps an unconfirmed recovery copy and reloads the shared
+workspace. Do not use the server as the authoritative production system until
+that bridge is complete
 (see [`docs/SECURITY_REVIEW-v82.md`](docs/SECURITY_REVIEW-v82.md)).
 
 The older visual inspection is retained at
