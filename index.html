@@ -3360,12 +3360,16 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const bindsSigner = m => plain(m) && plain(m.subject) && Object.hasOwn(m.subject, 'signedAt');
   // The stock NC disposition approval subject. Approvals signed by this build also bind the disposition record (decision,
   // note, who recorded it and when) and the approver; older ones bind only the decision and are checked in that form.
-  // The stock NC approval subject also takes the hash of the cited MRB decision (current form), so the board it rests on is bound.
-  const ncApprovalSubject = (t, note, by, at, current, mrbDecisionHash = null) => { const a = plain(t.affected) ? t.affected : {}; return { id: t.id, partNumber: t.partNumber, serial: t.serial, lot: t.lot, disposition: plain(t.dispo) ? t.dispo.decision : undefined, defect: { defectCode: a.defectCode, defectName: a.defectName, subCode: a.subCode, subName: a.subName }, quantity: a.quantity, mrbId: t.mrbId, note, ...(current ? { serials: Array.isArray(a.serials) ? a.serials : null, mrbDecision: mrbDecisionHash, dispo: plain(t.dispo) ? { decision: t.dispo.decision, note: t.dispo.note ?? null, by: signerOf_(t.dispo), at: t.dispo.at ?? null } : null, ...signedBy(by, at) } : {}) }; };
+  // The stock NC approval subject also takes the hash of the cited MRB decision (current form), so the board it rests on is bound,
+  // and the NC's own identification and problem scope (nc), so the approval cannot be made to cover a different discrepancy.
+  // Links recorded after approval (rework order, CAR) are not part of it.
+  const ncApprovalSubject = (t, note, by, at, current, mrbDecisionHash = null) => { const a = plain(t.affected) ? t.affected : {}; return { id: t.id, partNumber: t.partNumber, serial: t.serial, lot: t.lot, disposition: plain(t.dispo) ? t.dispo.decision : undefined, defect: { defectCode: a.defectCode, defectName: a.defectName, subCode: a.subCode, subName: a.subName }, quantity: a.quantity, mrbId: t.mrbId, note, ...(current ? { nc: { type: t.type ?? null, title: t.title ?? null, description: t.description ?? null, revision: t.revision ?? null, quantity: t.quantity ?? null, foundAt: t.foundAt ?? null, pedigree: t.pedigree ?? null, source: t.source ?? null, escape: t.escape ?? null, containment: t.containment ?? null, createdAt: t.createdAt ?? null, raisedBy: signerOf_(t.raisedBy) }, serials: Array.isArray(a.serials) ? a.serials : null, mrbDecision: mrbDecisionHash, dispo: plain(t.dispo) ? { decision: t.dispo.decision, note: t.dispo.note ?? null, by: signerOf_(t.dispo), at: t.dispo.at ?? null } : null, ...signedBy(by, at) } : {}) }; };
   // Every meaning a stock NC approval has been signed with (the record type was renamed from NC/IDR).
   const NC_APPROVAL_MEANINGS = Object.freeze(['NC disposition approval', 'NC/IDR disposition approval']);
   // The decision hash of the MRB a stock NC cites, or null.
   const mrbDecisionHashOf = (state, t) => { const m = t && t.mrbId && plain(state) && plain(state.maneuver) && Array.isArray(state.maneuver.mrb) ? state.maneuver.mrb.find(b => plain(b) && b.id === t.mrbId) : null; return m && plain(m.decision) && plain(m.decision.manifest) ? m.decision.manifest.hash ?? null : null; };
+  // A record's override (a Master Access inspection override, shown on screen and print) must be the one that was signed.
+  const overrideMismatch = rec => plain(rec) && plain(rec.manifest) && canonical((plain(rec.by) ? rec.by.override : undefined) ?? null) !== canonical(rec.manifest.override ?? null);
   // The recorded signer and time of a signed record must be the manifest's.
   const signerMismatch = (rec, m) => !plain(rec.by) || !plain(m.signer) || rec.by.credentialId !== m.signer.credentialId || rec.by.name !== m.signer.name || rec.at !== m.at;
   function verifyManifests(state) {
@@ -3408,6 +3412,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       if (plain(order.closure) && plain(order.closure.manifest)) recheck(`${order.id} closure`, order.closure.manifest, closureSubject(state, order));
       const fair = order.fair;
       if (plain(fair) && plain(fair.approved) && plain(fair.approved.manifest) && signerMismatch(fair.approved, fair.approved.manifest)) failures.push({ where: `${order.id} FAIR approval`, reason: 'the recorded approver or time does not match the approval signature' });
+      if (plain(fair)) [['verified', 'FAIR verification'], ['reviewed', 'FAIR box 22'], ['approved', 'FAIR approval']].forEach(([k, label]) => { if (overrideMismatch(fair[k])) failures.push({ where: `${order.id} ${label}`, reason: 'the recorded override does not match the signed override' }); });
       if (plain(fair) && plain(fair.verified) && plain(fair.verified.manifest) && signerMismatch(fair.verified, fair.verified.manifest)) failures.push({ where: `${order.id} FAIR verification`, reason: 'the recorded verifier or verification time does not match the verification signature' });
       // Manifests have stored their signed subject since MANIFEST_SUBJECTS_FROM, the same build that added the build stamp. A FAIR
       // verification signed since then, or carrying a build stamp, must keep its subject, or the content comparison below would be skipped.
@@ -3440,6 +3445,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
         if (plain(pm) && plain(p.form.prepared.by) && plain(pm.signer) && (p.form.prepared.by.credentialId !== pm.signer.credentialId || p.form.prepared.by.name !== pm.signer.name || p.form.prepared.at !== pm.at)) failures.push({ where: `${order.id} ${p.serial} 8130-9`, reason: 'the recorded preparer (credential or name) or time does not match the 8130-9 signature' });
         const am = plain(p.aqi) ? p.aqi.manifest : null;
         if (plain(am) && plain(p.aqi.by) && plain(am.signer) && (p.aqi.by.credentialId !== am.signer.credentialId || p.aqi.by.name !== am.signer.name || p.aqi.at !== am.at)) failures.push({ where: `${order.id} ${p.serial} 8130-9 AQI signature`, reason: 'the recorded AQI signer (credential or name) or time does not match the AQI signature' });
+        if (plain(p.form) && overrideMismatch(p.form.prepared)) failures.push({ where: `${order.id} ${p.serial} 8130-9`, reason: 'the recorded override does not match the signed override' });
+        if (overrideMismatch(p.aqi)) failures.push({ where: `${order.id} ${p.serial} 8130-9 AQI signature`, reason: 'the recorded override does not match the signed override' });
         if (aqiSelfSignMismatch(p)) failures.push({ where: `${order.id} ${p.serial} 8130-9 AQI signature`, reason: 'the AQI self-signature record does not match who completed the 8130-9' });
         if (plain(am)) recheck(`${order.id} ${p.serial} 8130-9 AQI signature`, am, { order: order.id, serial: p.serial, form: plain(pm) ? pm.hash : null, ...(plain(am.subject) && Object.hasOwn(am.subject, 'stamp') ? { stamp: plain(p.aqi.by) ? (p.aqi.by.stamp ?? null) : null } : {}), ...(bindsSigner(am) ? signedBy(p.aqi.by, p.aqi.at) : {}), ...(p.aqi.selfSigned ? { selfSigned: true } : {}), ...(am.override ? { override: am.override } : {}) });
         const dm = plain(p.darApproval) ? p.darApproval.manifest : null;
@@ -9697,6 +9704,7 @@ const ATTACH_KINDS = Object.freeze(['mrb','cars','ncs','sprs']);
   function containNC(state, id, note) {
     const t = get(state, 'ncs', id); if (!t) return fail('NC not found.');
     { const d = denied('dispo-nc', 'record containment'); if (d) return d; }
+    if (t.status === 'Resolved') return fail(`${t.id} is resolved, and its signed approval covers the containment on record. Raise a new NC to record further containment.`);
     note = clean(note); if (!text(note, 2000)) return fail('Describe the containment: units located, purged, quarantined or notified (1 to 2,000 characters).');
     t.containment = { note, by: actor(state), at: now() };
     log(state, t, `Contained: ${note}`);
