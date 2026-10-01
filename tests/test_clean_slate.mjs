@@ -166,6 +166,8 @@ const prod = createHost(here('../index.html'));
   for (const [what, text] of [['the sample person', 'Morgan Lee'], ['a sample NetSuite lot', 'LOT-2401-0088'], ['a sample component lot', 'LOT-DEMO-'], ['a sample tool serial', '150151267'], ['a sample bill of materials', 'DEMO drive motor'], ['a sample planned order', 'Demand withdrawn (DEMO).'], ['a sample master WI history', 'Released by QA.'], ['a sample rework draft', 'Re-torque fastener(s) to drawing value'], ['a sample stamp holder', "'Quality inspector', 'Quality'"]]) {
     check(`index.html does not carry ${what}`, !html.includes(text));
   }
+  const bundle = read('../assets/flight-ui.js'), fallback = 'The log is the calibration record that a QA Manager keeps or imports.';
+  check('the tooling help names the calibration log, not a blank snapshot time, in both renderers', html.includes(fallback) && bundle.includes(fallback) && !html.includes('can be added. Log read ${esc(MES.CAL_SNAPSHOT)} PT.') && !read('../src/react/flight-ui.jsx').includes('can be added. Log read {asText(MES.CAL_SNAPSHOT)} PT.'));
   check('the production fixture is a copy of index.html', read('fixtures/publish.html') === html.replace(/((?:src|href)=")assets\//g, '$1../../assets/'));
 }
 
