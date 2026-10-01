@@ -51,6 +51,7 @@ await expectFail('changing a recorded MRB vote after the decision fails',board+"
 await expectFail('changing who voted a seat after the decision fails',board+"m.votes[0].by={...m.votes[0].by,credentialId:'ACCT-someone'};",`${mrb} board decision`);
 await expectFail('changing the MRB serials after the decision fails',board+"m.serials=[...(m.serials||[]),'SN-EXTRA'];",`${mrb} board decision`);
 await expectFail('changing who recorded the MRB decision fails',board+"m.decision.by={...m.decision.by,credentialId:'ACCT-other',name:'Someone Else'};",`${mrb} board decision`);
+await expectFail('changing the recorded name on the MRB decision fails',board+"m.decision.by={...m.decision.by,name:'Someone Else'};",`${mrb} board decision`);
 await expectFail('changing when the MRB decision was recorded fails',board+"m.decision.at='2026-01-01T00:00:00.000Z';",`${mrb} board decision`);
 await expectFail('removing the MRB decision manifest fails',board+"delete m.decision.manifest;",`${mrb} board decision`);
 
@@ -61,6 +62,9 @@ await expectFail('changing the stock NC disposition after approval fails',stock+
 await expectFail('changing the affected quantity after approval fails',stock+"t.affected.quantity=t.affected.quantity+1;",`${nc} disposition approval`);
 await expectFail('changing the defect code after approval fails',stock+"t.affected.defectCode='ZZ';",`${nc} disposition approval`);
 await expectFail('changing the approval note after approval fails',stock+"t.resolution.note='Edited.';",`${nc} disposition approval`);
+await expectFail('changing the recorded name on the stock NC approval fails',stock+"t.resolution.by={...t.resolution.by,name:'Someone Else'};",`${nc} disposition approval`);
+r=await run(([json,id])=>{const s=JSON.parse(json),t=s.maneuver.ncs.find(x=>x.id===id);t.dispo={...t.dispo,credentialId:t.resolution.by.credentialId,name:t.resolution.by.name};return {valid:MES.validate(s)};},[confJson,nc]);
+ok('in the demo, a stock NC dispositioned and approved by one person stays valid (D-20 lifts it)',r.valid===true,JSON.stringify(r));
 await expectFail('removing the stock NC approval manifest fails',stock+"delete t.resolution.manifest;",`${nc} disposition approval`);
 r=await run(()=>{const s=structuredClone(state),t=(s.maneuver.ncs||[]).find(t=>t.resolution&&t.resolution.manifest);if(!t)return {none:true};delete t.affected;const v=MES.verifyManifests(s);return {id:t.id,ok:v.ok,where:v.failures.map(f=>f.where)};});
 ok('removing the affected record from an approved stock NC fails rather than skipping the check',r.ok===false&&r.where.some(w=>w.includes(`${r.id} disposition approval`)),JSON.stringify(r));
@@ -162,13 +166,17 @@ ok('a freshly signed CAR closure verifies, and removing its root cause afterward
 
 // ---- production validation refuses a box 22 signed by the verifier (the demo lifts this rule, D-33) ----
 await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(1200);
-r=await run(([json,id])=>{const base=JSON.parse(json),f=base.orders.find(o=>o.id===id).fair;const other={...f.reviewed.by,credentialId:'ACCT-second',name:'Second Reviewer'};const mk=by=>{const s=structuredClone(base),g=s.orders.find(o=>o.id===id).fair;g.reviewed={...g.reviewed,by,manifest:{...g.reviewed.manifest,signer:{...g.reviewed.manifest.signer,credentialId:by.credentialId}}};return s;};const self=mk({...f.verified.by});const second=mk(other);const fv=s=>MES.validate(s);const moved=mk({...f.verified.by});moved.orders.find(o=>o.id===id).fair.verified.by={...f.verified.by,credentialId:'ACCT-moved'};return {sameCred:f.verified.by.credentialId,second:fv(second),self:fv(self),moved:fv(moved)};},[fairJson,fair.id]);
+r=await run(([json,id])=>{const base=(s=>{((s.maneuver&&s.maneuver.ncs)||[]).forEach(t=>{if(t.dispo&&t.resolution&&t.resolution.by&&t.dispo.credentialId===t.resolution.by.credentialId)t.dispo={...t.dispo,credentialId:'ACCT-demo-dispositioner'};});return s;})(JSON.parse(json)),f=base.orders.find(o=>o.id===id).fair;const other={...f.reviewed.by,credentialId:'ACCT-second',name:'Second Reviewer'};const mk=by=>{const s=structuredClone(base),g=s.orders.find(o=>o.id===id).fair;g.reviewed={...g.reviewed,by,manifest:{...g.reviewed.manifest,signer:{...g.reviewed.manifest.signer,credentialId:by.credentialId}}};return s;};const self=mk({...f.verified.by});const second=mk(other);const fv=s=>MES.validate(s);const moved=mk({...f.verified.by});moved.orders.find(o=>o.id===id).fair.verified.by={...f.verified.by,credentialId:'ACCT-moved'};return {sameCred:f.verified.by.credentialId,second:fv(second),self:fv(self),moved:fv(moved)};},[fairJson,fair.id]);
 ok('in production, validation accepts a box 22 signed by a second person and refuses one signed by the verifier',r.second===true&&r.self===false,JSON.stringify(r));
 ok('in production, validation refuses a box 22 signed by the verification signer even when the recorded verifier was changed',r.moved===false,JSON.stringify(r));
 // ---- production: the AQI self-signature flag must match who completed the 8130-9 (the demo lifts this, see DEMO_DEVIATIONS) ----
 await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(1200);
 r=await run(([json,c])=>{const base=JSON.parse(json);const mk=f=>{const s=structuredClone(base),p=s.orders.find(o=>o.id===c.id).conformity.find(x=>x.serial===c.serial);f(p);const v=MES.verifyManifests(s);return v.failures.filter(x=>/AQI signature/.test(x.where)).map(x=>x.reason);};return {clean:mk(()=>{}),samePerson:mk(p=>{p.form.prepared.by={...p.aqi.by};p.form.prepared.manifest={...p.form.prepared.manifest,signer:{...p.form.prepared.manifest.signer,credentialId:p.aqi.by.credentialId}};})};},[confJson,conf]);
 ok('in production, an 8130-9 completed and AQI-signed by the same person without the self-signature record fails verification',r.clean.length===0&&r.samePerson.some(x=>/self-signature/.test(x)),JSON.stringify(r));
+// ---- production: the person who dispositioned a stock NC cannot be the person who approved it ----
+// (The demo workspace was built under the demo's lifted rules, so its self-approved NCs are given another dispositioner first.)
+r=await run(([json,id])=>{const base=(s=>{((s.maneuver&&s.maneuver.ncs)||[]).forEach(t=>{if(t.dispo&&t.resolution&&t.resolution.by&&t.dispo.credentialId===t.resolution.by.credentialId)t.dispo={...t.dispo,credentialId:'ACCT-demo-dispositioner'};});return s;})(JSON.parse(json));const mk=f=>{const s=structuredClone(base),t=s.maneuver.ncs.find(x=>x.id===id);f(t);return MES.validate(s);};return {clean:mk(()=>{}),self:mk(t=>{t.dispo={...t.dispo,credentialId:t.resolution.by.credentialId,name:t.resolution.by.name};})};},[confJson,nc]);
+ok('in production, validation refuses a stock NC whose disposition and approval carry the same credential',r.clean===true&&r.self===false,JSON.stringify(r));
 ok('no page errors',errs.length===0,errs.join(' | '));
 console.log('errors',errs,'FAILS',JSON.stringify(fails));await b.close();
 process.exit(fails.length?1:0);
