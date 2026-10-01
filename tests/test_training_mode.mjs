@@ -269,8 +269,11 @@ async function serverCase(training) {
     .replace("  mode: 'local',            // 'local' keeps", "  mode: 'mcp',            // 'local' keeps")
     .replace("  endpoint: '',             // e.g. https://mes-bridge.internal/mcp", "  endpoint: 'http://127.0.0.1:9/bridge',             // e.g. https://mes-bridge.internal/mcp")
     .replace("  token: '',      // sent as Authorization", "  token: 'mirror-token-literal',      // sent as Authorization")
-    .replace("  token: ''                 // bearer token for the bridge", "  token: 'bridge-token-literal'                 // bearer token for the bridge");
-  ok('the connector test build really carries both tokens', configured.includes("'mirror-token-literal'") && configured.includes("'bridge-token-literal'"));
+    .replace("  token: ''                 // bearer token for the bridge", "  token: 'bridge-token-literal'                 // bearer token for the bridge")
+    .replace("window.SK_IDENTITY = window.SK_IDENTITY || {\n  provider: 'local',", "window.SK_IDENTITY = window.SK_IDENTITY || {\n  provider: 'okta',")
+    .replace("    issuer: '',                     // e.g.", "    issuer: 'http://127.0.0.1:9/okta',                     // e.g.")
+    .replace("    clientId: '',                   // the SPA", "    clientId: 'production-client-id',                   // the SPA");
+  ok('the connector test build really carries both tokens and a production identity provider', configured.includes("'mirror-token-literal'") && configured.includes("'bridge-token-literal'") && configured.includes("provider: 'okta',") && configured.includes("'production-client-id'"));
   const indexPath = path.join(dir, 'index.html');
   fs.writeFileSync(indexPath, configured);
   const browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
@@ -279,7 +282,7 @@ async function serverCase(training) {
       const server = createServer({ dbPath: ':memory:', quiet: true, training, setupCode: 'connector-ui', indexPath });
       const port = await server.listenAsync(0, '127.0.0.1');
       const raw = await (await fetch(`http://127.0.0.1:${port}/`)).text();
-      if (training) ok('the training page sent before sign-in carries neither connector token nor their addresses', !raw.includes('mirror-token-literal') && !raw.includes('bridge-token-literal') && !raw.includes('127.0.0.1:9/'), raw.match(/token: '[^']*'/g)?.join());
+      if (training) ok('the training page sent before sign-in carries neither connector token, identity provider issuer or client id, nor their addresses', !raw.includes('mirror-token-literal') && !raw.includes('bridge-token-literal') && !raw.includes('production-client-id') && !raw.includes('127.0.0.1:9/') && /SK_IDENTITY \|\| \{\n  provider: 'local',/.test(raw), raw.match(/(token|issuer|provider): '[^']*'/g)?.join());
       else ok('the same build on a production server is served unchanged, tokens included (the test configuration is real)', raw.includes('mirror-token-literal') && raw.includes('bridge-token-literal'));
       const page = await browser.newPage();
       const outbound = [];
@@ -291,10 +294,10 @@ async function serverCase(training) {
         window.SK_MIRROR = { url: 'http://127.0.0.1:9/later', token: 'x' };
         if (window.SK_INTEGRATIONS) window.SK_INTEGRATIONS.mode = 'mcp';
         const bridge = await window.skIntegrations.netsuite.itemAvailability(['TRN-1']);
-        return { mirror: window.skMirror.enabled, url: window.SK_MIRROR.url, mode: window.SK_INTEGRATIONS.mode, endpoint: window.SK_INTEGRATIONS.endpoint, manual: bridge.manual === true };
+        return { mirror: window.skMirror.enabled, url: window.SK_MIRROR.url, mode: window.SK_INTEGRATIONS.mode, endpoint: window.SK_INTEGRATIONS.endpoint, manual: bridge.manual === true, identity: window.skIdentity.provider, configured: window.SK_IDENTITY.provider, issuer: window.SK_IDENTITY.okta.issuer };
       });
-      if (training) ok('on a training server the configured mirror and integration bridge stay off and nothing is posted', seen.mirror === false && seen.url === '' && seen.mode === 'local' && seen.endpoint === '' && seen.manual && outbound.length === 0, JSON.stringify({ seen, outbound }));
-      else ok('the same build on a production server keeps its configured mirror and bridge (the test configuration is real)', seen.mirror === true && seen.mode === 'mcp' && seen.endpoint === 'http://127.0.0.1:9/bridge', JSON.stringify(seen));
+      if (training) ok('on a training server the configured mirror, integration bridge and identity provider stay off, and nothing reaches them', seen.mirror === false && seen.url === '' && seen.mode === 'local' && seen.endpoint === '' && seen.manual && seen.identity === 'local' && seen.configured === 'local' && seen.issuer === '' && outbound.length === 0, JSON.stringify({ seen, outbound }));
+      else ok('the same build on a production server keeps its configured mirror, bridge and identity provider (the test configuration is real)', seen.mirror === true && seen.mode === 'mcp' && seen.endpoint === 'http://127.0.0.1:9/bridge' && seen.configured === 'okta' && seen.issuer === 'http://127.0.0.1:9/okta' && outbound.some(url => /127\.0\.0\.1:9\/okta/.test(url)), JSON.stringify({ seen, outbound }));
       await page.close();
       await server.closeAsync();
     }
@@ -383,10 +386,31 @@ try {
       const [download] = await Promise.all([page.waitForEvent('download', { timeout: 10000 }), page.evaluate(script)]);
       downloads.push({ label, name: download.suggestedFilename(), text: fs.readFileSync(await download.path(), 'utf8') });
     }
+    // JSON files, on a page of their own: Chromium stops automatic downloads from one page after ten.
+    const jsonPage = await context.newPage();
+    jsonPage.on('pageerror', error => errors.push(`json downloads ${training}: ${error.message}`));
+    await jsonPage.goto(`http://127.0.0.1:${port}/`);
+    await jsonPage.locator('#sk-login').waitFor({ state: 'visible', timeout: 15000 });
+    for (const [label, script] of [
+      ['record export', () => saveFile(new Blob([JSON.stringify({ internal: true, workOrder: { id: 'WO-1' } }, null, 2)], { type: 'application/json' }), 'WO-1-record.json')],
+      ['dlFile json', () => dlFile('register.json', '{"tools":[]}', 'application/json')],
+      ['json claiming not training', () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['{"training":false,"trainingNote":"production","y":2}'], { type: 'application/json' })); a.download = 'claim.json'; a.click(); }],
+      ['already marked json', () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['{"manifest":{"hash":"h"},"training":"TRAINING, NOT THE RECORD","z":3}'], { type: 'application/json' })); a.download = 'governance.json'; a.click(); }],
+      ['json array', () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['[1,2]'], { type: 'application/json' })); a.download = 'list.json'; a.click(); }],
+    ]) {
+      const [download] = await Promise.all([jsonPage.waitForEvent('download', { timeout: 10000 }), jsonPage.evaluate(script)]);
+      downloads.push({ label, name: download.suggestedFilename(), text: fs.readFileSync(await download.path(), 'utf8') });
+    }
+    await jsonPage.close();
     if (training) {
       ok('every saved file is named TRAINING-', downloads.every(d => /^TRAINING-/.test(d.name) && !/^TRAINING-TRAINING-/.test(d.name)), downloads.map(d => d.name).join(', '));
-      ok('every saved HTML file the app builds carries the training mark exactly once', downloads.filter(d => !['anchor', 'controlled document', 'hostile document'].includes(d.label)).every(d => count(d.text, TRAINING_MARK) === 1), downloads.map(d => `${d.label}:${count(d.text, TRAINING_MARK)}`).join(', '));
-      ok('a saved JSON file is unchanged inside', downloads.find(d => d.label === 'anchor').text === '{"x":1}');
+      const jsonOf = label => { try { return JSON.parse(downloads.find(d => d.label === label).text); } catch { return null; } };
+      ok('every saved HTML file the app builds carries the training mark exactly once', downloads.filter(d => ['dlFile', 'saveFile', 'blocked print'].includes(d.label)).every(d => count(d.text, TRAINING_MARK) === 1), downloads.map(d => `${d.label}:${count(d.text, TRAINING_MARK)}`).join(', '));
+      const marked = ['anchor', 'record export', 'dlFile json', 'json claiming not training'].map(label => ({ label, json: jsonOf(label) }));
+      ok('every saved JSON object carries the training mark inside it, first, whatever the file is renamed to', marked.every(({ json }) => !!json && Object.keys(json)[0] === 'training' && json.training === TRAINING_MARK && json.trainingNote === 'Saved by a Flight System training server. Not a quality record.'), JSON.stringify(marked));
+      ok('a saved JSON file keeps its own content beside the mark', jsonOf('anchor').x === 1 && jsonOf('record export').workOrder.id === 'WO-1' && jsonOf('record export').internal === true && Array.isArray(jsonOf('dlFile json').tools) && jsonOf('json claiming not training').y === 2);
+      ok('a JSON file that already carries the mark (the governance export) is saved byte for byte, so its manifest still verifies', downloads.find(d => d.label === 'already marked json').text === '{"manifest":{"hash":"h"},"training":"TRAINING, NOT THE RECORD","z":3}');
+      ok('JSON that is not an object is saved unchanged, under a TRAINING- name', downloads.find(d => d.label === 'json array').text === '[1,2]');
       ok('text that only names the mark class does not count as marked', /Report naming training-print-mark/.test(downloads.find(d => d.label === 'dlFile').text) && count(downloads.find(d => d.label === 'dlFile').text, TRAINING_MARK) === 1);
       const doc = downloads.find(d => d.label === 'controlled document').text;
       ok('an HTML controlled document downloaded through a link is a wrapper page: the mark, then the document in a sandboxed frame', /^<!doctype html>/.test(doc) && doc.indexOf('class="training-print-mark"') < doc.indexOf('<iframe sandbox ') && doc.includes('srcdoc="<!doctype html><html><body><p>Procedure</p></body></html>"') && count(doc, TRAINING_MARK) >= 1, doc.slice(0, 200));
@@ -417,7 +441,7 @@ try {
       ok('the file saveFile hands to the downloads service still carries the mark once', count(slowSaved, TRAINING_MARK) === 1, slowSaved.slice(0, 160));
       await slow.close();
     } else {
-      ok('production saves files under their own names with no training mark', downloads.map(d => d.name).join() === 'report.html,atp-report.html,export.json,record.html,procedure.html,hostile.html' && downloads.every(d => !d.text.includes(TRAINING_MARK)), downloads.map(d => d.name).join(', '));
+      ok('production saves files under their own names with no training mark', downloads.map(d => d.name).join() === 'report.html,atp-report.html,export.json,record.html,procedure.html,hostile.html,WO-1-record.json,register.json,claim.json,governance.json,list.json' && downloads.filter(d => d.label !== 'already marked json').every(d => !d.text.includes(TRAINING_MARK)) && downloads.find(d => d.label === 'anchor').text === '{"x":1}' && downloads.find(d => d.label === 'dlFile json').text === '{"tools":[]}', downloads.map(d => d.name).join(', '));
     }
     if (training) {
       ok('signed in, every page keeps the strip', !!marks.banner && marks.banner.text === TRAINING_MARK && marks.banner.visible, JSON.stringify(marks.banner));
