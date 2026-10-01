@@ -12371,7 +12371,7 @@ function flightProgress(o, precomputedHeld) {
 const PRIORITY_WEIGHT={AOG:0,High:1,Normal:2,Low:3};
 function orderTier(o){
   if(o.priority==='AOG'||MES.aogActive(o))return 0;
-  if(MES.blockingTickets(o).length||openTickets(o).length)return 1;
+  if(orderBlocked(o)||openTickets(o).length)return 1;
   return 2;
 }
 // The day a work order was created: its first record event (or its baseline revision).

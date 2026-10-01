@@ -292,6 +292,28 @@ try {
       }
       assert.equal(await page.evaluate(() => MES.validate(state)), true, 'the restored workspace is valid');
     });
+    await check(`${at} orders: with no column sort, an order blocked by a sequence change sorts with the holds, ahead of unblocked work`, async () => {
+      const id = await page.evaluate(() => {
+        skTable.reset('orders');
+        // An open order with no NC, no AOG and no hold, whose due date would sort it last among its tier.
+        const order = state.orders.filter(o => o.status !== 'Closed' && o.priority !== 'AOG' && !MES.aogActive(o) && !openTickets(o).length && !orderBlocked(o)).pop();
+        window.__tier = [order, order.sequenceChange, order.due];
+        order.sequenceChange = { status: 'Awaiting QA', entries: [], requestedBy: state.profile.name, requestedAt: new Date().toISOString() };
+        order.due = '2099-12-31';
+        return order.id;
+      });
+      try {
+        await show(page, 'orders');
+        const ranks = await page.evaluate(() => [...document.querySelectorAll('#main .fr-wo-card')].map(card => {
+          const o = MES.getOrder(state, card.dataset.woCard);
+          return { id: o.id, plain: o.priority !== 'AOG' && !MES.aogActive(o) && !openTickets(o).length && !orderBlocked(o) };
+        }));
+        const at = ranks.findIndex(r => r.id === id), firstPlain = ranks.findIndex(r => r.plain);
+        assert.ok(at >= 0 && (firstPlain < 0 || at < firstPlain), `the blocked order (position ${at}) comes before the first unblocked order (position ${firstPlain})`);
+      } finally {
+        await page.evaluate(() => { const [order, change, due] = window.__tier; if (change === undefined) delete order.sequenceChange; else order.sequenceChange = change; order.due = due; render(); });
+      }
+    });
     await check(`${at} orders: Compact changes the cards`, async () => {
       await show(page, 'orders');
       const padding = () => page.locator('#main .fr-wo-card').first().evaluate(el => parseFloat(getComputedStyle(el).paddingTop));
