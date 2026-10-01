@@ -247,7 +247,9 @@ function surfaces(state) {
   {
     const heavy = structuredClone(state), hNc = heavy.maneuver.ncs.find(t => t.status === 'Open');
     const filler = { ...hNc.quarantinedAttachments[0], dataUrl: `data:image/png;base64,${'B'.repeat(890000)}` };
-    hNc.quarantinedAttachments = [0, 1, 2, 3].map(i => resigned(filler, `${filler.id}-H${i}`));
+    hNc.quarantinedAttachments = [0, 1, 2].map(i => resigned(filler, `${filler.id}-H${i}`));
+    // About 3.2 MB stored: past the content limit, under the record headroom.
+    hNc.attachments = [{ id: `ATT-${hNc.id}-LIVE`, name: 'live-scan.png', type: 'image/png', size: 400000, storage: 'inline', addedAt: new Date().toISOString(), addedBy: { name: 'Terry Tech', role: 'Assembly technician', credentialId: 'ACCT-quar-technician' }, dataUrl: `data:image/png;base64,${'L'.repeat(520000)}` }];
     const big = { name: 'more.png', type: 'image/png', size: 200000, dataUrl: `data:image/png;base64,${'C'.repeat(250000)}` };
     const kitOrder = heavy.orders.find(o => ['Kitting', 'Building'].includes(o.status));
     const kit = host.withAccount(operator, () => MES.addKitFile(heavy, kitOrder.id, big), heavy);
@@ -258,6 +260,30 @@ function surfaces(state) {
     const tk = host.withAccount(technician, () => MES.addTicketAttachment(heavy, tOrder.id, tTicket.id, big), heavy);
     check('an NC ticket file is refused at the limit with a remedy that works (removal does not free room)', tk.ok === false && /removed files stay in quarantine\. Log this file by name only/.test(tk.message));
     check('a file logged by name only is still accepted at the limit', host.withAccount(operator, () => MES.addKitFile(heavy, kitOrder.id, { name: 'kit-by-name.pdf', type: 'application/pdf', size: 10 }), heavy).ok);
+  }
+  // A file logged by name only still costs its record, so scripted add and remove cycles cannot grow the shared
+  // workspace past its limit.
+  {
+    const cycle = structuredClone(state);
+    cycle.orders.forEach(o => { o.operations.forEach(x => { x.attachments = []; delete x.quarantinedAttachments; }); o.kitFiles = []; delete o.quarantinedKitFiles; o.tickets.forEach(t => { t.attachments = []; delete t.quarantinedAttachments; }); });
+    Object.values(cycle.maneuver).forEach(list => Array.isArray(list) && list.forEach(r => { if (r) { r.attachments = []; delete r.quarantinedAttachments; } }));
+    // Start near the limit with large live record files, then cycle files logged by name only.
+    const bigNc = cycle.maneuver.ncs.find(t => t.status === 'Open');
+    [0, 1, 2].forEach(i => host.withAccount(technician, () => FlightManeuver.addRecordFile(cycle, 'ncs', bigNc.id, { name: `scan-${i}.png`, type: 'image/png', size: 600000, dataUrl: `data:image/png;base64,${String(i).repeat(880000)}` }), cycle));
+    bigNc.attachments.push({ id: `ATT-${bigNc.id}-FILL`, name: 'fill.png', type: 'image/png', size: 500000, storage: 'inline', addedAt: new Date().toISOString(), addedBy: { name: 'Terry Tech', role: 'Assembly technician', credentialId: 'ACCT-quar-technician' }, dataUrl: `data:image/png;base64,${'F'.repeat(730000)}` });
+    const startSize = JSON.stringify(cycle).length;
+    const longReason = 'R'.repeat(300), named = { name: 'n'.repeat(160), type: 'text/plain', size: 4 };
+    const holders = cycle.orders.flatMap(o => ['Kitting', 'Building'].includes(o.status) && !MES.pendingSequenceChange(o) ? o.operations.filter(x => !x.done).map(x => [o, x]) : []);
+    let refused = null, removed = 0;
+    for (let round = 0; round < 49 && !refused; round++) {
+      for (const [o, op] of holders) {
+        const added = host.withAccount(technician, () => MES.addAttachment(cycle, o.id, op.id, named), cycle);
+        if (!added.ok) { refused = added; break; }
+        const out = host.withAccount(technician, () => MES.removeAttachment(cycle, o.id, op.id, op.attachments.at(-1).id, longReason), cycle);
+        if (out.ok) removed++;
+      }
+    }
+    check('add and remove cycles with files logged by name only stop at the workspace record limit, with what to do', bigNc.attachments.length === 4 && !!refused && /holds as many file records as it can/.test(refused.message) && removed > 0 && JSON.stringify(cycle).length - startSize < 1100000);
   }
   // Quarantine is capped per record, with a plain refusal once full.
   {

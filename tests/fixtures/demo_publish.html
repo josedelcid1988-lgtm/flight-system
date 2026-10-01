@@ -6507,7 +6507,10 @@ const OP_BOM_MAX = 12;
   const MAX_ATTACHMENT = 300000, MAX_ATTACHMENTS_TOTAL = 3000000;
   const attachmentValid = file => plain(file) && str(file.id, 40) && str(file.name, 160) && str(file.type, 80, 0) && Number.isInteger(file.size) && file.size >= 0 && ['inline', 'reference'].includes(file.storage) && (file.storage === 'reference' || (typeof file.dataUrl === 'string' && file.dataUrl.length <= MAX_ATTACHMENT)) && timestamp(file.addedAt) && profileValid(file.addedBy);
   const listOf = value => Array.isArray(value) ? value : [];
-  const fileBytes = files => files.reduce((n, file) => n + (file && typeof file.dataUrl === 'string' ? file.dataUrl.length : 0), 0);
+  // A stored file costs its content plus its record: name, who added it and, once removed, the reason, remover and
+  // manifest. A file logged by name only still costs its record, so add and remove cycles cannot grow the workspace
+  // without bound.
+  const fileBytes = files => files.reduce((n, file) => { if (!plain(file)) return n; const { dataUrl, ...record } = file; return n + (typeof dataUrl === 'string' ? dataUrl.length : 0) + JSON.stringify(record).length; }, 0);
   // Every stored file counts, live or quarantined, on work orders (operations, kit list, tickets) and on quality
   // records: a removed file is kept, so it still takes room. Every file adder checks this budget.
   const heldBytes = holder => holder ? fileBytes(listOf(holder.attachments)) + fileBytes(listOf(holder.quarantinedAttachments)) : 0;
@@ -6515,7 +6518,15 @@ const OP_BOM_MAX = 12;
   const attachmentBytes = state => recordFileBytes(state) + state.orders.reduce((total, order) => total + fileBytes(listOf(order.kitFiles)) + fileBytes(listOf(order.quarantinedKitFiles)) + order.operations.reduce((sum, op) => sum + heldBytes(op), 0) + listOf(order.tickets).reduce((sum, t) => sum + heldBytes(t), 0), 0);
   // A split copies the order's live files onto the new order, so the copy must fit the workspace limit too.
   const splitBudgetError = (state, child) => attachmentBytes(state) + fileBytes(listOf(child.kitFiles)) + listOf(child.operations).reduce((sum, op) => sum + fileBytes(listOf(op.attachments)), 0) > MAX_ATTACHMENTS_TOTAL ? 'Splitting would copy this order\u2019s files onto the new order past the workspace attachment limit. Keep the larger files in the controlled document system and reference them here, then split.' : null;
-  const fileBudgetError = (state, dataUrl) => dataUrl && attachmentBytes(state) + dataUrl.length > MAX_ATTACHMENTS_TOTAL ? 'This workspace is near its attachment limit, and removed files stay in quarantine. Log this file by name only, or keep it in the controlled document system and reference it here.' : null;
+  // Content is held to the workspace attachment limit. A file logged by name only still adds a record (and, once
+  // removed, its quarantine entry), so records have a fixed headroom above that limit; past it no file is added.
+  const FILE_RECORD_ALLOWANCE = 2000, FILE_RECORD_HEADROOM = 500000;
+  const fileBudgetError = (state, dataUrl) => {
+    const used = attachmentBytes(state);
+    if (dataUrl && used + dataUrl.length > MAX_ATTACHMENTS_TOTAL) return 'This workspace is near its attachment limit, and removed files stay in quarantine. Log this file by name only, or keep it in the controlled document system and reference it here.';
+    if (used + FILE_RECORD_ALLOWANCE > MAX_ATTACHMENTS_TOTAL + FILE_RECORD_HEADROOM) return 'This workspace holds as many file records as it can, counting removed files kept in quarantine. Keep further evidence in the controlled document system and reference it in a note on the record.';
+    return null;
+  };
 
   // Removing a file never erases it. Like a removed recording, the file leaves the live list and is kept in
   // quarantine on its record with the reason, who removed it and when, under a SHA-256 signature manifest that
@@ -6587,7 +6598,7 @@ const OP_BOM_MAX = 12;
     if (!str(name, 160)) return fail('That file needs a name.');
     const dataUrl = typeof input?.dataUrl === 'string' && input.dataUrl ? input.dataUrl: null;
     if (dataUrl && dataUrl.length > MAX_ATTACHMENT) return fail(`${name} is too large to keep in this browser. It can be logged by name only.`);
-    if (dataUrl && attachmentBytes(state) + dataUrl.length > MAX_ATTACHMENTS_TOTAL) return fail('This workspace is near its attachment limit, and removed files stay in quarantine. Log this file by name only, or keep it in the controlled document system and reference it here.');
+    { const over = fileBudgetError(state, dataUrl); if (over) return fail(over); }
     let number = attachments.length + 1;
     while ([...attachments, ...listOf(operation.quarantinedAttachments)].some(file => file.id === `ATT-${opId}-${number}`)) number++;
     const file = { id: `ATT-${opId}-${number}`, name, type: String(input?.type ?? '').slice(0, 80), size: Number.isInteger(input?.size) ? input.size: 0, storage: dataUrl ? 'inline' : 'reference', addedAt: new Date().toISOString(), addedBy: profileSnapshot(state.profile), ...(dataUrl ? { dataUrl } : {}) };
