@@ -3,7 +3,7 @@
 // #294: the calibration, master WI and work order CSV imports share one header check, so they refuse a duplicate,
 //       unknown or missing column and a row of the wrong width with the same words, and still import nothing.
 // #196 and #197: MES.calibrationCapacity builds the calibration archive note once for both QMS records views, and the
-//       note no longer claims a closed work order's buy-off holds its calibration entry in the live log.
+//       note says only work orders already moved to the server archive stop holding their cited entries in the log.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -85,8 +85,8 @@ const run = (state, account, fn) => host.withAccount(account, fn, state);
 {
   const cap = MES.calibrationCapacity(fresh());
   check('calibrationCapacity returns the archive note both QMS records views print', typeof cap.archiveNote === 'string' && cap.archiveNote.length > 0);
-  check('the note no longer claims every buy-off citation stays in the log', !/every entry a work order buy-off cites/.test(cap.archiveNote) && /every entry an open work order buy-off cites stay in the log/.test(cap.archiveNote), cap.archiveNote);
-  check('the note says where a closed work order cites its entry from', /cited only by a closed work order can move; it keeps its signature and opens by its ID from the server archive/.test(cap.archiveNote), cap.archiveNote);
+  check('the note no longer claims every buy-off citation stays in the log', !/every entry a work order buy-off cites/.test(cap.archiveNote) && /every entry a buy-off on a work order still in this workspace cites stay in the log, closed orders not yet archived included/.test(cap.archiveNote), cap.archiveNote);
+  check('the note says only an entry cited by archived work orders alone can move', /cited only by work orders already moved to the server archive can move; it keeps its signature and opens by its ID from the server archive/.test(cap.archiveNote), cap.archiveNote);
   check('the note uses no em dash', !/\u2014/.test(cap.archiveNote));
 }
 
