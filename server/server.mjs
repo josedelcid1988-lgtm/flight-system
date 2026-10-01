@@ -880,14 +880,14 @@ export function createServer(options = {}) {
         let doc;
         try { doc = await readJson(req); } catch (e) { if (e.status === 400 || e.status === 413) await auditRefusal(e.status, e.status === 413 ? 'request body over the size limit' : 'request body is not JSON'); throw e; }
         const ifMatch = req.headers['if-match'] || null;
-        if (!manages(session.account)) { await store.audit(session.username, 'workspace-put-refused', { status: 403, reason: currentWorkspace ? 'initialized workspace is action-only' : 'only QA Manager or Master Access may initialize' }); send(res, 403, { error: currentWorkspace ? 'The shared workspace is initialized and cannot be replaced as a snapshot. Use a server-authorized record action or the approved migration procedure.' : 'Only QA Manager or Master Access can initialize the shared workspace.' }); return; }
+        if (!manages(session.account)) { await auditRefusal(403, currentWorkspace ? 'initialized workspace is action-only' : 'only QA Manager or Master Access may initialize'); send(res, 403, { error: currentWorkspace ? 'The shared workspace is initialized and cannot be replaced as a snapshot. Use a server-authorized record action or the approved migration procedure.' : 'Only QA Manager or Master Access can initialize the shared workspace.' }); return; }
         if (currentWorkspace) {
           if (!ifMatch) { await auditRefusal(428, 'missing If-Match', { etag: currentWorkspace.etag }); send(res, 428, { error: 'Include the current workspace ETag in If-Match.' }); return; }
           if (currentWorkspace.etag !== ifMatch) { await auditRefusal(409, 'stale If-Match', { etag: currentWorkspace.etag }); res.writeHead(409, { 'Content-Type': MIME['.json'], ETag: currentWorkspace.etag }); res.end(JSON.stringify({ error: 'The workspace changed on another device. Reload to continue.', etag: currentWorkspace.etag })); return; }
           if (canon(doc) === canon(JSON.parse(currentWorkspace.json))) { await store.audit(session.username, 'workspace-snapshot-noop', { etag: currentWorkspace.etag }); res.writeHead(204, { ETag: currentWorkspace.etag }); res.end(); return; }
           const stored = JSON.parse(currentWorkspace.json);
           const changedKeys = [...new Set([...Object.keys(doc || {}), ...Object.keys(stored || {})])].filter(key => canon(doc?.[key]) !== canon(stored?.[key]));
-          await store.audit(session.username, 'workspace-put-refused', { status: 403, reason: 'initialized workspace is action-only', etag: currentWorkspace.etag, changedKeys }); send(res, 403, { error: 'The shared workspace is initialized and cannot be replaced as a snapshot. Use a server-authorized record action or the approved migration procedure.' }); return;
+          await auditRefusal(403, 'initialized workspace is action-only', { etag: currentWorkspace.etag, changedKeys }); send(res, 403, { error: 'The shared workspace is initialized and cannot be replaced as a snapshot. Use a server-authorized record action or the approved migration procedure.' }); return;
         }
         { const stale = await dropArchived(doc); if (stale) { await auditRefusal(409, stale, { code: 'ARCHIVED' }); send(res, 409, { error: stale, code: 'ARCHIVED' }); return; } }
         const state = host.MES.upgrade(structuredClone(doc));
