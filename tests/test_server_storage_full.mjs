@@ -1,7 +1,7 @@
 // #241: with the shared server active, the browser copy is a cache. A full or unavailable browser storage must not
 // refuse a change the server can take: the change goes to the server and the page says this device's offline copy is
-// out of date, in its own notice. If the server session ends before such a change is confirmed, the tab is not
-// reloaded away: it keeps a recovery copy to download. A standalone page, where the browser copy is the only record,
+// out of date, in its own notice. Until a server request that carried such a change is confirmed, the change is kept as
+// a device copy to download, and an ended session or a dropped connection does not lose it. A standalone page, where the browser copy is the only record,
 // still refuses the change. A workspace that changed in another tab still blocks changes in either mode.
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -41,7 +41,9 @@ try {
   };
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const token = await signIn(page, true);
-  const serverHas = async id => { const response = await fetch(`http://127.0.0.1:${port}/api/workspace`, { headers: { Authorization: `Bearer ${token}` } }); return response.ok && (await response.json()).orders.some(order => order.partNumber === id); };
+  // Reads the shared workspace with a session token; a token that no longer works fails the check instead of reading as absent.
+  const serverHas = async (id, bearer = token) => { const response = await fetch(`http://127.0.0.1:${port}/api/workspace`, { headers: { Authorization: `Bearer ${bearer}` } }); assert.equal(response.status, 200, 'the test reads the shared workspace'); return (await response.json()).orders.some(order => order.partNumber === id); };
+  const tabToken = tab => tab.evaluate(() => sessionStorage.getItem('skyryse-mes-server-token-v1'));
   const waitForServer = id => page.waitForFunction(async ({ port, token, id }) => {
     const response = await fetch(`http://127.0.0.1:${port}/api/workspace`, { headers: { Authorization: `Bearer ${token}` } });
     return response.ok && (await response.json()).orders.some(order => order.partNumber === id);
@@ -75,6 +77,15 @@ try {
   const stored = await page.evaluate(key => JSON.parse(localStorage.getItem(key) || '{}').orders?.some(order => order.partNumber === 'STORAGE-FULL-003'), KEY);
   check('once browser storage works again the offline copy is updated and the notice clears', third.ok && stored && !(await shown(page, '#offline-copy-alert')), await shown(page, '#offline-copy-alert'));
 
+  // Codex review on #264: any successful cache write of the server's copy clears the out-of-date notice, not only a new change.
+  await fillStorage(page);
+  await addOrder(page, 'STORAGE-FULL-010');
+  await waitForServer('STORAGE-FULL-010');
+  await page.waitForFunction(() => !cachelessUnconfirmed(), null, { timeout: 15000 });
+  await page.evaluate(() => window.__restoreStorage());
+  await page.evaluate(() => refreshServerWorkspace());
+  check('a reload of the server copy into working browser storage clears the out-of-date notice', await page.evaluate(() => offlineCopyStale) === false && !(await shown(page, '#offline-copy-alert')), await shown(page, '#offline-copy-alert'));
+
   // Codex review on #264: another notice already on screen does not hide the offline-copy warning.
   await page.evaluate(() => { const box = document.querySelector('#storage-alert'); box.hidden = false; box.textContent = 'An earlier notice.'; });
   await fillStorage(page);
@@ -92,6 +103,8 @@ try {
   check('when the browser has turned storage off, the notice says so and says to allow site storage', blocked.ok && /Allow site storage/.test(blockedText) && !/Free browser storage/.test(blockedText) && !/—/.test(blockedText), blockedText);
   await page.evaluate(() => window.__restoreStorage());
   await addOrder(page, 'STORAGE-FULL-007');
+  await waitForServer('STORAGE-FULL-007');
+  await page.waitForFunction(() => window.skServer?.sync?.status === 'synced' && !serverActionPending && !serverActionQueue.length, null, { timeout: 15000 });
 
   // Refusal path: a workspace changed in another tab still blocks changes in server mode.
   await page.evaluate(key => window.dispatchEvent(new StorageEvent('storage', { key })), KEY);
@@ -99,24 +112,55 @@ try {
   check('a workspace changed in another tab still blocks changes in server mode', !otherTab.ok && !otherTab.kept, JSON.stringify(otherTab));
   await page.close();
 
-  // Codex review on #264: a change kept without a browser copy is only in this tab until the server confirms it. When the
-  // server session ends first, the tab stays open with a recovery copy to download instead of reloading the change away.
-  const held = await browser.newPage({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
-  await signIn(held, false);
-  await held.evaluate(() => { window.__sameDocument = true; });
-  await fillStorage(held);
-  await held.route(/\/api\/workspace(\/actions\/.*)?$/, route => route.request().method() === 'GET' ? route.continue() : route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'Session ended.' }) }));
+  // Codex review on #264: a change kept without a browser copy is only in this tab until a server request that carried it
+  // is confirmed. When the server session ends first, the tab stays open with the device copy to download.
+  const openHeld = async () => {
+    const tab = await browser.newPage({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    await signIn(tab, false);
+    await tab.evaluate(() => { window.__sameDocument = true; });
+    await fillStorage(tab);
+    return tab;
+  };
+  const actionRoute = /\/api\/workspace\/actions\/.*$/;
+  const deviceCopy = async tab => {
+    const [download] = await Promise.all([tab.waitForEvent('download'), tab.locator('[data-action="download-device-copy"]').first().click()]);
+    return fs.readFile(await download.path(), 'utf8');
+  };
+  const held = await openHeld();
+  const heldToken = await tabToken(held);
+  await held.route(actionRoute, route => route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'Session ended.' }) }));
   const lost = await addOrder(held, 'STORAGE-HELD-001');
   await held.waitForFunction(() => /only in this tab/.test(document.querySelector('#flight-server-recovery')?.textContent || ''), null, { timeout: 15000 });
-  const heldState = await held.evaluate(() => ({ sameDocument: window.__sameDocument === true, kept: state.orders.some(order => order.partNumber === 'STORAGE-HELD-001'), recovery: !!unconfirmedServerRecovery?.workspace?.orders?.some(order => order.partNumber === 'STORAGE-HELD-001'), signIn: !!document.querySelector('#flight-server-recovery [data-action="server-sign-in-again"]') }));
-  check('an ended session does not reload away a change that is only in this tab', lost.kept && heldState.sameDocument && heldState.kept && heldState.recovery && heldState.signIn && !(await serverHas('STORAGE-HELD-001')), JSON.stringify({ lost, heldState }));
-  const [download] = await Promise.all([held.waitForEvent('download'), held.locator('#flight-server-recovery [data-action="download-server-recovery"]').click()]);
-  const recoveryFile = await fs.readFile(await download.path(), 'utf8');
-  check('the device recovery copy downloads with the unconfirmed change in it', /STORAGE-HELD-001/.test(recoveryFile));
+  const heldState = await held.evaluate(() => ({ sameDocument: window.__sameDocument === true, kept: state.orders.some(order => order.partNumber === 'STORAGE-HELD-001'), copy: !!cachelessCopy?.workspace?.orders?.some(order => order.partNumber === 'STORAGE-HELD-001'), signIn: !!document.querySelector('#flight-server-recovery [data-action="server-sign-in-again"]') }));
+  check('an ended session does not reload away a change that is only in this tab', lost.kept && heldState.sameDocument && heldState.kept && heldState.copy && heldState.signIn && !(await serverHas('STORAGE-HELD-001', heldToken)), JSON.stringify({ lost, heldState }));
+  check('the device copy downloads with the unconfirmed change in it', /STORAGE-HELD-001/.test(await deviceCopy(held)));
   const afterHold = await addOrder(held, 'STORAGE-HELD-002');
   check('after the session ends, further changes are refused until the person signs in again', !afterHold.ok && !afterHold.kept, JSON.stringify(afterHold));
-  await held.unroute(/\/api\/workspace(\/actions\/.*)?$/);
   await held.close({ runBeforeUnload: false });
+
+  // Codex review on #264: two quick changes go out in separate batches. The first is confirmed and reloads the server
+  // copy; the second is refused because the session ended. The second change is still kept as the device copy.
+  const twice = await openHeld();
+  const twiceToken = await tabToken(twice);
+  let actionCalls = 0;
+  await twice.route(actionRoute, route => { actionCalls += 1; return /STORAGE-TWICE-002/.test(route.request().postData() || '') ? route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'Session ended.' }) }) : route.continue(); });
+  await addOrder(twice, 'STORAGE-TWICE-001');
+  await addOrder(twice, 'STORAGE-TWICE-002');
+  await twice.waitForFunction(() => /only in this tab/.test(document.querySelector('#flight-server-recovery')?.textContent || ''), null, { timeout: 15000 });
+  const twiceState = await twice.evaluate(() => ({ sameDocument: window.__sameDocument === true, copy: !!cachelessCopy?.workspace?.orders?.some(order => order.partNumber === 'STORAGE-TWICE-002') }));
+  check('when a later batch is refused after an earlier one was confirmed, the later change is still kept as the device copy', twiceState.sameDocument && twiceState.copy && await serverHas('STORAGE-TWICE-001', twiceToken) && !(await serverHas('STORAGE-TWICE-002', twiceToken)) && /STORAGE-TWICE-002/.test(await deviceCopy(twice)), JSON.stringify({ actionCalls, twiceState }));
+  await twice.close({ runBeforeUnload: false });
+
+  // Codex review on #264: a dropped connection leaves the change unconfirmed. The notice offers the device copy, and closing
+  // the tab asks first.
+  const dropped = await openHeld();
+  const droppedToken = await tabToken(dropped);
+  await dropped.route(actionRoute, route => route.abort('connectionreset'));
+  await addOrder(dropped, 'STORAGE-DROP-001');
+  await dropped.waitForFunction(() => /offline|error/.test(window.skServer?.sync?.status || ''), null, { timeout: 15000 });
+  const droppedState = await dropped.evaluate(() => ({ unconfirmed: cachelessUnconfirmed(), button: !!document.querySelector('#offline-copy-alert [data-action="download-device-copy"]') }));
+  check('a dropped connection keeps the unconfirmed change as a device copy, offered for download, and closing the tab asks first', droppedState.unconfirmed && droppedState.button && /STORAGE-DROP-001/.test(await deviceCopy(dropped)) && !(await serverHas('STORAGE-DROP-001', droppedToken)), JSON.stringify(droppedState));
+  await dropped.close({ runBeforeUnload: false });
 
   // Refusal path: a standalone page, where the browser copy is the only record, still refuses the change.
   const standalone = await browser.newPage({ viewport: { width: 1440, height: 900 } });
