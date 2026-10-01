@@ -4382,7 +4382,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
     const op = order.operations.find(item => item.id === opId);
-    if (!op || op.classification !== EXTERNAL_CLASS) return fail('This is not an external sub-processing operation.');
+    // Both external classes can be created with a requested PO (addOrderOperation), so both can have it filled here; completeOperation requires it for both.
+    if (!op || !isExternal(op.classification)) return fail('This is not an external operation.');
     if (op.externalPO) return fail('This operation already has a PO. Use Edit Op to change it.');
     const check = purchaseOrderFor({ ...input, poMode: 'existing' });
     if (check.error) return fail(check.error);
@@ -10421,7 +10422,8 @@ function pedigreeHint(id,value){return `<small class="pedigree-hint" id="${id}-h
 document.addEventListener('change',e=>{const t=e.target;if(t.matches&&t.matches('#new-pedigree,#adhoc-pedigree,#pedigree-to')){const h=document.getElementById(t.id+'-hint');if(h)h.textContent=PEDIGREE_INFO[t.value]||'';}});
 
 function atpBlock(o, op) {
-  const poReq = op.classification === MES.EXTERNAL_CLASS && !op.externalPO ? `<section class="atp-block po-request-block" aria-label="Purchase order request"><div class="stamp-check blocked atp-warn">${icon('lock')}<div><strong>PO requested · waiting for NetSuite PO</strong><small>${op.poRequest ? `${esc(op.poRequest.vendor)} · ${esc(op.poRequest.process)}${op.poRequest.needBy ? ` · need by ${esc(op.poRequest.needBy)}` : ''}${op.poRequest.notes ? ` · ${esc(op.poRequest.notes)}` : ''}. Requested by ${esc(op.poRequest.requestedBy?.name || '')}.` : 'No purchase order recorded.'} Buy-off is held until the PO is added.</small>${skCan('adjust-wo') && !op.done ? `<button type="button" class="btn primary" data-action="po-add" data-op="${esc(op.id)}">Add PO ${icon('arrow')}</button>` : ''}</div></div></section>` : '';
+  // External Testing on an external work center shows the receiving hold below instead.
+  const poReq = !op.externalPO && (op.classification === MES.EXTERNAL_CLASS || (MES.EXTERNAL_CLASSES.includes(op.classification) && !MES.WORK_CENTERS?.some(c => c.id === op.workCenterId && c.external))) ? `<section class="atp-block po-request-block" aria-label="Purchase order request"><div class="stamp-check blocked atp-warn">${icon('lock')}<div><strong>PO requested · waiting for NetSuite PO</strong><small>${op.poRequest ? `${esc(op.poRequest.vendor)} · ${esc(op.poRequest.process)}${op.poRequest.needBy ? ` · need by ${esc(op.poRequest.needBy)}` : ''}${op.poRequest.notes ? ` · ${esc(op.poRequest.notes)}` : ''}. Requested by ${esc(op.poRequest.requestedBy?.name || '')}.` : 'No purchase order recorded.'} Buy-off is held until the PO is added.</small>${skCan('adjust-wo') && !op.done ? `<button type="button" class="btn primary" data-action="po-add" data-op="${esc(op.id)}">Add PO ${icon('arrow')}</button>` : ''}</div></div></section>` : '';
   if (poReq) return poReq;
   const externalCenter = MES.WORK_CENTERS?.find(center => center.id === op.workCenterId && center.external);
   if (externalCenter && MES.EXTERNAL_CLASSES.includes(op.classification)) {
@@ -12289,8 +12291,9 @@ function buyoffPrereqs(o,op){
   if(op.requiresTooling===true&&!tools.length&&!stepCapturedTools(op).length)add('Log each calibrated tool you used.','#tool-tag','Go to calibrated tools');
   const checks=tools.map(tag=>MES.toolCheck(tag,now,state));
   // A tool captured on a step is part of the buy-off too (the engine adds it to the tool list), so a lapsed one blocks here as well.
-  const stepTags=stepCapturedTools(op).map(t=>t.tag).filter(tag=>!tools.includes(tag));
-  const blocked=[...checks,...stepTags.map(tag=>MES.toolCheck(tag,now,state))].find(c=>!c.ok);if(blocked)add(blocked.message,'#tool-tag','Go to calibrated tools');
+  const blocked=checks.find(c=>!c.ok);if(blocked)add(blocked.message,'#tool-tag','Go to calibrated tools');
+  // A tool captured on a step that is no longer usable: the step has to be unchecked and its tool recaptured, so go to that step.
+  (op.steps||[]).forEach((st,i)=>{const tag=op.stepChecks?.[st.id]?.torque?.tool;if(!tag||tools.includes(tag))return;const c=MES.toolCheck(tag,now,state);if(!c.ok)add(`${c.message} It was captured on step ${MES.stepLetter(i)}: uncheck that step and record it again with a usable tool.`,`.step-dots [data-step="${i}"]`,`Go to step ${MES.stepLetter(i)}`);});
   const torque=checks.filter(c=>c.ok&&MES.isTorqueTool(c.tool)).find(c=>!MES.torqueValid((draft.torque||{})[c.tool.tag]));
   if(torque)add(`Enter the torque value applied with ${torque.tool.tag}.`,`#torque-${CSS.escape(torque.tool.tag)}`,'Go to the torque value');
   if(MES.isPartsConformityOperation(op)){const g=MES.confOpGate(state,o);if(!g.ok)add(g.message,'.conf-op','Go to the conformity checklist');}

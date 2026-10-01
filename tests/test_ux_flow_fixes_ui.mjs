@@ -281,6 +281,24 @@ try {
     const conf = await page.evaluate(() => { const o = structuredClone(state.orders.find(x => x.operations.some(op => MES.isPartsConformityOperation(op)))); o.conformity = []; const op = o.operations.find(x => MES.isPartsConformityOperation(x)); return buyoffPrereqs(o, op).map(x => x.text + ' > ' + x.target); });
     ok('an unfinished conformity package is listed, with a way to the checklist', conf.some(t => /^Part Conformity: finish Phases 1 to 6 .* > \.conf-op$/.test(t)), JSON.stringify(conf));
     ok('torque value branch', branches.torque.some(t => /^Enter the torque value applied with .* > #torque-/.test(t)), JSON.stringify(branches.torque));
+    // A requested PO on an External Testing operation can be filled, as on External Sub-Processing; a non-external operation is still refused.
+    const po = await page.evaluate(() => {
+      const c = structuredClone(state), o = c.orders.find(x => x.status === 'Building' && !MES.pendingSequenceChange(x) && !MES.engineeringChange(x));
+      const testClass = MES.EXTERNAL_CLASSES.find(x => x !== MES.EXTERNAL_CLASS);
+      const a = MES.addOrderOperation(c, o.id, { title: 'Environmental test', description: 'x', steps: 'A\nB', position: o.operations.length, buyoffType: 'Technician', classification: testClass, callouts: [], poMode: 'request', poVendor: 'Acme Labs', poProcess: 'Thermal cycle per spec' });
+      if (!a.ok) return { setup: a.message };
+      const ord = MES.getOrder(c, o.id), op = ord.operations.find(x => x.classification === testClass && !x.externalPO);
+      const pending = buyoffPrereqs(ord, op).map(x => x.text);
+      const r = MES.addPurchaseOrder(c, o.id, op.id, { poNumber: 'PO-99002' });
+      const plain = ord.operations.find(x => !MES.EXTERNAL_CLASSES.includes(x.classification));
+      const refused = MES.addPurchaseOrder(structuredClone(c), o.id, plain.id, { poNumber: 'PO-99003' });
+      return { pending, ok: r.ok, message: r.message, po: op.externalPO?.number, valid: MES.validate(c), refused: !refused.ok && refused.message };
+    });
+    ok('External Testing without its PO lists the PO as the blocker', !!po.pending && po.pending.includes('Add the NetSuite PO for this sub-processing operation.'), JSON.stringify(po));
+    ok('a requested PO on External Testing can be filled and the workspace stays valid', po.ok && po.po === 'PO-99002' && po.valid, JSON.stringify(po));
+    ok('adding a PO to a non-external operation is still refused', po.refused === 'This is not an external operation.', JSON.stringify(po));
+    const stepGo = await page.evaluate(() => { const o = state.orders.find(x => x.id === 'WO-10006'), op = structuredClone(o.operations.find(x => !x.done)); op.requiresTooling = false; op.steps = [{ id: 's1', title: 'A', instruction: 'A' }, { id: 's2', title: 'B', instruction: 'B' }]; op.stepChecks = { s2: { torque: { tool: 'NOT-IN-LOG-2', value: '5', unit: 'in-lb' } } }; return buyoffPrereqs(o, op).find(x => /NOT-IN-LOG-2/.test(x.text)); });
+    ok('a lapsed step tool points at its own step, not the tool field', !!stepGo && stepGo.target === '.step-dots [data-step="1"]' && stepGo.go === 'Go to step B' && /captured on step B: uncheck that step/.test(stepGo.text), JSON.stringify(stepGo));
     const eng = await page.evaluate(() => { const s = structuredClone(state), o = s.orders.find(x => x.id === 'WO-10006'), op = o.operations.find(x => !x.done); return MES.completeOperation(s, o.id, op.id, '', { stampNumber: MES.buyoffCredential(s.profile, op.buyoffType).holder?.number }); });
     ok('the engine still refuses a buy-off with the standard inspection unconfirmed', !eng.ok && /standard inspection|Check off/.test(eng.message), JSON.stringify(eng));
     // An operation with no steps held by an external PO: Complete operation is disabled and says why next to the button.
