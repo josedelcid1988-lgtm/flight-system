@@ -94,7 +94,8 @@ for(const [label,text,count] of SOD) has(label,text,count);
 
 // ---- what an approval records ----
 has('a signature manifest names the signer, meaning, time, signed subject, SHA-256 and build',"return { meaning, at, signer, algorithm: 'SHA-256', hash: sha256(canonical(subject)), subject: JSON.parse(JSON.stringify(subject)), authenticated: false, build: buildStamp(),",1);
-has('the signer is the signed-in account with its credential',"const signer = acct ? { name: acct.name, role: acct.role, credentialId: acct.credentialId, account: acct.account }",1);
+has('the signer is the signed-in account with its credential',"function manifestSigner(state) { const acct = accountActor(); return acct ? { name: acct.name, role: acct.role, credentialId: acct.credentialId, account: acct.account }",1);
+has('every manifest names its signer through manifestSigner',"    const signer = manifestSigner(state);",1);
 
 // ---- the production build ----
 const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{});
