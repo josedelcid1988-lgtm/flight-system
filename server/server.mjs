@@ -982,8 +982,11 @@ export function createServer(options = {}) {
         send(res, 200, { recorded: ids.length }); return;
       }
 
+      // A list limit reaches the database only as a whole number from 1 to 1,000: SQLite reads a negative LIMIT as
+      // unlimited and PostgreSQL refuses one, so anything else (missing, zero, negative, fractional) reads the fallback.
+      const pageLimit = (raw, fallback) => { const n = Number(raw); return Number.isInteger(n) && n >= 1 ? Math.min(1000, n) : fallback; };
       // -- archive: closed work orders out of the live document, read-only --
-      if (route === '/archive' && m === 'GET') { const orders = await store.archiveSearch(url.searchParams.get('q') || '', Math.min(1000, Number(url.searchParams.get('limit')) || 200)), total = await store.archiveCount(); send(res, 200, { orders, total }); return; }
+      if (route === '/archive' && m === 'GET') { const orders = await store.archiveSearch(url.searchParams.get('q') || '', pageLimit(url.searchParams.get('limit'), 200)), total = await store.archiveCount(); send(res, 200, { orders, total }); return; }
       if (route === '/trace' && m === 'GET') {
         const q = String(url.searchParams.get('q') || '').trim();
         if (!q) { send(res, 400, { error: 'Give a serial number, lot or part number to trace.' }); return; }
@@ -994,14 +997,13 @@ export function createServer(options = {}) {
         send(res, 200, { query: q, results: [...live, ...await store.archiveSearch(q, 1000)] }); return;
       }
       // -- calibration archive: superseded calibration entries out of the live log, read-only (#130) --
-      // A page of 1 to 1,000 entries; anything else (missing, zero, negative, not a whole number) reads the default 500.
-      const calibrationArchiveLimit = raw => { const n = Number(raw); return Number.isInteger(n) && n >= 1 ? Math.min(1000, n) : 500; };
+      // A page of 1 to 1,000 entries; anything else reads the default 500 (pageLimit, above).
       // Pages in entry id order: after names the last entry id of the previous page, and next is the cursor for the
       // following page, or null at the end.
       if (route === '/calibration-archive' && m === 'GET') {
         const after = url.searchParams.get('after') || '';
         if (after && !/^CALLOG-\d{5}$/.test(after)) { send(res, 400, { error: 'The after cursor is a calibration entry id such as CALLOG-00042, from the next value of the previous page.' }); return; }
-        const limit = calibrationArchiveLimit(url.searchParams.get('limit'));
+        const limit = pageLimit(url.searchParams.get('limit'), 500);
         const entries = await store.calibrationArchiveList(url.searchParams.get('tag') || '', limit, after);
         send(res, 200, { entries, next: entries.length === limit ? entries[entries.length - 1].id : null, readOnly: true }); return;
       }
