@@ -36,6 +36,10 @@ await expectFail('removing the DAR acceptance manifest fails',pkg+"delete p.darA
 await expectFail('changing the recorded 8130-9 preparer away from the form signer fails',pkg+"p.form.prepared.by={...p.form.prepared.by,credentialId:'ACCT-other'};",'8130-9');
 await expectFail('changing the recorded AQI signer away from the AQI signature fails',pkg+"p.aqi.by={...p.aqi.by,credentialId:'ACCT-other'};",'8130-9 AQI signature');
 await expectFail('removing the completed 8130-9 from a conformed package fails rather than skipping its AQI and DAR checks',pkg+"p.form=null;",'8130-9');
+await expectFail('removing the AQI signature from a conformed package fails',pkg+"p.aqi=null;",'8130-9 AQI signature');
+await expectFail('removing the DAR acceptance from a conformed package fails',pkg+"p.darApproval=null;",'DAR acceptance');
+await expectFail('removing the AQI signature from a package marked AQI signed fails',pkg+"p.status='AQI signed';p.darApproval=null;p.aqi=null;",'8130-9 AQI signature');
+await expectFail('removing the DAR acceptance from a closed package fails',pkg+"p.status='Closed';p.darApproval=null;",'DAR acceptance');
 
 const mrb=await run(()=>{const m=(state.maneuver.mrb||[]).find(m=>m.decision&&m.decision.manifest);return m&&m.id;});
 ok('fixture: a decided MRB board',!!mrb,String(mrb));
@@ -44,6 +48,8 @@ await expectFail('editing the MRB decision rationale after signing fails',board+
 await expectFail('changing a recorded MRB vote after the decision fails',board+"m.votes[0].vote=m.votes[0].vote==='Approve'?'Reject':'Approve';",`${mrb} board decision`);
 await expectFail('changing who voted a seat after the decision fails',board+"m.votes[0].by={...m.votes[0].by,credentialId:'ACCT-someone'};",`${mrb} board decision`);
 await expectFail('changing the MRB serials after the decision fails',board+"m.serials=[...(m.serials||[]),'SN-EXTRA'];",`${mrb} board decision`);
+await expectFail('changing who recorded the MRB decision fails',board+"m.decision.by={...m.decision.by,credentialId:'ACCT-other',name:'Someone Else'};",`${mrb} board decision`);
+await expectFail('changing when the MRB decision was recorded fails',board+"m.decision.at='2026-01-01T00:00:00.000Z';",`${mrb} board decision`);
 await expectFail('removing the MRB decision manifest fails',board+"delete m.decision.manifest;",`${mrb} board decision`);
 
 const nc=await run(()=>{const t=(state.maneuver.ncs||[]).find(t=>t.resolution&&t.resolution.manifest);return t&&t.id;});
@@ -56,8 +62,17 @@ await expectFail('changing the approval note after approval fails',stock+"t.reso
 await expectFail('removing the stock NC approval manifest fails',stock+"delete t.resolution.manifest;",`${nc} disposition approval`);
 r=await run(()=>{const s=structuredClone(state),t=(s.maneuver.ncs||[]).find(t=>t.resolution&&t.resolution.manifest);if(!t)return {none:true};delete t.affected;const v=MES.verifyManifests(s);return {id:t.id,ok:v.ok,where:v.failures.map(f=>f.where)};});
 ok('removing the affected record from an approved stock NC fails rather than skipping the check',r.ok===false&&r.where.some(w=>w.includes(`${r.id} disposition approval`)),JSON.stringify(r));
-r=await run(([nc])=>{const s=structuredClone(state),t=s.maneuver.ncs.find(t=>t.id===nc);delete t.resolution.manifest;t.history=[...(t.history||[]),{at:new Date().toISOString(),action:'Migrated from escape ESC-0001.',actor:'Flight System'}];const v=MES.verifyManifests(s);return {ok:v.ok,where:v.failures.map(f=>f.where)};},[nc]);
-ok('a stock NC migrated from a closed escape keeps its unsigned closure without a verification failure',!r.where.some(w=>w.includes(`${nc} disposition approval`)),JSON.stringify(r));
+// A migrated escape: resolved with no disposition or affected record, an escape record, a closure with no manifest,
+// and the system migration entry. Any other resolved NC without a manifest fails, including one that only adds the entry.
+const migrated=`const t=s.maneuver.ncs.find(t=>t.id==='${nc}');delete t.resolution.manifest;t.dispo=null;t.affected=null;t.mrbId=null;t.escape={from:'Final inspection',detectedAt:'Customer'};t.history=[...(t.history||[]),{at:new Date().toISOString(),action:'Migrated from escape ESC-0001.',actor:'system'}];`;
+r=await run(src=>{const s=structuredClone(state);(new Function('s',src))(s);const v=MES.verifyManifests(s);return {ok:v.ok,where:v.failures.map(f=>f.where),valid:MES.validate(s)};},migrated);
+ok('a stock NC migrated from a closed escape keeps its unsigned closure without a verification failure',!r.where.some(w=>w.includes(`${nc} disposition approval`))&&r.valid===true,JSON.stringify(r));
+await expectFail('a signed NC that only gains a migration history entry still fails when its manifest is removed',stock+"delete t.resolution.manifest;t.history=[...(t.history||[]),{at:new Date().toISOString(),action:'Migrated from escape ESC-0001.',actor:'system'}];",`${nc} disposition approval`);
+await expectFail('a migration entry written by a person, not the system, does not grandfather the closure',migrated+"t.history[t.history.length-1].actor='Someone · ACCT-x';",`${nc} disposition approval`);
+await expectFail('a migrated NC that keeps a disposition record does not grandfather the closure',migrated+"t.dispo={decision:'Scrap'};",`${nc} disposition approval`);
+await expectFail('a migration entry dated before the closure does not grandfather it',migrated+"t.history[t.history.length-1].at='2000-01-01T00:00:00.000Z';",`${nc} disposition approval`);
+await expectFail('changing who approved the stock NC disposition fails',stock+"t.resolution.by={...t.resolution.by,credentialId:'ACCT-other',name:'Someone Else'};",`${nc} disposition approval`);
+await expectFail('changing when the stock NC disposition was approved fails',stock+"t.resolution.at='2026-01-01T00:00:00.000Z';",`${nc} disposition approval`);
 
 // ---- box 22 is signed, validated and bound into the Skyryse QA approval ----
 const fair=await run(()=>{const o=state.orders.find(o=>o.fair&&o.fair.status==='Approved');if(!o)return null;const s=structuredClone(state),x=s.orders.find(y=>y.id===o.id);x.fair.status='Open';x.fair.verified=null;x.fair.approved=null;delete x.fair.reviewed;
@@ -75,8 +90,15 @@ await expectFail('replacing the box 22 reviewer after the approval fails',F+"f.r
 await expectFail('re-signing box 22 as someone else after the approval fails',F+"f.reviewed={...f.reviewed,by:{...f.reviewed.by,credentialId:'ACCT-other'},manifest:MES.signManifest(s,'AS9102 FAIR reviewed and approved (blocks 22 and 23)',{fair:f.reviewed.manifest.subject.fair,verified:f.verified.manifest.hash,reviewer:'ACCT-other',reviewedAt:f.reviewed.at},f.reviewed.at)};",'FAIR approval');
 await expectFail('changing the FAI reasons after verification fails',F+"f.reasons=[f.reasons[0]==='Mfg. process change'?'New part (first production)':'Mfg. process change'];",'FAIR verification');
 await expectFail('removing box 22 after the approval fails',F+"delete f.reviewed;",'FAIR approval');
+await expectFail('removing the Skyryse QA approval from an Approved FAIR fails',F+"f.approved=null;",'FAIR approval');
+await expectFail('removing the verification from a Verified or Approved FAIR fails',F+"f.verified=null;",'FAIR verification');
+await expectFail('changing who gave the Skyryse QA approval fails',F+"f.approved.by={...f.approved.by,credentialId:'ACCT-other',name:'Someone Else'};",'FAIR approval');
+r=await run(([id])=>{const s=structuredClone(state),f=s.orders.find(o=>o.id===id).fair;f.approved=null;return {valid:MES.validate(s)};},[fair.id]);
+ok('MES.validate refuses an Approved FAIR with no approval record',r.valid===false,JSON.stringify(r));
 r=await run(([id])=>{const mk=at=>{const s=structuredClone(state),f=s.orders.find(o=>o.id===id).fair;const sub={fair:f.approved.manifest.subject.fair,verified:f.verified.manifest.hash};f.approved={...f.approved,at,manifest:MES.signManifest(s,'AS9102 FAIR Skyryse QA approval',sub,at)};f.reviewed=null;const v=MES.verifyManifests(s);return v.failures.filter(x=>/FAIR approval/.test(x.where)).length;};return {before:mk('2026-09-20T10:00:00.000Z'),after:mk('2026-09-28T10:00:00.000Z')};},[fair.id]);
 ok('an approval from before box 22 was mandatory may lack box 22; one recorded after cannot',r.before===0&&r.after>0,JSON.stringify(r));
+r=await run(([id])=>{const s=structuredClone(state),f=s.orders.find(o=>o.id===id).fair;const at='2026-09-28T10:00:00.000Z',sub={fair:f.approved.manifest.subject.fair,verified:f.verified.manifest.hash};f.approved={...f.approved,at,manifest:MES.signManifest(s,'AS9102 FAIR Skyryse QA approval',sub,'2026-09-20T10:00:00.000Z')};f.reviewed=null;const v=MES.verifyManifests(s);return v.failures.filter(x=>/FAIR approval/.test(x.where)).map(x=>x.reason);},[fair.id]);
+ok('backdating only the approval manifest time does not let a post-cutoff approval drop box 22',r.some(x=>/box 22 is missing/.test(x))&&r.some(x=>/does not match the approval signature/.test(x)),JSON.stringify(r));
 await expectFail('removing the FAIR verification manifest fails',F+"delete f.verified.manifest;",'FAIR verification');
 await expectFail('removing the Skyryse QA approval manifest fails',F+"delete f.approved.manifest;",'FAIR approval');
 await expectFail('removing the box 22 manifest fails',F+"delete f.reviewed.manifest;",'FAIR box 22');
@@ -95,8 +117,8 @@ ok('box 22 on a FAIR that is not verified is refused by validation',r.onOpen===f
 ok('the signed workspace itself validates',r.ok===true,JSON.stringify(r));
 r=await run(([id])=>{const s=structuredClone(state),o=s.orders.find(o=>o.id===id),f=o.fair;f.fai=undefined;o.fai={...(o.fai||{}),required:true,reason:'First work order from MWI-0001 Rev A.',wi:(o.fai&&o.fai.wi)||'MWI-0001|A',at:(o.fai&&o.fai.at)||new Date().toISOString(),by:(o.fai&&o.fai.by)||f.verified.by};f.reasons=['Mfg. process change'];const sub={...f.verified.manifest.subject,form1:{...f.verified.manifest.subject.form1,reasons:['Mfg. process change']}};f.verified={...f.verified,manifest:MES.signManifest(s,f.verified.manifest.meaning,sub,f.verified.at)};f.status='Verified';f.reviewed=null;f.approved=null;const v=MES.verifyManifests(s);return {ok:v.ok,failures:v.failures.filter(x=>/FAIR/.test(x.where))};},[fair.id]);
 ok('a FAIR verified before reason normalization (raw reasons signed) still verifies',r.ok===true||r.failures.length===0,JSON.stringify(r));
-r=await run(([id])=>{const s=structuredClone(state),f=s.orders.find(o=>o.id===id).fair;f.reviewed=null;return {valid:MES.validate(s)};},[fair.id]);
-ok('a FAIR with box 22 cleared (null) still validates as a record',r.valid===true,JSON.stringify(r));
+r=await run(([id])=>{const s=structuredClone(state),f=s.orders.find(o=>o.id===id).fair;f.status='Verified';f.approved=null;f.reviewed=null;return {valid:MES.validate(s)};},[fair.id]);
+ok('a Verified FAIR with box 22 cleared (null) still validates as a record',r.valid===true,JSON.stringify(r));
 const fairJson=await run(()=>JSON.stringify(state));
 
 // ---- the CAR closure, from the 150-order regression set ----
@@ -114,11 +136,18 @@ await expectFail('editing the CAR root cause after closure fails',C+"c.rootCause
 await expectFail('editing a CAR action after closure fails',C+"c.actions[0].description='Edited after closure.';",`${car} closure`);
 await expectFail('editing the CAR effectiveness result after closure fails',C+"c.effectiveness.result='Not effective';",`${car} closure`);
 await expectFail('editing the CAR closure statement after closure fails',C+"c.closure.note='Edited.';",`${car} closure`);
+await expectFail('changing who closed the CAR fails',C+"c.closure.by={...c.closure.by,credentialId:'ACCT-other',name:'Someone Else'};",`${car} closure`);
+await expectFail('changing when the CAR was closed fails',C+"c.closure.at='2026-01-01T00:00:00.000Z';",`${car} closure`);
 await expectFail('removing the CAR closure manifest fails',C+"delete c.closure.manifest;",`${car} closure`);
+
+// Standalone and offline saves run MES.validate, not verifyManifests: a missing signed record or signature is refused there too.
+r=await run(([json,src])=>{const base=JSON.parse(json),out={};for(const [k,e] of Object.entries(src)){const s=structuredClone(base);(new Function('s',e))(s);out[k]=MES.validate(s);}const s=structuredClone(base);(new Function('s',src.aqi))(s);out.diagnose=(MES.diagnose(s)||{}).detail||'';out.clean=MES.validate(structuredClone(base));return out;},[confJson,{aqi:pkg+"p.aqi=null;",dar:pkg+"delete p.darApproval.manifest;",form:pkg+"delete p.form.prepared.manifest;",mrb:board+"delete m.decision.manifest;",nc:stock+"delete t.resolution.manifest;"}]);
+ok('MES.validate (standalone load and save) refuses a removed AQI signature, DAR manifest, 8130-9 manifest, MRB manifest or NC approval manifest',r.clean===true&&['aqi','dar','form','mrb','nc'].every(k=>r[k]===false),JSON.stringify(r));
+ok('the validation diagnosis names the incomplete signed record',/A signed record is incomplete at .*AQI signature/.test(r.diagnose),JSON.stringify(r.diagnose));
 
 // ---- verification fails closed: a manifest whose stored subject was signed by this build is recomputed even when
 // the live record adds or drops a key ----
-r=await run(([car])=>{const s=structuredClone(state),c=s.maneuver.cars.find(c=>c.id===car);const subject={id:c.id,title:c.title,severity:c.severity,rootCause:c.rootCause.statement,actions:c.actions.map(a=>({id:a.id,description:a.description,completedAt:a.completedAt})),verification:c.verification.at,effectiveness:c.effectiveness.result,note:c.closure.note};c.closure.manifest=MES.signManifest(s,'Corrective action closure',subject,c.closure.at);const ok0=MES.verifyManifests(s).ok;c.rootCause=null;const v=MES.verifyManifests(s);return {before:ok0,ok:v.ok,where:v.failures.map(f=>f.where)};},[car]);
+r=await run(([car])=>{const s=structuredClone(state),c=s.maneuver.cars.find(c=>c.id===car);const subject={id:c.id,title:c.title,severity:c.severity,rootCause:c.rootCause.statement,actions:c.actions.map(a=>({id:a.id,description:a.description,completedAt:a.completedAt})),verification:c.verification.at,effectiveness:c.effectiveness.result,note:c.closure.note};c.closure.manifest=MES.signManifest(s,'Corrective action closure',subject,c.closure.at);const sg=c.closure.manifest.signer;c.closure.by={name:sg.name,role:sg.role,credentialId:sg.credentialId};const ok0=MES.verifyManifests(s).ok;c.rootCause=null;const v=MES.verifyManifests(s);return {before:ok0,ok:v.ok,where:v.failures.map(f=>f.where)};},[car]);
 ok('a freshly signed CAR closure verifies, and removing its root cause afterwards fails',r.before===true&&r.ok===false&&r.where.some(w=>w.includes(`${car} closure`)),JSON.stringify(r));
 
 // ---- production validation refuses a box 22 signed by the verifier (the demo lifts this rule, D-33) ----

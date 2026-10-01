@@ -3071,14 +3071,49 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // the manifest stored. The FAIR's own content is compared with what the verifier signed, box 22 must chain to the
   // verified FAIR, and the Skyryse QA approval must chain to box 22. Any edit to a signed field after signing fails.
   // A stock NC migrated from a closed escape record keeps that record's unsigned closure: it was never a signed approval.
-  const migratedEscape = t => plain(t) && Array.isArray(t.history) && t.history.some(e => plain(e) && /^Migrated from escape /.test(String(e.action || '')));
+  // The migration shape: resolved with no disposition or affected record (an NC resolved in Flight Maneuver always has a
+  // disposition), an escape record, a closure with no manifest key, and the system migration entry dated at or after the closure.
+  const migratedEscape = t => plain(t) && t.status === 'Resolved' && t.dispo === null && t.affected === null && plain(t.escape) && plain(t.resolution) && !Object.hasOwn(t.resolution, 'manifest') && Array.isArray(t.history) && t.history.some(e => plain(e) && e.actor === 'system' && /^Migrated from escape \S+\.$/.test(String(e.action || '')) && typeof e.at === 'string' && typeof t.resolution.at === 'string' && t.resolution.at <= e.at);
   // Box 22 became mandatory before the Skyryse QA approval on this date (commit 42103cb). An approval recorded since then
   // must keep its box 22 review, even one signed before the approval bound the box 22 hash.
   const FAIR_BOX22_REQUIRED_FROM = '2026-09-26T06:17:24.000Z';
   // The AQI self-signature flag must match whether the AQI signer completed the 8130-9.
   const aqiSelfSignMismatch = p => false /* DEMO D-38 */ && plain(p) && plain(p.form) && plain(p.form.prepared) && plain(p.form.prepared.by) && plain(p.aqi) && plain(p.aqi.by) && (p.aqi.by.credentialId === p.form.prepared.by.credentialId) !== (p.aqi.selfSigned === true);
+  // A signed record whose signature (or the record itself) is missing, for a stage the record has reached. These are
+  // structural checks, so MES.validate runs them on every load and save, standalone included; verifyManifests reports them too.
+  const CONF_AQI_FROM = 2, CONF_DAR_FROM = 5;
+  function missingSignatures(state) {
+    const gaps = [];
+    (plain(state) && Array.isArray(state.orders) ? state.orders : []).forEach(order => {
+      if (!plain(order)) return;
+      const fair = order.fair;
+      if (plain(fair)) {
+        if (['Verified', 'Approved'].includes(fair.status) && !plain(fair.verified)) gaps.push({ where: `${order.id} FAIR verification`, reason: `the FAIR is ${fair.status} but has no verification record` });
+        if (fair.status === 'Approved' && !plain(fair.approved)) gaps.push({ where: `${order.id} FAIR approval`, reason: 'the FAIR is Approved but has no Skyryse QA approval record' });
+        [['verified', 'FAIR verification'], ['reviewed', 'FAIR box 22'], ['approved', 'FAIR approval']].forEach(([k, label]) => { if (plain(fair[k]) && !plain(fair[k].manifest)) gaps.push({ where: `${order.id} ${label}`, reason: `the ${label} has no signature manifest` }); });
+        if (plain(fair.approved) && !plain(fair.reviewed) && String(fair.approved.at || '') >= FAIR_BOX22_REQUIRED_FROM) gaps.push({ where: `${order.id} FAIR approval`, reason: 'the Skyryse QA approval was recorded after box 22 became mandatory, but box 22 is missing' });
+      }
+      (Array.isArray(order.conformity) ? order.conformity : []).forEach(p => {
+        if (!plain(p)) return;
+        const stage = CONF_STATUS.indexOf(p.status), where = `${order.id} ${p.serial}`;
+        if (!plain(p.form)) { if (stage > 0 || plain(p.aqi) || plain(p.darApproval)) gaps.push({ where: `${where} 8130-9`, reason: 'the package is past completion of the 8130-9, or carries an AQI or DAR signature, but has no completed 8130-9' }); }
+        else if (!plain(p.form.prepared) || !plain(p.form.prepared.manifest)) gaps.push({ where: `${where} 8130-9`, reason: 'the completed 8130-9 has no signature manifest' });
+        if (stage >= CONF_AQI_FROM && !plain(p.aqi)) gaps.push({ where: `${where} 8130-9 AQI signature`, reason: `the package is ${p.status} but has no AQI signature` });
+        if (stage >= CONF_DAR_FROM && !plain(p.darApproval)) gaps.push({ where: `${where} DAR acceptance`, reason: `the package is ${p.status} but has no DAR acceptance` });
+        if (plain(p.aqi) && !plain(p.aqi.manifest)) gaps.push({ where: `${where} 8130-9 AQI signature`, reason: 'the AQI signature has no signature manifest' });
+        if (plain(p.darApproval) && !plain(p.darApproval.manifest)) gaps.push({ where: `${where} DAR acceptance`, reason: 'the DAR acceptance has no signature manifest' });
+      });
+    });
+    const fm = kind => plain(state) && plain(state.maneuver) && Array.isArray(state.maneuver[kind]) ? state.maneuver[kind].filter(plain) : [];
+    fm('mrb').forEach(m => { if (plain(m.decision) && !plain(m.decision.manifest)) gaps.push({ where: `${m.id} board decision`, reason: 'the board decision has no signature manifest' }); });
+    fm('cars').forEach(car => { if (plain(car.closure) && !plain(car.closure.manifest)) gaps.push({ where: `${car.id} closure`, reason: 'the closure has no signature manifest' }); });
+    fm('ncs').forEach(t => { const r = t.resolution; if (!plain(r)) { if (t.status === 'Resolved') gaps.push({ where: `${t.id} disposition approval`, reason: 'the resolved NC has no approval record' }); } else if (!plain(r.manifest) && !migratedEscape(t)) gaps.push({ where: `${t.id} disposition approval`, reason: 'the disposition approval has no signature manifest' }); });
+    return gaps;
+  }
+  // The recorded signer and time of a signed record must be the manifest's.
+  const signerMismatch = (rec, m) => !plain(rec.by) || !plain(m.signer) || rec.by.credentialId !== m.signer.credentialId || rec.at !== m.at;
   function verifyManifests(state) {
-    const failures = []; let checked = 0, recomputed = 0, legacy = 0; const manifestSubjects = [];
+    const failures = missingSignatures(state); let checked = 0, recomputed = 0, legacy = 0; const manifestSubjects = [];
     const shapeOk = m => plain(m) && typeof m.meaning === 'string' && !!m.meaning && typeof m.at === 'string' && !Number.isNaN(Date.parse(m.at)) && plain(m.signer) && typeof m.signer.name === 'string' && !!m.signer.name.trim() && typeof m.signer.credentialId === 'string' && !!m.signer.credentialId.trim() && m.algorithm === 'SHA-256' && /^[0-9a-f]{64}$/.test(m.hash);
     const walk = (node, path) => {
       if (Array.isArray(node)) { node.forEach((x, i) => walk(x, `${path}[${i}]`)); return; }
@@ -3116,8 +3151,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       (order.tickets || []).forEach(t => { if (!plain(t.manifest) || t.status !== 'Resolved') return; const carried = order.splitFrom && plain(t.carriedFrom) ? t.carriedFrom : null; recheck(`${order.id} ${t.id} approval`, t.manifest, carried ? { ...ticketSubject(order, t), orderId: carried.orderId } : ticketSubject(order, t)); });
       if (plain(order.closure) && plain(order.closure.manifest)) recheck(`${order.id} closure`, order.closure.manifest, closureSubject(state, order));
       const fair = order.fair;
-      if (plain(fair) && plain(fair.approved) && plain(fair.approved.manifest) && !plain(fair.reviewed) && String(fair.approved.manifest.at || fair.approved.at || '') >= FAIR_BOX22_REQUIRED_FROM) failures.push({ where: `${order.id} FAIR approval`, reason: 'the Skyryse QA approval was recorded after box 22 became mandatory, but box 22 is missing' });
-      if (plain(fair)) [['verified', 'FAIR verification'], ['reviewed', 'FAIR box 22'], ['approved', 'FAIR approval']].forEach(([k, label]) => { if (plain(fair[k]) && !plain(fair[k].manifest)) failures.push({ where: `${order.id} ${label}`, reason: `the ${label} has no signature manifest` }); });
+      if (plain(fair) && plain(fair.approved) && plain(fair.approved.manifest) && signerMismatch(fair.approved, fair.approved.manifest)) failures.push({ where: `${order.id} FAIR approval`, reason: 'the recorded approver or time does not match the approval signature' });
       if (plain(fair) && plain(fair.verified) && plain(fair.verified.manifest) && plain(fair.verified.by) && plain(fair.verified.manifest.signer) && fair.verified.by.credentialId !== fair.verified.manifest.signer.credentialId) failures.push({ where: `${order.id} FAIR verification`, reason: 'the recorded verifier does not match the verification signature' });
       // Box 22 chains to the verified FAIR, and an approval signed since box 22 was bound into it chains to box 22.
       // An approval signed before that carries no reviewed key and is checked as it was signed.
@@ -3136,11 +3170,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       // so an edit to the form, the AQI record or the DAR record after signing fails here.
       (Array.isArray(order.conformity) ? order.conformity : []).forEach(p => {
         if (!plain(p)) return;
-        if (!plain(p.form)) { if (CONF_STATUS.indexOf(p.status) > 0 || plain(p.aqi) || plain(p.darApproval)) failures.push({ where: `${order.id} ${p.serial} 8130-9`, reason: 'the package is past completion of the 8130-9, or carries an AQI or DAR signature, but has no completed 8130-9' }); }
         const pm = plain(p.form) && plain(p.form.prepared) ? p.form.prepared.manifest : null;
-        if (plain(p.form) && !plain(pm)) failures.push({ where: `${order.id} ${p.serial} 8130-9`, reason: 'the completed 8130-9 has no signature manifest' });
-        if (plain(p.aqi) && !plain(p.aqi.manifest)) failures.push({ where: `${order.id} ${p.serial} 8130-9 AQI signature`, reason: 'the AQI signature has no signature manifest' });
-        if (plain(p.darApproval) && !plain(p.darApproval.manifest)) failures.push({ where: `${order.id} ${p.serial} DAR acceptance`, reason: 'the DAR acceptance has no signature manifest' });
         if (plain(pm) && plain(p.form)) recheck(`${order.id} ${p.serial} 8130-9`, pm, { order: order.id, ...p.form, prepared: undefined, ...(pm.override ? { override: pm.override } : {}) });
         if (plain(pm) && plain(p.form.prepared.by) && plain(pm.signer) && (p.form.prepared.by.credentialId !== pm.signer.credentialId || p.form.prepared.at !== pm.at)) failures.push({ where: `${order.id} ${p.serial} 8130-9`, reason: 'the recorded preparer or time does not match the 8130-9 signature' });
         const am = plain(p.aqi) ? p.aqi.manifest : null;
@@ -3154,9 +3184,9 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     // Flight Maneuver signatures: the MRB board decision, the CAR closure and the stock NC disposition approval are
     // recomputed from the stored record, the same way the work order signatures are.
     const fm = kind => plain(state.maneuver) && Array.isArray(state.maneuver[kind]) ? state.maneuver[kind].filter(plain) : [];
-    fm('mrb').forEach(m => { const d = m.decision; if (!plain(d)) return; if (!plain(d.manifest)) { failures.push({ where: `${m.id} board decision`, reason: 'the board decision has no signature manifest' }); return; } recheck(`${m.id} board decision`, d.manifest, { id: m.id, orderId: m.orderId, ticketId: m.ticketId, partNumber: m.partNumber, serials: m.serials, proposed: m.proposed, votes: (Array.isArray(m.votes) ? m.votes : []).map(v => ({ seat: v.seat, vote: v.vote, by: plain(v.by) ? v.by.credentialId : undefined, at: v.at })), status: d.status, note: d.note }); });
-    fm('cars').forEach(car => { const c = car.closure; if (!plain(c)) return; if (!plain(c.manifest)) { failures.push({ where: `${car.id} closure`, reason: 'the closure has no signature manifest' }); return; } recheck(`${car.id} closure`, c.manifest, { id: car.id, title: car.title, severity: car.severity, rootCause: plain(car.rootCause) ? car.rootCause.statement : undefined, actions: (Array.isArray(car.actions) ? car.actions : []).map(a => ({ id: a.id, description: a.description, completedAt: a.completedAt })), verification: plain(car.verification) ? car.verification.at : undefined, effectiveness: plain(car.effectiveness) ? car.effectiveness.result : undefined, note: c.note }); });
-    fm('ncs').forEach(t => { const r = t.resolution; if (!plain(r)) { if (t.status === 'Resolved') failures.push({ where: `${t.id} disposition approval`, reason: 'the resolved NC has no approval record' }); return; } if (!plain(r.manifest)) { if (!migratedEscape(t)) failures.push({ where: `${t.id} disposition approval`, reason: 'the disposition approval has no signature manifest' }); return; } const a = plain(t.affected) ? t.affected : {}; recheck(`${t.id} disposition approval`, r.manifest, { id: t.id, partNumber: t.partNumber, serial: t.serial, lot: t.lot, disposition: plain(t.dispo) ? t.dispo.decision : undefined, defect: { defectCode: a.defectCode, defectName: a.defectName, subCode: a.subCode, subName: a.subName }, quantity: a.quantity, mrbId: t.mrbId, note: r.note }); });
+    fm('mrb').forEach(m => { const d = m.decision; if (!plain(d) || !plain(d.manifest)) return; if (signerMismatch(d, d.manifest)) failures.push({ where: `${m.id} board decision`, reason: 'the recorded board decision signer or time does not match the signature' }); recheck(`${m.id} board decision`, d.manifest, { id: m.id, orderId: m.orderId, ticketId: m.ticketId, partNumber: m.partNumber, serials: m.serials, proposed: m.proposed, votes: (Array.isArray(m.votes) ? m.votes : []).map(v => ({ seat: v.seat, vote: v.vote, by: plain(v.by) ? v.by.credentialId : undefined, at: v.at })), status: d.status, note: d.note }); });
+    fm('cars').forEach(car => { const c = car.closure; if (!plain(c) || !plain(c.manifest)) return; if (signerMismatch(c, c.manifest)) failures.push({ where: `${car.id} closure`, reason: 'the recorded closure signer or time does not match the signature' }); recheck(`${car.id} closure`, c.manifest, { id: car.id, title: car.title, severity: car.severity, rootCause: plain(car.rootCause) ? car.rootCause.statement : undefined, actions: (Array.isArray(car.actions) ? car.actions : []).map(a => ({ id: a.id, description: a.description, completedAt: a.completedAt })), verification: plain(car.verification) ? car.verification.at : undefined, effectiveness: plain(car.effectiveness) ? car.effectiveness.result : undefined, note: c.note }); });
+    fm('ncs').forEach(t => { const r = t.resolution; if (!plain(r) || !plain(r.manifest)) return; if (signerMismatch(r, r.manifest)) failures.push({ where: `${t.id} disposition approval`, reason: 'the recorded approver or time does not match the signature' }); const a = plain(t.affected) ? t.affected : {}; recheck(`${t.id} disposition approval`, r.manifest, { id: t.id, partNumber: t.partNumber, serial: t.serial, lot: t.lot, disposition: plain(t.dispo) ? t.dispo.decision : undefined, defect: { defectCode: a.defectCode, defectName: a.defectName, subCode: a.subCode, subName: a.subName }, quantity: a.quantity, mrbId: t.mrbId, note: r.note }); });
     return { ok: failures.length === 0, complete: legacy === 0, legacy, checked, recomputed, failures };
   }
   const actor = state => { const acct = accountActor(); return acct ? { name: acct.name, role: acct.role, credentialId: acct.credentialId } : profileSnapshot(state.profile); };
@@ -8291,7 +8321,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   MES.seed = () => { const state = ensurePlanner(seedWithPlanner()); ['audits','certifications','supplierApprovals','qualityValues','qualityVerdicts','controlledDocuments','modelAdapterHistory','aiActionLog','aiSkillDrafts','aiSkillTriggers','aiSkillTriggerHistory','calibrationLog'].forEach(key=>{if(!Array.isArray(state[key]))state[key]=[];}); if(!plain(state.modelAdapter))state.modelAdapter=emptyModelAdapter(); ensureInventoryLedger(state); ensureResources(state); ensureProjects(state); syncPlanningBlockers(state); return state; };
   const upgradeWithPlanner = MES.upgrade;
   MES.upgrade = state => { const upgraded = upgradeWithPlanner(state); if (!upgraded) return null; ensurePlanner(upgraded); if(!Array.isArray(upgraded.controlledDocuments))upgraded.controlledDocuments=[];if(!Array.isArray(upgraded.modelAdapterHistory))upgraded.modelAdapterHistory=[];if(!Array.isArray(upgraded.aiActionLog))upgraded.aiActionLog=[];if(!Array.isArray(upgraded.aiSkillDrafts))upgraded.aiSkillDrafts=[];if(!Array.isArray(upgraded.aiSkillTriggers))upgraded.aiSkillTriggers=[];if(!Array.isArray(upgraded.aiSkillTriggerHistory))upgraded.aiSkillTriggerHistory=[];if(!Array.isArray(upgraded.calibrationLog))upgraded.calibrationLog=[];if(!plain(upgraded.modelAdapter))upgraded.modelAdapter=emptyModelAdapter(); ensureInventoryLedger(upgraded); ensureResources(upgraded); ensureProjects(upgraded); syncPlanningBlockers(upgraded); return upgraded; };
-  Object.assign(MES, { archivable, archiveOrders, archivedOrderValid, ownWorkRefusal, coveredBuildOps, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, verifyManifests, reviewFair, NFF, recordTraining, personTraining, trainingCurrentFor, trainingCertificateValid, ownWorkHit, OWN_WORK_EXEMPT_PEDIGREES, scryptHex, PIN_KDF, saveTraining, trainingCatalog, requiredTrainings, trainingDef, TRAINING_CODE_RE, importStamps, stampRegisterCsv, nextStampNumber, isPlaceholderStamp, STAMP_NUMBER_RE, wiAuthors, wiAuthorRefusal, wiPeerReviewRefusal, buildStamp, buildStampValid, supportActor, supportGrant, logSupport, SUPPORT_RULES, SUPPORT_KINDS, recordSupportAccess, noteDemoBypassRemoved, supportLogValid, recordCalibration, updateCalibration, calibrationStatus, calibrationChainProblem, calibrationEntryHash, calibrationLegacyHash, calibrationLogChanges, calibrationCurrentIds, calibratedToolChecks, toolUseRecords, calibrationEntryValid, CALIBRATION_STATUSES });
+  Object.assign(MES, { missingSignatures, archivable, archiveOrders, archivedOrderValid, ownWorkRefusal, coveredBuildOps, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, verifyManifests, reviewFair, NFF, recordTraining, personTraining, trainingCurrentFor, trainingCertificateValid, ownWorkHit, OWN_WORK_EXEMPT_PEDIGREES, scryptHex, PIN_KDF, saveTraining, trainingCatalog, requiredTrainings, trainingDef, TRAINING_CODE_RE, importStamps, stampRegisterCsv, nextStampNumber, isPlaceholderStamp, STAMP_NUMBER_RE, wiAuthors, wiAuthorRefusal, wiPeerReviewRefusal, buildStamp, buildStampValid, supportActor, supportGrant, logSupport, SUPPORT_RULES, SUPPORT_KINDS, recordSupportAccess, noteDemoBypassRemoved, supportLogValid, recordCalibration, updateCalibration, calibrationStatus, calibrationChainProblem, calibrationEntryHash, calibrationLegacyHash, calibrationLogChanges, calibrationCurrentIds, calibratedToolChecks, toolUseRecords, calibrationEntryValid, CALIBRATION_STATUSES });
   Object.assign(MES, { SOURCE_INSPECTION_CLASS, SOURCE_INSPECTION_CODES, CONFORMITY_SUBCODES, TEST_SUBCODES, operationType, migrateOperationTypes, sourceInspectionCodes, conformitySubcodes, testSubcodes, operationSubcodes, operationSubcode, saveSourceInspectionCodes, saveOperationSubcodes, mrbTrainingTiers, saveMrbTrainingTiers, recordSourceInspection, sourceInspectionHolds, sourceInspectionWorkspaceValid });
   MES.roleDeniedMessage = roleDeniedMessage;
   const validateWithSourceInspection = MES.validate;
@@ -9452,12 +9482,12 @@ const ATTACH_KINDS = Object.freeze(['mrb','cars','ncs','sprs']);
     }
     if (MES && typeof MES.validate === 'function' && !MES.validate.__maneuver) {
       const origValidate = MES.validate;
-      const v = state => origValidate(state) && maneuverValid(state);
+      const v = state => origValidate(state) && maneuverValid(state) && MES.missingSignatures(state).length === 0;
       v.__maneuver = true; MES.validate = v;
     }
     if (MES && typeof MES.diagnose === 'function' && !MES.diagnose.__maneuver) {
       const origDiagnose = MES.diagnose;
-      const d = state => { const base = origDiagnose(state); if (base && !(base.where === 'workspace' && base.detail === 'The workspace fails a validation rule that could not be isolated.')) return base; const issue = diagnoseManeuver(state); return issue ? { ...issue, fix: null } : base; };
+      const d = state => { const base = origDiagnose(state); if (base && !(base.where === 'workspace' && base.detail === 'The workspace fails a validation rule that could not be isolated.')) return base; const issue = diagnoseManeuver(state); if (issue) return { ...issue, fix: null }; const gap = MES.missingSignatures(state)[0]; return gap ? { where: gap.where, detail: `A signed record is incomplete at ${gap.where}: ${gap.reason}.`, fix: null } : base; };
       d.__maneuver = true; MES.diagnose = d;
     }
   }
