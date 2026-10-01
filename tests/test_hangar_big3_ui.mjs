@@ -136,6 +136,11 @@ try {
   const resolvedRef = await quality.evaluate(date => { const slot = state.planner.days.quality[date].big3[2], prior = slot.ref.id; slot.ref.id = 'BLK-99999'; view = 'home'; render(); return prior; }, today());
   const resolvedSlot = panel(quality).locator('.big3-slot').nth(2);
   check(/Resolved in the record/.test(await resolvedSlot.innerText()) && await resolvedSlot.locator('[data-action]').count() === 0, 'a task resolved in its record shows as resolved with no Accept, Decline or scheduling');
+  const resolvedAccept = await quality.evaluate(date => { const before = state.planner.days.quality[date].big3[2].status, result = MES.decideBigThree(state, date, 2, 'accept'); return { result, before, status: state.planner.days.quality[date].big3[2].status }; }, today());
+  check(resolvedAccept.result.ok === false && /resolved in the record/.test(resolvedAccept.result.message) && resolvedAccept.status === resolvedAccept.before, 'the engine refuses to accept a task resolved in its record and leaves the slot as it was');
+  const legacy = await quality.evaluate(() => { const box = document.createElement('div'); box.innerHTML = renderPlannerBigThree(); const slot = box.querySelectorAll('.big3-slot')[2]; return { dates: [...box.querySelectorAll('[data-action^="big3-"]')].map(button => button.dataset.date), actions: slot?.querySelectorAll('[data-action]').length, text: slot?.textContent || '' }; });
+  check(legacy.dates.length > 0 && legacy.dates.every(value => value === today()), `every Big Three button in the page template carries the day it was drawn for (${legacy.dates.join(',')})`);
+  check(legacy.actions === 0 && /Resolved in the record/.test(legacy.text), 'the page template also shows a task resolved in its record with no actions');
   await quality.evaluate(([date, prior]) => { state.planner.days.quality[date].big3[2].ref.id = prior; view = 'home'; render(); }, [today(), resolvedRef]);
   big3 = panel(quality);
 
