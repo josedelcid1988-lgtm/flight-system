@@ -97,6 +97,25 @@ including the stored copy behind another ID. A recording no record names yet (up
 an operation) can be opened only by the account that uploaded it and by a QA Manager or Master Access
 account. Other requests are refused with 403 and recorded as `evidence-read-refused`.
 
+A record names a recording only through an operation's `evidence` or `quarantinedEvidence` entry, by its `id`
+or its `copyOf`, matched exactly. The live check and the archive check use the same rule
+(`server/evidence-refs.mjs`) in both the SQLite and the PostgreSQL store. A recording ID written anywhere else in
+an order, such as a title, a note or an activity line, names nothing and does not open the recording.
+
+Each archived order's references are recorded in `archive_evidence` when the order is archived, with a marker in
+`archive_evidence_indexed`, so the archive check is one indexed lookup. Any archived order without a marker (the whole
+archive of a database from before these tables, or an order archived by a server still on an earlier release during a
+rolling upgrade) is recorded at startup and again by the next lookup that misses, so no archived recording is left
+unreadable. Each pass covers the archive as it stood when the pass started, so a server still archiving on an earlier
+release cannot keep a start or a lookup waiting; what it adds is indexed by the next pass.
+
+A reference is also authority, so adding one is checked: a write (a record action or a workspace save) that adds a
+new reference to a recording the server holds is refused with 422 and recorded as `evidence-refused` unless the
+account uploaded that recording or is a QA Manager or Master Access account. On a workspace that already exists, a
+new reference to a recording the server does not hold yet is refused too (the browser uploads before it saves the
+reference), so a reference cannot be saved ahead of someone else's upload. A recording the workspace already names
+stays usable as before.
+
 ## First-run setup code
 
 The first account on a new server becomes Master Access, so creating it needs a setup code that only

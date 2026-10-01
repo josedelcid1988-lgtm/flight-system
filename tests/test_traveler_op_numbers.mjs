@@ -75,6 +75,10 @@ check('traveler step numbers use the screen op number', (() => {
 })());
 check('the traveler names the inserted op with the screen number',
   printed[position].number === screen.operationNumber(after, inserted.id) && unescape(printed[position].title) === 'Re-torque fastener(s)');
+// #327: each step row keeps one check-off box; print name and date stay on the operation row.
+const stepRowHtml = [...traveler.matchAll(/<tr class="st"><td class="no">[^<]+<\/td>[\s\S]*?<\/tr>/g)].map(m => m[0]);
+check('every numbered step row has one check-off box and no blank name or date cells',
+  stepRowHtml.length > 0 && stepRowHtml.every(row => (row.match(/class="chk"/g) || []).length === 1 && !row.includes('<td class="blank">')));
 
 for (const mode of ['internal', 'external']) {
   const page = MESPrint.document(after, mode);
