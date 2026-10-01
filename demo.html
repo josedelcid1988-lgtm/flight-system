@@ -5827,6 +5827,7 @@ const OP_BOM_MAX = 12;
   // A requirement with a tolerance, a decimal value, a diameter or a unit of measure needs the measured value. A bare spec or
   // standard number (MIL-STD-130, AMS 5643) does not.
   const quantitative = req => /±|\+\s*\/?\s*-|Ø|\d\.\d|\b\d+(\.\d+)?\s*(in|mm|cm|µm|in-lb|ft-lb|N·m|Nm|deg|°|%|psi|kPa|Ra|V|A|Ω|ohm|g|lb)\b/i.test(req) && !/^(note|see|per)\b/i.test(req.trim());
+  // Box 10: a supplied blank clears the designed tooling; a field left out of the input keeps the recorded value.
   function applyFairResult(state, order, c, input) {
     if (input && Object.hasOwn(input, 'result')) {
       const result = String(input.result ?? '').trim(), tool = String(input.tool ?? '').trim(), designedTooling = String(input.designedTooling ?? c.designedTooling ?? '').trim(), okv = input.ok, nc = String(input.nc ?? '').trim().toUpperCase(), comments = String(input.comments ?? c.comments ?? '').trim();
@@ -5836,7 +5837,7 @@ const OP_BOM_MAX = 12;
       if (result && quantitative(c.requirement) && ok !== false && !/\d/.test(result)) return fail('Block 9: a quantitative requirement needs the measured value, not only pass or fail.');
       if (ok === false && !order.tickets.some(t => t.id === nc)) return fail('Block 11: a nonconforming characteristic needs the NC raised on this work order.');
       const who = actor(state);
-      Object.assign(c, { result, tool, ...(designedTooling ? { designedTooling } : {}), ok: result ? ok : null, nc: ok === false ? nc : '', comments, inspector: result ? who.name.slice(0, 80) : '', date: result ? new Date().toISOString().slice(0, 10) : '' });
+      Object.assign(c, { result, tool, ...(designedTooling || input.designedTooling != null ? { designedTooling } : {}), ok: result ? ok : null, nc: ok === false ? nc : '', comments, inspector: result ? who.name.slice(0, 80) : '', date: result ? new Date().toISOString().slice(0, 10) : '' });
     }
     return { ok: true };
   }
