@@ -8479,7 +8479,23 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const base = diagnoseWithPlanner(state); if (base) return base;
     const sprints = plain(state?.projectPlan) && Array.isArray(state.projectPlan.sprints) ? state.projectPlan.sprints : [];
     for (const row of sprints) { const problem = plain(row) ? sprintRangeProblem(row.startDate, row.endDate) : ''; if (problem) return { where: String(row.id), detail: `Sprint ${row.id} runs ${row.startDate} to ${row.endDate}. ${problem}`, fix: null }; }
+    if (plain(state?.projectPlan) && Object.hasOwn(state.projectPlan, 'retiredSprints')) {
+      const retired = state.projectPlan.retiredSprints;
+      if (!Array.isArray(retired)) return { where: 'projectPlan.retiredSprints', detail: 'The retired sprint register (projectPlan.retiredSprints) is not a list. Restore it from a backup or export of this workspace, then reload.', fix: null };
+      for (let i = 0; i < retired.length; i += 1) if (!retiredSprintValid(retired[i])) { const id = plain(retired[i]) && typeof retired[i].id === 'string' ? retired[i].id : `projectPlan.retiredSprints[${i}]`; return { where: id, detail: `Retired sprint ${id} has a missing or invalid field. Restore it from a backup or export of this workspace, then reload.`, fix: null }; }
+      const live = new Set(sprints.map(row => row && row.id));
+      const clash = retired.find(row => live.has(row.id));
+      if (clash) return { where: clash.id, detail: `Sprint ID ${clash.id} is used by both a live and a retired sprint. Restore the workspace from a backup or export, then reload.`, fix: null };
+    }
     return null;
+  };
+  // repair (the standalone save and load fallback) diagnoses with the engine's own rules. A workspace that passes those
+  // but fails a planner-layer rule (MES.validate) must be refused with the planner diagnosis, never reported repaired.
+  const repairWithPlanner = MES.repair;
+  MES.repair = (state, limit) => {
+    const result = repairWithPlanner(state, limit);
+    if (!result.ok || MES.validate(state)) return result;
+    return { ok: false, repairs: result.repairs, blocker: MES.diagnose(state) || { where: 'workspace', detail: 'The workspace fails a validation rule that could not be isolated.', fix: null } };
   };
   const seedWithPlanner = MES.seed;
   MES.seed = () => { const state = ensurePlanner(seedWithPlanner()); ['audits','certifications','supplierApprovals','qualityValues','qualityVerdicts','controlledDocuments','modelAdapterHistory','aiActionLog','aiSkillDrafts','aiSkillTriggers','aiSkillTriggerHistory','calibrationLog'].forEach(key=>{if(!Array.isArray(state[key]))state[key]=[];}); if(!plain(state.modelAdapter))state.modelAdapter=emptyModelAdapter(); ensureInventoryLedger(state); ensureResources(state); ensureProjects(state); syncPlanningBlockers(state); return state; };

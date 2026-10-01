@@ -168,6 +168,28 @@ await check('upgrade leaves a malformed retired register in place for validation
   }
 });
 
+await check('diagnose names each invalid retired-sprint record and repair refuses it', async () => {
+  // Validation refuses these workspaces, so diagnose must say which record blocks writes and what to do, and repair (used
+  // by the standalone save path) must refuse rather than report nothing to repair.
+  const base = host.MES.upgrade(legacyWorkspace());
+  const cases = [
+    ['a register that is not a list', s => { s.projectPlan.retiredSprints = 'CORRUPT'; }, /^The retired sprint register \(projectPlan\.retiredSprints\) is not a list\. Restore it from a backup or export of this workspace, then reload\./, 'projectPlan.retiredSprints'],
+    ['a retired row with a broken field', s => { s.projectPlan.retiredSprints[0].capacityHours = -5; }, /^Retired sprint SPT-0001 has a missing or invalid field\. Restore it from a backup or export of this workspace, then reload\./, 'SPT-0001'],
+    ['a retired ID that a live sprint also uses', s => { s.projectPlan.retiredSprints[0].id = 'SPT-0003'; }, /^Sprint ID SPT-0003 is used by both a live and a retired sprint\. Restore the workspace from a backup or export, then reload\./, 'SPT-0003']
+  ];
+  for (const [what, breakIt, message, where] of cases) {
+    const state = structuredClone(base); breakIt(state);
+    assert.equal(host.MES.validate(state), false, `${what}: invalid`);
+    const issue = host.MES.diagnose(state);
+    assert.ok(issue, `${what}: diagnose names it`);
+    assert.equal(issue.where, where, what);
+    assert.match(issue.detail, message, what);
+    const repaired = host.MES.repair(structuredClone(state));
+    assert.equal(repaired.ok, false, `${what}: repair refuses`);
+    assert.match(repaired.blocker.detail, message, `${what}: repair reports the same reason`);
+  }
+});
+
 await check('a retired sprint record is validated', async () => {
   const state = host.MES.upgrade(legacyWorkspace());
   const tampered = structuredClone(state); tampered.projectPlan.retiredSprints[0].retiredReason = '';

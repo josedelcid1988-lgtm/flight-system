@@ -102,6 +102,21 @@ try {
   assert.ok((await retiredRow.textContent()).includes(retired.name), 'the retired sprint is listed by name');
   assert.ok((await retiredRow.textContent()).includes('Create a new sprint of at most 92 days for this work.'), 'the retired sprint shows its reason and the next step');
   assert.equal(await page.getByRole('heading', { name: 'Retired sprints' }).count(), 1);
+  // A standalone save refuses a workspace whose retired register is malformed and keeps the stored copy, with the reason.
+  const refusedSave = await page.evaluate(() => {
+    const before = localStorage.getItem('skyryse-mes-work-order-v1');
+    const keep = state.projectPlan.retiredSprints;
+    state.projectPlan.retiredSprints = 'CORRUPT';
+    const saved = save();
+    const after = localStorage.getItem('skyryse-mes-work-order-v1');
+    const reverted = state.projectPlan.retiredSprints;
+    state.projectPlan.retiredSprints = keep; render();
+    return { saved, unchanged: before === after, reverted: reverted !== 'CORRUPT', toast: document.body.innerText.includes('The retired sprint register (projectPlan.retiredSprints) is not a list') };
+  });
+  assert.equal(refusedSave.saved, false, 'save refuses a malformed retired register');
+  assert.ok(refusedSave.unchanged, 'browser storage keeps the last valid workspace');
+  assert.ok(refusedSave.reverted, 'the in-memory change is rolled back');
+  assert.ok(refusedSave.toast, 'the refusal names the register and what to do');
   // The Hangar milestone-risk button opens the milestone's own work order, not the first one in the workspace.
   const milestoneOrder = await page.evaluate(name => {
     const project = state.projectPlan.projects.find(item => item.name === name);
