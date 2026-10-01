@@ -10,8 +10,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash, randomBytes, scrypt as scryptCb, timingSafeEqual } from 'node:crypto';
-import { openDb } from './db.mjs';
-import { openPostgres } from './db-postgres.mjs';
+import { openDb, openDbReadOnly } from './db.mjs';
+import { openPostgres, openPostgresReadOnly } from './db-postgres.mjs';
+import { scanArchiveProto } from './archive-proto-scan.mjs';
 import { createHost } from './mes-host.mjs';
 import { stamp, verify } from '../tools/stamp-build.mjs';
 
@@ -172,6 +173,7 @@ export function createServer(options = {}) {
   const jiraFetch = options.jiraFetch || globalThis.fetch;
   if (host.MES.MAX_EVIDENCE_BYTES && host.MES.MAX_EVIDENCE_BYTES > MAX_REQUEST_BYTES) throw new Error(`index.html allows ${host.MES.MAX_EVIDENCE_BYTES} byte recordings but the server's request limit is ${MAX_REQUEST_BYTES}. Raise MAX_REQUEST_BYTES and the proxy's client_max_body_size together.`);
   const log = options.quiet ? () => {} : (...a) => console.log(new Date().toISOString(), ...a);
+  const warn = options.quiet ? () => {} : (...a) => console.warn(new Date().toISOString(), ...a);
   const modelAdapterSettings = parseModelAdapterSettings(options.modelAdapterSettings !== undefined ? options.modelAdapterSettings : process.env.FLIGHT_MODEL_ADAPTER_SETTINGS);
   const exportCredentials = parseExportCredentials(options.exportCredentials !== undefined ? options.exportCredentials : process.env.FLIGHT_EXPORT_CREDENTIALS);
   const exportTargetAllowed = (tokenSetting, destination) => { let origin = null; try { origin = new URL(String(destination)).origin; } catch {} return !!origin && !!tokenSetting && Object.hasOwn(exportCredentials, tokenSetting) && exportCredentials[tokenSetting].includes(origin); };
@@ -1011,13 +1013,45 @@ export function createServer(options = {}) {
     }
   }
 
+  // Issue #174: once per start, after the server listens, the archive "__proto__" scan (the one
+  // tools/scan-archive-proto.mjs runs) reads this server's own store through a separate read-only connection and logs
+  // one line. It never writes, and a failure is a warning: the server keeps serving. A store handed in as
+  // options.store or an in-memory database has no second connection to open, so it is not checked.
+  const archiveScanOpen = options.archiveScanOpen || (options.store || (!databaseUrl && dbPath === ':memory:') ? null : () => databaseUrl ? openPostgresReadOnly(databaseUrl) : openDbReadOnly(dbPath, { live: true }));
+  // The connection string can carry a password, so neither it nor the password appears in a log line.
+  const redact = text => { let out = String(text); if (databaseUrl) { out = out.split(databaseUrl).join('[connection string]'); try { const pw = decodeURIComponent(new URL(databaseUrl).password || ''); if (pw) out = out.split(pw).join('[password]'); } catch {} } return out; };
+  const checkArchive = async () => {
+    if (!archiveScanOpen) return { skipped: true };
+    try {
+      const reader = await archiveScanOpen();
+      let result;
+      try { result = await scanArchiveProto(host.MES, reader); } finally { await reader.close(); }
+      const { scanned, flagged, unreadable } = result;
+      const counts = `${scanned} row${scanned === 1 ? '' : 's'} scanned, ${flagged.length} flagged`;
+      if (!flagged.length && !unreadable.length) { log(`archive __proto__ check: ${counts}`); return result; }
+      const named = [...flagged.map(f => `${f.id} own "__proto__" key at ${f.at}`), ...unreadable.map(id => `${id} not checked, its stored JSON does not parse`)].join('; ');
+      warn(`WARNING archive __proto__ check: ${counts}${unreadable.length ? `, ${unreadable.length} unreadable` : ''}: ${named}.${flagged.length ? ' Content under that key is outside the record\'s signatures.' : ''} Send this line to the QA Manager; nothing was changed.`);
+      return result;
+    } catch (error) {
+      const message = redact(error && error.message ? error.message : error);
+      warn(`WARNING archive __proto__ check could not finish: ${message}. Nothing was changed and the server keeps running. Run node tools/scan-archive-proto.mjs to check the archive.`);
+      return { error: message };
+    }
+  };
+
   server = http.createServer((req, res) => { handle(req, res); });
   server.store = store; server.host = host; server.validState = validState; server.ready = storeReady.then(async () => { await wrapped; void drainExports(); });
   // Bind address: 127.0.0.1 unless options.host, FLIGHT_HOST or --host names another.
-  server.listenAsync = async (port, host = options.host || process.env.FLIGHT_HOST || DEFAULT_HOST) => { await server.ready; return new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, () => { server.off('error', reject); resolve(server.address().port); }); }); };
+  // Once listening, the archive check starts on a later turn of the event loop, so startup does not wait for it.
+  server.listenAsync = async (port, host = options.host || process.env.FLIGHT_HOST || DEFAULT_HOST) => {
+    await server.ready;
+    const bound = await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, () => { server.off('error', reject); resolve(server.address().port); }); });
+    server.archiveCheck ||= new Promise(resolve => setImmediate(resolve)).then(checkArchive);
+    return bound;
+  };
   // The code to show in the server console, or null once the first account exists.
   server.firstRunSetupCode = async () => { await storeReady; return (await store.accounts()).length ? null : setupCode; };
-  server.closeAsync = async () => { await wrapped.catch(() => {}); await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())); await exportDrain?.catch(() => {}); await store.close(); };
+  server.closeAsync = async () => { await wrapped.catch(() => {}); await server.archiveCheck; await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())); await exportDrain?.catch(() => {}); await store.close(); };
   return server;
 }
 
