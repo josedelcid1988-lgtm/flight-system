@@ -5145,13 +5145,10 @@ const OP_BOM_MAX = 12;
     const total = keep + moved, moves = [];
     for (const [index, line] of (Array.isArray(order.materials) ? order.materials : []).entries()) {
       if (line && line.source) {
-        // A sub-assembly issued from another work order. A serialized one can't be divided without knowing which unit
-        // carries which serial, so the split waits for it; a lot quantity divides like an issued lot.
-        if (Array.isArray(line.source.serials) && line.source.serials.length) return { error: `${line.name} (${line.partNumber}) is filled from ${line.source.orderId} with serial${line.source.serials.length === 1 ? '' : 's'} ${line.source.serials.join(', ')}, and the split can't tell which units they go with. ${order.status === 'Kitting' ? 'Return it on the Kitting tab, split, then issue it again to the order that uses it.' : 'Close the split request as Not required and raise it with Manufacturing Engineering.'}` };
-        const childQty = Math.floor(line.required * moved / total);
-        if (childQty < 1) return { error: `${line.name} (${line.partNumber}) has ${line.required} issued from ${line.source.orderId} for ${total} units, too few to give the new order its share. ${order.status === 'Kitting' ? 'Return it on the Kitting tab, then split.' : 'Close the split request as Not required and raise the shortage with Manufacturing Engineering.'}` };
-        moves.push({ index, issued: line.required, childQty, sourced: true });
-        continue;
+        // A sub-assembly issued from another work order. The kit line records what the order needs, not what the source
+        // order issued, so the split can't divide it; it waits until the line is returned, or until the units go on.
+        const what = Array.isArray(line.source.serials) && line.source.serials.length ? `serial${line.source.serials.length === 1 ? '' : 's'} ${line.source.serials.join(', ')}` : `lot ${line.source.lotNumber}`;
+        return { error: `${line.name} (${line.partNumber}) is filled from ${line.source.orderId} with ${what}, and the split can't tell which units it goes with. ${order.status === 'Kitting' ? 'Return it on the Kitting tab, split, then issue it again to the order that uses it.' : 'Close the split request as Not required and raise it with Manufacturing Engineering.'}` };
       }
       if (!line || !line.ready || !line.lot) continue;
       const issued = issuedToOrder(state, order.id, line.partNumber, line.lot);
@@ -5162,15 +5159,13 @@ const OP_BOM_MAX = 12;
       if (!record || record.conformityStatus !== 'Accepted') return { error: `Lot ${line.lot} of ${line.partNumber} is ${record ? record.conformityStatus : 'not on the inventory ledger'} for conformity, so its issued parts can't move to the new order. Resolve the lot's conformity, then split.` };
       moves.push({ index, issued, childQty, partNumber: line.partNumber, lot: line.lot, name: line.name });
     }
-    const ledgerMoves = moves.filter(move => !move.sourced).length;
-    if (ledgerMoves && ensureInventoryLedger(state).transactions.length + ledgerMoves * 2 > 20000) return { error: 'The inventory ledger has no room to move the issued kit to the new order.' };
+    if (moves.length && ensureInventoryLedger(state).transactions.length + moves.length * 2 > 20000) return { error: 'The inventory ledger has no room to move the issued kit to the new order.' };
     return { moves };
   }
   function applyIssuedKitSplit(state, order, child, moves) {
     for (const move of moves) {
       order.materials[move.index].required = move.issued - move.childQty;
       child.materials[move.index].required = move.childQty;
-      if (move.sourced) continue;   // no ledger rows: both lines still cite the same source order, and their quantities add up
       const note = `Split: ${move.name} issued share moved from ${order.id} to ${child.id}.`;
       const back = postInventoryTransaction(state, { type: 'Return', partNumber: move.partNumber, lot: move.lot, quantity: move.childQty, orderId: order.id, location: order.site || null, note });
       if (!back.ok) return back;

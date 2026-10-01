@@ -154,17 +154,15 @@ const prod = createHost(here('../index.html'));
     const seqBefore = JSON.stringify(ledState);
     const seqSplit = o4 ? prod.withAccount(admin, () => MES.splitOrder(ledState, o4.id, 2), ledState) : { message: 'order not created' };
     check('a split is refused while a sequence change awaits QA, nothing changed', !seqSplit.ok && /QA must release the updated sequence/.test(seqSplit.message) && JSON.stringify(ledState) === seqBefore, seqSplit.message);
-    // A sub-assembly issued from another work order (Codex review on #331): a lot quantity divides between the orders,
-    // and both lines still cite the same source, so the source order's issued count is unchanged; a serialized one
-    // refuses the split, because the split can't tell which units carry which serials.
+    // A sub-assembly issued from another work order (Codex review and Jinx #482 on #331). The kit line records what the
+    // order needs, not what the source order issued, so a split over it is refused, by lot or by serial, nothing changed.
     const r3 = prod.withAccount(admin, () => MES.addOrder(ledState, { masterWI: `${qtyWi.id}|${qtyWi.revision}`, pedigree: 'Production', subcategory: 'Mfg.', quantity: 5, aircraft: MES.AIRCRAFT[0], site: MES.SITES[0] }), ledState);
     const o3 = r3.ok ? MES.getOrder(ledState, r3.id) : null;
     const src = serials => ({ orderId: 'WO-SUB-1', lotNumber: 'LOT-SUB-1', serials, revision: 'A', issuedAt: now, issuedBy: { name: 'Go Live', role: 'Administrator', credentialId: 'ACCT-go-live' } });
-    if (o3) { toKitting(o3); const m = line(o3, 'BOM-002'); Object.assign(m, { ready: true, lot: 'LOT-SUB-1', required: 10, source: src([]) }); }
-    const subTotal = () => ledState.orders.flatMap(o => o.materials).filter(m => m.source && m.source.orderId === 'WO-SUB-1').reduce((n, m) => n + m.required, 0);
+    if (o3) { toKitting(o3); const m = line(o3, 'BOM-002'); Object.assign(m, { ready: true, lot: 'LOT-SUB-1', required: 7, source: src([]) }); }
+    const lotBefore = JSON.stringify(ledState);
     const lotSplit = o3 ? prod.withAccount(admin, () => MES.splitOrder(ledState, o3.id, 2), ledState) : { message: 'order not created' };
-    const c3 = lotSplit.ok ? MES.getOrder(ledState, lotSplit.id) : null;
-    check('splitting a sub-assembly issued by lot quantity divides it: 6 stay, 4 move, still 10 issued from the source order', !!c3 && line(o3, 'BOM-002').required === 6 && line(c3, 'BOM-002').required === 4 && subTotal() === 10 && MES.validate(ledState) === true, lotSplit.message);
+    check('a split over a sub-assembly issued by lot (7 needed, a partial fill possible) is refused with the next step, nothing changed', !lotSplit.ok && /filled from WO-SUB-1 with lot LOT-SUB-1/.test(lotSplit.message) && /Return it on the Kitting tab/.test(lotSplit.message) && JSON.stringify(ledState) === lotBefore, lotSplit.message);
     if (o3) Object.assign(line(o3, 'BOM-002'), { source: src(['SUB-SN-1', 'SUB-SN-2']) });
     const serialBefore = JSON.stringify(ledState);
     const serialSplit = o3 ? prod.withAccount(admin, () => MES.splitOrder(ledState, o3.id, 1), ledState) : { message: 'order not created' };
