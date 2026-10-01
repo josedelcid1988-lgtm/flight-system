@@ -124,6 +124,38 @@ await check('upgrade retires a legacy out-of-bound sprint unchanged and the work
   assert.equal(host.MES.validate(state), true);
 });
 
+await check('upgrade keeps every valid legacy sprint, however many there are', async () => {
+  // The previous release capped neither the sprint list nor its length, so 501 long sprints were a valid workspace.
+  const raw = seed();
+  raw.projectPlan = { projects: [], objectives: [], milestones: [], sprints: Array.from({ length: 501 }, (_, i) => ({ ...storedSprint('2026-01-01', '2026-12-31'), id: `SPT-${String(i + 1).padStart(4, '0')}` })) };
+  const state = host.MES.upgrade(raw);
+  assert.equal(state.projectPlan.retiredSprints.length, 501);
+  assert.equal(host.MES.validate(state), true, host.MES.diagnose(state)?.detail);
+});
+
+await check('upgrade retires only a legacy sprint that was valid before the bound', async () => {
+  // A row that was malformed in any other way stays where it is and still fails validation; the range alone never
+  // turns an invalid row into an accepted retired record.
+  for (const [what, change] of [
+    ['negative capacity', row => { row.capacityHours = -5; }],
+    ['a backlog that is not a list', row => { row.backlog = 'all of it'; }],
+    ['an invalid recorder', row => { row.by = { name: '' }; }],
+    ['an invalid time', row => { row.at = 'yesterday'; }],
+    ['an unregistered work center', row => { row.workCenterId = 'NOWHERE'; }]
+  ]) {
+    const raw = seed(); const row = { ...storedSprint('2026-01-01', '2026-12-31'), id: 'SPT-0001' }; change(row);
+    raw.projectPlan = { projects: [], objectives: [], milestones: [], sprints: [row] };
+    const state = host.MES.upgrade(raw);
+    assert.equal((state.projectPlan.retiredSprints || []).length, 0, `${what}: not retired`);
+    assert.equal(host.MES.validate(state), false, `${what}: still invalid`);
+  }
+  const state = host.MES.upgrade(legacyWorkspace());
+  const forged = structuredClone(state); forged.projectPlan.retiredSprints[0].capacityHours = -5;
+  assert.equal(host.MES.validate(forged), false, 'a retired record still carries a valid sprint shape');
+  const noBacklog = structuredClone(state); delete noBacklog.projectPlan.retiredSprints[0].backlog;
+  assert.equal(host.MES.validate(noBacklog), false, 'a retired record keeps its backlog');
+});
+
 await check('a retired sprint record is validated', async () => {
   const state = host.MES.upgrade(legacyWorkspace());
   const tampered = structuredClone(state); tampered.projectPlan.retiredSprints[0].retiredReason = '';

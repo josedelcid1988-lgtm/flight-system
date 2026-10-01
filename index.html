@@ -7973,9 +7973,13 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     for (const key of ['projects', 'objectives', 'milestones', 'sprints']) if (!Array.isArray(state.projectPlan[key])) state.projectPlan[key] = [];
     return state.projectPlan;
   }
+  // The sprint shape every release before the date bound accepted: real dates with the end on or after the start, and
+  // no limit on the span. A live sprint must also pass sprintRangeProblem.
+  const sprintRowValid = row => plain(row) && /^SPT-\d{4,8}$/.test(row.id) && str(row.name, 100) && workCenterValid(row.workCenterId) && dateOnly(row.startDate) && dateOnly(row.endDate) && row.endDate >= row.startDate && Number.isFinite(row.capacityHours) && row.capacityHours >= 0 && row.capacityHours <= 10000 && Array.isArray(row.backlog) && row.backlog.length <= 500 && row.backlog.every(ref => plain(ref) && /^WO-\d{5,8}(?:-Split-\d{1,2})?$/.test(ref.workOrderId) && str(ref.operationId, 40)) && snapshotValid(row.by) && timestamp(row.at);
   // A sprint saved before the date bound that falls outside it is kept, unchanged, as a retired record (see
-  // retireOutOfBoundSprints). It keeps the shape it was valid with then and is never planned or reported.
-  const retiredSprintValid = row => plain(row) && /^SPT-\d{4,8}$/.test(row.id) && str(row.name, 100) && workCenterValid(row.workCenterId) && dateOnly(row.startDate) && dateOnly(row.endDate) && row.endDate >= row.startDate && str(row.retiredReason, 300) && timestamp(row.retiredAt);
+  // retireOutOfBoundSprints). It keeps the full shape it was valid with then and is never planned or reported. Like
+  // the sprint list before the bound, the retired list has no count limit; only the upgrade adds to it.
+  const retiredSprintValid = row => { if (!plain(row)) return false; const { retiredReason, retiredAt, ...sprint } = row; return sprintRowValid(sprint) && str(retiredReason, 300) && timestamp(retiredAt); };
   const projectPlanValid = state => {
     if (!Object.hasOwn(state, 'projectPlan')) return true;
     const p = state.projectPlan;
@@ -7983,8 +7987,8 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (!unique(p.projects.map(row => row && row.id)) || !p.projects.every(row => plain(row) && /^PRJ-\d{4,8}$/.test(row.id) && str(row.name, 100) && PROJECT_LIFECYCLES.includes(row.lifecycle) && PROJECT_SENSITIVITY.includes(row.sensitivity) && (row.parentId === null || p.projects.some(parent => parent.id === row.parentId)) && dateOnly(row.startDate) && dateOnly(row.dueDate) && row.dueDate >= row.startDate && Array.isArray(row.partNumbers) && row.partNumbers.length <= 100 && row.partNumbers.every(part => str(part, 50)) && (row.sensitivityHistory === undefined || (Array.isArray(row.sensitivityHistory) && row.sensitivityHistory.length <= 100 && row.sensitivityHistory.every(change => plain(change) && PROJECT_SENSITIVITY.includes(change.from) && PROJECT_SENSITIVITY.includes(change.to) && str(change.reason, 300) && change.reason.trim().length >= 3 && snapshotValid(change.by) && timestamp(change.at)))))) return false;
     if (!unique(p.objectives.map(row => row && row.id)) || !p.objectives.every(row => plain(row) && /^OBJ-\d{4,8}$/.test(row.id) && str(row.title, 120) && OBJECTIVE_STATUSES.includes(row.status) && dateOnly(row.dueDate) && snapshotValid(row.by) && timestamp(row.at))) return false;
     if (!unique(p.milestones.map(row => row && row.id)) || !p.milestones.every(row => plain(row) && /^MIL-\d{4,8}$/.test(row.id) && str(row.title, 120) && (row.projectId === null || p.projects.some(project => project.id === row.projectId)) && (row.objectiveId === null || p.objectives.some(objective => objective.id === row.objectiveId)) && dateOnly(row.dueDate) && ['Open', 'Done', 'Cancelled'].includes(row.status) && typeof row.mustStart === 'boolean' && (row.workOrderId === null || /^WO-\d{5,8}(?:-Split-\d{1,2})?$/.test(row.workOrderId)) && snapshotValid(row.by) && timestamp(row.at))) return false;
-    if (p.retiredSprints !== undefined && (!Array.isArray(p.retiredSprints) || p.retiredSprints.length > 500 || !p.retiredSprints.every(retiredSprintValid))) return false;
-    if (!unique([...p.sprints, ...(p.retiredSprints || [])].map(row => row && row.id)) || !p.sprints.every(row => plain(row) && /^SPT-\d{4,8}$/.test(row.id) && str(row.name, 100) && workCenterValid(row.workCenterId) && !sprintRangeProblem(row.startDate, row.endDate) && Number.isFinite(row.capacityHours) && row.capacityHours >= 0 && row.capacityHours <= 10000 && Array.isArray(row.backlog) && row.backlog.length <= 500 && row.backlog.every(ref => plain(ref) && /^WO-\d{5,8}(?:-Split-\d{1,2})?$/.test(ref.workOrderId) && str(ref.operationId, 40)) && snapshotValid(row.by) && timestamp(row.at))) return false;
+    if (p.retiredSprints !== undefined && (!Array.isArray(p.retiredSprints) || !p.retiredSprints.every(retiredSprintValid))) return false;
+    if (!unique([...p.sprints, ...(p.retiredSprints || [])].map(row => row && row.id)) || !p.sprints.every(row => sprintRowValid(row) && !sprintRangeProblem(row.startDate, row.endDate))) return false;
     return true;
   };
   const nextPlanId = (rows, prefix) => `${prefix}-${String(Math.max(0, ...rows.map(row => Number(String(row.id).match(/(\d+)$/)?.[1]) || 0)) + 1).padStart(4, '0')}`;
@@ -8054,12 +8058,13 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   }
   // Upgrade step: a workspace saved before the bound may hold a sprint that was valid then (real dates, end on or after
   // start) but falls outside it now. Each one moves, unchanged, to projectPlan.retiredSprints with the reason, so the
-  // workspace stays valid and writable and the record is kept. Sprints that were never valid are left for validation.
+  // workspace stays valid and writable and the record is kept. Only a row that passes the full earlier sprint check
+  // moves; any other malformed row is left where it is for validation to refuse.
   function retireOutOfBoundSprints(state) {
     const p = state?.projectPlan; if (!plain(p) || !Array.isArray(p.sprints)) return;
     const keep = [], retire = [];
     for (const row of p.sprints) {
-      const problem = plain(row) && dateOnly(row.startDate) && dateOnly(row.endDate) && row.endDate >= row.startDate ? sprintRangeProblem(row.startDate, row.endDate) : '';
+      const problem = sprintRowValid(row) ? sprintRangeProblem(row.startDate, row.endDate) : '';
       if (problem) retire.push({ ...row, retiredReason: `Retired on upgrade: Sprint ${row.id} runs ${row.startDate} to ${row.endDate}. ${problem} Create a new sprint of at most ${SPRINT_MAX_DAYS} days for this work.`.slice(0, 300), retiredAt: new Date().toISOString() });
       else keep.push(row);
     }
