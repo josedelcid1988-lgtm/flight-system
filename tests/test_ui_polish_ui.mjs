@@ -191,12 +191,24 @@ try {
     check('the holds panel offers View all holds with the total', await link.count() === 1 && (await link.innerText()).includes(`(${held})`));
     await link.click();
     await page.locator('body[data-view="orders"]').waitFor();
-    check('View all holds opens All work orders filtered to Blocked', await page.getByRole('combobox', { name: 'Work order status' }).inputValue() === 'Blocked');
-    const rows = page.locator('.fr-order-table tbody tr');
-    check('the filtered list shows only blocked orders', await rows.count() > 0 && await rows.evaluateAll(list => list.every(r => /Blocked/.test(r.innerText))));
+    check('View all holds opens All work orders filtered to On hold', await page.getByRole('combobox', { name: 'Work order status' }).inputValue() === 'On hold');
+    // The list holds exactly the orders the Hangar counted: blocking tickets or pending source inspections on an open
+    // order. An order held only by a source inspection is listed; an engineering-change order with no hold is not.
+    const expectedIds = await page.evaluate(() => state.orders.filter(o => !['Closed', 'Cancelled', 'Scrapped'].includes(o.status) && (MES.blockingTickets(o).length || MES.sourceInspectionHolds(state, o).length)).map(o => o.id).sort());
+    const listedIds = (await page.locator('.fr-order-table tbody tr[data-order-row]').evaluateAll(list => list.map(r => r.dataset.orderRow))).sort();
+    check('the On hold list shows exactly the orders the Hangar counted', JSON.stringify(listedIds) === JSON.stringify(expectedIds) && listedIds.length === held, `${listedIds.length} listed vs ${expectedIds.length} expected`);
     const footer = await page.locator('.fr-queue footer').innerText();
     check('the work order queue footer says progress and approval rules are unchanged', footer.includes('Work order progress and approval rules are unchanged.'), footer);
     check('the old footer wording is gone', !/existing MES command gates/.test(await page.content()));
+    // An order held only by a pending source inspection is counted on the Hangar and listed under On hold.
+    const sourceOnly = await page.evaluate(() => {
+      const o = state.orders.find(x => !['Closed', 'Cancelled', 'Scrapped'].includes(x.status) && !MES.blockingTickets(x).length && !MES.sourceInspectionHolds(state, x).length);
+      const original = MES.sourceInspectionHolds;
+      MES.sourceInspectionHolds = (s, order) => order && order.id === o.id ? [{ id: 'SI-TEST', status: 'Pending' }] : original(s, order);
+      view = 'orders'; render();
+      return o.id;
+    });
+    check('an order held only by a source inspection is listed under On hold', await page.locator(`.fr-order-table tbody tr[data-order-row="${sourceOnly}"]`).count() === 1);
     // Navigation without a status still clears the filter.
     await page.evaluate(() => { const b = document.createElement('button'); b.dataset.action = 'nav'; b.dataset.view = 'orders'; document.body.append(b); b.click(); b.remove(); });
     check('ordinary navigation to All work orders shows every status', await page.getByRole('combobox', { name: 'Work order status' }).inputValue() === 'All');

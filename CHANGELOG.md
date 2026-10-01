@@ -11,7 +11,7 @@
   table (entry, tool tag, status, due date, recorded by) with the note and signature in an expandable row. FAIR and
   conformity stamp PIN fields are tied to their labels. Trace search and archived print or export say they are busy and
   hold their buttons while the server answers, and say plainly when it does not. The Hangar holds panel counts every
-  held order and links to All work orders filtered to Blocked. The work order queue footer reads "Work order progress
+  held order and links to All work orders filtered to a new On hold status, which lists exactly the orders the Hangar counted. The work order queue footer reads "Work order progress
   and approval rules are unchanged." `test_ui_polish_ui` covers each change.
 
 What changed in Flight System, newest first. The build id is set in `VERSION.md`; the release record at

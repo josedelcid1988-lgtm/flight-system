@@ -14,6 +14,9 @@ const displayFlightDate = value => {
   return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 };
 const orderIsOpen = order => !['Closed', 'Cancelled', 'Scrapped'].includes(order.status);
+// The holds on an open order as the Hangar counts them: blocking tickets and pending source inspections. The All work
+// orders "On hold" filter uses the same rule, so "View all holds" lists exactly the orders the Hangar counted.
+const hangarHolds = (state, MES, order) => orderIsOpen(order) ? [...(MES && MES.blockingTickets ? MES.blockingTickets(order) : []), ...(MES && MES.sourceInspectionHolds ? MES.sourceInspectionHolds(state, order) : [])] : [];
 const recordIsTerminal = status => ['Closed', 'Cancelled', 'Approved', 'Resolved', 'Rejected', 'Completed', 'Stocked'].includes(asText(status));
 const asText = value => String(value == null ? '' : value);
 const holdText = value => typeof value === 'string' ? value : value && (value.title || value.message || value.reason || value.description || value.id) || 'A blocking record needs action.';
@@ -67,13 +70,11 @@ function Hangar({ state, MES, onOpen }) {
     const searchable = [item.id, titleOf(item), item.partNumber, item.status, item.pedigree].map(asText).join(' ').toLowerCase();
     return (filter === 'All' || orderIsOpen(item)) && searchable.includes(query.trim().toLowerCase());
   }).sort((a, b) => asText(dueOf(a) || '9999').localeCompare(asText(dueOf(b) || '9999')));
-  const allHolds = (state.orders || []).filter(orderIsOpen).flatMap(item => {
-    const blockers = MES && MES.blockingTickets ? MES.blockingTickets(item) : [];
-    const sourceInspections = MES && MES.sourceInspectionHolds ? MES.sourceInspectionHolds(state, item) : [];
-    const allHolds = [...blockers, ...sourceInspections];
-    return allHolds.length ? [{ item, reason: holdText(allHolds[0]) }] : [];
+  const allHolds = (state.orders || []).flatMap(item => {
+    const itemHolds = hangarHolds(state, MES, item);
+    return itemHolds.length ? [{ item, reason: holdText(itemHolds[0]) }] : [];
   });
-  // The panel shows the first four; "View all holds" opens All work orders filtered to Blocked.
+  // The panel shows the first four; "View all holds" opens All work orders filtered to On hold.
   const holds = allHolds.slice(0, 4);
   const milestoneRisks = MES.milestoneRisks ? MES.milestoneRisks(state) : [];
   const changeDensity = () => setCompact(value => {
@@ -88,7 +89,7 @@ function Hangar({ state, MES, onOpen }) {
       <div className="fr-summary"><span className="fr-eyebrow">YOUR WORK QUEUE</span><strong>{rows.length} <small>{filter.toLowerCase()} work orders</small></strong><span>Sorted by due date from the current workspace.</span></div>
       <div className="fr-holds"><div className="fr-section-heading"><h2>Open holds</h2><span className="fr-count">{String(allHolds.length).padStart(2, '0')}</span></div>
         {holds.length ? holds.map(({ item, reason }) => <button className="fr-hold-row" key={item.id} onClick={() => open(item)}><span className="fr-hold-icon"><Boxes size={18}/></span><span><strong>{item.id} · {titleOf(item)}</strong><small>{reason}</small></span><ChevronRight size={16}/></button>) : <p className="fr-no-holds"><Check size={16}/> No blocking holds in open work orders.</p>}
-        {allHolds.length > 0 && <button type="button" className="fr-text-action fr-holds-all" data-action="nav" data-view="orders" data-status="Blocked">View all holds{allHolds.length > holds.length ? ` (${allHolds.length})` : ''}<ChevronRight size={14}/></button>}
+        {allHolds.length > 0 && <button type="button" className="fr-text-action fr-holds-all" data-action="nav" data-view="orders" data-status="On hold">View all holds{allHolds.length > holds.length ? ` (${allHolds.length})` : ''}<ChevronRight size={14}/></button>}
       </div>
     </section>
     {milestoneRisks.length > 0 && <section className="fr-milestone-watch" aria-label="Project milestones at risk"><div className="fr-section-heading"><h2>Project milestones at risk</h2><span className="fr-count">{String(milestoneRisks.length).padStart(2, '0')}</span></div>{milestoneRisks.map(item => <div className="fr-milestone-watch-row" key={item.id}><div><strong>{item.id} · {item.title}</strong><span>{item.risk} · due {new Date(`${item.dueDate}T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}{item.workOrderId ? ` · ${item.workOrderId}` : ''}</span></div>{item.workOrderId && <button className="fr-record-link" onClick={() => { const workOrder = state.orders.find(order => order.id === item.workOrderId); if (workOrder) onOpen(workOrder.id); }}>Open work order</button>}</div>)}</section>}
@@ -123,7 +124,7 @@ function WorkOrderQueue({ state, MES, rows: sourceRows, initial, callbacks, onOp
     return () => window.removeEventListener('keydown', shortcut);
   }, []);
   const notifyFilters = next => callbacks?.onFilters?.(next);
-  const matchStatus = item => status === 'All' || item.record.status === status || (status === 'Blocked' && item.held);
+  const matchStatus = item => status === 'All' || item.record.status === status || (status === 'Blocked' && item.held) || (status === 'On hold' && hangarHolds(state, MES, item.record).length > 0);
   const rows = sourceRows.filter(item => {
     const order = item.record;
     const searchable = [order.id, order.title, order.partNumber, order.status, order.pedigree, order.aircraft, MES.orderSite(order)].map(asText).join(' ').toLowerCase();
@@ -141,7 +142,7 @@ function WorkOrderQueue({ state, MES, rows: sourceRows, initial, callbacks, onOp
     <section className="fr-queue" aria-labelledby="fr-orders-heading">
       <div className="fr-queue-heading"><div className="fr-section-heading"><h2 id="fr-orders-heading">Work orders</h2><span className="fr-count">{String(rows.length).padStart(2, '0')}</span></div>
         <div className="fr-controls"><label className="fr-search"><Search size={16}/><input id="order-search" ref={searchRef} type="search" aria-label="Search work orders" value={query} onChange={event => setSearch(event.target.value)} placeholder="Search orders"/><kbd>⌘ K</kbd></label>
-          <label className="fr-filter-select"><span className="fr-visually-hidden">Work order status</span><select aria-label="Work order status" value={status} onChange={event => setStatusFilter(event.target.value)}>{['All', 'Blocked', 'Draft', 'Kitting', 'Building', 'Quality', 'Closed'].map(value => <option key={value}>{value}</option>)}</select></label>
+          <label className="fr-filter-select"><span className="fr-visually-hidden">Work order status</span><select aria-label="Work order status" value={status} onChange={event => setStatusFilter(event.target.value)}>{['All', 'On hold', 'Blocked', 'Draft', 'Kitting', 'Building', 'Quality', 'Closed'].map(value => <option key={value}>{value}</option>)}</select></label>
           <label className="fr-filter-select"><span className="fr-visually-hidden">Site</span><select aria-label="Work order site" value={site} onChange={event => setSiteFilter(event.target.value)}>{['All', ...MES.SITES].map(value => <option key={value}>{value}</option>)}</select></label>
           <label className="fr-filter-select"><span className="fr-visually-hidden">Aircraft</span><select aria-label="Work order aircraft" value={aircraft} onChange={event => setAircraftFilter(event.target.value)}>{['All', ...MES.AIRCRAFT].map(value => <option key={value}>{value}</option>)}</select></label>
           <label className="fr-order-flag"><input type="checkbox" checked={flagged} onChange={event => setFlagFilter(event.target.checked)}/> Flagged</label>
