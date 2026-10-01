@@ -5840,6 +5840,7 @@ const OP_BOM_MAX = 12;
   // A requirement with a tolerance, a decimal value, a diameter or a unit of measure needs the measured value. A bare spec or
   // standard number (MIL-STD-130, AMS 5643) does not.
   const quantitative = req => /±|\+\s*\/?\s*-|Ø|\d\.\d|\b\d+(\.\d+)?\s*(in|mm|cm|µm|in-lb|ft-lb|N·m|Nm|deg|°|%|psi|kPa|Ra|V|A|Ω|ohm|g|lb)\b/i.test(req) && !/^(note|see|per)\b/i.test(req.trim());
+  // Box 10: a supplied blank clears the designed tooling; a field left out of the input keeps the recorded value.
   function applyFairResult(state, order, c, input) {
     if (input && Object.hasOwn(input, 'result')) {
       const result = String(input.result ?? '').trim(), tool = String(input.tool ?? '').trim(), designedTooling = String(input.designedTooling ?? c.designedTooling ?? '').trim(), okv = input.ok, nc = String(input.nc ?? '').trim().toUpperCase(), comments = String(input.comments ?? c.comments ?? '').trim();
@@ -5849,7 +5850,7 @@ const OP_BOM_MAX = 12;
       if (result && quantitative(c.requirement) && ok !== false && !/\d/.test(result)) return fail('Block 9: a quantitative requirement needs the measured value, not only pass or fail.');
       if (ok === false && !order.tickets.some(t => t.id === nc)) return fail('Block 11: a nonconforming characteristic needs the NC raised on this work order.');
       const who = actor(state);
-      Object.assign(c, { result, tool, ...(designedTooling ? { designedTooling } : {}), ok: result ? ok : null, nc: ok === false ? nc : '', comments, inspector: result ? who.name.slice(0, 80) : '', date: result ? new Date().toISOString().slice(0, 10) : '' });
+      Object.assign(c, { result, tool, ...(designedTooling || input.designedTooling != null ? { designedTooling } : {}), ok: result ? ok : null, nc: ok === false ? nc : '', comments, inspector: result ? who.name.slice(0, 80) : '', date: result ? new Date().toISOString().slice(0, 10) : '' });
     }
     return { ok: true };
   }
@@ -10118,16 +10119,17 @@ const ATTACH_KINDS = Object.freeze(['mrb','cars','ncs','sprs']);
       </main><footer><p>Flight Control · ${edition} copy · ${escape(order.id)} · Record only. Video evidence is referenced by metadata; no recording is included in this document.</p></footer></body></html>`;
   }
 
-  // Shop traveler: the floor copy that travels with the kit. Blank stamp, date and data cells, every step, callouts, hold points.
+  // Shop traveler: the floor copy that travels with the kit. Every step, callouts, hold points and blank data cells. Each step
+  // and ATP equipment row gets one check-off box; the print name and date sign-off is on the operation row only.
   function traveler(order, ctx = {}) {
-    const serials = list(ctx.serials), stamp = '<td class="blank"></td>';
+    const serials = list(ctx.serials), stamp = '<td class="blank"></td>', checkOff = '<td class="chk" colspan="2"><span class="box" role="img" aria-label="Check off when done"></span></td>';
     const callout = op => list(op.callouts).map(c => `<span class="callout">${escape(c)}</span>`).join(' ');
     const rows = order.operations.map(op => {
       const stdHdr = (op.classification === 'Inspection' || op.inspectionPoint === true) ? `<br><strong>STANDARD INSPECTION:</strong> ${escape(MES.STD_INSPECTION.text)}` : '';
       const sourceHdr = op.sourceInspectionPlan ? `<br><strong>SOURCE INSPECTION:</strong> ${escape(op.sourceInspectionPlan.name)}. ${escape(op.sourceInspectionPlan.notificationText)}${op.sourceInspection ? `<br><em>Agency ${escape(op.sourceInspection.agency)} · inspector ${escape(op.sourceInspection.inspector)} · reference ${escape(op.sourceInspection.reference)} · notified ${escape(op.sourceInspection.notifiedDate)} · inspected ${escape(op.sourceInspection.inspectedDate)}</em>` : '<br><em>Source inspection record required before buy-off.</em>'}` : '';
       const hold = op.inspectionPoint ? `<span class="hold">${op.buyoffType === 'Conformity Inspector' ? 'CONFORMITY HOLD POINT' : 'INSPECTION POINT'}</span>` : '';
-      const steps = list(op.steps).map((s, i) => `<tr class="st"><td class="no">${escape(number(op))}-${escape(MES.stepLetter(i))}</td><td colspan="2"><strong>${escape(s.title)}</strong><br>${escape(s.instruction || '')}${s.recordsTorque ? '<br><em>Torque: value ______ unit ____ tool ________</em>' : ''}${list(s.consumables).length ? `<br><em>Consumables: ${list(s.consumables).map(escape).join(', ')} · lot ______ exp ______</em>` : ''}</td>${stamp}${stamp}</tr>`).join('');
-      const atpRow = op.classification === 'Acceptance Test Procedure (ATP)' ? `<tr class="st"><td class="no"></td><td colspan="2"><strong>Test equipment / assets (required)</strong><br>Asset ID ____________ cal due ________ · Asset ID ____________ cal due ________ · Asset ID ____________ cal due ________</td>${stamp}${stamp}</tr>` : '';
+      const steps = list(op.steps).map((s, i) => `<tr class="st"><td class="no">${escape(number(op))}-${escape(MES.stepLetter(i))}</td><td colspan="2"><strong>${escape(s.title)}</strong><br>${escape(s.instruction || '')}${s.recordsTorque ? '<br><em>Torque: value ______ unit ____ tool ________</em>' : ''}${list(s.consumables).length ? `<br><em>Consumables: ${list(s.consumables).map(escape).join(', ')} · lot ______ exp ______</em>` : ''}</td>${checkOff}</tr>`).join('');
+      const atpRow = op.classification === 'Acceptance Test Procedure (ATP)' ? `<tr class="st"><td class="no"></td><td colspan="2"><strong>Test equipment / assets (required)</strong><br>Asset ID ____________ cal due ________ · Asset ID ____________ cal due ________ · Asset ID ____________ cal due ________</td>${checkOff}</tr>` : '';
       return `<tbody class="op"><tr class="oh"><td class="no">${escape(number(op))}</td><td><strong>${escape(op.title)}</strong> ${hold}<br><small>${escape(op.classification || 'Manufacturing')} · buy-off: ${escape(op.buyoffType || '')}</small> ${callout(op)}${stdHdr}${sourceHdr}${op.externalPO && op.externalPO.number ? `<br><small>PO ${escape(op.externalPO.number)}</small>` : ''}</td><td>${escape(op.description || '')}</td><td class="blank">Print name</td><td class="blank">Date</td></tr>${steps}${atpRow}</tbody>`;
     }).join('');
     const kit = order.materials.map(m => `<tr><td>${escape(m.partNumber)}</td><td>${escape(m.name)}</td><td>${escape(m.required)}</td><td>${escape(m.lot || '')}</td>${stamp}${stamp}</tr>`).join('');
@@ -10137,7 +10139,7 @@ const ATTACH_KINDS = Object.freeze(['mrb','cars','ncs','sprs']);
       .top{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #111;padding-bottom:8px}.big{font:700 28px/1 Arial,sans-serif;letter-spacing:.04em}
       dl{display:grid;grid-template-columns:repeat(4,1fr);gap:6px 12px;margin:12px 0}dt{font-size:10px;text-transform:uppercase;color:#555}dd{margin:0;font-weight:700}
       table{width:100%;border-collapse:collapse;margin-bottom:8px}th,td{border:1px solid #333;padding:4px 6px;vertical-align:top;text-align:left}th{background:#eee;font-size:10px;text-transform:uppercase}
-      .no{width:52px;font-weight:700}.blank{width:140px;color:#999;font-size:10px}.oh td{background:#f3f3f3}.st td{font-size:11px}.hold{border:2px solid #c0362c;color:#c0362c;font-weight:700;padding:0 4px;font-size:10px}
+      .no{width:52px;font-weight:700}.blank{width:140px;color:#999;font-size:10px}.oh td{background:#f3f3f3}.st td{font-size:11px}.chk{text-align:center;vertical-align:middle}.box{display:inline-block;width:16px;height:16px;border:1.5px solid #111;background:#fff}.legend{margin:0 0 6px}.hold{border:2px solid #c0362c;color:#c0362c;font-weight:700;padding:0 4px;font-size:10px}
       .callout{border:1.5px solid #111;border-radius:3px;padding:0 4px;font-size:10px;font-weight:700}.op{break-inside:avoid}.fallback{border:2px solid #111;padding:6px 8px;margin:8px 0 12px;break-inside:avoid}.fallback p{margin:0 0 6px}.fallback table{margin:0}.fb td{height:22px}.sig{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:16px}.sig div{border-top:1px solid #111;padding-top:4px;font-size:10px}
       .sk-brand{display:inline-flex;flex-direction:column;align-items:center;gap:2px;margin-right:16px}.sk-brand span{font:700 11px/1 Arial,sans-serif;letter-spacing:.32em;margin-right:-.32em;color:#111}.brand-row{display:flex;align-items:center}.print-action{position:fixed;top:12px;right:12px;padding:8px 16px;font-weight:700}@media print{.print-action{display:none}body{margin:10mm}}
       </style></head><body><button class="print-action" type="button">Print traveler</button>
@@ -10147,7 +10149,7 @@ const ATTACH_KINDS = Object.freeze(['mrb','cars','ncs','sprs']);
       <section class="fallback"><p><strong>Flight System is the record of record. This traveler is a working aid.</strong> If an operation cannot be recorded in Flight System when performed, sign and date here, then enter it in Flight System when available.</p>
       <table><thead><tr><th>Op / step</th><th>Print name</th><th>Signature</th><th>Date</th><th>Entered in Flight System by / date</th></tr></thead><tbody>${'<tr class="fb"><td>&nbsp;</td><td></td><td></td><td></td><td></td></tr>'.repeat(4)}</tbody></table></section>
       <h2>Kit</h2><table><thead><tr><th>Part number</th><th>Material</th><th>Qty</th><th>Lot / serial</th><th>Verified by (print name)</th><th>Date</th></tr></thead><tbody>${kit}</tbody></table>
-      <h2>Operation sequence</h2><table><thead><tr><th>Op / step</th><th>Operation</th><th>Instruction</th><th>Print name</th><th>Date</th></tr></thead>${rows}</table>
+      <h2>Operation sequence</h2><p class="legend">Tick the box on each step when it is done. When the operation is complete, print your name and the date on the operation row.</p><table><thead><tr><th>Op / step</th><th>Operation</th><th>Instruction</th><th>Op: print name<br>Step: done</th><th>Op: date</th></tr></thead>${rows}</table>
       <div class="sig"><div>Kitted by (print name) / date</div><div>Final inspection (print name) / date</div><div>QA release (print name) / date</div></div>
       </body></html>`;
   }
