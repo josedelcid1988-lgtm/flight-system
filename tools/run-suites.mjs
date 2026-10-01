@@ -35,6 +35,9 @@ export function judge(name, code, out) {
   const checks = out.match(/checks (\d+) pass (\d+) fail (\d+)(?: skip (\d+))?/);
   if (checks && Number(checks[3]) > 0) problems.push(`${checks[3]} failed checks`);
   const flows = out.match(/flows (\d+) failed (\d+)/); if (flows && Number(flows[2]) > 0) problems.push(`${flows[2]} failed flows`);
+  // qa_e2e reports whether the workspace it ends with still passes MES.validate. Every flow can succeed and
+  // still leave an invalid workspace, so the result line must say valid true; false or a missing field fails.
+  if (flows) { const valid = out.match(/flows \d+ failed \d+ valid (true|false)\b/); if (!valid) problems.push('the E2E result line does not report whether the final workspace is valid'); else if (valid[1] !== 'true') problems.push('the final workspace is invalid (MES.validate is false)'); }
   if (/REHEARSAL FAILURES/.test(out)) problems.push('rehearsal failures');
   if (/^FAIL \d+/m.test(out)) problems.push('layout drift');
   for (const m of out.matchAll(/(?:page )?errors (\[.*\])/g)) { try { const list = JSON.parse(m[1]); if (list.length) problems.push(`page errors: ${list.slice(0, 2).join(' | ')}`); } catch { /* informational line */ } }
