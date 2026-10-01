@@ -40,7 +40,11 @@ try {
   if (want.some(t => !triggers.includes(t))) { console.error(`FAIL the restored database is missing its append-only triggers: ${want.filter(t => !triggers.includes(t)).join(', ')}`); ok = false; }
   if (against) {
     const live = new DatabaseSync(against, { readOnly: true });
-    const cols = 'id, client_write_id, store_key, entity_type, entity_id, operation, payload_json, payload_sha256, prev_sha256, actor, credential, client_ts, server_ts, build_version, build_sha256, client_id';
+    // manifests_sha256 is part of each row's link; compare it whenever both databases have the column. A
+    // backup with the column against a live database without it (or the reverse) is not a prefix.
+    const hasM = d => d.prepare('PRAGMA table_info(records)').all().some(c => c.name === 'manifests_sha256');
+    if (hasM(db) !== hasM(live)) { console.error('FAIL the backup and the live database differ in schema (manifests_sha256): one predates signature manifests in the chain'); ok = false; }
+    const cols = 'id, client_write_id, store_key, entity_type, entity_id, operation, payload_json, payload_sha256, prev_sha256, actor, credential, client_ts, server_ts, build_version, build_sha256, client_id' + (hasM(db) && hasM(live) ? ', manifests_sha256' : '');
     const get = live.prepare(`SELECT ${cols} FROM records WHERE id = ?`);
     let mismatch = null;
     for (const row of db.prepare(`SELECT ${cols} FROM records ORDER BY id`).iterate()) {

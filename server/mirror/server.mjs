@@ -104,6 +104,16 @@ export function chainTip(db) {
 export function readAnchor(file) {
   try { const a = JSON.parse(fs.readFileSync(file, 'utf8')); return a && Number.isInteger(a.records) && HEX64.test(a.tip || '') ? a : null; } catch { return null; }
 }
+// Whether the database's row count and tip are still the ones the anchor recorded. Checked before every write
+// and every backup, so a database changed outside the server is never re-anchored or copied as if it were good.
+export function anchorMismatch(db, anchor) {
+  if (!anchor) return 'the chain anchor is missing or unreadable';
+  const now = chainTip(db);
+  if (now.records !== anchor.records) return `the database has ${now.records} rows but the anchor records ${anchor.records}`;
+  if (now.tip !== anchor.tip) return 'the last row does not match the anchored chain tip';
+  return null;
+}
+
 export function writeAnchor(file, db, when = new Date()) {
   const a = { ...chainTip(db), anchoredAt: when.toISOString() };
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -225,8 +235,12 @@ export function exportAll(db, format = 'json', anchor) {
 // ---- backups ---------------------------------------------------------------------------------------
 const BACKUP_RE = /^flight-system-mirror-(\d{4}-\d{2}-\d{2})T(\d{6})Z\.sqlite$/;
 // The copy is written with its own anchor (<backup>.anchor.json), taken from the same database state:
-// the server is single threaded and no write runs between the two.
-export function backupNow(db, dir, when = new Date()) {
+// the server is single threaded and no write runs between the two. The database is first checked in full
+// against its trusted live anchor; a database that no longer matches it is never copied, so a backup cannot
+// carry a fresh anchor for a truncated or rewritten chain.
+export function backupNow(db, dir, when = new Date(), { anchor } = {}) {
+  const v = verifyChain(db, { anchor: anchor === undefined ? null : anchor });
+  if (!v.ok) throw new Error(`backup refused: the database does not match its chain anchor (${v.firstBreak.reason}). Investigate before backing up; see Restore procedure in server/mirror/README.md.`);
   fs.mkdirSync(dir, { recursive: true });
   const iso = when.toISOString();
   const name = `flight-system-mirror-${iso.slice(0, 10)}T${iso.slice(11, 19).replace(/:/g, '')}Z.sqlite`;
@@ -274,6 +288,11 @@ export function createMirror(options = {}) {
     const rows = Number(db.prepare('SELECT COUNT(*) n FROM records').get().n);
     if (rows > 0) { db.close(); throw new Error(`The chain anchor ${anchorPath} is missing for a database that already holds ${rows} records. Check the chain, then write the anchor: node server/mirror/server.mjs --reanchor --db ${cfg.dbPath}${cfg.anchorPath ? ` --anchor ${anchorPath}` : ''}. After a restore, copy the backup's .anchor.json into place with it.`); }
     writeAnchor(anchorPath, db);
+  } else {
+    // An anchor that no longer matches means rows were removed or the last row changed while the server was
+    // down. Starting would let the next write overwrite the anchor and hide that, so the server refuses.
+    const v = verifyChain(db, { anchor: readAnchor(anchorPath) });
+    if (!v.ok) { db.close(); throw new Error(`The mirror database does not match its chain anchor ${anchorPath}: ${v.firstBreak.reason}. The server does not start, so no write can overwrite the anchor. Compare it with the latest good backup (node server/mirror/restore-test.mjs <backup> --against ${cfg.dbPath}); only after the cause is recorded, restore a backup or run --reanchor.`); }
   }
   const bearer = req => String(req.headers.authorization || '');
   const same = (a, b) => { const x = Buffer.from(a), y = Buffer.from(b); return x.length === y.length && crypto.timingSafeEqual(x, y); };
@@ -300,6 +319,8 @@ export function createMirror(options = {}) {
       if (req.method === 'POST' && url.pathname === `/api/${API_VERSION}/writes`) {
         if (!writer(req)) return fail(res, 401, 'unauthorized', 'Send the write token as Authorization: Bearer <token>.');
         let body; try { body = JSON.parse(await readBody(req)); } catch (e) { return e.status === 413 ? fail(res, 413, 'too_large', `Request body over ${cfg.maxBodyBytes} bytes.`) : fail(res, 400, 'bad_request', 'Body is not valid JSON.'); }
+        const drift = anchorMismatch(db, readAnchor(anchorPath));
+        if (drift) { console.error(`write refused: ${drift}`); return fail(res, 409, 'anchor_mismatch', 'The mirror database no longer matches its chain anchor, so no record is stored until the operator investigates. The app keeps the records queued.'); }
         const check = ackCheck(db, body && body.lastAck);
         const r = appendRecords(db, body && body.clientId, body && body.records);
         if (r.ok && r.results.some(x => x.status === 'stored')) writeAnchor(anchorPath, db);
@@ -334,7 +355,7 @@ export function createMirror(options = {}) {
     }
   });
   let timer = null;
-  const runBackup = () => { lastBackup = backupNow(db, cfg.backupDir); pruneBackups(cfg.backupDir, cfg.backupKeepDays); return lastBackup; };
+  const runBackup = () => { lastBackup = backupNow(db, cfg.backupDir, new Date(), { anchor: readAnchor(anchorPath) }); pruneBackups(cfg.backupDir, cfg.backupKeepDays); return lastBackup; };
   return {
     server, db, cfg, anchorPath,
     verify: () => verifyChain(db, { anchor: readAnchor(anchorPath) }),
@@ -358,7 +379,9 @@ async function main() {
   }
   if (cfg.backupNow) {
     const db = openDatabase(cfg.dbPath);
-    const file = backupNow(db, cfg.backupDir); const removed = pruneBackups(cfg.backupDir, cfg.backupKeepDays);
+    const anchorFile = cfg.anchorPath ? path.resolve(cfg.anchorPath) : defaultAnchorPath(cfg.dbPath);
+    let file; try { file = backupNow(db, cfg.backupDir, new Date(), { anchor: fs.existsSync(anchorFile) ? readAnchor(anchorFile) : null }); } catch (e) { console.error(e.message); db.close(); process.exit(1); }
+    const removed = pruneBackups(cfg.backupDir, cfg.backupKeepDays);
     console.log(`backup written: ${file}${removed.length ? `; removed ${removed.length} old copies` : ''}`);
     db.close(); return;
   }

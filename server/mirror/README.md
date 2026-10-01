@@ -12,7 +12,9 @@ shipped default) the app is unchanged.
   link covers its signature manifests (`manifests_sha256`), so an edit to a stored row or manifest,
   or a missing row, is found by `GET /api/v1/verify`.
 - Chain anchor: the row count and the link of the last row are kept outside the database (the
-  anchor file), so rows removed from the end, or a changed last row, are found too.
+  anchor file), so rows removed from the end, or a changed last row, are found too. The server
+  refuses to start, refuses every write (409 `anchor_mismatch`) and refuses every backup while the
+  database does not match its anchor, so the anchor is never overwritten to cover a change.
 - Two tokens: the page carries an append-only write token; reading, verifying and exporting need
   the operator token, which never goes into the page.
 - Loopback only in plain HTTP: to serve other machines it runs behind a TLS-terminating reverse proxy.
@@ -27,6 +29,12 @@ Requires Node 22.13 or later (for `node:sqlite` without a flag).
 FS_MIRROR_TOKEN='<long random operator value>' FS_MIRROR_WRITE_TOKEN='<a different long random value>' \
 FS_MIRROR_ALLOW_ORIGIN='https://mes.internal' node server/mirror/server.mjs
 ```
+
+**Upgrading an existing mirror:** the old `FS_MIRROR_TOKEN` was the value in `SK_MIRROR.token`, so
+every browser that loaded the app has seen it. Generate a **new** operator token for
+`FS_MIRROR_TOKEN`; do not keep the old value as the operator token. The old value may become the
+write token only if you accept that it stays readable in the page, which is all a write token is.
+Then run `--reanchor` once (see Settings).
 
 The mirror refuses to start without both tokens, if they are equal, or if either is shorter than 16
 characters. The **write token** goes into the page and can only append records (`POST /api/v1/writes`):

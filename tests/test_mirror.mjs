@@ -154,6 +154,31 @@ await m.close();
   ok('a database from before this change gains the column, keeps its links and keeps writing',ra.status===0&&more.results[0].status==='stored'&&vl.ok&&vl.records===3&&vl.legacyRows===2,JSON.stringify({vl,ra:ra.stderr}));await ml.close();}
 }
 
+// The anchor is never overwritten to cover a change: a mismatching database is refused at start, on every
+// write and on every backup, and the restore comparison includes manifests_sha256.
+{const {DatabaseSync}=await import('node:sqlite');
+ const gp=path.join(tmp,'guard.sqlite');const mg=createMirror({dbPath:gp,backupDir:path.join(tmp,'b12'),port:0,backupEveryMinutes:0,...SECURE});const ag=await mg.listen();const ug=`http://127.0.0.1:${ag.port}/api/v1`;
+ const pg=b=>fetch(ug+'/writes',{method:'POST',headers:{'content-type':'application/json',...WAUTH},body:JSON.stringify(b)});
+ await pg({clientId:'g',records:[rec(70),rec(71),rec(72)]});
+ const good=mg.backup();const anchorBefore=fs.readFileSync(gp+'.anchor.json','utf8');
+ // Tamper while the server runs: the last row is removed behind its back.
+ mg.db.exec('DROP TRIGGER records_no_delete');mg.db.exec('DROP TRIGGER manifests_no_delete');mg.db.exec('DELETE FROM signature_manifests WHERE record_id=3');mg.db.exec('DELETE FROM records WHERE id=3');
+ const refused=await pg({clientId:'g',records:[rec(73)]});const rj=await refused.json();
+ ok('a write is refused while the database no longer matches its anchor, and nothing is stored',refused.status===409&&rj.error.code==='anchor_mismatch'&&Number(mg.db.prepare('SELECT COUNT(*) n FROM records').get().n)===2,JSON.stringify(rj));
+ ok('the refused write leaves the anchor as it was',fs.readFileSync(gp+'.anchor.json','utf8')===anchorBefore);
+ let bmsg='';try{mg.backup();}catch(e){bmsg=e.message;}
+ ok('a backup is refused while the database no longer matches its anchor',/backup refused/.test(bmsg)&&/removed from the end/.test(bmsg),bmsg);
+ await mg.close();
+ let smsg='';try{createMirror({dbPath:gp,backupDir:path.join(tmp,'b12'),port:0,backupEveryMinutes:0,...SECURE});}catch(e){smsg=e.message;}
+ ok('the server refuses to start on a database that no longer matches its anchor',/does not match its chain anchor/.test(smsg)&&/removed from the end/.test(smsg),smsg);
+ ok('the refusal to start leaves the anchor as it was',fs.readFileSync(gp+'.anchor.json','utf8')===anchorBefore);
+ const bk=spawnSync(process.execPath,[path.join(ROOT,'server/mirror/server.mjs'),'--backup-now','--db',gp,'--backup-dir',path.join(tmp,'b13')],{encoding:'utf8'});
+ ok('--backup-now refuses the same database',bk.status===1&&/backup refused/.test(bk.stderr),bk.stdout+bk.stderr);
+ // restore-test --against compares manifests_sha256: a live copy differing only in that column is not a prefix.
+ const live=path.join(tmp,'mlive.sqlite');fs.copyFileSync(good,live);{const d=new DatabaseSync(live);d.exec('DROP TRIGGER records_no_update');d.exec("UPDATE records SET manifests_sha256='"+'0'.repeat(64)+"' WHERE id=1");d.close();}
+ const rt=spawnSync(process.execPath,[path.join(ROOT,'server/mirror/restore-test.mjs'),good,'--against',live],{encoding:'utf8'});
+ ok('restore-test --against finds a row that differs only in manifests_sha256',rt.status===1&&/row 1 in the backup differs/.test(rt.stderr),rt.stdout+rt.stderr);}
+
 // Fail closed (issue 76): no token configured refuses to start, no origin configured sends no CORS header, and
 // health tells a caller without the token only that the mirror is up.
 {let refusedStart='';try{createMirror({dbPath:path.join(tmp,'none.sqlite'),backupDir:path.join(tmp,'b5'),port:0,backupEveryMinutes:0});}catch(e){refusedStart=e.message;}
@@ -232,7 +257,13 @@ v=await (await get(API+'/verify')).json();
 ok('the live chain is intact after the outage and recovery',v.chainIntact===true,JSON.stringify(v));
 // Restore: the server goes back to a backup taken before rows it had confirmed. The next post names the newest
 // confirmed row, the server no longer has it, and the app sends every record again, so nothing is lost.
+const authEdit=(fn,arg)=>p.evaluate(([src,arg])=>{const a=JSON.parse(localStorage.getItem('skyryse-mes-auth-v1'));new Function('a','arg',src)(a,arg);localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify(a));window.dispatchEvent(new Event('sk-auth-saved'));},[fn,arg]);
+const lastOp=id=>(m.db.prepare("SELECT operation FROM records WHERE entity_type='account' AND entity_id=? ORDER BY id DESC LIMIT 1").get(id)||{}).operation;
+await authEdit("a.users.push({username:arg,displayName:'Temp Account',salt:'00',hash:'f'.repeat(64),role:'general',createdAt:new Date().toISOString()});",'tmpacct');st=await drain();
 {const bk2=m.backup();
+ // An account deleted after the backup: the restored mirror holds it as current until the device says again that it is gone.
+ await authEdit("a.users=a.users.filter(u=>u.username!==arg);",'tmpacct');st=await drain();
+ ok('a deletion after the backup reached the server before the restore',lastOp('tmpacct')==='delete',String(lastOp('tmpacct')));
  const after=[];for(let i=0;i<2;i++)after.push((await mkOrder(p)).id);st=await drain();
  const has=id=>!!m.db.prepare("SELECT 1 FROM records WHERE entity_type='order' AND entity_id=?").get(id);
  ok('orders written after the backup reached the server before the restore',after.every(has)&&st.unsynced===0,JSON.stringify({after,st}));
@@ -240,11 +271,23 @@ ok('the live chain is intact after the outage and recovery',v.chainIntact===true
  const live=path.join(tmp,'live.sqlite');for(const x of ['-wal','-shm'])fs.rmSync(live+x,{force:true});fs.copyFileSync(bk2,live);fs.copyFileSync(bk2+'.anchor.json',live+'.anchor.json');
  m=createMirror({dbPath:live,backupDir:path.join(tmp,'b4'),port:PORT,backupEveryMinutes:0,...SECURE});await m.listen();
  ok('the restored server lacks the orders confirmed after its backup (the refusal case is real)',!after.some(has));
+ ok('the restored server holds the deleted account as current (the refusal case is real)',lastOp('tmpacct')==='upsert',String(lastOp('tmpacct')));
  const w3=await mkOrder(p);st=await drain();
  ok('after a restore the app sends every record again: the orders confirmed after the backup are back',w3.ok&&after.every(has)&&has(w3.id)&&st.unsynced===0&&!!st.resentAt,JSON.stringify({st,after,w3}));
+ ok('after a restore the app also re-sends its deletions: the deleted account is gone again',lastOp('tmpacct')==='delete',String(lastOp('tmpacct')));
  ok('the restored and refilled chain is intact against its anchor',m.verify().ok,JSON.stringify(m.verify()));
  const w4=await mkOrder(p);const before=count();st=await drain();
  ok('once caught up, the next write sends only what changed',st.resentAt&&count()-before<=3,JSON.stringify({added:count()-before}));}
+// A device upgraded from a build without acknowledgements: it has confirmed records but no lastAck, so its
+// first confirmed post sends everything once instead of trusting a mirror that may have been restored.
+{await p.evaluate(()=>{const c=JSON.parse(localStorage.getItem('skyryse-mes-sync-client-v1'));delete c.ack;localStorage.setItem('skyryse-mes-sync-client-v1',JSON.stringify(c));});
+ await p.reload();await p.waitForFunction(()=>window.__ready===true&&!!window.skMirror,null,{timeout:30000});
+ const pre=await p.evaluate(()=>({ack:JSON.parse(localStorage.getItem('skyryse-mes-sync-client-v1')).ack||null,sent:Object.keys(JSON.parse(localStorage.getItem('skyryse-mes-sync-sent-v1')||'{}')).length,resent:window.skMirror.status().resentAt}));
+ const before=count();const w5=await mkOrder(p);st=await drain();
+ const post=await p.evaluate(()=>JSON.parse(localStorage.getItem('skyryse-mes-sync-client-v1')).ack||null);
+ ok('an upgraded device with confirmed records and no acknowledgement sends everything once on its first post, then records an acknowledgement',pre.ack===null&&pre.sent>0&&pre.resent===null&&w5.ok&&!!st.resentAt&&count()-before>=pre.sent&&!!post&&Number.isInteger(post.id),JSON.stringify({pre,added:count()-before,post}));
+ const b2=count();await mkOrder(p);st=await drain();
+ ok('after that baseline the next write sends only what changed',count()-b2<=3,JSON.stringify({added:count()-b2}));}
 ok('state valid in the app at the end',await p.evaluate(()=>MES.validate(state)));
 ok('no page errors with the mirror on, including the outage',errs.length===0,errs.join(' | '));
 await ctx.close();await b.close();await m.close();

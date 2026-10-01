@@ -13826,6 +13826,11 @@ window.SK_MIRROR = window.SK_MIRROR || {
   if (!client || typeof client.id !== 'string') { client = { id: 'client-' + (window.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2)), seq: 0 }; }
   var queue = read(QUEUE_KEY, []); if (!Array.isArray(queue)) queue = [];
   var sent = read(SENT_KEY, {}); if (!sent || typeof sent !== 'object') sent = {};
+  if (!client.tombs || typeof client.tombs !== 'object') client.tombs = {};
+  var tombs = client.tombs;
+  // A device upgraded from a build without acknowledgements has confirmed records but no lastAck to name, so it
+  // cannot tell whether the mirror was restored meanwhile. Its first confirmed post sends everything once.
+  var needBaseline = !client.ack && Object.keys(sent).length > 0;
   var lastJson = {};          // entity key -> JSON last queued in this page (fast path; sent holds the hashes across reloads)
   var inflight = null, retryTimer = null, attempt = 0, lastError = '', lastSyncAt = null, memoryOnly = false, resentAt = null, lastWs = null;
   var persist = function () {
@@ -13887,6 +13892,14 @@ window.SK_MIRROR = window.SK_MIRROR || {
     var meta = function (name) { var m = document.querySelector('meta[name="' + name + '"]'); return m ? m.getAttribute('content') : ''; };
     return window.MES && typeof MES.buildStamp === 'function' ? MES.buildStamp() : { version: meta('fs-build') || 'unstamped', sha256: meta('fs-build-sha256') || 'unstamped' };
   }
+  // A deleted entity is queued as a delete record and remembered as a tombstone (the newest 5000 are kept).
+  function pushDelete(key, acct, b, now) {
+    var type = key.split('|')[0], id = key.slice(type.length + 1), json = JSON.stringify({ entityType: type, entityId: id, deleted: true });
+    client.seq += 1;
+    queue.push({ clientWriteId: client.id + '-' + client.seq, storeKey: type === 'account' ? AUTH_KEY : (typeof KEY !== 'undefined' ? KEY : 'skyryse-mes-work-order-v1'), entityType: type, entityId: id, operation: 'delete', payloadJson: json, payloadSha256: hash(json), actor: acct ? acct.name + ' · ' + acct.credentialId : null, credential: acct ? acct.credentialId : null, clientTs: now, buildVersion: b.version, buildSha256: b.sha256, manifests: [], synced: false });
+    delete tombs[key]; tombs[key] = 1;
+    var keys = Object.keys(tombs); if (keys.length > 5000) keys.slice(0, keys.length - 5000).forEach(function (k) { delete tombs[k]; });
+  }
   function enqueue(map, onlyTypes) {
     var acct = window.skAuth && typeof skAuth.actor === 'function' ? skAuth.actor() : null;
     var b = build(), now = new Date().toISOString(), added = 0;
@@ -13898,15 +13911,14 @@ window.SK_MIRROR = window.SK_MIRROR || {
       client.seq += 1;
       queue.push({ clientWriteId: client.id + '-' + client.seq, storeKey: e.storeKey, entityType: e.type, entityId: e.id, operation: 'upsert', payloadJson: json, payloadSha256: h, actor: acct ? acct.name + ' · ' + acct.credentialId : null, credential: acct ? acct.credentialId : null, clientTs: now, buildVersion: b.version, buildSha256: b.sha256, manifests: manifestsOf(JSON.parse(json), e.type, []), synced: false });
       sent[key] = h; lastJson[key] = json; added += 1;
+      if (tombs[key]) delete tombs[key];
     });
     Object.keys(sent).forEach(function (key) {
       var type = key.split('|')[0];
       // A workspace commit owns every entity type except accounts; the account pass owns accounts only.
       var mine = onlyTypes[0] === '*' ? type !== 'account' : onlyTypes.indexOf(type) >= 0;
       if (map[key] || !mine) return;
-      var id = key.slice(type.length + 1), json = JSON.stringify({ entityType: type, entityId: id, deleted: true });
-      client.seq += 1;
-      queue.push({ clientWriteId: client.id + '-' + client.seq, storeKey: type === 'account' ? AUTH_KEY : (typeof KEY !== 'undefined' ? KEY : 'skyryse-mes-work-order-v1'), entityType: type, entityId: id, operation: 'delete', payloadJson: json, payloadSha256: hash(json), actor: acct ? acct.name + ' · ' + acct.credentialId : null, credential: acct ? acct.credentialId : null, clientTs: now, buildVersion: b.version, buildSha256: b.sha256, manifests: [], synced: false });
+      pushDelete(key, acct, b, now);
       delete sent[key]; delete lastJson[key]; added += 1;
     });
     if (added) persist();
@@ -13935,12 +13947,16 @@ window.SK_MIRROR = window.SK_MIRROR || {
       .then(function (res) { return res.json().catch(function () { return {}; }).then(function (j) { if (!res.ok || !j.ok) throw new Error((j.error && j.error.message) || ('HTTP ' + res.status)); return j; }); })
       .then(function (j) {
         var done = {}, bad = {};
+        var fresh = null;
         (j.results || []).forEach(function (r) {
-          if (r.status === 'stored' || r.status === 'duplicate') { done[r.clientWriteId] = 1; if (Number.isInteger(r.id) && (!client.ack || r.id > client.ack.id)) client.ack = { id: r.id, clientWriteId: r.clientWriteId }; }
+          if (r.status === 'stored' || r.status === 'duplicate') { done[r.clientWriteId] = 1; if (Number.isInteger(r.id) && (!fresh || r.id > fresh.id)) fresh = { id: r.id, clientWriteId: r.clientWriteId }; }
           else if (r.status === 'rejected') bad[r.clientWriteId] = r.reason || 'rejected';
         });
         queue = queue.filter(function (r) { return !done[r.clientWriteId]; });
-        if (j.ackCheck === 'missing') resendAll();
+        // After a restore (or on a device's first post since upgrading), only rows confirmed in this answer are
+        // known to be on the server; everything else is sent again.
+        if (j.ackCheck === 'missing' || needBaseline) { client.ack = fresh; needBaseline = false; resendAll(); }
+        else if (fresh && (!client.ack || fresh.id > client.ack.id)) client.ack = fresh;
         queue.forEach(function (r) { if (bad[r.clientWriteId]) r.rejected = bad[r.clientWriteId]; });
         persist(); attempt = 0; lastError = Object.keys(bad).length ? 'The mirror refused ' + Object.keys(bad).length + ' record(s): ' + bad[Object.keys(bad)[0]] : ''; lastSyncAt = new Date().toISOString();
         inflight = null; paint();
@@ -13956,12 +13972,15 @@ window.SK_MIRROR = window.SK_MIRROR || {
   // The server no longer holds a row it confirmed to this device (it was restored from a backup taken before
   // that row). Forget what was confirmed and queue every entity and account again, so nothing this device
   // holds is missing from the restored mirror. The rows confirmed since the restore are kept by the server.
+  // Deletions are re-sent too: every entity this device deleted is kept as a tombstone, so a restored mirror
+  // that holds an entity from before its deletion is told again that it is gone.
   function resendAll() {
     sent = {}; lastJson = {};
-    client.ack = null;
     var ws = (typeof state !== 'undefined' && state) || lastWs;
     if (ws) enqueue(entities(ws, typeof KEY !== 'undefined' ? KEY : 'skyryse-mes-work-order-v1'), ['*']);
     enqueue(accountEntities(), ['account']);
+    var acct = window.skAuth && typeof skAuth.actor === 'function' ? skAuth.actor() : null, b = build(), now = new Date().toISOString();
+    Object.keys(tombs).forEach(function (key) { if (!sent[key]) pushDelete(key, acct, b, now); });
     resentAt = new Date().toISOString();
     persist();
   }
