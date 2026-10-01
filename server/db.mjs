@@ -4,6 +4,9 @@ import { createHash, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { evidenceIdsInOrder } from './evidence-refs.mjs';
+
+const archivedEvidenceIds = json => { try { return evidenceIdsInOrder(JSON.parse(json)?.order); } catch { return new Set(); } };
 
 export function openDb(path) {
   const db = new DatabaseSync(path);
@@ -53,6 +56,30 @@ export function openDb(path) {
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
   }
+  // The evidence references of each archived order (see server/evidence-refs.mjs) and, per order, a marker that its
+  // references are recorded. putArchived writes both with the archive row. reconcileArchiveEvidence records any archived
+  // order without a marker: an older database's whole archive at the first start, and any order archived by a server
+  // still on an earlier release (which writes neither) at the next start or the next lookup that misses. Every insert
+  // ignores a row already there, so two servers reconciling at once is harmless.
+  db.exec(`CREATE TABLE IF NOT EXISTS archive_evidence (evidence_id TEXT NOT NULL, order_id TEXT NOT NULL, PRIMARY KEY (evidence_id, order_id));
+    CREATE TABLE IF NOT EXISTS archive_evidence_indexed (order_id TEXT PRIMARY KEY);`);
+  const recordArchiveEvidence = (orderId, json) => {
+    const add = db.prepare('INSERT OR IGNORE INTO archive_evidence (evidence_id, order_id) VALUES (?, ?)');
+    for (const id of archivedEvidenceIds(json)) add.run(id, orderId);
+    db.prepare('INSERT OR IGNORE INTO archive_evidence_indexed (order_id) VALUES (?)').run(orderId);
+  };
+  // One pass covers the archive as it stood when the pass started (the highest order_id then), walked with a key cursor,
+  // so each row is visited at most once and another process still archiving cannot keep the pass running.
+  const reconcileArchiveEvidence = () => {
+    const end = db.prepare('SELECT MAX(order_id) AS last FROM archive').get()?.last;
+    if (end == null) return;
+    const page = db.prepare('SELECT a.order_id, a.json FROM archive a WHERE a.order_id > ? AND a.order_id <= ? AND NOT EXISTS (SELECT 1 FROM archive_evidence_indexed i WHERE i.order_id = a.order_id) ORDER BY a.order_id LIMIT 200');
+    for (let after = '', rows; (rows = page.all(after, end)).length; after = rows[rows.length - 1].order_id) {
+      db.exec('BEGIN IMMEDIATE');
+      try { for (const row of rows) recordArchiveEvidence(row.order_id, row.json); db.exec('COMMIT'); } catch (error) { db.exec('ROLLBACK'); throw error; }
+    }
+  };
+  reconcileArchiveEvidence();
   // A database from before hashed sessions keeps tokens in plaintext. Those sessions are ended, not converted:
   // everyone signs in again once after the upgrade.
   const sessionColumns = new Set(db.prepare('PRAGMA table_info(sessions)').all().map(row => row.name));
@@ -145,9 +172,16 @@ export function openDb(path) {
     // ---- archive of closed work orders ----
     archived(id) { const r = db.prepare('SELECT order_id, json, sha256, schema, archived_at, archived_by FROM archive WHERE order_id = ?').get(id); return r ? { id: r.order_id, entry: JSON.parse(r.json), sha256: r.sha256, schema: r.schema, archivedAt: r.archived_at, archivedBy: r.archived_by } : null; },
     archivedSha(id) { const r = db.prepare('SELECT sha256 FROM archive WHERE order_id = ?').get(id); return r ? r.sha256 : null; },
-    putArchived(e) { db.prepare('INSERT INTO archive (order_id, json, sha256, schema, part_number, serials, lots, parts, title, closed_at, archived_at, archived_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(e.id, e.json, e.sha256, e.schema, e.keys.partNumber || null, JSON.stringify(e.keys.serials), JSON.stringify(e.keys.lots), JSON.stringify(e.keys.parts), e.keys.title || null, e.keys.closedAt || null, now(), e.by || null); },
-    // Whether any archived order names this evidence ID. IDs are EV- and a UUID, so the quoted ID matches exactly.
-    archiveNamesEvidence(id) { return !!db.prepare('SELECT 1 AS found FROM archive WHERE instr(json, ?) > 0 LIMIT 1').get(JSON.stringify(String(id))); },
+    putArchived(e) { db.prepare('INSERT INTO archive (order_id, json, sha256, schema, part_number, serials, lots, parts, title, closed_at, archived_at, archived_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(e.id, e.json, e.sha256, e.schema, e.keys.partNumber || null, JSON.stringify(e.keys.serials), JSON.stringify(e.keys.lots), JSON.stringify(e.keys.parts), e.keys.title || null, e.keys.closedAt || null, now(), e.by || null); recordArchiveEvidence(e.id, e.json); },
+    // Whether any archived order names this evidence ID in an operation's evidence or quarantinedEvidence entry (id
+    // or copyOf, exact), from the references recorded at archive time: one indexed lookup, so an ID planted in a note
+    // or title names nothing and costs nothing. A miss first records any order a previous-release server archived.
+    archiveNamesEvidence(id) {
+      const find = () => !!db.prepare('SELECT 1 AS found FROM archive_evidence WHERE evidence_id = ? LIMIT 1').get(String(id));
+      if (find()) return true;
+      reconcileArchiveEvidence();
+      return find();
+    },
     archiveCount() { return db.prepare('SELECT COUNT(*) AS c FROM archive').get().c; },
     // Exact match on an order ID, serial, lot or part (case-insensitive), or a list when the query is empty.
     archiveSearch(query, limit = 200) {
