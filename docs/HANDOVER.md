@@ -45,20 +45,18 @@ production removes what such a demo left (its accounts and every account they cr
 records, its security events, and the drafts and mirror sent index it could have touched). The accounts the
 older demo made move to the demo's own account store, so they still work in the demo; a name the demo already
 holds keeps the demo's account and the older one is set aside under `skyryse-mes-legacy-demo-accounts-v1`.
-An account a person created while signed in to such a demo cannot be told apart from a production account, so
-a standalone page then opens on an account review and nothing else, across reloads and identity provider
-redirects. Only a QA Manager or Master Access account signs in to it (anyone else's session is ended and
-switching account is refused); they confirm each account they recognize, and nobody confirms their own account,
-so a browser with a single QA Manager or Master Access account cannot finish the review: move its workspace to
-the server (`docs/MIGRATION.md`) or clear its site data. A tab already open when the review is found reloads onto
-it. If browser storage refuses the review record, it is written into the account store instead, and failing that
-the page holds it and tells every other open page, which holds it too. Queued account records wait outside the
-mirror queue under `skyryse-mes-legacy-demo-account-queue-v1`, and the mirror sends no account record at all while
-the review is pending; closing the review queues the reviewed account list instead. An account nobody recognizes is never confirmed: clear
-the browser's site data, or use the server, before production use. Each step counts only once its security log entry is stored
-(`legacy-demo-accounts-confirmed`, then `legacy-demo-reviewed` when every account is confirmed). With the server,
-sign-in and accounts are the server's, so a notice stays on every page until a QA Manager or Master Access account
-signed in to the server marks the review done, again only once that is logged. Drafts and partial sign-in failure
+That demo let anyone create, change or reset accounts with relaxed rules, so an account it created or changed under a
+production name, or a password it reset, cannot be told apart from production, and no account on that browser can be
+trusted to sign in or to review the others. A standalone page therefore closes to production use: any session is ended,
+switching account is refused, nothing can be signed or changed, and the page says to move the workspace to the server
+without the browser's accounts (`docs/MIGRATION.md`) and then clear the browser's site data. A tab already open when
+the leftovers are found closes too. The review record is saved before anything is removed; if storage refuses it,
+nothing is removed, so every page finds the leftovers and closes, and the mirror sends nothing until storage is freed.
+Queued account records wait outside the mirror queue under `skyryse-mes-legacy-demo-account-queue-v1`, and the mirror
+sends no account record while the record is pending. With the server, sign-in and accounts are the server's, so a
+notice stays on every page until a QA Manager or Master Access account signed in to the server marks the review done,
+only once that is logged. A tab of an older production build that was already open with a queue in memory is outside
+this cleanup; the server-side guard is issue #514. Drafts and partial sign-in failure
 counts the older demo could have written are set
 aside under `skyryse-mes-legacy-demo-*` keys; a lockout in force is kept. Every account creation is now written to
 the security log (`account-create`), so this cannot recur unnoticed.

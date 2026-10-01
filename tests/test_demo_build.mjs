@@ -59,7 +59,7 @@ ok('production keeps the NC review hand-off',prod.includes('if(t.dispo?.credenti
  ok('the demo takes a mirror only from the suite runner\'s own setting, recorded before any of the file runs',curated.indexOf('window.__demoMirrorPreset=window.__FS_SUITE_DEMO_MIRROR__||null;')>0&&curated.indexOf('window.__demoMirrorPreset=window.__FS_SUITE_DEMO_MIRROR__||null;')<curated.indexOf('<script id="sk-mirror">'));
  ok('the demo keeps its mirror queue under separate keys',!/['"]skyryse-mes-sync-(queue|sent|client)-v1['"]/.test(curated)&&/'skyryse-mes-demo-sync-queue-v1'/.test(curated));
  ok('production keeps its frozen mirror queue keys',/'skyryse-mes-sync-queue-v1'/.test(prod));}
-ok('the demo reads and writes accounts only under skyryse-mes-demo-auth-v1',!/['"]skyryse-mes-auth-v1['"]/.test(curated)&&(curated.match(/['"]skyryse-mes-demo-auth-v1['"]\/\* DEMO D-\d+ \*\//g)||[]).length===6);
+ok('the demo reads and writes accounts only under skyryse-mes-demo-auth-v1',!/['"]skyryse-mes-auth-v1['"]/.test(curated)&&(curated.match(/['"]skyryse-mes-demo-auth-v1['"]\/\* DEMO D-\d+ \*\//g)||[]).length===5);
 {const shared=['session','lockout','security','oidc','server-token','drafts','evidence'];
  ok('the demo keeps its session, lockout, security log, sign-in tokens, drafts and evidence under demo keys',shared.every(k=>!new RegExp(`['"]skyryse-mes-${k}-v1['"]`).test(curated)&&new RegExp(`['"]skyryse-mes-demo-${k}-v1['"]`).test(curated)),shared.filter(k=>new RegExp(`['"]skyryse-mes-${k}-v1['"]`).test(curated)).join(','));
  ok('production keeps those keys unchanged',shared.every(k=>new RegExp(`['"]skyryse-mes-${k}-v1['"]`).test(prod)));}
@@ -163,61 +163,33 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  const prodLog=JSON.parse(r.log||'[]');
  ok('security events a demo page wrote leave the production security log; production events stay',!prodLog.some(e=>/demo\.html$/.test(e.page||''))&&prodLog.some(e=>e.type==='signin'&&e.username==='mlee'),r.log.slice(0,400));
  ok('those demo events are kept in the demo security log, not deleted',r.demoLog.length===2&&r.demoLog.every(e=>e.page==='/srv/flight/demo.html'),JSON.stringify(r.demoLog));
- {const ev=prodLog.find(e=>e.type==='legacy-demo-removed')||{};ok('the removal is recorded in the production security log',(ev.accounts||[]).includes('master')&&(ev.accounts||[]).includes('qa.boss')&&ev.queuedRecords===5&&ev.securityEvents===2&&ev.draftsMoved===1&&ev.mirrorSentIndexCleared===true&&ev.accountsMovedToDemo===demoUsers.length+2&&ev.accountsSetAside===1&&ev.accountsNotCopied===0&&ev.accountRecordsHeld===2&&ev.reviewSaved===true,JSON.stringify(ev));}
+ {const ev=prodLog.find(e=>e.type==='legacy-demo-removed')||{};ok('the removal is recorded in the production security log',(ev.accounts||[]).includes('master')&&(ev.accounts||[]).includes('qa.boss')&&ev.queuedRecords===5&&ev.securityEvents===2&&ev.draftsMoved===1&&ev.mirrorSentIndexCleared===true&&ev.accountsMovedToDemo===demoUsers.length+2&&ev.accountsSetAside===1&&ev.accountsNotCopied===0&&ev.accountRecordsHeld===2,JSON.stringify(ev));}
  {const da=Object.fromEntries(r.demoAuth.map(u=>[u.username,u]));
  ok('the accounts an older demo made move to the demo account store with their passwords and roles',!!da['qa.boss']&&da['qa.boss'].role==='admin'&&da['qa.boss'].hash.startsWith('ecad')&&!!da['__proto__']&&demoUsers.every(u=>!!da[u.username]),JSON.stringify(Object.keys(da)));
  ok('where the demo store already holds that name, the demo\'s account is kept and the older one is set aside',da['tech.two']&&da['tech.two'].displayName==='Current Demo Tech'&&r.legacyAccounts.length===1&&r.legacyAccounts[0].username==='tech.two'&&r.legacyAccounts[0].createdBy==='qa.boss',JSON.stringify({tech:da['tech.two'],aside:r.legacyAccounts}));
  ok('no production account moves to the demo store',!da.mlee&&!da.ops1&&!da.qa2);}
- ok('a standalone production page opens on the account review, not on sign-in',r.gate&&/Review the accounts on this browser/.test(r.gate)&&!r.notice,JSON.stringify({gate:r.gate&&r.gate.slice(0,80),notice:r.notice}));
+ ok('a standalone production page closes to production use instead of opening on sign-in, and says how to keep the work',r.gate&&/closed to production use/.test(r.gate)&&/MIGRATION/.test(r.gate)&&/clear this browser's site data/.test(r.gate)&&!r.notice,JSON.stringify({gate:r.gate&&r.gate.slice(0,80),notice:r.notice}));
  ok('an account named __proto__ made by a demo account is removed, and the cleanup finishes',!r.users.includes('__proto__'),JSON.stringify(r.users));
  {const sent=JSON.parse(r.sent||'{}'),dels=JSON.parse(r.queueRaw||'[]').filter(x=>x&&x.operation==='delete').map(x=>x.entityId);
  ok('the mirror sent index the older demo shared is cleared, so its entities are never sent as production deletes',sent['order|WO-10009']!=='a'.repeat(64)&&sent['account|master']!=='b'.repeat(64)&&!dels.includes('WO-10009')&&!dels.includes('master'),JSON.stringify({sent:Object.keys(sent).slice(0,5),dels}));}
  ok('operation drafts are set aside under their own key, not deleted, and the demo\'s current drafts are untouched',r.drafts===null&&r.legacyDrafts.length===1&&r.legacyDrafts[0][1].note==='rehearsal note'&&r.demoDrafts.length===1&&r.demoDrafts[0][1].note==='current demo note',JSON.stringify({drafts:r.drafts,legacyDrafts:r.legacyDrafts,demoDrafts:r.demoDrafts}));
  ok('partial sign-in failure counts are set aside; a lockout in force is kept',JSON.stringify(Object.keys(r.locks))==='["locked1"]'&&r.locks.locked1.until>Date.now()&&r.legacyLocks.master.fails===3&&r.legacyLocks.mlee.fails===4,JSON.stringify({locks:r.locks,legacyLocks:r.legacyLocks}));
- // The review stays required across reloads, and nobody works on this browser until every account is confirmed.
- const gateState=()=>p.evaluate(()=>{const g=document.getElementById('sk-legacy-review');return {gate:!!g,text:g&&g.textContent,boot:!!document.getElementById('sk-boot'),login:!document.getElementById('sk-login').hidden,flag:JSON.parse(localStorage.getItem('skyryse-mes-legacy-demo-review-v1')||'null'),session:sessionStorage.getItem('skyryse-mes-session-v1'),user:window.skAuth&&skAuth.user()&&skAuth.user().username,boxes:g?[...g.querySelectorAll('input[type=checkbox]')].map(c=>c.value):[],log:JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').filter(e=>/^legacy-demo-(accounts-confirmed|reviewed)$/.test(e.type))};});
- const gateSignIn=async(un,pw)=>{await p.evaluate(([un,pw])=>{const f=document.querySelector('#sk-legacy-review form');f.elements.username.value=un;f.elements.password.value=pw;f.requestSubmit();},[un,pw]);await p.waitForTimeout(600);return gateState();};
- const record=async picks=>{await p.evaluate(picks=>{const g=document.getElementById('sk-legacy-review');g.querySelectorAll('input[type=checkbox]').forEach(c=>{c.checked=picks.includes(c.value);});[...g.querySelectorAll('button')].find(b=>b.textContent==='Record confirmations').click();},picks);await p.waitForTimeout(500);return gateState();};
- const gateSignOut=async()=>{await p.evaluate(()=>[...document.querySelectorAll('#sk-legacy-review button')].find(b=>b.textContent==='Sign out').click());await p.waitForTimeout(200);};
+ // The browser stays closed across reloads, for every account: nobody signs in, a session is ended, switching is refused.
+ const closedState=()=>p.evaluate(()=>{const g=document.getElementById('sk-legacy-review');return {gate:!!g,boot:!!document.getElementById('sk-boot'),login:!document.getElementById('sk-login').hidden,inputs:g?g.querySelectorAll('input,button,form').length:-1,session:sessionStorage.getItem('skyryse-mes-session-v1'),user:window.skAuth&&skAuth.user()&&skAuth.user().username};});
  await p.reload();await p.waitForTimeout(700);
- let g=await gateState();
- ok('the account review is shown again after a reload and the sign-in form is not offered',g.gate&&g.boot&&!g.login&&!!g.flag,JSON.stringify(g));
- await p.evaluate(()=>sessionStorage.setItem('skyryse-mes-session-v1','ops1'));await p.reload();await p.waitForTimeout(900);
- g=await gateState();
- ok('a session of an account that cannot review is ended while the review is pending',g.gate&&g.boot&&g.session===null&&g.user===null&&/Only a QA Manager or Master Access account/.test(g.text),JSON.stringify(g));
+ let g=await closedState();
+ ok('after a reload the browser is still closed, with no sign-in form and nothing to press',g.gate&&g.boot&&!g.login&&g.inputs===0,JSON.stringify(g));
+ for(const who of ['ops1','mlee','qa2']){
+  await p.evaluate(u=>sessionStorage.setItem('skyryse-mes-session-v1',u),who);await p.reload();await p.waitForTimeout(800);
+  g=await closedState();
+  ok(`a session of ${who} is ended on a closed browser, a QA Manager or Master Access account included`,g.gate&&g.session===null&&g.user===null,JSON.stringify(g));}
+ {const ends=await p.evaluate(()=>JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').filter(e=>e.type==='signout'&&/older demo build/.test(e.reason||'')).map(e=>e.username));
+ ok('each ended session is logged with the reason',JSON.stringify(ends)==='["ops1","mlee","qa2"]',JSON.stringify(ends));}
  const sw=await p.evaluate(async()=>(await skAuth.switchAccount('mlee','chosen-pass-1')));
- ok('switching account is refused while the review is pending',sw.ok===false&&/Finish the account review/.test(sw.message),JSON.stringify(sw));
- g=await gateSignIn('ops1','chosen-pass-1');
- ok('an Operations account with the right password cannot sign in while the review is pending',g.session===null&&/Only a QA Manager or Master Access account/.test(g.text),JSON.stringify(g));
- g=await gateSignIn('mlee','wrong-pass-1');
- ok('a wrong password on the review sign-in is refused',g.session===null&&/Incorrect password/.test(g.text),JSON.stringify(g.text));
- g=await gateSignIn('mlee','chosen-pass-1');
- ok('a QA Manager signs in to the review; their own account has no box while another Master Access account exists',g.session==='mlee'&&g.boot&&JSON.stringify(g.boxes)==='["ops1","qa2"]',JSON.stringify(g));
- g=await record([]);
- ok('recording nothing is refused with what to do',/Select the accounts/.test(g.text)&&g.log.length===0,JSON.stringify(g.text));
- g=await record(['ops1','qa2']);
- {const c=g.log.find(e=>e.type==='legacy-demo-accounts-confirmed')||{};
- ok('confirmations are logged with who made them, and the review stays open until every account is confirmed',c.by==='mlee'&&JSON.stringify(c.accounts)==='["ops1","qa2"]'&&!!g.flag&&g.flag.confirmed.qa2.by==='mlee'&&!g.flag.confirmed.mlee&&g.boot&&/1 account still to confirm/.test(g.text),JSON.stringify(g));}
- await gateSignOut();g=await gateSignIn('qa2','chosen-pass-1');
- ok('the other Master Access account can confirm the QA Manager, never itself',g.session==='qa2'&&JSON.stringify(g.boxes)==='["mlee"]',JSON.stringify(g.boxes));
- // Browser storage refuses the security log entry: nothing is recorded and the review stays open.
- g=await p.evaluate(async()=>{const real=Storage.prototype.setItem;Storage.prototype.setItem=function(k,v){if(k==='skyryse-mes-security-v1')throw new Error('storage full');return real.call(this,k,v);};
-  try{const gt=document.getElementById('sk-legacy-review');gt.querySelector('input[type=checkbox]').checked=true;[...gt.querySelectorAll('button')].find(b=>b.textContent==='Record confirmations').click();await new Promise(r=>setTimeout(r,300));}finally{Storage.prototype.setItem=real;}
-  return {text:document.getElementById('sk-legacy-review').textContent,flag:JSON.parse(localStorage.getItem('skyryse-mes-legacy-demo-review-v1')||'null')};});
- ok('a confirmation whose security log entry cannot be stored is not recorded',/Nothing was recorded/.test(g.text)&&!!g.flag&&!g.flag.confirmed.mlee,JSON.stringify(g));
- // The last confirmation is stored but the closing entry is refused: the review stays open and offers to close again.
- g=await p.evaluate(async()=>{const real=Storage.prototype.setItem;Storage.prototype.setItem=function(k,v){if(k==='skyryse-mes-security-v1'&&/legacy-demo-reviewed/.test(v))throw new Error('storage full');return real.call(this,k,v);};
-  try{const gt=document.getElementById('sk-legacy-review');gt.querySelector('input[type=checkbox]').checked=true;[...gt.querySelectorAll('button')].find(b=>b.textContent==='Record confirmations').click();await new Promise(r=>setTimeout(r,300));}finally{Storage.prototype.setItem=real;}
-  const gt=document.getElementById('sk-legacy-review');return {text:gt.textContent,buttons:[...gt.querySelectorAll('button')].filter(b=>!b.hidden).map(b=>b.textContent),flag:JSON.parse(localStorage.getItem('skyryse-mes-legacy-demo-review-v1')||'null')};});
- ok('when the closing entry cannot be stored, every confirmation is kept and the review offers to close again',/refused the security log entry that closes the review/.test(g.text)&&JSON.stringify(g.buttons)==='["Close the review","Sign out"]'&&!!g.flag&&!!g.flag.confirmed.mlee,JSON.stringify(g));
- await Promise.all([p.waitForNavigation(),p.evaluate(()=>[...document.querySelectorAll('#sk-legacy-review button')].find(b=>b.textContent==='Close the review').click())]);await p.waitForTimeout(900);
- g=await gateState();
- {const done=g.log.filter(e=>e.type==='legacy-demo-reviewed');
- ok('once every account is confirmed the review closes, is logged with who closed it, and the page opens normally',!g.flag&&!g.gate&&done.length===1&&done[0].by==='qa2'&&done[0].accounts.includes('qa.boss')&&JSON.stringify(done[0].confirmedAccounts.sort())==='["mlee","ops1","qa2"]',JSON.stringify({g,done}));}
- {const q=(await p.evaluate(()=>JSON.parse(localStorage.getItem('skyryse-mes-sync-queue-v1')||'[]'))).concat(mirrorPosts).filter(x=>x.entityType==='account').map(x=>x.entityId+':'+x.operation);
- ok('closing the review queues the reviewed account list for the mirror, and no older-demo account',['mlee:upsert','ops1:upsert','qa2:upsert'].every(x=>q.includes(x))&&!q.some(x=>/^(qa\.boss|master|tech\.two)/.test(x)),JSON.stringify(q));}
- await p.reload();await p.waitForTimeout(700);
- ok('once reviewed, no review is shown after a reload',await p.evaluate(()=>!document.getElementById('sk-legacy-review')&&!document.getElementById('sk-legacy-demo-notice')));
+ ok('switching account is refused on a closed browser, with what to do',sw.ok===false&&/closed to production use/.test(sw.message)&&/site data/.test(sw.message),JSON.stringify(sw));
+ ok('no account record was sent to the mirror while the browser is closed',!mirrorPosts.some(x=>x.entityType==='account'),JSON.stringify(mirrorPosts.map(x=>x.clientWriteId)));
+ const again=await p.evaluate(()=>JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').filter(e=>e.type==='legacy-demo-removed').length);
+ ok('a second open finds nothing left to remove and records nothing new',again===1,String(again));
  // The accounts the older demo made still work in the demo itself.
  await p.evaluate(()=>sessionStorage.removeItem('skyryse-mes-session-v1'));
  await p.goto('file://'+FIXTURES+'demo_publish.html');await p.waitForFunction(()=>!!document.querySelector('#sk-boot input[name=username]'));
@@ -225,14 +197,11 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  await p.locator('#sk-boot form').evaluate(f=>f.requestSubmit());await p.waitForFunction(()=>!document.getElementById('sk-boot'),null,{timeout:20000});
  ok('an account made in the older demo signs in to the demo with its chosen password',await p.evaluate(()=>skAuth.user()&&skAuth.user().username)==='qa.boss');
  await p.evaluate(()=>sessionStorage.removeItem('skyryse-mes-demo-session-v1'));
- await p.evaluate(()=>sessionStorage.removeItem('skyryse-mes-session-v1'));
+ // Clearing the browser's site data reopens it: production starts over with first-account setup.
  await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(600);
- const signIn=await p.evaluate(async()=>{const r=await skAuth.switchAccount('master','demo1234');return r.ok;});
- ok('master with demo1234 no longer signs in to production',signIn===false,String(signIn));
- const bossIn=await p.evaluate(async()=>{const r=await skAuth.switchAccount('qa.boss','chosen-pass-1');return r.ok;});
- ok('an account the older demo\'s master created no longer signs in to production with its chosen password',bossIn===false,String(bossIn));
- const again=await p.evaluate(()=>JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').filter(e=>e.type==='legacy-demo-removed').length);
- ok('a second open finds nothing left to remove and records nothing new',again===1,String(again));
+ await p.evaluate(()=>{localStorage.clear();sessionStorage.removeItem('skyryse-mes-session-v1');});await p.reload();await p.waitForTimeout(900);
+ const fresh=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),login:!document.getElementById('sk-login').hidden,title:document.getElementById('sk-login-title').textContent}));
+ ok('once the site data is cleared, production opens on first-account setup',!fresh.gate&&fresh.login&&/Set up Master Access/.test(fresh.title),JSON.stringify(fresh));
  await ctx.close();}
 // An identity provider set for production (here before load, as a deployment page does) never reaches the demo.
 {const ctx=await b.newContext({viewport:{width:1440,height:1000}});const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));
@@ -249,60 +218,56 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  await p.locator('#sk-boot form').evaluate(f=>f.requestSubmit());await p.waitForFunction(()=>!document.getElementById('sk-boot'),null,{timeout:20000});
  ok('a demo account signs in with demo1234 although production names a provider',await p.evaluate(()=>skAuth.user()&&skAuth.user().username)==='master');
  await ctx.close();}
-// Nobody confirms their own account, not even the only QA Manager or Master Access account: the review cannot finish on
-// that browser, and the page says what to do instead. A username such as __proto__ is confirmed like any other.
-{const ctx=await b.newContext({viewport:{width:1440,height:1000}});const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));
- const H={salt:'01',hash:'ecad7597c83a96d133e45f9e9d271cbb0d1815dbae29b38b5148be7822799576'};
- await ctx.addInitScript(H=>{if(sessionStorage.getItem('seeded'))return;sessionStorage.setItem('seeded','1');
-  localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify({users:[{username:'solo',displayName:'Solo Manager',...H,role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'solo'},{username:'tech1',displayName:'Tech One',...H,role:'technician',createdAt:'2026-09-02T00:00:00.000Z',createdBy:'solo'},{username:'__proto__',displayName:'Proto Person',...H,role:'technician',createdAt:'2026-09-02T00:00:00.000Z',createdBy:'solo'}]}));
-  localStorage.setItem('skyryse-mes-legacy-demo-review-v1',JSON.stringify({foundAt:'2026-09-30T00:00:00.000Z',accounts:['master']}));},H);
- await p.goto('file://'+FIXTURES+'publish.html');await p.waitForFunction(()=>!!document.querySelector('#sk-legacy-review form'));
- await p.evaluate(()=>{const f=document.querySelector('#sk-legacy-review form');f.elements.username.value='solo';f.elements.password.value='chosen-pass-1';f.requestSubmit();});await p.waitForTimeout(600);
- const v=await p.evaluate(()=>({boxes:[...document.querySelectorAll('#sk-legacy-review input[type=checkbox]')].map(c=>c.value),text:document.getElementById('sk-legacy-review').textContent}));
- ok('the only QA Manager or Master Access account cannot confirm its own account and is told the review cannot finish here',JSON.stringify(v.boxes)==='["tech1","__proto__"]'&&/cannot finish here/.test(v.text)&&/MIGRATION/.test(v.text),JSON.stringify(v));
- const after=await p.evaluate(async()=>{const gt=document.getElementById('sk-legacy-review');gt.querySelectorAll('input[type=checkbox]').forEach(c=>{c.checked=true;});[...gt.querySelectorAll('button')].find(b=>b.textContent==='Record confirmations').click();await new Promise(r=>setTimeout(r,400));
-  const raw=localStorage.getItem('skyryse-mes-legacy-demo-review-v1'),f=JSON.parse(raw||'null');return {gate:!!document.getElementById('sk-legacy-review'),text:document.getElementById('sk-legacy-review').textContent,ownProto:!!f&&Object.prototype.hasOwnProperty.call(f.confirmed,'__proto__'),tech:!!f&&!!f.confirmed.tech1,solo:!!f&&Object.prototype.hasOwnProperty.call(f.confirmed,'solo'),boxes:[...gt.querySelectorAll('input[type=checkbox]')].length};});
- ok('a __proto__ account is confirmed as its own entry, and the review stays open with only the reviewer\'s own account left',after.gate&&after.ownProto&&after.tech&&!after.solo&&after.boxes===0&&/1 account still to confirm/.test(after.text),JSON.stringify(after));
- await ctx.close();}
-// A standalone tab already open when another tab finds an older demo's leftovers reloads onto the review.
+// A standalone tab already open when another tab records the review closes too.
 {const ctx=await b.newContext({viewport:{width:1440,height:1000}});const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));
  const H={salt:'01',hash:'ecad7597c83a96d133e45f9e9d271cbb0d1815dbae29b38b5148be7822799576'};
  await ctx.addInitScript(H=>{if(localStorage.getItem('seeded'))return;localStorage.setItem('seeded','1');localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify({users:[{username:'ops9',displayName:'Ops Nine',...H,role:'ops',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'qm9'},{username:'qm9',displayName:'QM Nine',...H,role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'qm9'}]}));},H);
  await p.addInitScript(()=>{if(sessionStorage.getItem('signed'))return;sessionStorage.setItem('signed','1');sessionStorage.setItem('skyryse-mes-session-v1','ops9');});
  await p.goto('file://'+FIXTURES+'publish.html');await p.waitForFunction(()=>!document.getElementById('sk-boot')&&window.skAuth&&skAuth.user(),null,{timeout:20000});
- const other=await ctx.newPage();await other.goto('file://'+FIXTURES+'publish.html');await other.waitForTimeout(400);
- await other.evaluate(()=>localStorage.setItem('skyryse-mes-legacy-demo-review-v1',JSON.stringify({foundAt:new Date().toISOString(),accounts:['master']})));
- await p.waitForFunction(()=>!!document.getElementById('sk-legacy-review'),null,{timeout:10000}).catch(()=>{});
- const open=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),user:window.skAuth&&skAuth.user()&&skAuth.user().username}));
- ok('an already open tab reloads onto the review when another tab records it, and its non-reviewer session ends',open.gate&&!open.user,JSON.stringify(open));
- await ctx.close();}
-// When browser storage refuses the review record, the review is still required: on the page that found the leftovers
-// and on a page already open in another tab. First the record goes into the account store instead; when that is
-// refused too, the page tells the other open pages directly.
-for(const refuseAccounts of [false,true]){
- const ctx=await b.newContext({viewport:{width:1440,height:1000}});
- const H={salt:'01',hash:'ecad7597c83a96d133e45f9e9d271cbb0d1815dbae29b38b5148be7822799576'};
- await ctx.addInitScript(([H,refuseAccounts])=>{const real=Storage.prototype.setItem;
-  Storage.prototype.setItem=function(k,v){if(this===window.localStorage&&window.__refuseReview&&(k==='skyryse-mes-legacy-demo-review-v1'||(refuseAccounts&&k==='skyryse-mes-auth-v1'&&String(v).includes('legacyDemoReview'))))throw new DOMException('full','QuotaExceededError');return real.call(this,k,v);};
-  if(localStorage.getItem('seeded'))return;real.call(localStorage,'seeded','1');
-  real.call(localStorage,'skyryse-mes-auth-v1',JSON.stringify({users:[{username:'ops9',displayName:'Ops Nine',...H,role:'ops',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'mlee',displayName:'Morgan Lee',...H,role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'}]}));},[H,refuseAccounts]);
- // A tab already open and signed in as an Operations account.
- const open=await ctx.newPage();open.on('pageerror',e=>errs.push(e.message));
- await open.addInitScript(()=>{if(sessionStorage.getItem('signed'))return;sessionStorage.setItem('signed','1');sessionStorage.setItem('skyryse-mes-session-v1','ops9');});
- await open.goto('file://'+FIXTURES+'publish.html');await open.waitForFunction(()=>!document.getElementById('sk-boot')&&window.skAuth&&skAuth.user(),null,{timeout:20000});
- // An older demo's account appears, and a second page finds it with the review record refused. The account is written
- // by that page itself before it loads: a write from the open tab reaches another tab's storage asynchronously.
- const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));
- await p.addInitScript(()=>{window.__refuseReview=true;if(window.__seededMaster)return;window.__seededMaster=true;const a=JSON.parse(localStorage.getItem('skyryse-mes-auth-v1'));if(!a.users.some(u=>u.username==='master')&&!sessionStorage.getItem('masterAdded')){sessionStorage.setItem('masterAdded','1');a.users.push({username:'master',displayName:'Master Access',salt:'00',hash:'f'.repeat(64),role:'admin',createdAt:'2026-09-17T00:00:00.000Z',createdBy:'demo build'});localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify(a));}});
- await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(900);
- const f1=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),stored:localStorage.getItem('skyryse-mes-legacy-demo-review-v1'),auth:JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')),ev:JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').find(e=>e.type==='legacy-demo-removed')}));
- const label=refuseAccounts?'with the account store refused too':'kept in the account store';
- ok(`review record refused, ${label}: the page that found the leftovers opens on the review and the removal says where the record is`,f1.gate&&f1.stored===null&&JSON.stringify(f1.auth.users.map(u=>u.username))==='["ops9","mlee"]'&&!!f1.ev&&f1.ev.reviewSaved===!refuseAccounts&&f1.ev.reviewStore===(refuseAccounts?null:'accounts')&&!!f1.auth.legacyDemoReview===!refuseAccounts,JSON.stringify({gate:f1.gate,stored:f1.stored,ev:f1.ev,field:!!f1.auth.legacyDemoReview}));
- await open.waitForFunction(()=>!!document.getElementById('sk-legacy-review'),null,{timeout:10000}).catch(()=>{});
- const o=await open.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),user:window.skAuth&&skAuth.user()&&skAuth.user().username}));
- ok(`review record refused, ${label}: a tab already open reloads onto the review and its Operations session ends`,o.gate&&!o.user,JSON.stringify(o));
+ // Another tab's write is simulated in this page's own storage with the storage event it raises (this harness does not
+ // pass localStorage writes between pages reliably); the page's 2-second check would find it without the event too.
+ // The page reloads when the record appears: a flag set on unload survives the reload in this tab's session storage.
+ await p.evaluate(()=>window.addEventListener('pagehide',()=>sessionStorage.setItem('reloadedForReview','1')));
+ const v=await p.evaluate(()=>{const v=JSON.stringify({foundAt:new Date().toISOString(),accounts:['master']});localStorage.setItem('skyryse-mes-legacy-demo-review-v1',v);return v;});
+ await p.evaluate(v=>{window.dispatchEvent(new StorageEvent('storage',{key:'skyryse-mes-legacy-demo-review-v1',newValue:v,storageArea:localStorage}));},v).catch(()=>{});
+ await p.waitForFunction(()=>sessionStorage.getItem('reloadedForReview')==='1',null,{timeout:10000}).catch(()=>{});
+ ok('an already open tab reloads when another tab records the review',await p.evaluate(()=>sessionStorage.getItem('reloadedForReview')==='1').catch(()=>false));
+ // Once the record has reached the browser's copy, the tab's next load is closed and its session ends. (This harness
+ // can lose a write made milliseconds before the same page reloads, which a write from another tab never is.)
+ await p.waitForTimeout(6000);
+ await p.evaluate(v=>{if(!localStorage.getItem('skyryse-mes-legacy-demo-review-v1'))localStorage.setItem('skyryse-mes-legacy-demo-review-v1',v);},v);await p.waitForTimeout(3000);
  await p.reload();await p.waitForTimeout(900);
- ok(`review record refused, ${label}: a reload of the finding tab still opens on the review`,await p.evaluate(()=>!!document.getElementById('sk-legacy-review')));
+ const open=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),user:window.skAuth&&skAuth.user()&&skAuth.user().username}));
+ ok('that tab is then closed and its Operations session ends',open.gate&&!open.user,JSON.stringify(open));
+ await ctx.close();}
+// When browser storage refuses the review record (here in every page, as a full storage does), nothing is removed, so every page finds the leftovers and closes: the
+// page that found them, a page already open (told directly) and a page opened later. Nothing is sent to the mirror,
+// since the older demo's queued records are still in the queue.
+{const ctx=await b.newContext({viewport:{width:1440,height:1000}});
+ const H={salt:'01',hash:'ecad7597c83a96d133e45f9e9d271cbb0d1815dbae29b38b5148be7822799576'};
+ const posts=[];await ctx.route(/mirror-full\.test|\/api\/v1\/writes/,route=>{try{posts.push(...(JSON.parse(route.request().postData()||'{}').records||[]));}catch(e){}route.fulfill({status:500,contentType:'application/json',body:'{"ok":false}'});});
+ await ctx.addInitScript(H=>{window.SK_MIRROR={url:'http://mirror-full.test',token:'full-token',batchSize:50};const real=Storage.prototype.setItem;
+  Storage.prototype.setItem=function(k,v){if(this===window.localStorage&&k==='skyryse-mes-legacy-demo-review-v1')throw new DOMException('full','QuotaExceededError');return real.call(this,k,v);};
+  if(localStorage.getItem('seeded'))return;real.call(localStorage,'seeded','1');
+  real.call(localStorage,'skyryse-mes-auth-v1',JSON.stringify({users:[{username:'ops9',displayName:'Ops Nine',...H,role:'ops',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'mlee',displayName:'Morgan Lee',...H,role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'}]}));},H);
+ // A page already open on the sign-in screen (an active signed-in tab would rewrite shared storage from its own copy).
+ const open=await ctx.newPage();open.on('pageerror',e=>errs.push(e.message));
+ await open.goto('file://'+FIXTURES+'publish.html');await open.waitForFunction(()=>!document.getElementById('sk-login').hidden,null,{timeout:20000});
+ // The leftovers are written by the finding page itself before it loads (a write from another tab arrives asynchronously).
+ const leftovers=()=>{if(sessionStorage.getItem('left'))return;sessionStorage.setItem('left','1');const a=JSON.parse(localStorage.getItem('skyryse-mes-auth-v1'));if(!a.users.some(u=>u.username==='master')){a.users.push({username:'master',displayName:'Master Access',salt:'00',hash:'f'.repeat(64),role:'admin',createdAt:'2026-09-17T00:00:00.000Z',createdBy:'demo build'});localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify(a));localStorage.setItem('skyryse-mes-sync-queue-v1',JSON.stringify([{clientWriteId:'old-demo-w',storeKey:'skyryse-mes-work-order-qa100-v1',entityType:'order',entityId:'WO-10009',operation:'upsert',payloadJson:'{}'},{clientWriteId:'prod-w',storeKey:'skyryse-mes-work-order-v1',entityType:'order',entityId:'WO-1',operation:'upsert',payloadJson:'{}'}]));}};
+ const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));await p.addInitScript(leftovers);
+ await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(2500);
+ const f1=await p.evaluate(()=>({gate:(document.getElementById('sk-legacy-review')||{}).textContent||null,stored:localStorage.getItem('skyryse-mes-legacy-demo-review-v1'),users:JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.map(u=>u.username),queue:JSON.parse(localStorage.getItem('skyryse-mes-sync-queue-v1')||'[]').map(x=>x.clientWriteId),ev:JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').filter(e=>/^legacy-demo-/.test(e.type))}));
+ ok('review record refused: nothing is removed, the page closes and says to free storage, and the finding is logged',!!f1.gate&&/Browser storage is full/.test(f1.gate)&&f1.stored===null&&f1.users.includes('master')&&f1.queue.includes('old-demo-w')&&f1.ev.some(e=>e.type==='legacy-demo-found'&&e.reviewSaved===false)&&!f1.ev.some(e=>e.type==='legacy-demo-removed'),JSON.stringify(f1));
+ {const leaked=posts.filter(x=>x.clientWriteId==='old-demo-w'||x.clientWriteId==='prod-w'||(x.entityType==='account'&&x.entityId==='master'));
+ ok('review record refused: nothing in the shared queue is sent to the mirror, the older demo\'s queued workspace record and account included',leaked.length===0,JSON.stringify(leaked.map(x=>x.clientWriteId)));}
+ await open.waitForFunction(()=>!!document.getElementById('sk-legacy-review'),null,{timeout:10000}).catch(()=>{});
+ const o=await open.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),login:!document.getElementById('sk-login').hidden}));
+ ok('review record refused: a tab already open is told and closes, its sign-in form gone',o.gate&&!o.login,JSON.stringify(o));
+ // Every later load finds the same leftovers, since nothing was removed, and closes again.
+ await p.reload();await p.waitForTimeout(900);
+ {const l=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),users:JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.map(u=>u.username)}));
+ ok('review record refused: a later load finds the leftovers again and closes',l.gate&&l.users.includes('master'),JSON.stringify(l));}
  await ctx.close();}
 // Queued account records are never sent to the mirror while the review is pending, even when storage refuses to move
 // them out of the queue; the workspace records in the same queue are sent.
