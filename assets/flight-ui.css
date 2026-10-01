@@ -23,3 +23,44 @@
 .fr-activity .fr-page-heading p{margin:8px 0 0;color:var(--fr-muted);font-size:13px}.fr-activity-filters{display:flex;align-items:flex-end;flex-wrap:wrap;gap:10px}.fr-activity-filters>.fr-search{flex:1 1 270px;min-width:240px}.fr-activity-filters>.fr-search input{width:100%}.fr-activity-filters>.fr-filter-select{display:grid;gap:5px;color:var(--fr-muted);font-size:11px;font-weight:650}.fr-activity-filters input[type=date],.fr-activity-filters select{min-height:38px;max-width:190px;padding:0 9px;border:1px solid var(--fr-line);border-radius:8px;background:#fff;color:#3c4f66;font:inherit;font-size:12px}.fr-activity .fr-table-scroll table{width:100%;min-width:900px;border-collapse:collapse}.fr-activity .fr-table-scroll th{text-align:left;padding:11px 10px;color:#748299;font-size:11px;font-weight:700;letter-spacing:.04em;white-space:nowrap}.fr-activity .fr-table-scroll td{padding:12px 10px;border-top:1px solid rgba(67,91,122,.11);font-size:13px;vertical-align:top}.fr-activity .fr-table-scroll td time{white-space:nowrap}.fr-activity .fr-table-scroll td:nth-child(3){min-width:360px}.fr-activity .fr-table-scroll tr:hover td{background:rgba(235,243,255,.4)}.fr-activity .fr-table-scroll table.fr-compact td{padding-top:6px;padding-bottom:6px}.fr-activity .fr-activity-kind{display:inline-flex;padding:4px 7px;border:1px solid var(--fr-line);border-radius:999px;background:rgba(244,248,253,.9);color:#53657e;font-size:11px;white-space:nowrap}.fr-activity .record-link{padding:0;border:0;background:none;color:var(--fr-blue);font:inherit;font-weight:650;cursor:pointer}.fr-activity-detail{margin:16px 0;padding:13px;border:1px solid var(--fr-line);border-radius:10px;background:rgba(244,248,253,.7)}.fr-activity-detail p{margin:8px 0 0;line-height:1.5;overflow-wrap:anywhere}.fr-activity .fr-queue footer{margin-top:12px}@media(max-width:900px){.fr-activity-filters>.fr-search{flex-basis:100%}.fr-activity-filters>.fr-controls{justify-content:flex-start}}@media(max-width:650px){.fr-activity-filters>.fr-filter-select{flex:1}.fr-activity-filters input[type=date],.fr-activity-filters select{max-width:none;width:100%}.fr-activity .fr-queue footer{display:block}.fr-activity .fr-queue footer span:last-child{display:flex;margin-top:7px}}
 .fr-activity .fr-activity-order{display:block;margin-top:5px;color:var(--fr-muted);font-size:11px}.fr-activity .fr-activity-order .record-link{font-size:11px}
 .fr-activity-overlay{position:fixed;z-index:10000;inset:0;display:flex;justify-content:flex-end;background:rgba(9,21,39,.34);backdrop-filter:blur(5px)}.fr-activity-overlay .fr-drawer-panel{width:min(470px,92vw);height:100%;overflow:auto}
+
+/* Phone layout, below 700px. Work-order tables render as cards; tables that stay tables scroll inside their own box, with edge shadows as the cue that more columns are there; the page itself never scrolls sideways. Nothing in this section applies at 700px or wider. */
+.fr-wo-cards{display:none}
+@media(max-width:699.98px){
+.fr-table-scroll{position:relative;max-width:100%;-webkit-overflow-scrolling:touch}
+.fr-table-scroll:not(.fr-has-cards){overflow-x:auto;background:linear-gradient(90deg,#fff 40%,rgba(255,255,255,0)) left center/32px 100% no-repeat local,linear-gradient(270deg,#fff 40%,rgba(255,255,255,0)) right center/32px 100% no-repeat local,radial-gradient(farthest-side at 0 50%,rgba(23,36,58,.42),rgba(23,36,58,0)) left center/20px 100% no-repeat scroll,radial-gradient(farthest-side at 100% 50%,rgba(23,36,58,.42),rgba(23,36,58,0)) right center/20px 100% no-repeat scroll}
+.fr-has-cards{overflow:visible;border-top:0}
+.fr-has-cards>table{display:none}
+.fr-wo-cards{display:grid;gap:10px;margin:0;padding:0;list-style:none}
+.fr-wo-card{min-width:0;padding:14px;border:1px solid var(--fr-line);border-radius:12px;background:#fff;box-shadow:0 4px 14px rgba(30,55,89,.05)}
+.fr-wo-card.is-held{border-color:#e4a8b4;background:#fff7f9}
+.fr-wo-card.is-aog{box-shadow:inset 3px 0 #c74452,0 4px 14px rgba(30,55,89,.05)}
+.fr-wo-card-top{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px}
+.fr-wo-card-id{color:var(--fr-blue);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14px;font-weight:650}
+.fr-wo-card .fr-status{white-space:normal}
+.fr-wo-card .fr-order-blocked{display:inline-flex;padding:5px 8px;border-radius:7px;background:#b53648;color:#fff;font-size:12px;font-weight:650}
+.fr-wo-card-title{margin:8px 0 2px;font-size:15px;font-weight:650;line-height:1.3;overflow-wrap:anywhere}
+.fr-wo-card-part{margin:0;color:var(--fr-muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;overflow-wrap:anywhere}
+.fr-wo-card-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px 12px;margin:12px 0 0}
+.fr-wo-card-fields>div{min-width:0}
+.fr-wo-card-fields .fr-wo-card-next{grid-column:1/-1}
+.fr-wo-card-fields dt{color:#5f6f86;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+.fr-wo-card-fields dd{margin:2px 0 0;font-size:13px;line-height:1.35;overflow-wrap:anywhere}
+.fr-wo-card-fields .is-overdue{color:#9a5807;font-weight:650}
+.fr-wo-card-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.fr-wo-card-actions .fr-order-priority{flex:1 1 120px;min-height:44px;padding:0 8px;border:1px solid var(--fr-line);border-radius:10px;background:#fff;color:#42556d;font:inherit;font-size:14px}
+.fr-wo-card-actions .fr-order-priority.aog{border-color:#d96973;background:#fff0f2;color:#a02f3c;font-weight:700}
+.fr-wo-card-open{flex:1 1 120px;display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:44px;padding:0 14px;border:1px solid var(--fr-blue);border-radius:10px;background:var(--fr-blue);color:#fff;font:inherit;font-size:14px;font-weight:650;cursor:pointer}
+.fr-wo-card-open:focus-visible{outline:3px solid rgba(25,103,210,.4);outline-offset:2px}
+.fr-queue .fr-controls{flex-wrap:wrap}
+.fr-queue .fr-search{flex:1 1 100%;height:44px}
+.fr-queue .fr-search input{width:100%;min-width:0}
+.fr-queue .fr-search kbd{display:none}
+.fr-queue .fr-filter button,.fr-queue .fr-density{min-height:44px}
+.fr-queue .fr-filter-select select,.fr-queue .fr-order-flag{min-height:44px}
+.fr-page-heading{flex-wrap:wrap;gap:12px}
+.fr-page-heading>*{min-width:0;max-width:100%}
+.fr-dispatch-controls,.fr-dispatch-controls label{min-width:0;max-width:100%}
+.fr-dispatch-controls label{grid-template-columns:minmax(0,1fr)}
+.fr-dispatch-controls input,.fr-dispatch-controls select{width:100%;max-width:100%;min-height:44px}
+}

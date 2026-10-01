@@ -12406,7 +12406,7 @@ document.addEventListener('change', event => {
       const scrollLeft = $('.table-wrap')?.scrollLeft || 0;
       render();
       if ($('.table-wrap')) $('.table-wrap').scrollLeft = scrollLeft;
-      document.querySelector(`[data-priority-order="${id}"]`)?.focus({ preventScroll: true });
+      [...document.querySelectorAll(`[data-priority-order="${id}"]`)].find(el => el.offsetParent)?.focus({ preventScroll: true });
       notify(result.message);
     } catch (error) {
       control.value = previous;
@@ -15649,6 +15649,22 @@ body .operation-btn[data-fs-status][aria-pressed="true"]{outline:2px solid var(-
 #sk-boot input{border-radius:10px!important;background:rgba(255,255,255,.07)!important;border-color:rgba(255,255,255,.35)!important;color:white!important}
 #sk-boot input:focus-visible{outline:3px solid #087cff!important;outline-offset:3px}
 #sk-boot .sk-veil{background:linear-gradient(90deg,rgba(4,8,14,.88),rgba(4,8,14,.12))!important}
+/* Phone, below 700px. Sign-in: the form sits on a solid panel with solid inputs so the photograph never shows through, and the kicker starts below the hangar light bar (about 12% down the photograph) on a darkened band. Work pages: grids and selects shrink to the screen so the page never scrolls sideways. */
+@media(max-width:699.98px){
+ #sk-boot .sk-veil{background:linear-gradient(180deg,rgba(4,8,14,.9) 0%,rgba(4,8,14,.55) 22%,rgba(4,8,14,.35) 45%,rgba(4,8,14,.85) 100%)!important}
+ #sk-boot:has(#sk-login:not([hidden])) .sk-mission{padding:calc(12vh + 44px) 16px 32px!important;padding:calc(12dvh + 44px) 16px 32px!important}
+ #sk-boot .sk-mission{max-width:100%;box-sizing:border-box}
+ #sk-boot .sk-eyebrow{max-width:100%;padding:4px 8px;border-radius:6px;background:#04080e;letter-spacing:.2em;white-space:normal}
+ #sk-boot .sk-login{max-width:none;padding:16px;border:1px solid rgba(255,255,255,.16);border-radius:14px;background:#0b121c}
+ #sk-boot .sk-login label{color:#c9dcf5}
+ #sk-boot input{background:#162232!important;border-color:rgba(255,255,255,.45)!important;color:#fff!important}
+ #sk-boot input::placeholder{color:#a9b6c7}
+ #sk-boot .sk-login-note{color:#b4c0cf}
+ #sk-boot .sk-mission .sk-sub{color:#b4c0cf}
+ .inventory-layout,.wi-layout,.execution-layout{grid-template-columns:minmax(0,1fr)!important}
+ .inventory-layout>*,.wi-layout>*{min-width:0}
+ .content select{max-width:100%}
+}
 /* Bright canvas, photographic identity, and explicit operator orientation. */
 :root{--surface:#f5f8ff;--paper:#fff;--canvas:#f5f8ff;--line:#dbe3f0;--line-2:#a9b9ce;--accent:#075ec9;--accent-press:#034694;--accent-soft:#e8f1ff}
 body{background:#f5f8ff!important}

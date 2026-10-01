@@ -50,6 +50,32 @@ function RecordDrawer({ order, MES, onClose, onOpen }) {
   </dialog>;
 }
 
+const nextStepOf = order => { const next = (order.operations || []).find(operation => !operation.done); return next && (next.title || next.name) || order.status || 'Review record'; };
+const ownerOf = order => order.owner || order.assignedTo || 'Unassigned';
+
+// Below 700px the work-order tables render as these cards instead (see the phone section of flight-ui.css).
+function WorkOrderCards({ orders, onOpen, meta, MES }) {
+  if (!orders.length) return null;
+  return <ul className="fr-wo-cards" aria-label="Work orders">{orders.map((order, index) => {
+    const item = meta ? meta[index] : null;
+    const held = item && item.held;
+    return <li key={order.id} className={`fr-wo-card${held ? ' is-held' : ''}${item && item.aog ? ' is-aog' : ''}`} data-wo-card={order.id}>
+      <div className="fr-wo-card-top"><strong className="fr-wo-card-id">{order.id}</strong>{held ? <span className="fr-order-blocked">Blocked</span> : <span className="fr-status"><i/>{order.status || 'Draft'}</span>}</div>
+      <p className="fr-wo-card-title">{titleOf(order)}</p>
+      <p className="fr-wo-card-part">{order.partNumber || 'Part not assigned'}{order.revision ? ` / Rev ${order.revision}` : ''}</p>
+      <dl className="fr-wo-card-fields">
+        <div className="fr-wo-card-next"><dt>Next step</dt><dd>{nextStepOf(order)}</dd></div>
+        <div><dt>Owner</dt><dd>{ownerOf(order)}</dd></div>
+        <div><dt>Due</dt><dd className={item && item.overdue ? 'is-overdue' : ''}><time dateTime={dueOf(order)}>{displayFlightDate(dueOf(order))}</time></dd></div>
+      </dl>
+      <div className="fr-wo-card-actions">
+        {meta && MES && <select className={`fr-order-priority ${asText(order.priority).toLowerCase()}`} data-priority-order={order.id} aria-label={`Priority for ${order.id}`} disabled={order.status === 'Closed'} defaultValue={order.priority}>{MES.PRIORITIES.map(value => <option key={value}>{value}</option>)}</select>}
+        <button className="fr-wo-card-open" aria-label={'Open ' + order.id} onClick={() => onOpen(order)}>Open <ArrowUpRight size={16}/></button>
+      </div>
+    </li>;
+  })}</ul>;
+}
+
 function Hangar({ state, MES, onOpen }) {
   const [savedQueue] = useState(() => { try { return JSON.parse(localStorage.getItem(queueKey) || '{}'); } catch { return {}; } });
   const [query, setQuery] = useState(savedQueue.query || '');
@@ -96,9 +122,11 @@ function Hangar({ state, MES, onOpen }) {
           <button className="fr-density" aria-pressed={compact} onClick={changeDensity}><SlidersHorizontal size={15}/>{compact ? 'Comfortable' : 'Compact'}</button>
         </div>
       </div>
-      <div className="fr-table-scroll"><table className={compact ? 'fr-compact' : ''}><thead><tr><th>Work order / Assembly</th><th>Next step</th><th>Owner</th><th>Due</th><th><span className="fr-visually-hidden">Details</span></th></tr></thead><tbody>
-        {rows.map(item => { const next = (item.operations || []).find(operation => !operation.done); const label = next && (next.title || next.name) || item.status || 'Review record'; return <tr key={item.id}><td><button className="fr-record-link" onClick={() => open(item)}><span className="fr-order-icon"><FileText size={18}/></span><span><strong>{titleOf(item)}</strong><small>{item.id}<i> · {item.partNumber || 'Part not assigned'}</i></small></span></button></td><td><span className="fr-status"><i/>{label}</span></td><td>{item.owner || item.assignedTo || 'Unassigned'}</td><td>{displayFlightDate(dueOf(item))}</td><td><button className="fr-open-button" aria-label={'Open ' + item.id} onClick={() => open(item)}><ArrowUpRight size={18}/></button></td></tr>; })}
-      </tbody></table>{!rows.length && <div className="fr-empty">No work orders match the current search and filter.</div>}</div>
+      <div className="fr-table-scroll fr-has-cards"><table className={compact ? 'fr-compact' : ''}><thead><tr><th>Work order / Assembly</th><th>Next step</th><th>Owner</th><th>Due</th><th><span className="fr-visually-hidden">Details</span></th></tr></thead><tbody>
+        {rows.map(item => { const label = nextStepOf(item); return <tr key={item.id}><td><button className="fr-record-link" onClick={() => open(item)}><span className="fr-order-icon"><FileText size={18}/></span><span><strong>{titleOf(item)}</strong><small>{item.id}<i> · {item.partNumber || 'Part not assigned'}</i></small></span></button></td><td><span className="fr-status"><i/>{label}</span></td><td>{ownerOf(item)}</td><td>{displayFlightDate(dueOf(item))}</td><td><button className="fr-open-button" aria-label={'Open ' + item.id} onClick={() => open(item)}><ArrowUpRight size={18}/></button></td></tr>; })}
+      </tbody></table>
+        <WorkOrderCards orders={rows} onOpen={open}/>
+        {!rows.length && <div className="fr-empty">No work orders match the current search and filter.</div>}</div>
       <footer><span>{rows.length} work orders</span><span><Check size={13}/> Existing commands and approvals remain authoritative</span></footer>
     </section>
     <RecordDrawer order={order} MES={MES} onClose={() => setOrder(null)} onOpen={onOpen}/>
@@ -146,7 +174,7 @@ function WorkOrderQueue({ state, MES, rows: sourceRows, initial, callbacks, onOp
         </div>
       </div>
       <div className="fr-order-table-summary" dangerouslySetInnerHTML={{ __html: callbacks?.summary?.(rows.length) || '' }}/>
-      <div className="fr-table-scroll table-wrap" role="region" aria-label="Work orders table" tabIndex="0">
+      <div className="fr-table-scroll fr-has-cards table-wrap" role="region" aria-label="Work orders table" tabIndex="0">
         <table className={`fr-order-table${compact ? ' fr-compact' : ''}`}><thead><tr dangerouslySetInnerHTML={{ __html: initial.headers.join('') }}/></thead><tbody>{rows.map(item => { const order = item.record; return <tr key={order.id} className={`${item.held ? 'hold-row' : ''} ${item.aog ? 'aog-row' : ''}`} data-order-row={order.id}>
           <td><button className="fr-record-link" onClick={() => setSelected(order)}><strong>{order.id}</strong>{order.fai?.required && <span className="fr-fai-tag">FAI</span>}</button></td>
           <td><strong className="fr-mono">{order.partNumber} / Rev {order.revision}</strong><small>{titleOf(order)}</small>{order.aircraft && <small className="fr-mono">Aircraft {order.aircraft}</small>}{item.superseded && <small className="fr-revision-warning">Superseded revision</small>}</td>
@@ -157,6 +185,7 @@ function WorkOrderQueue({ state, MES, rows: sourceRows, initial, callbacks, onOp
           <td>{order.pedigree}{order.subcategory && <small>{order.subcategory}</small>}</td>
           <td><select className={`fr-order-priority ${asText(order.priority).toLowerCase()}`} data-priority-order={order.id} aria-label={`Priority for ${order.id}`} disabled={order.status === 'Closed'} defaultValue={order.priority}>{MES.PRIORITIES.map(value => <option key={value}>{value}</option>)}</select></td>
         </tr>; })}</tbody></table>
+        <WorkOrderCards orders={rows.map(item => item.record)} onOpen={setSelected} meta={rows} MES={MES}/>
         {!rows.length && <div className="fr-empty">No matching work orders. Adjust the search or filters.</div>}
       </div>
       <footer><span>{rows.length} of {state.orders.length} work orders · {site === 'All' ? 'all sites' : site}</span><span><Check size={13}/> Flight progress and existing MES command gates are preserved</span></footer>
