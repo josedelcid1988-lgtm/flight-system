@@ -2593,6 +2593,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // (toolCheck prefers the log when a workspace is passed). A correction appends a new entry that
   // supersedes the original; the original stays in the log untouched. There is no delete: a tool leaves
   // service through an entry with status Retired, which toolCheck refuses, so the signed history stays whole.
+  // A QA Manager may move superseded entries to the server archive (#130, recordCalibrationArchive): they leave the
+  // live log unchanged and signed, and the log head keeps a signed record of them so the chain still verifies.
   const CALIBRATION_STATUSES = Object.freeze(['In Calibration', 'Out for Calibration', 'Quarantined', 'Retired']);
   const CALIBRATION_TAG_RE = /^[A-Z0-9][A-Z0-9-]{1,39}$/;
   // The signer roles that hold configure-qms authority: the QA Manager and Master Access account roles, as the
@@ -2614,7 +2616,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // none may be retired without dates (#120), so a tool that was calibrated cannot lose its dates on retirement.
   // The write check reads the shipped snapshot too; load validation reads only the signed log, because a later build
   // may ship a snapshot with new dates and must not invalidate a retirement that was valid when it was signed.
-  const calibrationDatesInLog = (entries, tag) => { const dated = entries.find(e => plain(e) && e.tag === tag && (e.calibratedAt || e.expires)); return dated ? String(dated.id) : null; };
+  // An archived entry is read through its summary (#130), which says whether it carried dates.
+  const calibrationDatesInLog = (entries, tag) => { const dated = entries.find(e => plain(e) && e.tag === tag && (e.calibratedAt || e.expires || e.dated === true)); return dated ? String(dated.id) : null; };
   const calibrationDatesOnRecord = (entries, tag) => { const seed = CAL_TOOLS.find(t => t.tag.toUpperCase() === tag); if (seed && seed.expires) return 'the shipped tool snapshot'; return calibrationDatesInLog(entries, tag); };
   const calibrationDatesKept = (tag, where) => `${tag} has calibration dates on record (${where}). Enter its calibration and due dates on the Retired entry. Only a tool that was never calibrated may leave them blank.`;
   const calibrationDatesValid = e => calibrationUndated(e) || (dateOnly(e.calibratedAt) && dateOnly(e.expires) && e.expires > e.calibratedAt && timestamp(e.recordedAt) && e.calibratedAt <= pacificDay(e.recordedAt));
@@ -2660,19 +2663,26 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const calibrationSubject = e => ({ id: e.id, tag: e.tag, description: e.description, serial: e.serial, calibratedAt: e.calibratedAt, expires: e.expires, status: e.status, location: e.location, note: e.note, recordedAt: e.recordedAt, recordedBy: e.recordedBy, supersedes: e.supersedes || null, ...(e.torque !== undefined ? { torque: e.torque } : {}), ...(e.signerRole !== undefined ? { signerRole: e.signerRole } : {}) });
   // A retired tool returns to service only through a correction whose note gives the reason (owner decision on #35).
   const CALIBRATION_REASON_MIN = 8;
-  const reinstatementReasonMissing = (prior, next) => prior.status === 'Retired' && next.status !== 'Retired' && (next.note.length < CALIBRATION_REASON_MIN || next.note === prior.note);
+  // An archived retirement keeps only the SHA-256 of its note (#130), so the new reason is compared by hash.
+  const reinstatementReasonMissing = (prior, next) => prior.status === 'Retired' && next.status !== 'Retired' && (next.note.length < CALIBRATION_REASON_MIN || (prior.noteHash !== undefined ? prior.noteHash === sha256(next.note) : next.note === prior.note));
   // The history rules, read in log order with the current entry per tag. The log order decides which entry is
   // current, so it is bound to the signed ids: ids rise strictly in log order. A correction targets the current
   // entry for its tag, a retired tag is never recorded again as a new entry, and a correction that returns a
   // retired tool to service carries a new reason. Returns { id, detail } for the first entry that breaks one, or null.
-  function calibrationSequenceProblem(log) {
+  // archived is the summaries of the entries moved to the server archive (#130). They are read in id order between
+  // the live entries, as the entries they stand for were, so a live entry is checked against the entry before it
+  // even when that one was archived. The summaries themselves were checked while their entries were live.
+  function calibrationSequenceProblem(log, archived) {
     const current = new Map(), seen = [];
-    let previous = null;
+    const pending = (Array.isArray(archived) ? archived : []).filter(s => plain(s) && /^CALLOG-\d{5}$/.test(s.id)).sort((a, b) => Number(a.id.slice(7)) - Number(b.id.slice(7)));
+    let previous = null, next = 0;
+    const readArchived = below => { while (next < pending.length && Number(pending[next].id.slice(7)) < below) { const s = pending[next++]; seen.push(s); current.set(s.tag, s); } };
     for (const e of Array.isArray(log) ? log : []) {
       if (!plain(e)) continue;
       if (/^CALLOG-\d{5}$/.test(e.id)) {
         if (previous && Number(e.id.slice(7)) <= Number(previous.slice(7))) return { id: e.id, detail: `Calibration entry ${e.id} is out of order: it comes after ${previous} in the log, so the log was reordered.` };
         previous = e.id;
+        readArchived(Number(e.id.slice(7)));
       }
       const cur = current.get(e.tag);
       if (calibrationUndated(e)) { const where = calibrationDatesInLog(seen, e.tag); if (where) return { id: e.id, detail: `Calibration entry ${e.id} retires ${e.tag} without calibration dates, but ${e.tag} has calibration dates on record (${where}).` }; }
@@ -2680,7 +2690,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       if (e.torque === undefined && !CAL_TOOLS.some(t => t.tag.toUpperCase() === e.tag)) return { id: e.id, detail: `Calibration entry ${e.id} does not say whether ${e.tag} is a torque tool. A tool that is not in the shipped snapshot needs that answer.` };
       if (cur && cur.torque === true && e.torque !== true) return { id: e.id, detail: `Calibration entry ${e.id} removes the torque classification from ${e.tag}, which ${cur.id} records as a torque tool.` };
       if (e.supersedes !== undefined) {
-        if (!cur || cur.id !== e.supersedes) return { id: e.id, detail: `Calibration entry ${e.id} corrects ${e.supersedes}, which is not the current entry for ${e.tag}.` };
+        if (!cur || cur.id !== e.supersedes) return { id: e.id, detail: seen.some(x => x.id === e.supersedes) ? `Calibration entry ${e.id} corrects ${e.supersedes}, which is not the current entry for ${e.tag}.` : `Calibration entry ${e.id} corrects ${e.supersedes}, which is neither in the calibration log before it nor in a calibration archive record: an entry or an archive record was removed. Restore the workspace from the last good copy or export.` };
         if (reinstatementReasonMissing(cur, e)) return { id: e.id, detail: `Calibration entry ${e.id} returns retired tool ${e.tag} to service without a reason in its note.` };
       } else if (cur && cur.status === 'Retired') return { id: e.id, detail: `Calibration entry ${e.id} records ${e.tag} again after it was retired in ${cur.id}.` };
       current.set(e.tag, e);
@@ -2702,11 +2712,40 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // canonicalPayload keeps every key, including the entry's own calibrationSignature.manifest: canonical drops nested
   // manifest keys, which would leave the signature metadata outside the chain.
   const calibrationEntryHash = entry => sha256(canonicalPayload(entry));
-  const calibrationHeadFor = (log, legacyCount, sealedAt, legacyHash) => ({ count: log.length, hash: log.length ? calibrationEntryHash(log[log.length - 1]) : null, legacyCount, ...(sealedAt ? { sealedAt } : {}), ...(legacyHash ? { legacyHash } : {}) });
+  const calibrationHeadFor = (log, legacyCount, sealedAt, legacyHash, archived) => ({ count: log.length, hash: log.length ? calibrationEntryHash(log[log.length - 1]) : null, legacyCount, ...(sealedAt ? { sealedAt } : {}), ...(legacyHash ? { legacyHash } : {}), ...(Array.isArray(archived) && archived.length ? { archived } : {}) });
+  // #130: superseded entries can move to the server archive. The head keeps one signed record per archive, in
+  // head.archived: { id: CALARC-nnnn, manifest }. The manifest subject is the record: who archived, when, how many
+  // entries, one SHA-256 over them as they were signed, the gaps they leave in the chain, and a summary of each.
+  // A gap is { from, first, to, count, digest }: from is the previousHash of its first archived entry, first and to
+  // the hashes of its first and last, so the live entry after the gap links to "to" and the chain is walked across it,
+  // and the start marker (#162) still names the first entry when that one was archived. A summary keeps what the
+  // history rules read: tool, status, torque answer, whether it carried dates, and for a retirement the SHA-256 of its
+  // note. The full entries, signatures unchanged, are in the server archive.
+  const CALIBRATION_LOG_LIMIT = 5000, CALIBRATION_LOG_WARN = 4500;
+  const CALIBRATION_ARCHIVE_MEANING = 'Calibration entries archived';
+  const calibrationArchiveSummary = e => ({ id: e.id, tag: e.tag, status: e.status, dated: !!(e.calibratedAt || e.expires), ...(e.torque !== undefined ? { torque: e.torque } : {}), ...(e.status === 'Retired' ? { noteHash: sha256(e.note) } : {}) });
+  const CALIBRATION_SUMMARY_KEYS = ['id', 'tag', 'status', 'dated', 'torque', 'noteHash'];
+  const calibrationSummaryValid = s => plain(s) && Object.keys(s).every(k => CALIBRATION_SUMMARY_KEYS.includes(k)) && /^CALLOG-\d{5}$/.test(s.id) && CALIBRATION_TAG_RE.test(s.tag) && CALIBRATION_STATUSES.includes(s.status) && typeof s.dated === 'boolean' && (s.torque === undefined || typeof s.torque === 'boolean') && (s.status === 'Retired' ? /^[0-9a-f]{64}$/.test(s.noteHash) : s.noteHash === undefined);
+  const hex64 = v => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);
+  const calibrationGapValid = g => plain(g) && (g.from === null || hex64(g.from)) && hex64(g.first) && hex64(g.to) && Number.isInteger(g.count) && g.count >= 1 && hex64(g.digest);
+  const calibrationArchiveRecordValid = r => {
+    if (!plain(r) || !/^CALARC-\d{4}$/.test(r.id) || Object.keys(r).some(k => k !== 'id' && k !== 'manifest')) return false;
+    const m = r.manifest;
+    if (!qualityManifestValid(m) || m.meaning !== CALIBRATION_ARCHIVE_MEANING || !calibrationSignerRole(m.signer.role)) return false;
+    const s = m.subject;
+    if (s.id !== r.id || s.at !== m.at || s.by !== `${m.signer.name} · ${m.signer.credentialId}` || s.signerRole !== m.signer.role) return false;
+    if (!Number.isInteger(s.count) || s.count < 1 || s.count > CALIBRATION_LOG_LIMIT || !hex64(s.digest)) return false;
+    if (!Array.isArray(s.gaps) || !s.gaps.length || !s.gaps.every(calibrationGapValid) || s.gaps.reduce((n, g) => n + g.count, 0) !== s.count) return false;
+    return Array.isArray(s.entries) && s.entries.length === s.count && s.entries.every(calibrationSummaryValid);
+  };
+  const calibrationArchiveRecords = state => plain(state) && plain(state.calibrationLogHead) && Array.isArray(state.calibrationLogHead.archived) ? state.calibrationLogHead.archived : [];
+  const calibrationArchiveSubject = r => plain(r) && plain(r.manifest) && plain(r.manifest.subject) ? r.manifest.subject : {};
+  const calibrationArchivedSummaries = state => calibrationArchiveRecords(state).flatMap(r => { const s = calibrationArchiveSubject(r); return Array.isArray(s.entries) ? s.entries : []; });
+  const calibrationArchiveValid = archived => archived === undefined || (Array.isArray(archived) && archived.length > 0 && archived.length <= 9999 && archived.every(calibrationArchiveRecordValid) && unique(archived.map(r => r.id)) && unique(archived.flatMap(r => r.manifest.subject.entries.map(s => s.id))));
   // One hash over every entry recorded before the chain, taken when the log is sealed, so a change to any of them
   // (not only the last) is detected. The unlinked entries have no previousHash to carry it.
   const calibrationLegacyHash = entries => sha256(canonicalPayload(entries));
-  const calibrationHeadValid = head => plain(head) && Number.isInteger(head.count) && head.count >= 0 && head.count <= 5000 && (head.hash === null || /^[0-9a-f]{64}$/.test(head.hash)) && Number.isInteger(head.legacyCount) && head.legacyCount >= 0 && head.legacyCount <= head.count && (head.sealedAt === undefined || timestamp(head.sealedAt)) && (head.legacyCount > 0 ? /^[0-9a-f]{64}$/.test(head.legacyHash) : head.legacyHash === undefined) && Object.keys(head).every(k => ['count', 'hash', 'legacyCount', 'sealedAt', 'legacyHash'].includes(k));
+  const calibrationHeadValid = head => plain(head) && Number.isInteger(head.count) && head.count >= 0 && head.count <= 5000 && (head.hash === null || /^[0-9a-f]{64}$/.test(head.hash)) && Number.isInteger(head.legacyCount) && head.legacyCount >= 0 && head.legacyCount <= head.count && (head.sealedAt === undefined || timestamp(head.sealedAt)) && (head.legacyCount > 0 ? /^[0-9a-f]{64}$/.test(head.legacyHash) : head.legacyHash === undefined) && Object.keys(head).every(k => ['count', 'hash', 'legacyCount', 'sealedAt', 'legacyHash', 'archived'].includes(k)) && calibrationArchiveValid(head.archived);
   // The start marker (#162), state.calibrationLogStart = { firstId, firstHash, recordedAt }, is written with the first
   // calibration entry and never changes. It names that entry and the hash of the whole entry, so once a workspace has
   // held a calibration entry it cannot read as one that never had a log: deleting both the log and its head leaves the
@@ -2716,11 +2755,14 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // the calibration keys). Someone who deliberately removes the log, the head and the marker together is not stopped.
   const calibrationStartFor = log => ({ firstId: log[0].id, firstHash: calibrationEntryHash(log[0]), recordedAt: log[0].recordedAt });
   const calibrationStartValid = start => plain(start) && /^CALLOG-\d{5}$/.test(start.firstId) && /^[0-9a-f]{64}$/.test(start.firstHash) && timestamp(start.recordedAt) && Object.keys(start).length === 3;
-  function calibrationStartProblem(log, start) {
+  // gaps are the archived gaps (#130): when the first entry was archived, the gap that starts the log (from null)
+  // must begin with the entry the marker names.
+  function calibrationStartProblem(log, start, gaps) {
     if (start === undefined) return log.length ? { id: 'calibrationLogStart', detail: `The calibration log has ${log.length} entr${log.length === 1 ? 'y' : 'ies'} but no start marker, so a later removal of the whole log could not be detected.` } : null;
     if (!calibrationStartValid(start)) return { id: 'calibrationLogStart', detail: 'The calibration log start marker is malformed.' };
     if (!log.length) return { id: 'calibrationLogStart', detail: `The calibration log is empty, but this workspace started it with ${start.firstId} on ${start.recordedAt}: the log and its head were removed, so a retired or quarantined tool could read as usable again.` };
     const first = log[0];
+    if (Array.isArray(gaps) && gaps.some(g => g.from === null && g.first === start.firstHash)) return null;
     if (!plain(first) || first.id !== start.firstId || calibrationEntryHash(first) !== start.firstHash) return { id: 'calibrationLogStart', detail: `The first calibration entry${plain(first) && first.id ? `, ${first.id},` : ''} does not match the start marker, which records ${start.firstId}: the first entry was removed, replaced, or changed.` };
     return null;
   }
@@ -2730,6 +2772,11 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const head = plain(state) ? state.calibrationLogHead : undefined;
     const start = plain(state) ? state.calibrationLogStart : undefined;
     let legacy = 0, chained = false;
+    // The gaps archived entries left (#130), keyed by the hash of their last entry. A link that does not reach the
+    // entry before it is followed back through the gaps; each gap is crossed exactly once.
+    const gaps = head !== undefined && calibrationHeadValid(head) ? calibrationArchiveRecords(state).flatMap(r => r.manifest.subject.gaps) : [];
+    const byTo = new Map(gaps.map(g => [g.to, g])), crossed = new Set();
+    if (byTo.size !== gaps.length) return { id: 'calibrationLogHead', detail: 'Two calibration archive records name the same archived entries.' };
     for (let i = 0; i < log.length; i += 1) {
       const e = log[i];
       if (!plain(e)) continue;
@@ -2740,7 +2787,9 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       }
       chained = true;
       const want = i ? calibrationEntryHash(log[i - 1]) : null;
-      if (e.previousHash !== want) return { id: e.id, detail: i ? `Calibration entry ${e.id} does not link to ${log[i - 1].id}, the entry before it: an entry between them was removed or changed, or the log was reordered.` : `Calibration entry ${e.id} is first in the log but links to an earlier entry, so the entries before it were removed.` };
+      let reached = e.previousHash;
+      while (reached !== want && byTo.has(reached) && !crossed.has(reached)) { crossed.add(reached); reached = byTo.get(reached).from; }
+      if (reached !== want) return { id: e.id, detail: i ? `Calibration entry ${e.id} does not link to ${log[i - 1].id}, the entry before it: an entry between them was removed or changed, or the log was reordered.` : `Calibration entry ${e.id} is first in the log but links to an earlier entry, so the entries before it were removed.` };
     }
     if (head === undefined) return log.length ? { id: 'calibrationLogHead', detail: `The calibration log has ${log.length} entr${log.length === 1 ? 'y' : 'ies'} but no recorded head, so missing latest entries cannot be ruled out.` } : calibrationStartProblem(log, start);
     if (!calibrationHeadValid(head)) return { id: 'calibrationLogHead', detail: 'The calibration log head is malformed.' };
@@ -2749,7 +2798,11 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (head.legacyCount !== legacy) return { id: 'calibrationLogHead', detail: `The calibration log has ${legacy} entr${legacy === 1 ? 'y' : 'ies'} from before the chain but its head sealed ${head.legacyCount}: an early entry was removed or added.` };
     if (legacy && head.legacyHash !== calibrationLegacyHash(log.slice(0, legacy))) return { id: 'calibrationLogHead', detail: `An entry recorded before the chain no longer matches the seal made ${head.sealedAt ? `on ${head.sealedAt}` : 'when the log was sealed'}: one of the first ${legacy} entr${legacy === 1 ? 'y was' : 'ies was'} changed.` };
     if (head.hash !== (log.length ? calibrationEntryHash(log[log.length - 1]) : null)) return { id: 'calibrationLogHead', detail: `The last calibration entry${log.length ? `, ${log[log.length - 1].id},` : ''} does not match the log head: the latest entry was replaced, changed, or removed.` };
-    return calibrationStartProblem(log, start);
+    const archivedIds = new Set(calibrationArchivedSummaries(state).map(x => x.id));
+    const back = log.find(e => plain(e) && archivedIds.has(e.id));
+    if (back) return { id: back.id, detail: `Calibration entry ${back.id} is in the live log, but a calibration archive record says it was archived: it was put back outside the application.` };
+    if (crossed.size !== gaps.length) return { id: 'calibrationLogHead', detail: 'A calibration archive record names archived entries that no longer sit between entries of the live log: an entry next to them was removed, moved or put back.' };
+    return calibrationStartProblem(log, start, gaps);
   }
   // Append one entry to the chain and move the head. The entry is signed before it is linked; previousHash is not
   // part of the signed subject, so the manifest is unchanged by the chain.
@@ -2758,7 +2811,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     entry.previousHash = log.length ? calibrationEntryHash(log[log.length - 1]) : null;
     log.push(entry);
     if (state.calibrationLogStart === undefined) state.calibrationLogStart = calibrationStartFor(log);
-    state.calibrationLogHead = calibrationHeadFor(log, head ? head.legacyCount : 0, head ? head.sealedAt : undefined, head ? head.legacyHash : undefined);
+    state.calibrationLogHead = calibrationHeadFor(log, head ? head.legacyCount : 0, head ? head.sealedAt : undefined, head ? head.legacyHash : undefined, head ? head.archived : undefined);
   };
   // Seal a log recorded before the chain existed: write its head once, naming how many unlinked entries it held and
   // when it was sealed. A log that already has linked entries is never resealed, so an import that lost its head
@@ -2777,15 +2830,92 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   };
   // The server write gate: a write keeps every entry the stored log holds, unchanged and in place, and may only
   // append. Returns a plain refusal or null. prev is the stored workspace (null before the first save).
-  function calibrationLogChanges(prev, next) {
+  // Whether a record's signed gaps describe the archived entries it covers (#130). entries are that record's archived
+  // entries in log order; each gap covers the next gap.count of them, and its from, first, to and digest must be what
+  // those entries give. The engine alone holds only the gaps, so the server runs this where it holds the entries: in the
+  // write gate on the stored copy, and against its calibration archive. Returns a plain refusal or null.
+  function calibrationGapsProblem(record, entries) {
+    const gaps = Array.isArray(calibrationArchiveSubject(record).gaps) ? calibrationArchiveSubject(record).gaps : [];
+    let next = 0;
+    for (let i = 0; i < gaps.length; i += 1) {
+      const g = gaps[i], run = entries.slice(next, next + (plain(g) && Number.isInteger(g.count) ? g.count : 0));
+      next += run.length;
+      const ok = plain(g) && run.length === g.count && run.length > 0 && g.from === (Object.hasOwn(run[0], 'previousHash') ? run[0].previousHash : undefined) && g.first === calibrationEntryHash(run[0]) && g.to === calibrationEntryHash(run[run.length - 1]) && g.digest === sha256(canonicalPayload(run));
+      if (!ok) return `Gap ${i + 1} of calibration archive record ${record.id} does not describe the archived entries it covers${run.length ? ` (${run[0].id} to ${run[run.length - 1].id})` : ''}. The record does not match the entries. Nothing was saved or archived. Restore the workspace and the server database from the last good copy.`;
+    }
+    if (next !== entries.length) return `The gaps of calibration archive record ${record.id} cover ${next} entries but the record archives ${entries.length}. Nothing was saved or archived. Restore the workspace and the server database from the last good copy.`;
+    return null;
+  }
+  // What an archive in this write moves (#130): the stored entries missing from the new log, each with the archive
+  // record that claims it. A record is new when the stored head does not hold it yet.
+  function calibrationArchiveMoves(prev, next) {
     const before = plain(prev) && Array.isArray(prev.calibrationLog) ? prev.calibrationLog : [];
     const after = plain(next) && Array.isArray(next.calibrationLog) ? next.calibrationLog : [];
-    for (let i = 0; i < before.length; i += 1) {
-      const id = plain(before[i]) && before[i].id ? before[i].id : `calibrationLog[${i}]`;
-      if (i >= after.length) return `The change would remove calibration entry ${id} and ${before.length - i - 1 > 0 ? `${before.length - i - 1} later entr${before.length - i - 1 === 1 ? 'y' : 'ies'}` : 'nothing after it'} from the shared log. The calibration log is append-only; nothing was saved. Reload the workspace and record the change as a correction.`;
-      if (canonicalPayload(before[i]) !== canonicalPayload(after[i])) return `The change would alter or move calibration entry ${id} in the shared log. The calibration log is append-only; nothing was saved. Reload the workspace and record the change as a correction.`;
+    const held = calibrationArchiveRecords(prev), records = calibrationArchiveRecords(next), added = records.slice(held.length);
+    const live = new Set(after.filter(plain).map(e => e.id)), claims = new Map();
+    added.forEach(r => { const entries = calibrationArchiveSubject(r).entries; (Array.isArray(entries) ? entries : []).forEach(s => claims.set(plain(s) ? s.id : null, { summary: s, record: r })); });
+    return { before, after, held, records, added, claims, removed: before.filter(e => plain(e) && !live.has(e.id)) };
+  }
+  // The server write gate: a write keeps every entry the stored log holds, unchanged and in place, and may only
+  // append, except that an archive record new in this write may move superseded entries out (#130). Such a record
+  // must name exactly the entries that left, with summaries and one SHA-256 that match the stored copies, and archive
+  // records already stored stay unchanged. Returns a plain refusal or null. prev is the stored workspace (null before
+  // the first save).
+  function calibrationLogChanges(prev, next) {
+    if (!plain(prev)) return null;
+    const { before, after, held, records, added, claims, removed } = calibrationArchiveMoves(prev, next);
+    for (let i = 0; i < held.length; i += 1) {
+      if (i >= records.length || canonicalPayload(held[i]) !== canonicalPayload(records[i])) return `The change would remove or alter calibration archive record ${plain(held[i]) && held[i].id ? held[i].id : `#${i + 1}`} in the shared log. Archive records are append-only; nothing was saved. Reload the workspace and try again.`;
+    }
+    // Only what the stored log allows to move may move: never the latest entry for a tool, an entry a buy-off cites, or
+    // an entry recorded before the chain, however consistent the record that claims it.
+    const movable = removed.length ? new Set(calibrationArchivable(prev)) : null;
+    for (const e of removed) {
+      const claim = claims.get(e.id);
+      if (claim && !movable.has(e.id)) return `Calibration entry ${e.id} cannot be archived: in the shared log it is the latest entry for ${e.tag}, is cited by a work order buy-off, or was recorded before the hash chain. Nothing was saved or archived. Reload the workspace and archive again.`;
+      if (!claim) return `The change would remove calibration entry ${e.id} from the shared log without archiving it. The calibration log is append-only; nothing was saved. Reload the workspace and record the change as a correction.`;
+      if (canonicalPayload(claim.summary) !== canonicalPayload(calibrationArchiveSummary(e))) return `Calibration archive record ${claim.record.id} does not match calibration entry ${e.id} as the shared log holds it. Nothing was saved or archived. Reload the workspace and archive again.`;
+    }
+    if (claims.size !== removed.length) return 'A new calibration archive record names calibration entries the shared log does not hold, or holds them still. Nothing was saved or archived. Reload the workspace and archive again.';
+    for (const r of added) {
+      const moved = removed.filter(e => claims.get(e.id).record === r);
+      if (sha256(canonicalPayload(moved)) !== calibrationArchiveSubject(r).digest) return `Calibration archive record ${r.id} does not match the calibration entries it archives as the shared log holds them. Nothing was saved or archived. Reload the workspace and archive again.`;
+      { const gapProblem = calibrationGapsProblem(r, moved); if (gapProblem) return gapProblem; }
+    }
+    const kept = before.filter(e => !removed.includes(e));
+    for (let i = 0; i < kept.length; i += 1) {
+      const id = plain(kept[i]) && kept[i].id ? kept[i].id : `calibrationLog[${i}]`;
+      if (i >= after.length) return `The change would remove calibration entry ${id} and ${kept.length - i - 1 > 0 ? `${kept.length - i - 1} later entr${kept.length - i - 1 === 1 ? 'y' : 'ies'}` : 'nothing after it'} from the shared log. The calibration log is append-only; nothing was saved. Reload the workspace and record the change as a correction.`;
+      if (canonicalPayload(kept[i]) !== canonicalPayload(after[i])) return `The change would alter or move calibration entry ${id} in the shared log. The calibration log is append-only; nothing was saved. Reload the workspace and record the change as a correction.`;
     }
     return null;
+  }
+  // Whether the server's calibration archive holds exactly the entries the workspace's archive records signed (#130).
+  // held is one { id, recordId, entry } per stored row the records name (a missing row is simply absent). Each row must
+  // be filed under its record, match its signed summary, and together the rows of a record must hash to the record's
+  // digest, so rows left in the table from another workspace under the same entry ids are refused, not adopted.
+  // Returns a plain refusal or null. Read-only.
+  function calibrationArchiveHeldProblem(state, held) {
+    const rows = new Map((Array.isArray(held) ? held : []).filter(plain).map(h => [h.id, h]));
+    for (const r of calibrationArchiveRecords(state)) {
+      const s = calibrationArchiveSubject(r), entries = [];
+      for (const summary of Array.isArray(s.entries) ? s.entries : []) {
+        const row = rows.get(summary.id);
+        if (!row || !plain(row.entry)) return `The workspace names archived calibration entry ${summary.id} (${r.id}), which this server does not hold. Restore the server database that holds the calibration archive, or initialize from the workspace export made on that server. Nothing was saved.`;
+        if (row.recordId !== r.id || row.entry.id !== summary.id || canonicalPayload(calibrationArchiveSummary(row.entry)) !== canonicalPayload(summary)) return `Archived calibration entry ${summary.id} on this server does not match archive record ${r.id} in the workspace${row.recordId !== r.id ? `: the server files it under ${row.recordId}` : ''}. The server archive belongs to other history. Restore the server database that holds this workspace's calibration archive. Nothing was saved.`;
+        entries.push(row.entry);
+      }
+      entries.sort((a, b) => Number(String(a.id).slice(7)) - Number(String(b.id).slice(7)));
+      if (sha256(canonicalPayload(entries)) !== s.digest) return `The archived calibration entries of ${r.id} on this server (${entries.slice(0, 5).map(e => e.id).join(', ')}${entries.length > 5 ? ` and ${entries.length - 5} more` : ''}) do not match the SHA-256 the archive record signed: one of them does not match. The server archive belongs to other history. Restore the server database that holds this workspace's calibration archive. Nothing was saved.`;
+      { const gapProblem = calibrationGapsProblem(r, entries); if (gapProblem) return gapProblem; }
+    }
+    return null;
+  }
+  // The entries an accepted write moves to the server archive, exactly as the stored log holds them, with the id of
+  // the archive record that moved each. Call it only after calibrationLogChanges(prev, next) returned null.
+  function calibrationArchivedEntries(prev, next) {
+    const { claims, removed } = calibrationArchiveMoves(prev, next);
+    return removed.filter(e => claims.has(e.id)).map(e => ({ entry: e, recordId: claims.get(e.id).record.id }));
   }
   // today is the Pacific day of the write: a calibration cannot be dated after the day it is recorded.
   const calibrationFieldError = (f, today) => {
@@ -2807,9 +2937,14 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // The next id after the highest in the log, or null once CALLOG-99999 is used: ids stay five digits and rising.
   const CALIBRATION_ID_MAX = 99999;
   const nextCalibrationId = log => { const n = Math.max(0, ...log.map(e => Number(String(e && e.id).slice(7)) || 0)) + 1; return n > CALIBRATION_ID_MAX ? null : `CALLOG-${String(n).padStart(5, '0')}`; };
-  // There is no archive: entries are signed records and are never removed (#113), so the limits say that plainly.
-  const calibrationIdsUsed = 'The calibration log has used its last entry number, CALLOG-99999, so this entry was not recorded. Calibration entries are signed records and cannot be removed or archived in Flight System. Ask your Flight System administrator how to continue.';
-  const calibrationLogFull = 'The calibration log is full (5,000 entries), so this entry was not recorded. Calibration entries are signed records and cannot be removed or archived in Flight System. Ask your Flight System administrator how to continue.';
+  // The limits say what happened and what to do next (#113). A full log makes room when a QA Manager archives
+  // superseded entries (#130); archiving does not free entry numbers, so the last number still needs the administrator.
+  const calibrationIdsUsed = 'The calibration log has used its last entry number, CALLOG-99999, so this entry was not recorded. Archiving entries does not free entry numbers. Ask your Flight System administrator how to continue.';
+  const calibrationLogFull = 'The calibration log is full (5,000 entries), so this entry was not recorded. A QA Manager can archive superseded entries on the shared Flight System server (System QMS records, Calibration log) to make room, then record this entry again.';
+  // A full log where nothing can move (every entry the latest for its tool, cited by a buy-off, or recorded before the
+  // chain) cannot make room by archiving, so the refusal says so and names the administrator instead.
+  const calibrationLogFullStuck = 'The calibration log is full (5,000 entries), so this entry was not recorded. No entry can be archived to make room: each one is the latest entry for its tool, is cited by a work order buy-off, or was recorded before the hash chain. Ask your Flight System administrator how to continue.';
+  const calibrationLogFullFor = state => calibrationArchivable(state).length ? calibrationLogFull : calibrationLogFullStuck;
   // The torque answer from a form or API call: true, false, or undefined when not given.
   const torqueAnswer = v => v === true || v === 'yes' || v === 'true' ? true : v === false || v === 'no' || v === 'false' ? false : undefined;
   const seedTorqueTool = tag => CAL_TOOLS.some(t => t.tag.toUpperCase() === tag && /TORQUE/i.test(t.description));
@@ -2838,9 +2973,9 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const retired = calibrationStatus(state, fields.tag);
     const torque = calibrationTorque(fields.tag, input?.torque, retired);
     if (torque.error) return fail(torque.error);
-    if (calibrationUndated(fields)) { const where = calibrationDatesOnRecord(state.calibrationLog, fields.tag); if (where) return fail(calibrationDatesKept(fields.tag, where)); }
+    if (calibrationUndated(fields)) { const where = calibrationDatesOnRecord([...calibrationArchivedSummaries(state), ...state.calibrationLog], fields.tag); if (where) return fail(calibrationDatesKept(fields.tag, where)); }
     if (retired && retired.status === 'Retired') return fail(`${fields.tag} is retired (${retired.id}) and cannot be recorded again. If it was retired by mistake, a QA Manager corrects ${retired.id} and enters the reason in the note.`);
-    if (state.calibrationLog.length >= 5000) return fail(calibrationLogFull);
+    if (state.calibrationLog.length >= CALIBRATION_LOG_LIMIT) return fail(calibrationLogFullFor(state));
     if (!nextCalibrationId(state.calibrationLog)) return fail(calibrationIdsUsed);
     const entry = { id: nextCalibrationId(state.calibrationLog), ...fields, ...(torque.torque !== undefined ? { torque: torque.torque } : {}), recordedAt, recordedBy: `${who.name} \u00b7 ${who.credentialId}`, signerRole: who.role };
     entry.calibrationSignature = { manifest: signManifest(state, 'Calibration recorded', calibrationSubject(entry), entry.recordedAt) };
@@ -2854,7 +2989,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (!prior) return fail('That calibration entry was not found.');
     const current = calibrationStatus(state, prior.tag);
     if (!current || current.id !== prior.id) return fail(`${prior.id} is not the current entry for ${prior.tag}. Correct the current entry, ${current ? current.id : 'the latest one'}, instead.`);
-    if (log.length >= 5000) return fail(calibrationLogFull);
+    if (log.length >= CALIBRATION_LOG_LIMIT) return fail(calibrationLogFullFor(state));
     if (!nextCalibrationId(log)) return fail(calibrationIdsUsed);
     const fields = { tag: prior.tag, description: patch?.description === undefined ? prior.description : String(patch.description).trim(), serial: patch?.serial === undefined ? prior.serial : String(patch.serial).trim(), calibratedAt: patch?.calibratedAt === undefined ? prior.calibratedAt : String(patch.calibratedAt).trim(), expires: patch?.expires === undefined ? prior.expires : String(patch.expires).trim(), status: patch?.status === undefined ? prior.status : String(patch.status).trim(), location: patch?.location === undefined ? prior.location : String(patch.location).trim(), note: patch?.note === undefined ? prior.note : String(patch.note).trim() };
     const recordedAt = new Date().toISOString();
@@ -2862,7 +2997,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (bad) return fail(bad);
     const torque = calibrationTorque(prior.tag, patch?.torque, prior);
     if (torque.error) return fail(torque.error);
-    if (calibrationUndated(fields)) { const where = calibrationDatesOnRecord(log, prior.tag); if (where) return fail(calibrationDatesKept(prior.tag, where)); }
+    if (calibrationUndated(fields)) { const where = calibrationDatesOnRecord([...calibrationArchivedSummaries(state), ...log], prior.tag); if (where) return fail(calibrationDatesKept(prior.tag, where)); }
     if (reinstatementReasonMissing(prior, fields)) return fail(`${prior.tag} is retired. To return it to service, enter the reason in the note (at least ${CALIBRATION_REASON_MIN} characters, different from the retirement note), for example which tool was retired by mistake.`);
     const who = actor(state);
     if (!snapshotValid(who)) return fail('Sign in with a named credential before correcting a calibration entry.');
@@ -2872,6 +3007,69 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     state.calibrationLog = log;
     appendCalibrationEntry(state, entry);
     return { ok: true, id: entry.id, message: `Calibration entry ${prior.id} corrected as ${entry.id}. The original entry stays in the log.` };
+  }
+  // #130: archiving superseded calibration entries. Every calibration entry a work order in the workspace cites on a
+  // buy-off (operation tools and ATP test assets). Those stay in the live log while the order does.
+  const calibrationCitedIds = state => {
+    const cited = new Set();
+    for (const o of plain(state) && Array.isArray(state.orders) ? state.orders : []) for (const op of plain(o) && Array.isArray(o.operations) ? o.operations : []) {
+      const b = plain(op) && plain(op.buyoff) ? op.buyoff : null;
+      if (!b) continue;
+      for (const t of [...(Array.isArray(b.tools) ? b.tools : []), ...(Array.isArray(b.testAssets) ? b.testAssets : [])]) if (t && typeof t.calibrationEntry === 'string') cited.add(t.calibrationEntry);
+    }
+    return cited;
+  };
+  // The entries an archive would move, in log order: every linked entry that a later entry for the same tool follows,
+  // and that no buy-off in the workspace cites. The latest entry for a tool is its current entry, so it always stays.
+  // Entries recorded before the chain (no previousHash) stay too: the legacy seal covers them as a block.
+  // Read-only: the name matches no server-mutator prefix.
+  function calibrationArchivable(state) {
+    const log = plain(state) && Array.isArray(state.calibrationLog) ? state.calibrationLog : [];
+    const latest = new Map(), cited = calibrationCitedIds(state);
+    log.forEach(e => { if (plain(e) && typeof e.tag === 'string') latest.set(e.tag, e.id); });
+    return log.filter(e => plain(e) && Object.hasOwn(e, 'previousHash') && latest.get(e.tag) !== e.id && !cited.has(e.id)).map(e => e.id);
+  }
+  // Only the shared server keeps archived entries. The server's engine host sets flightServerHost; a browser page is
+  // connected when skServer is active. A standalone workspace has nowhere to put them, so it cannot archive.
+  const calibrationArchiveStore = () => !!(root && (root.flightServerHost === true || (root.skServer && root.skServer.active)));
+  // Moves the archivable entries out of the live log and appends one signed archive record to the head. The chain is
+  // checked first, so an archive never seals over a log that does not verify. The server stores the moved entries,
+  // unchanged, from its own stored copy in the same transaction (calibrationArchivedEntries).
+  function recordCalibrationArchive(state) {
+    if (!can('configure-qms')) return fail('Only a QA Manager or Master Access account can archive calibration entries.');
+    if (!calibrationArchiveStore()) return fail('Archiving calibration entries needs the shared Flight System server, which keeps the archived entries and their signatures. This workspace is saved only in this browser, so nothing was archived. Ask your Flight System administrator to move it to the server.');
+    const who = actor(state);
+    if (!snapshotValid(who)) return fail('Sign in with a named credential before archiving calibration entries.');
+    if (!calibrationSignerRole(who.role)) return fail(calibrationSignerRefusal(who.role));
+    const problem = calibrationChainProblem(state);
+    if (problem) return fail(`The calibration log does not verify, so nothing was archived. ${problem.detail}`);
+    const move = new Set(calibrationArchivable(state));
+    if (!move.size) return fail('No superseded calibration entries can be archived. The latest entry for each tool and every entry a work order buy-off cites stay in the log.');
+    const records = calibrationArchiveRecords(state), number = Math.max(0, ...records.map(r => Number(r.id.slice(7)))) + 1;
+    if (number > 9999) return fail('The calibration archive has used its last record number, CALARC-9999, so nothing was archived. Ask your Flight System administrator how to continue.');
+    const log = state.calibrationLog, moved = log.filter(e => move.has(e.id)), gaps = [];
+    let run = [];
+    const closeRun = () => { if (run.length) gaps.push({ from: run[0].previousHash, first: calibrationEntryHash(run[0]), to: calibrationEntryHash(run[run.length - 1]), count: run.length, digest: sha256(canonicalPayload(run)) }); run = []; };
+    log.forEach(e => { if (move.has(e.id)) run.push(e); else closeRun(); });
+    closeRun();
+    const at = new Date().toISOString(), id = `CALARC-${String(number).padStart(4, '0')}`;
+    const subject = { id, at, by: `${who.name} \u00b7 ${who.credentialId}`, signerRole: who.role, count: moved.length, digest: sha256(canonicalPayload(moved)), gaps, entries: moved.map(calibrationArchiveSummary) };
+    const record = { id, manifest: signManifest(state, CALIBRATION_ARCHIVE_MEANING, subject, at) };
+    const head = state.calibrationLogHead;
+    state.calibrationLog = log.filter(e => !move.has(e.id));
+    state.calibrationLogHead = calibrationHeadFor(state.calibrationLog, head.legacyCount, head.sealedAt, head.legacyHash, [...records, record]);
+    const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+    return { ok: true, id, count: moved.length, message: `${plural(moved.length, 'superseded calibration entry', 'superseded calibration entries')} moved to the server archive as ${id}. The calibration log holds ${plural(state.calibrationLog.length, 'entry', 'entries')} now, including the latest entry for each tool.` };
+  }
+  // How full the live log is, and what to do next once it is within 10% of the limit. Read-only.
+  function calibrationCapacity(state) {
+    const count = plain(state) && Array.isArray(state.calibrationLog) ? state.calibrationLog.length : 0, near = count >= CALIBRATION_LOG_WARN, server = calibrationArchiveStore();
+    const n = v => v.toLocaleString('en-US');
+    const archivable = calibrationArchivable(state).length;
+    // Nothing archivable (every entry the latest for its tool, cited by a buy-off, or recorded before the chain): archiving
+    // cannot make room, so the warning names the administrator rather than a button that is not shown.
+    const next = !archivable ? 'No entry can be archived to make room: each one is the latest entry for its tool, is cited by a work order buy-off, or was recorded before the hash chain. Ask your Flight System administrator how to continue before the log is full.' : server ? 'A QA Manager should archive superseded entries now with Archive superseded entries below.' : 'To make room, a QA Manager must archive superseded entries, which needs the shared Flight System server. Ask your Flight System administrator to move this workspace to the server before the log is full.';
+    return { count, limit: CALIBRATION_LOG_LIMIT, warnAt: CALIBRATION_LOG_WARN, near, archiveAvailable: server, archivable, archived: calibrationArchivedSummaries(state).length, message: near ? `The calibration log holds ${n(count)} of ${n(CALIBRATION_LOG_LIMIT)} entries. When it is full, no calibration, quarantine, retirement or correction can be recorded. ${next}` : '' };
   }
   // Latest calibration entry for a tag; a superseded entry is skipped when its correction exists.
   // Read-only: the name intentionally matches no server-mutator prefix.
@@ -3339,7 +3537,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   function qualityAuditValid(a){if(!plain(a)||!/^AUD-\d{4}$/.test(a.id)||!str(a.scope,200)||a.scope.trim().length<3||a.scope!==a.scope.trim()||!['Open','Closed'].includes(a.status)||!Array.isArray(a.findings)||a.findings.length>20||!unique(a.findings.map(f=>f&&f.id))||!a.findings.every(qualityAuditFindingValid)||!snapshotValid(a.openedBy))return false;if(a.status==='Open')return a.closer===null&&!Object.hasOwn(a,'manifest')&&!Object.hasOwn(a,'closedAt');return a.findings.length>0&&a.findings.every(f=>f.status==='Closed')&&snapshotValid(a.closer)&&a.closer.credentialId!==a.openedBy.credentialId&&timestamp(a.closedAt)&&qualityManifestValid(a.manifest);}
   const qualityRecordsValid=state=>{
     if(Object.hasOwn(state,'audits')&&(!Array.isArray(state.audits)||state.audits.length>200||!unique(state.audits.map(a=>a&&a.id))||!state.audits.every(qualityAuditValid)))return false;
-    if(Object.hasOwn(state,'calibrationLog')&&(!Array.isArray(state.calibrationLog)||state.calibrationLog.length>5000||!unique(state.calibrationLog.map(e=>e&&e.id))||!state.calibrationLog.every(calibrationEntryValid)||calibrationSequenceProblem(state.calibrationLog)))return false;
+    if(Object.hasOwn(state,'calibrationLog')&&(!Array.isArray(state.calibrationLog)||state.calibrationLog.length>5000||!unique(state.calibrationLog.map(e=>e&&e.id))||!state.calibrationLog.every(calibrationEntryValid)||calibrationSequenceProblem(state.calibrationLog,calibrationArchivedSummaries(state))))return false;
     if(calibrationChainProblem(state))return false;
     if(calibrationReferenceProblem(state))return false;
     if(Object.hasOwn(state,'certifications')&&(!Array.isArray(state.certifications)||state.certifications.length>200||!unique(state.certifications.map(c=>c&&c.id))||!state.certifications.every(c=>plain(c)&&/^CERT-\d{4}$/.test(c.id)&&str(c.statement,300)&&c.statement.trim().length>=5&&c.statement===c.statement.trim()&&snapshotValid(c.by)&&timestamp(c.at)&&qualityManifestValid(c.manifest))))return false;
@@ -7631,7 +7829,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
         if (seenCalibration.has(e.id)) return { where: label, detail: `Duplicate calibration entry id ${label} in the calibration log. ${review}`, fix: null };
         seenCalibration.add(e.id);
       }
-      const sequence = calibrationSequenceProblem(log);
+      const sequence = calibrationSequenceProblem(log, calibrationArchivedSummaries(state));
       if (sequence) return { where: sequence.id, detail: `${sequence.detail} ${review}`, fix: null };
     }
     { const chain = calibrationChainProblem(state); if (chain) return { where: chain.id, detail: `${chain.detail} The saved calibration log was not changed. Restore the workspace from the last good copy or export, then have a QA Manager compare the calibration log with the calibration records.`, fix: null }; }
@@ -8236,7 +8434,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   MES.seed = () => { const state = ensurePlanner(seedWithPlanner()); ['audits','certifications','supplierApprovals','qualityValues','qualityVerdicts','controlledDocuments','modelAdapterHistory','aiActionLog','aiSkillDrafts','aiSkillTriggers','aiSkillTriggerHistory','calibrationLog'].forEach(key=>{if(!Array.isArray(state[key]))state[key]=[];}); if(!plain(state.modelAdapter))state.modelAdapter=emptyModelAdapter(); ensureInventoryLedger(state); ensureResources(state); ensureProjects(state); syncPlanningBlockers(state); return state; };
   const upgradeWithPlanner = MES.upgrade;
   MES.upgrade = state => { const upgraded = upgradeWithPlanner(state); if (!upgraded) return null; ensurePlanner(upgraded); if(!Array.isArray(upgraded.controlledDocuments))upgraded.controlledDocuments=[];if(!Array.isArray(upgraded.modelAdapterHistory))upgraded.modelAdapterHistory=[];if(!Array.isArray(upgraded.aiActionLog))upgraded.aiActionLog=[];if(!Array.isArray(upgraded.aiSkillDrafts))upgraded.aiSkillDrafts=[];if(!Array.isArray(upgraded.aiSkillTriggers))upgraded.aiSkillTriggers=[];if(!Array.isArray(upgraded.aiSkillTriggerHistory))upgraded.aiSkillTriggerHistory=[];if(!Array.isArray(upgraded.calibrationLog))upgraded.calibrationLog=[];if(!plain(upgraded.modelAdapter))upgraded.modelAdapter=emptyModelAdapter(); ensureInventoryLedger(upgraded); ensureResources(upgraded); ensureProjects(upgraded); syncPlanningBlockers(upgraded); return upgraded; };
-  Object.assign(MES, { archivable, archiveOrders, archivedOrderValid, ownWorkRefusal, coveredBuildOps, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, verifyManifests, reviewFair, NFF, recordTraining, personTraining, trainingCurrentFor, trainingCertificateValid, ownWorkHit, OWN_WORK_EXEMPT_PEDIGREES, scryptHex, PIN_KDF, saveTraining, trainingCatalog, requiredTrainings, trainingDef, TRAINING_CODE_RE, importStamps, stampRegisterCsv, nextStampNumber, isPlaceholderStamp, STAMP_NUMBER_RE, wiAuthors, wiAuthorRefusal, wiPeerReviewRefusal, buildStamp, buildStampValid, supportActor, supportGrant, logSupport, SUPPORT_RULES, SUPPORT_KINDS, recordSupportAccess, noteDemoBypassRemoved, supportLogValid, recordCalibration, updateCalibration, calibrationStatus, calibrationChainProblem, calibrationEntryHash, calibrationLegacyHash, calibrationLogChanges, calibrationCurrentIds, calibratedToolChecks, toolUseRecords, calibrationEntryValid, CALIBRATION_STATUSES });
+  Object.assign(MES, { archivable, archiveOrders, archivedOrderValid, ownWorkRefusal, coveredBuildOps, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, verifyManifests, reviewFair, NFF, recordTraining, personTraining, trainingCurrentFor, trainingCertificateValid, ownWorkHit, OWN_WORK_EXEMPT_PEDIGREES, scryptHex, PIN_KDF, saveTraining, trainingCatalog, requiredTrainings, trainingDef, TRAINING_CODE_RE, importStamps, stampRegisterCsv, nextStampNumber, isPlaceholderStamp, STAMP_NUMBER_RE, wiAuthors, wiAuthorRefusal, wiPeerReviewRefusal, buildStamp, buildStampValid, supportActor, supportGrant, logSupport, SUPPORT_RULES, SUPPORT_KINDS, recordSupportAccess, noteDemoBypassRemoved, supportLogValid, recordCalibration, updateCalibration, calibrationStatus, calibrationChainProblem, calibrationEntryHash, calibrationLegacyHash, calibrationLogChanges, recordCalibrationArchive, calibrationArchivable, calibrationArchiveSummary, calibrationArchivedEntries, calibrationArchiveHeldProblem, calibrationCapacity, CALIBRATION_LOG_LIMIT, calibrationCurrentIds, calibratedToolChecks, toolUseRecords, calibrationEntryValid, CALIBRATION_STATUSES });
   Object.assign(MES, { SOURCE_INSPECTION_CLASS, SOURCE_INSPECTION_CODES, CONFORMITY_SUBCODES, TEST_SUBCODES, operationType, migrateOperationTypes, sourceInspectionCodes, conformitySubcodes, testSubcodes, operationSubcodes, operationSubcode, saveSourceInspectionCodes, saveOperationSubcodes, mrbTrainingTiers, saveMrbTrainingTiers, recordSourceInspection, sourceInspectionHolds, sourceInspectionWorkspaceValid });
   MES.roleDeniedMessage = roleDeniedMessage;
   const validateWithSourceInspection = MES.validate;
@@ -11416,7 +11614,7 @@ const serverMutatorExact=new Set(['containNC','effectivenessCheck','pfmeaSafetyB
 const serverMutatorExclude=new Set(['repair','signManifest','verifyManifests','verifyAIActionLog','stampCheck','stampRegister','stampRegisterCsv','stampCredential','stampHolderFor','ticketAttachments','openProcessECRs','syncAssignments','buyoffCredential','ensure','seedDemoRecords','icalExport','openMaintenanceFor','recordAIAction','logSupport','noteDemoBypassRemoved','releaseWIFromPfmea','quarantineOrder','rollWorkOrderRevision']);
 // The reviewed commands the server accepts (server/mes-host.mjs actionAllow). A function is sent as a command only
 // when it is named here; the prefix rule alone is not enough.
-const serverMutatorAllow=new Set(['MES.addSavedView','MES.removeSavedView','MES.recordCalibration','MES.updateCalibration','MES.addAttachment','MES.addTicketAttachment','MES.removeTicketAttachment','MES.removeAttachment','MES.logAogBroadcast','MES.resolveAog','MES.setSchedule','MES.editOrderOperation','MES.setWIStepImage','MES.selectProfile','MES.assignSerial','MES.voidSerial','MES.moveToInventory','MES.markNetSuitePosted','MES.addKitFile','MES.linkOpToTicket','MES.saveReworkTemplate','MES.removeReworkTemplate','MES.saveOpAsReworkTemplate','MES.approveReworkTemplate','MES.addStandardRework','MES.setWIDrawing','MES.releaseUnreleasedWI','MES.rejectInspection','MES.logTravelerPrint','MES.saveFairHeader','MES.setFairIndex','MES.addFairForm2','MES.setFairTest','MES.addFairChar','MES.updateFairChar','MES.verifyFair','MES.approveFair','MES.reopenFair','MES.startConformity','MES.saveConformity','MES.checkConformity','MES.complete8130_9','MES.void8130_9','MES.aqiSign8130_9','MES.notifyCertification','MES.addDarFinding','MES.acceptDarFinding','MES.recordDarApproval','MES.record8130_3','MES.closeConformity','MES.issueFromOrder','MES.returnIssuedOrder','MES.qaReviewMasterWI','MES.setImpactDecision','MES.linkECO','MES.setWICriticalSafety','MES.addPfmeaRow','MES.updatePfmeaRow','MES.setStampPin','MES.setMsdsBook','MES.tickFodItem','MES.removeKitFile','MES.addMasterWI','MES.updateMasterWI','MES.saveWIOperations','MES.releaseMasterWI','MES.reviseMasterWI','MES.setStepCheck','MES.pushATPSoftware','MES.reviewATPPush','MES.linkATPSoftware','MES.addPurchaseOrder','MES.requestOrderClosure','MES.postNotice','MES.acknowledgeNotice','MES.updateNotice','MES.pruneExpiredNotices','MES.requestWorkOrder','MES.decideWORequest','MES.submitECRRequest','MES.reviewFeedbackECR','MES.linkECRJira','MES.incorporateECRs','MES.decideOrderClosure','MES.assignWork','MES.completeAssignment','MES.pingAssignment','MES.addOrderOperation','MES.removeOrderOperation','MES.approveSequenceChange','MES.setMaterialLot','MES.releaseApproval','MES.approveRelease','MES.approveECR','MES.approveEngineeringChange','MES.advance','MES.setMaterial','MES.setPriority','MES.completeOperation','MES.closeOrder','MES.addOrder','MES.addAdhocOrder','MES.splitOrder','MES.splitRequestOrder','MES.requestPedigreeChange','MES.approvePedigreeChange','MES.peerReviewMasterWI','MES.dispositionTicket','MES.addNote','MES.createTicket','MES.resolveTicket','MES.returnDisposition','MES.closeSplitRequest','MES.rejectEngineeringChange','MES.rejectSequenceChange','MES.rejectPedigreeChange','MES.returnRelease','MES.returnMasterWI','MES.withdrawClosure','MES.closeECRRequest','MES.updateProfile','MES.attachEvidence','MES.reviewEvidence','MES.rejectEvidence','MES.removeEvidence','MES.issueStamp','MES.updateStamp','MES.addMessage','MES.setSlackThread','MES.createBigThreePlan','MES.decideBigThree','MES.carryBigThree','MES.proposeBigThreeTimeBlock','MES.decideBigThreeTimeBlock','MES.escalateBigThree','MES.setPlanningCalendarSync','MES.icalImport','MES.openAudit','MES.closeAuditFinding','MES.closeAudit','MES.issueCertification','MES.approveSupplier','MES.storeQualityValue','MES.recordQualityVerdict','MES.createControlledDocument','MES.startControlledDocumentRevision','MES.reviewControlledDocument','MES.releaseControlledDocument','MES.configureModelAdapter','MES.setForm3Plan','MES.setSkillTrigger','MES.runSkill','MES.reviewSkillDraft','MES.updateSkillDraft','MES.acceptSkillDraft','MES.addEquipmentArea','MES.addEquipmentUnit','MES.createProject','MES.addProjectObjective','MES.addProjectMilestone','MES.setProjectSensitivity','MES.linkWorkOrderProject','MES.createSprint','MES.recordMaintenance','MES.closeMaintenance','MES.recordExternalReceipt','MES.clockOnOperation','MES.clockOffOperation','MES.postInventoryTransaction','MES.submitEngineeringChange','MES.reviewFair','MES.recordTraining','MES.saveTraining','MES.importStamps','MES.recordSupportAccess','MES.saveSourceInspectionCodes','MES.saveOperationSubcodes','MES.saveMrbTrainingTiers','MES.recordSourceInspection','FlightPlan.addPlannedOrder','FlightPlan.firm','FlightPlan.cancel','FlightPlan.convert','FlightManeuver.raiseCAR','FlightManeuver.recordContainment','FlightManeuver.recordRootCause','FlightManeuver.addAction','FlightManeuver.completeAction','FlightManeuver.verifyCAR','FlightManeuver.effectivenessCheck','FlightManeuver.closeCAR','FlightManeuver.cancelCAR','FlightManeuver.openMRB','FlightManeuver.voteMRB','FlightManeuver.decideMRB','FlightManeuver.linkCAR','FlightManeuver.addRecordFile','FlightManeuver.removeRecordFile','FlightManeuver.raiseNC','FlightManeuver.dispositionNC','FlightManeuver.containNC','FlightManeuver.approveNC','FlightManeuver.linkReworkOrder','FlightManeuver.raiseSPR','FlightManeuver.linkSPRJira','FlightManeuver.closeSPR','FlightManeuver.requestSCAR','FlightManeuver.linkSCARJira','FlightManeuver.closeSCAR','FlightManeuver.openPFMEA','FlightManeuver.setPfmeaScope','FlightManeuver.addPfmeaMode','FlightManeuver.removePfmeaMode','FlightManeuver.markOpNoRisk','FlightManeuver.completePfmeaAnalysis','FlightManeuver.setPfmeaAction','FlightManeuver.closePfmeaAction','FlightManeuver.completePfmeaActions','FlightManeuver.pfmeaSafetyBuyoff']);
+const serverMutatorAllow=new Set(['MES.addSavedView','MES.removeSavedView','MES.recordCalibration','MES.updateCalibration','MES.recordCalibrationArchive','MES.addAttachment','MES.addTicketAttachment','MES.removeTicketAttachment','MES.removeAttachment','MES.logAogBroadcast','MES.resolveAog','MES.setSchedule','MES.editOrderOperation','MES.setWIStepImage','MES.selectProfile','MES.assignSerial','MES.voidSerial','MES.moveToInventory','MES.markNetSuitePosted','MES.addKitFile','MES.linkOpToTicket','MES.saveReworkTemplate','MES.removeReworkTemplate','MES.saveOpAsReworkTemplate','MES.approveReworkTemplate','MES.addStandardRework','MES.setWIDrawing','MES.releaseUnreleasedWI','MES.rejectInspection','MES.logTravelerPrint','MES.saveFairHeader','MES.setFairIndex','MES.addFairForm2','MES.setFairTest','MES.addFairChar','MES.updateFairChar','MES.verifyFair','MES.approveFair','MES.reopenFair','MES.startConformity','MES.saveConformity','MES.checkConformity','MES.complete8130_9','MES.void8130_9','MES.aqiSign8130_9','MES.notifyCertification','MES.addDarFinding','MES.acceptDarFinding','MES.recordDarApproval','MES.record8130_3','MES.closeConformity','MES.issueFromOrder','MES.returnIssuedOrder','MES.qaReviewMasterWI','MES.setImpactDecision','MES.linkECO','MES.setWICriticalSafety','MES.addPfmeaRow','MES.updatePfmeaRow','MES.setStampPin','MES.setMsdsBook','MES.tickFodItem','MES.removeKitFile','MES.addMasterWI','MES.updateMasterWI','MES.saveWIOperations','MES.releaseMasterWI','MES.reviseMasterWI','MES.setStepCheck','MES.pushATPSoftware','MES.reviewATPPush','MES.linkATPSoftware','MES.addPurchaseOrder','MES.requestOrderClosure','MES.postNotice','MES.acknowledgeNotice','MES.updateNotice','MES.pruneExpiredNotices','MES.requestWorkOrder','MES.decideWORequest','MES.submitECRRequest','MES.reviewFeedbackECR','MES.linkECRJira','MES.incorporateECRs','MES.decideOrderClosure','MES.assignWork','MES.completeAssignment','MES.pingAssignment','MES.addOrderOperation','MES.removeOrderOperation','MES.approveSequenceChange','MES.setMaterialLot','MES.releaseApproval','MES.approveRelease','MES.approveECR','MES.approveEngineeringChange','MES.advance','MES.setMaterial','MES.setPriority','MES.completeOperation','MES.closeOrder','MES.addOrder','MES.addAdhocOrder','MES.splitOrder','MES.splitRequestOrder','MES.requestPedigreeChange','MES.approvePedigreeChange','MES.peerReviewMasterWI','MES.dispositionTicket','MES.addNote','MES.createTicket','MES.resolveTicket','MES.returnDisposition','MES.closeSplitRequest','MES.rejectEngineeringChange','MES.rejectSequenceChange','MES.rejectPedigreeChange','MES.returnRelease','MES.returnMasterWI','MES.withdrawClosure','MES.closeECRRequest','MES.updateProfile','MES.attachEvidence','MES.reviewEvidence','MES.rejectEvidence','MES.removeEvidence','MES.issueStamp','MES.updateStamp','MES.addMessage','MES.setSlackThread','MES.createBigThreePlan','MES.decideBigThree','MES.carryBigThree','MES.proposeBigThreeTimeBlock','MES.decideBigThreeTimeBlock','MES.escalateBigThree','MES.setPlanningCalendarSync','MES.icalImport','MES.openAudit','MES.closeAuditFinding','MES.closeAudit','MES.issueCertification','MES.approveSupplier','MES.storeQualityValue','MES.recordQualityVerdict','MES.createControlledDocument','MES.startControlledDocumentRevision','MES.reviewControlledDocument','MES.releaseControlledDocument','MES.configureModelAdapter','MES.setForm3Plan','MES.setSkillTrigger','MES.runSkill','MES.reviewSkillDraft','MES.updateSkillDraft','MES.acceptSkillDraft','MES.addEquipmentArea','MES.addEquipmentUnit','MES.createProject','MES.addProjectObjective','MES.addProjectMilestone','MES.setProjectSensitivity','MES.linkWorkOrderProject','MES.createSprint','MES.recordMaintenance','MES.closeMaintenance','MES.recordExternalReceipt','MES.clockOnOperation','MES.clockOffOperation','MES.postInventoryTransaction','MES.submitEngineeringChange','MES.reviewFair','MES.recordTraining','MES.saveTraining','MES.importStamps','MES.recordSupportAccess','MES.saveSourceInspectionCodes','MES.saveOperationSubcodes','MES.saveMrbTrainingTiers','MES.recordSourceInspection','FlightPlan.addPlannedOrder','FlightPlan.firm','FlightPlan.cancel','FlightPlan.convert','FlightManeuver.raiseCAR','FlightManeuver.recordContainment','FlightManeuver.recordRootCause','FlightManeuver.addAction','FlightManeuver.completeAction','FlightManeuver.verifyCAR','FlightManeuver.effectivenessCheck','FlightManeuver.closeCAR','FlightManeuver.cancelCAR','FlightManeuver.openMRB','FlightManeuver.voteMRB','FlightManeuver.decideMRB','FlightManeuver.linkCAR','FlightManeuver.addRecordFile','FlightManeuver.removeRecordFile','FlightManeuver.raiseNC','FlightManeuver.dispositionNC','FlightManeuver.containNC','FlightManeuver.approveNC','FlightManeuver.linkReworkOrder','FlightManeuver.raiseSPR','FlightManeuver.linkSPRJira','FlightManeuver.closeSPR','FlightManeuver.requestSCAR','FlightManeuver.linkSCARJira','FlightManeuver.closeSCAR','FlightManeuver.openPFMEA','FlightManeuver.setPfmeaScope','FlightManeuver.addPfmeaMode','FlightManeuver.removePfmeaMode','FlightManeuver.markOpNoRisk','FlightManeuver.completePfmeaAnalysis','FlightManeuver.setPfmeaAction','FlightManeuver.closePfmeaAction','FlightManeuver.completePfmeaActions','FlightManeuver.pfmeaSafetyBuyoff']);
 const serverCommandStates=new WeakSet([state]);
 // Commands are queued as engine calls succeed, before their change is committed. A refused change must not leave
 // its commands behind for the next flush: commits mark what is queued, refusals drop everything unmarked.
@@ -11640,11 +11838,17 @@ function renderQmsRecords(){
   const values=(state.qualityValues||[]).slice().reverse().map(row=>`<option value="${esc(row.id)}" data-kind="${esc(row.kind)}">${esc(row.id)} · ${esc(row.kind)} · ${esc(row.value)}${row.name?' · '+esc(row.name):''}</option>`).join('');
   const calCurrent=MES.calibrationCurrentIds(state);
   const calCanCorrect=!!window.skAuth?.can?.('configure-qms');
+  // #130: near the 5,000-entry limit the log says what to do next; on the shared server a QA Manager archives the
+  // superseded entries. The React view (CalibrationLog in src/react/flight-ui.jsx) carries the same markup.
+  const calCapacity=MES.calibrationCapacity(state);
+  const calWarning=calCapacity.near?`<p class="inline-info warning" role="status" data-calibration-capacity>${esc(calCapacity.message)}</p>`:'';
+  const calArchive=calCanCorrect&&calCapacity.archiveAvailable?`<div class="calibration-archive"><p class="small muted">${calCapacity.archivable?`${calCapacity.archivable} superseded ${calCapacity.archivable===1?'entry':'entries'} can move to the server archive.`:'No superseded entries can move to the server archive now.'} The latest entry for each tool and every entry a work order buy-off cites stay in the log.${calCapacity.archived?` ${calCapacity.archived} archived ${calCapacity.archived===1?'entry is':'entries are'} kept on the server with ${calCapacity.archived===1?'its signature':'their signatures'} unchanged.`:''}</p>${calCapacity.archivable?'<button class="btn" type="button" data-calibration-archive>Archive superseded entries</button>':''}</div>`:'';
   const calibrations=(state.calibrationLog||[]).slice().reverse().map(row=>`<li><strong>${esc(row.id)}</strong> · ${esc(row.tag)} · ${esc(row.description)}${row.torque===true?' · torque tool':''}${row.expires?` · due ${esc(row.expires)}`:' · no calibration dates'} <span class="pill ${row.status==='In Calibration'?'closed':'high'}">${esc(row.status)}</span>${row.supersedes?` <span class="muted">corrects ${esc(row.supersedes)}</span>`:''}${calCurrent.has(row.id)?'':' <span class="muted">superseded</span>'}<br><span class="muted">Recorded by ${esc(row.recordedBy)} · ${date(row.recordedAt)} · SHA-256${row.note?' · '+esc(row.note):''}</span>${calCanCorrect&&calCurrent.has(row.id)?`<details class="resolve-details"><summary>Correct this entry</summary><form data-qms-calibration-correct="${esc(row.id)}"><div class="form-grid"><label class="field">Description<input name="description" maxlength="80" required value="${esc(row.description)}"></label><label class="field">Torque tool<select name="torque"><option value="">Keep as recorded</option><option value="yes">Yes</option><option value="no">No</option></select></label><label class="field">Serial number<input name="serial" maxlength="40" value="${esc(row.serial)}"></label><label class="field">Calibrated on<input name="calibratedAt" type="date" value="${esc(row.calibratedAt)}"></label><label class="field">Due date<input name="expires" type="date" value="${esc(row.expires)}"></label><label class="field">Status<select name="status">${['In Calibration','Out for Calibration','Quarantined','Retired'].map(v=>`<option${v===row.status?' selected':''}>${v}</option>`).join('')}</select></label><label class="field">Location<input name="location" maxlength="80" value="${esc(row.location)}"></label><label class="field wide">Note or reason<input name="note" maxlength="300" value="${esc(row.note)}"></label></div><p class="small muted">The correction is signed and appended; ${esc(row.id)} stays in the log. To return a retired tool to service, give the reason in the note.</p><button class="btn" type="submit">Sign correction</button></form></details>`:''}</li>`).join('');
   const verdicts=(state.qualityVerdicts||[]).slice().reverse().map(row=>`<li><strong>${esc(row.id)}</strong> · ${esc(row.kind)} ${esc(row.value)} · ${esc(row.verdict)} <span class="muted">Signed by ${esc(row.by.name)} · ${date(row.at)} · SHA-256</span></li>`).join('');
-  return `<section class="qms-config-page"><div class="page-heading"><div><p class="hero-eyebrow">Flight Maneuver · Quality system</p><h1>System QMS records</h1><p class="lede">Audits, controlled documents, supplier approvals, certifications, recorded quality study results, and the calibration log. Signatures and content hashes are checked by the Flight record verifier.</p></div></div>${renderAIGovernance()}<section class="panel"><div class="panel-head"><h2>Audits</h2><span class="pill">${(state.audits||[]).length} records</span></div><form data-qms-record="audit"><div class="form-grid"><label class="field">Audit scope<input name="scope" maxlength="200" minlength="3" required placeholder="Internal process audit"></label><label class="field wide">Findings<textarea name="findings" rows="3" required placeholder="One finding per line"></textarea></label></div><p class="small muted">The person who records a finding cannot close it. A different person signs each closure.</p><button class="btn primary" type="submit">Open audit</button></form>${audits||'<p class="muted">No audits recorded.</p>'}</section>${renderControlledDocumentBlock()}<section class="panel"><div class="panel-head"><h2>Calibration log</h2><span class="pill">${(state.calibrationLog||[]).length} records</span></div><form data-qms-record="calibration"><div class="form-grid"><label class="field">Tool asset tag<input name="tag" maxlength="40" required placeholder="CAL-022"></label><label class="field">Description<input name="description" maxlength="80" required placeholder="DIGITAL CALIPER"></label><label class="field">Torque tool<select name="torque" required><option value="">Choose</option><option value="yes">Yes</option><option value="no">No</option></select></label><label class="field">Serial number<input name="serial" maxlength="40"></label><label class="field">Calibrated on<input name="calibratedAt" type="date"></label><label class="field">Due date<input name="expires" type="date"></label><label class="field">Status<select name="status"><option>In Calibration</option><option>Out for Calibration</option><option>Quarantined</option><option>Retired</option></select></label><label class="field">Location<input name="location" maxlength="80" placeholder="Production Floor"></label><label class="field wide">Note<input name="note" maxlength="300" placeholder="Certificate reference or lab"></label></div><p class="small muted">New entries supersede the shipped tool snapshot at point of use. A correction appends a new superseding entry; the original stays in the log. Entries are never deleted: to take a tool out of use for good, record it as Retired. Both dates are required, except on a Retired entry for a tool that was never calibrated, which leaves them blank.</p><button class="btn primary" type="submit">Record calibration</button></form><ul>${calibrations||'<li class="muted">No calibrations recorded.</li>'}</ul></section><div class="form-grid qms-record-columns"><section class="panel"><div class="panel-head"><h2>Certifications</h2><span class="pill">${(state.certifications||[]).length}</span></div><form data-qms-record="certification"><label class="field">Certification statement<textarea name="statement" minlength="5" maxlength="300" required rows="3" placeholder="What this certification covers"></textarea></label><button class="btn primary" type="submit">Sign certification</button></form><ul>${certifications||'<li class="muted">No certifications recorded.</li>'}</ul></section><section class="panel"><div class="panel-head"><h2>Supplier approvals</h2><span class="pill">${(state.supplierApprovals||[]).length}</span></div><form data-qms-record="supplier"><label class="field">Supplier name<input name="supplier" minlength="2" maxlength="120" required></label><button class="btn primary" type="submit">Sign supplier approval</button></form><ul>${suppliers||'<li class="muted">No supplier approvals recorded.</li>'}</ul></section></div><section class="panel"><div class="panel-head"><h2>Quality study values and verdicts</h2><span class="pill">The app records values; it does not calculate them.</span></div><div class="form-grid qms-record-columns"><form data-qms-record="quality-value"><label class="field">Study type<select name="kind"><option value="gage">Gage</option><option value="capability">Capability</option><option value="sampling">Sampling</option></select></label><label class="field">Computed value<input name="value" type="number" step="any" required></label><label class="field">Study or characteristic name<input name="name" maxlength="80"></label><button class="btn" type="submit">Store computed value</button></form><form data-qms-record="quality-verdict"><label class="field">Stored study value<select name="valueId" required><option value="">Choose a value</option>${values}</select></label><label class="field">Verdict<input name="verdict" minlength="2" maxlength="80" required placeholder="Acceptable"></label><p class="small muted">A verdict cites the stored result and is signed as a separate record.</p><button class="btn primary" type="submit">Sign verdict</button></form></div><ul>${verdicts||'<li class="muted">No signed verdicts recorded.</li>'}</ul></section></section>`;
+  return `<section class="qms-config-page"><div class="page-heading"><div><p class="hero-eyebrow">Flight Maneuver · Quality system</p><h1>System QMS records</h1><p class="lede">Audits, controlled documents, supplier approvals, certifications, recorded quality study results, and the calibration log. Signatures and content hashes are checked by the Flight record verifier.</p></div></div>${renderAIGovernance()}<section class="panel"><div class="panel-head"><h2>Audits</h2><span class="pill">${(state.audits||[]).length} records</span></div><form data-qms-record="audit"><div class="form-grid"><label class="field">Audit scope<input name="scope" maxlength="200" minlength="3" required placeholder="Internal process audit"></label><label class="field wide">Findings<textarea name="findings" rows="3" required placeholder="One finding per line"></textarea></label></div><p class="small muted">The person who records a finding cannot close it. A different person signs each closure.</p><button class="btn primary" type="submit">Open audit</button></form>${audits||'<p class="muted">No audits recorded.</p>'}</section>${renderControlledDocumentBlock()}<section class="panel"><div class="panel-head"><h2>Calibration log</h2><span class="pill">${(state.calibrationLog||[]).length} records</span></div>${calWarning}<form data-qms-record="calibration"><div class="form-grid"><label class="field">Tool asset tag<input name="tag" maxlength="40" required placeholder="CAL-022"></label><label class="field">Description<input name="description" maxlength="80" required placeholder="DIGITAL CALIPER"></label><label class="field">Torque tool<select name="torque" required><option value="">Choose</option><option value="yes">Yes</option><option value="no">No</option></select></label><label class="field">Serial number<input name="serial" maxlength="40"></label><label class="field">Calibrated on<input name="calibratedAt" type="date"></label><label class="field">Due date<input name="expires" type="date"></label><label class="field">Status<select name="status"><option>In Calibration</option><option>Out for Calibration</option><option>Quarantined</option><option>Retired</option></select></label><label class="field">Location<input name="location" maxlength="80" placeholder="Production Floor"></label><label class="field wide">Note<input name="note" maxlength="300" placeholder="Certificate reference or lab"></label></div><p class="small muted">New entries supersede the shipped tool snapshot at point of use. A correction appends a new superseding entry; the original stays in the log. Entries are never deleted: to take a tool out of use for good, record it as Retired. Both dates are required, except on a Retired entry for a tool that was never calibrated, which leaves them blank.</p><button class="btn primary" type="submit">Record calibration</button></form>${calArchive}<ul>${calibrations||'<li class="muted">No calibrations recorded.</li>'}</ul></section><div class="form-grid qms-record-columns"><section class="panel"><div class="panel-head"><h2>Certifications</h2><span class="pill">${(state.certifications||[]).length}</span></div><form data-qms-record="certification"><label class="field">Certification statement<textarea name="statement" minlength="5" maxlength="300" required rows="3" placeholder="What this certification covers"></textarea></label><button class="btn primary" type="submit">Sign certification</button></form><ul>${certifications||'<li class="muted">No certifications recorded.</li>'}</ul></section><section class="panel"><div class="panel-head"><h2>Supplier approvals</h2><span class="pill">${(state.supplierApprovals||[]).length}</span></div><form data-qms-record="supplier"><label class="field">Supplier name<input name="supplier" minlength="2" maxlength="120" required></label><button class="btn primary" type="submit">Sign supplier approval</button></form><ul>${suppliers||'<li class="muted">No supplier approvals recorded.</li>'}</ul></section></div><section class="panel"><div class="panel-head"><h2>Quality study values and verdicts</h2><span class="pill">The app records values; it does not calculate them.</span></div><div class="form-grid qms-record-columns"><form data-qms-record="quality-value"><label class="field">Study type<select name="kind"><option value="gage">Gage</option><option value="capability">Capability</option><option value="sampling">Sampling</option></select></label><label class="field">Computed value<input name="value" type="number" step="any" required></label><label class="field">Study or characteristic name<input name="name" maxlength="80"></label><button class="btn" type="submit">Store computed value</button></form><form data-qms-record="quality-verdict"><label class="field">Stored study value<select name="valueId" required><option value="">Choose a value</option>${values}</select></label><label class="field">Verdict<input name="verdict" minlength="2" maxlength="80" required placeholder="Acceptable"></label><p class="small muted">A verdict cites the stored result and is signed as a separate record.</p><button class="btn primary" type="submit">Sign verdict</button></form></div><ul>${verdicts||'<li class="muted">No signed verdicts recorded.</li>'}</ul></section></section>`;
 }
 document.addEventListener('submit',event=>{const form=event.target.closest?.('[data-qms-record]');if(!form)return;event.preventDefault();const data=Object.fromEntries(new FormData(form)),kind=form.dataset.qmsRecord;let result;if(kind==='audit')result=MES.openAudit(state,{scope:data.scope,findings:data.findings.split(/\r?\n/).filter(Boolean)});else if(kind==='certification')result=MES.issueCertification(state,data);else if(kind==='calibration')result=MES.recordCalibration(state,data);else if(kind==='supplier')result=MES.approveSupplier(state,data);else if(kind==='quality-value')result=MES.storeQualityValue(state,{kind:data.kind,value:Number(data.value),name:data.name});else if(kind==='quality-verdict'){const option=form.elements.valueId.selectedOptions[0];result=MES.recordQualityVerdict(state,{kind:option?.dataset.kind,valueId:data.valueId,verdict:data.verdict});}if(result?.ok)view='qms-records';applyResult(result);});
+document.addEventListener('click',event=>{if(!event.target.closest?.('[data-calibration-archive]'))return;event.preventDefault();const result=MES.recordCalibrationArchive(state);if(result?.ok)view='qms-records';applyResult(result);});
 document.addEventListener('submit',event=>{const form=event.target.closest?.('[data-qms-calibration-correct]');if(!form)return;event.preventDefault();const data=Object.fromEntries(new FormData(form));const result=MES.updateCalibration(state,form.dataset.qmsCalibrationCorrect,data);if(result?.ok)view='qms-records';applyResult(result);});
 document.addEventListener('submit',async event=>{const form=event.target.closest?.('[data-controlled-document]');if(!form)return;event.preventDefault();const error=form.querySelector('[data-controlled-doc-error]');error.textContent='';try{const file=form.elements.file.files?.[0];if(!file){error.textContent='Choose the document file.';return;}if(file.size<1||file.size>2*1024*1024){error.textContent='Choose a file from 1 byte to 2 MiB.';return;}const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=0x8000)binary+=String.fromCharCode(...bytes.subarray(i,Math.min(i+0x8000,bytes.length)));const attached={name:file.name,type:file.type||'application/octet-stream',size:bytes.length,base64:btoa(binary),sha256:MES.sha256(bytes)};const data=Object.fromEntries(new FormData(form));let result;if(form.dataset.controlledDocument==='create')result=MES.createControlledDocument(state,{documentNumber:data.documentNumber,title:data.title,kind:data.kind,file:attached});else{const source=(state.controlledDocuments||[]).find(doc=>doc.id===data.documentId);result=source?MES.startControlledDocumentRevision(state,source.id,{title:data.title,file:attached}):{ok:false,message:'Choose a released document.'};}if(result?.ok)view='qms-records';applyResult(result);if(!result?.ok)error.textContent=result?.message||'The document action was refused.';}catch(e){error.textContent='The selected file could not be read.';}});
 document.addEventListener('submit',event=>{const form=event.target.closest?.('[data-form3-plan]');if(!form)return;event.preventDefault();try{const rows=JSON.parse(form.elements.characteristics.value);applyResult(MES.setForm3Plan(state,form.dataset.wi,form.dataset.revision,rows));}catch{notify('Enter valid Form 3 characteristic JSON.');}});

@@ -21,13 +21,17 @@ database and point the server at it afterwards:
 node server/server.mjs --database-url "$FLIGHT_DATABASE_URL" --restore /backups/flight-2026-09-28.dump
 ```
 
-The restore expects an empty database by default. Starting the server after a restore verifies the
+The restore expects an empty database by default. It runs as one transaction: if any step fails,
+the target is left exactly as it was, including with `clean: true`. The session rows in the archive
+are never restored: the same transaction recreates the sessions table empty, so a token that was
+signed out after the backup cannot work again; everyone signs in again. Starting the server after a restore verifies the
 audit chain before accepting traffic; a tampered archive refuses to start, exactly as it does for
 SQLite.
 
 Programmatic access: `store.backup(path)` on an open store, and
 `restorePostgres(connectionString, archivePath, { clean })` from `server/db-postgres.mjs`
-(`clean: true` replaces the target database in place with `--clean --if-exists`).
+(`clean: true` replaces the target database in place with `--clean --if-exists`, inside the same
+single transaction).
 
 Keep backup archives off the database machine. The round-trip (backup, wipe, restore, verify data
 and audit chain) is covered by `tests/postgres/backup_restore.mjs`, wired into the `test:postgres`
