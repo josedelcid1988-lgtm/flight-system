@@ -8,13 +8,15 @@
 //
 // Since #168 the engine refuses such a key before an order enters the archive, but rows archived earlier are served
 // as stored. Content under an own "__proto__" key sits outside the record's signatures, so this lists every stored
-// row that holds one, with the path, using the engine's own finder (MES.protoKeyPath). It opens the store read-only
-// and changes nothing. Exit status: 0 no row flagged, 1 one or more rows flagged, 2 the scan could not finish.
+// row that holds one, with the path, using the engine's own finder (MES.protoKeyPath) through the scan the server
+// also runs at startup (server/archive-proto-scan.mjs). It opens the store read-only and changes nothing.
+// Exit status: 0 no row flagged, 1 one or more rows flagged, 2 the scan could not finish.
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDbReadOnly } from '../server/db.mjs';
 import { openPostgresReadOnly } from '../server/db-postgres.mjs';
 import { createHost } from '../server/mes-host.mjs';
+import { scanArchiveProto } from '../server/archive-proto-scan.mjs';
 import { storeSettings } from '../server/server.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -27,17 +29,9 @@ async function main() {
   const where = databaseUrl ? 'PostgreSQL (connection string not shown)' : `SQLite ${dbPath}`;
   console.log(`Archive "__proto__" key scan, read-only. Store: ${where}`);
   const store = databaseUrl ? await openPostgresReadOnly(databaseUrl) : openDbReadOnly(dbPath);
-  let scanned = 0;
-  const flagged = [], unreadable = [];
-  try {
-    for await (const row of store.archiveRows()) {
-      scanned += 1;
-      let entry;
-      try { entry = JSON.parse(row.json); } catch { unreadable.push(row.id); continue; }
-      const at = MES.protoKeyPath(entry, row.id);
-      if (at) flagged.push({ id: row.id, at });
-    }
-  } finally { await store.close(); }
+  let result;
+  try { result = await scanArchiveProto(MES, store); } finally { await store.close(); }
+  const { scanned, flagged, unreadable } = result;
   console.log(`Rows scanned: ${scanned}`);
   console.log(`Rows flagged: ${flagged.length}`);
   for (const f of flagged) console.log(`FLAGGED ${f.id} own "__proto__" key at ${f.at}`);

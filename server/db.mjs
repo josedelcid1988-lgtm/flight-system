@@ -211,12 +211,13 @@ export function openDb(path) {
 // Read-only access for one-off operator scans (tools/scan-archive-proto.mjs). It runs no schema step, cannot write,
 // and never creates the file. With no -wal file beside the database nothing is pending, so it opens immutable and
 // leaves no -wal or -shm behind; with one (a running server, or one that stopped uncleanly) it opens read-only so
-// the pending pages are read too.
-export function openDbReadOnly(path) {
+// the pending pages are read too. { live: true } (the server's startup check, while its own connection writes) never
+// opens immutable.
+export function openDbReadOnly(path, { live = false } = {}) {
   const file = resolvePath(path);
   const url = pathToFileURL(file);
   url.searchParams.set('mode', 'ro');
-  if (!existsSync(`${file}-wal`)) url.searchParams.set('immutable', '1');
+  if (!live && !existsSync(`${file}-wal`)) url.searchParams.set('immutable', '1');
   const db = new DatabaseSync(url, { readOnly: true });
   return {
     // Every archive row in order_id order, read in pages inside one read transaction so the scan sees one snapshot.
