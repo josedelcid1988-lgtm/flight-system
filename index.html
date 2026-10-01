@@ -3004,12 +3004,17 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // subject (ids and RPNs, no note) and still verifies against what it stored.
   const credOf = by => (plain(by) && typeof by.credentialId === 'string') ? by.credentialId : null;
   const pfmeaSafetySubject = (t, note) => ({ pfmea: t.id, wi: `${t.wiId} Rev ${t.wiRevision}`, note,
-    scope: plain(t.scope) ? { team: t.scope.team, boundaries: t.scope.boundaries ?? '' } : null,
+    scope: plain(t.scope) ? { team: t.scope.team, boundaries: t.scope.boundaries ?? '', by: credOf(t.scope.by) } : null,
+    analysisDone: plain(t.analysisDone) ? { by: credOf(t.analysisDone.by), at: t.analysisDone.at } : null,
+    actionsDone: plain(t.actionsDone) ? { by: credOf(t.actionsDone.by), at: t.actionsDone.at } : null,
     rows: (Array.isArray(t.rows) ? t.rows : []).map(r => ({ id: r.id, opId: r.opId, mode: r.mode, effect: r.effect ?? '', cause: r.cause ?? '', controls: r.controls ?? '', s: r.s, o: r.o, d: r.d, rpn: r.rpn, action: r.action ?? '', owner: r.owner ?? '', due: r.due ?? null, by: credOf(r.by), done: plain(r.done) ? { evidence: r.done.evidence, s: r.done.s, o: r.done.o, d: r.done.d, rpn: r.done.rpn, by: credOf(r.done.by) } : null, revised: plain(r.done) ? r.done.rpn : null })),
     reviewed: Object.keys(plain(t.reviewed) ? t.reviewed : {}).sort().map(opId => ({ opId, note: t.reviewed[opId].note, by: credOf(t.reviewed[opId].by) })) });
-  // Everyone whose work the Safety Team buy-off accepts: failure-mode authors, no-risk reviewers, action closers
-  // and the person who completed the analysis. None of them may give the buy-off.
-  const pfmeaContributors = t => new Set([...(Array.isArray(t.rows) ? t.rows : []).flatMap(r => [credOf(r.by), plain(r.done) ? credOf(r.done.by) : null]), ...Object.values(plain(t.reviewed) ? t.reviewed : {}).map(v => plain(v) ? credOf(v.by) : null), plain(t.analysisDone) ? credOf(t.analysisDone.by) : null].filter(Boolean));
+  // The subject a buy-off signed before the analysis was bound: ids and RPNs only. Still recomputed from the rows.
+  const pfmeaSafetyLegacySubject = t => ({ pfmea: t.id, wi: `${t.wiId} Rev ${t.wiRevision}`, rows: (Array.isArray(t.rows) ? t.rows : []).map(r => ({ id: r.id, opId: r.opId, rpn: r.rpn, revised: plain(r.done) ? r.done.rpn : null })) });
+  // Everyone whose work the Safety Team buy-off accepts: the person who recorded the scope, failure-mode authors,
+  // no-risk reviewers, action closers and the people who completed the analysis and the action step. None of them
+  // may give the buy-off.
+  const pfmeaContributors = t => new Set([plain(t.scope) ? credOf(t.scope.by) : null, ...(Array.isArray(t.rows) ? t.rows : []).flatMap(r => [credOf(r.by), plain(r.done) ? credOf(r.done.by) : null]), ...Object.values(plain(t.reviewed) ? t.reviewed : {}).map(v => plain(v) ? credOf(v.by) : null), plain(t.analysisDone) ? credOf(t.analysisDone.by) : null, plain(t.actionsDone) ? credOf(t.actionsDone.by) : null].filter(Boolean));
   // Verifies every signature manifest in a workspace. Every manifest found anywhere in the state must
   // have a valid shape (meaning, time, named signer with a credential, SHA-256 hash). Buy-offs, NC/IDR
   // approvals and order closures are recomputed from the stored record; FAIR and 8130-9 chains are
@@ -3043,7 +3048,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     (state.controlledDocuments||[]).forEach(doc=>{if(!controlledDocumentFileValid(doc.file))failures.push({where:`${doc.id} file`,reason:'stored file SHA-256 does not match'});const verifyDocumentManifest=(label,manifest,subject)=>{if(!plain(manifest))return;if(!shapeOk(manifest))failures.push({where:`${doc.id} ${label}`,reason:'manifest shape is invalid'});else if(manifest.build!==undefined&&!buildStampValid(manifest.build))failures.push({where:`${doc.id} ${label}`,reason:'build stamp is malformed'});recheck(`${doc.id} ${label}`,manifest,subject);};verifyDocumentManifest('author',doc.authorManifest,controlledDocumentSubject(doc));if(doc.reviewManifest)verifyDocumentManifest('review',doc.reviewManifest,controlledDocumentReviewSubject(doc));if(doc.releaseManifest)verifyDocumentManifest('release',doc.releaseManifest,controlledDocumentReleaseSubject(doc));});
     (state.trainingRecords||[]).forEach(record=>{if(record.certificate&&!trainingCertificateValid(record.certificate))failures.push({where:`${record.id} certificate`,reason:'stored file SHA-256 does not match'});});
     (state.calibrationLog||[]).forEach(record=>{const m=record.calibrationSignature&&record.calibrationSignature.manifest;if(!plain(m))failures.push({where:record.id,reason:'calibration entry is not signed'});else{recheck(record.id,m,calibrationSubject(record));if(!calibrationSignerOk(record,m))failures.push({where:record.id,reason:'calibration entry is signed by a role without calibration authority'});}});
-    (plain(state.maneuver) && Array.isArray(state.maneuver.pfmeas) ? state.maneuver.pfmeas : []).forEach(t => { const m = plain(t) && plain(t.safety) ? t.safety.manifest : null; if (plain(m) && plain(m.subject) && Object.hasOwn(m.subject, 'note')) recheck(`${t.id} Safety Team buy-off`, m, pfmeaSafetySubject(t, t.safety.note)); });
+    (plain(state.maneuver) && Array.isArray(state.maneuver.pfmeas) ? state.maneuver.pfmeas : []).forEach(t => { const m = plain(t) && plain(t.safety) ? t.safety.manifest : null; if (!plain(m)) return; recheck(`${t.id} Safety Team buy-off`, m, plain(m.subject) && Object.hasOwn(m.subject, 'note') ? pfmeaSafetySubject(t, t.safety.note) : pfmeaSafetyLegacySubject(t)); });
     (state.orders || []).forEach(order => {
       (order.operations || []).forEach(op => {
         const b = op.buyoff; if (!plain(b) || !plain(b.manifest)) return;
@@ -8687,7 +8692,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (t.openedBy.credentialId === actor(state).credentialId) return fail('Separation of duties: the person who opened the PFMEA cannot give the Safety Team buy-off.');
     if (wi && wi.qaReview && wi.qaReview.credentialId === actor(state).credentialId) return fail('Separation of duties: the QA reviewer cannot also give the Safety Team buy-off.');
     if (t.rows.some(r => r.by && r.by.credentialId === actor(state).credentialId)) return fail('Separation of duties: an author of the analysis cannot give the Safety Team buy-off.');
-    if (MES.pfmeaContributors(t).has(actor(state).credentialId)) return fail('Separation of duties: you recorded part of this analysis (a no-risk review, an action closure or the analysis completion), so you cannot give the Safety Team buy-off. Another Safety Team member gives it.');
+    if (MES.pfmeaContributors(t).has(actor(state).credentialId)) return fail('Separation of duties: you recorded part of this analysis (the scope, a no-risk review, an action closure, or the analysis or action step completion), so you cannot give the Safety Team buy-off. Another Safety Team member gives it.');
     const ready = MES.releaseWIFromPfmea(state, t.wiId, t.wiRevision, t.id, true); if (!ready.ok) return ready;
     const at = now();
     const subject = MES.pfmeaSafetySubject(t, note);
