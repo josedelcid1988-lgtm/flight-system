@@ -24,6 +24,8 @@ const check = (name, result) => { checks += 1; assert.ok(result, name); console.
 const curated = () => JSON.parse(fs.readFileSync(new URL('./fixtures/demo_publish.html', import.meta.url), 'utf8').match(/window\.__DEMO_SEED=(\{[\s\S]*?\});/)[1]);
 const photo = { name: 'torque-setup.png', type: 'image/png', size: 10, dataUrl: 'data:image/png;base64,iVBORw0KGgo=' };
 const REASON = 'Attached to the wrong operation.';
+// A copy of a signed quarantine entry under a new file id, with its manifest hash recomputed for the new subject.
+const resigned = (entry, id) => { const subject = { ...entry.manifest.subject, fileId: id, contentSha256: typeof entry.dataUrl === 'string' ? MES.sha256(entry.dataUrl) : null }; return { ...entry, id, manifest: { ...entry.manifest, subject, hash: MES.sha256(MES.canonical(subject)) } }; };
 // An open operation whose removals are allowed now: one that existed before any sequence change still waiting for QA.
 const removableOp = (order) => order.operations.find(item => !item.done && (!MES.pendingSequenceChange(order) || (order.sequenceBaseline || []).some(b => b.id === item.id)));
 
@@ -245,7 +247,7 @@ function surfaces(state) {
   {
     const heavy = structuredClone(state), hNc = heavy.maneuver.ncs.find(t => t.status === 'Open');
     const filler = { ...hNc.quarantinedAttachments[0], dataUrl: `data:image/png;base64,${'B'.repeat(890000)}` };
-    hNc.quarantinedAttachments = [0, 1, 2, 3].map(i => ({ ...filler, id: `${filler.id}-H${i}`, manifest: { ...filler.manifest, subject: { ...filler.manifest.subject, fileId: `${filler.id}-H${i}` } } }));
+    hNc.quarantinedAttachments = [0, 1, 2, 3].map(i => resigned(filler, `${filler.id}-H${i}`));
     const big = { name: 'more.png', type: 'image/png', size: 200000, dataUrl: `data:image/png;base64,${'C'.repeat(250000)}` };
     const kitOrder = heavy.orders.find(o => ['Kitting', 'Building'].includes(o.status));
     const kit = host.withAccount(operator, () => MES.addKitFile(heavy, kitOrder.id, big), heavy);
@@ -261,7 +263,7 @@ function surfaces(state) {
   {
     const full = structuredClone(state), fOrder = full.orders.find(o => o.operations.some(x => (x.quarantinedAttachments || []).length)), fOp = fOrder.operations.find(x => (x.quarantinedAttachments || []).length);
     const sample = fOp.quarantinedAttachments[0];
-    fOp.quarantinedAttachments = Array.from({ length: 50 }, (_, i) => ({ ...sample, id: `${sample.id}-Q${i}`, manifest: { ...sample.manifest, subject: { ...sample.manifest.subject, fileId: `${sample.id}-Q${i}` } } }));
+    fOp.quarantinedAttachments = Array.from({ length: 50 }, (_, i) => resigned(sample, `${sample.id}-Q${i}`));
     check('a full quarantine still validates', MES.validate(full));
     const beforeAdd = JSON.stringify(full);
     const added = host.withAccount(technician, () => MES.addAttachment(full, fOrder.id, fOp.id, { name: 'one-more.txt', type: 'text/plain', size: 4 }), full);
@@ -270,6 +272,13 @@ function surfaces(state) {
     const before = JSON.stringify(full);
     const refused = host.withAccount(technician, () => MES.removeAttachment(full, fOrder.id, fOp.id, `ATT-${fOp.id}-L1`, REASON), full);
     check('a removal into a full quarantine is refused with a workable next step, and nothing changes', refused.ok === false && /holds 50 removed files in quarantine, so this file cannot be removed\. Record the correction in a note/.test(refused.message) && JSON.stringify(full) === before);
+  }
+  // Editing a removal detail in both the entry and its signed subject breaks the subject hash: the normal write gate
+  // (MES.validate) refuses it, not only verifyManifests.
+  {
+    const both = structuredClone(state), entry = both.orders.flatMap(o => o.operations).find(x => (x.quarantinedAttachments || []).length).quarantinedAttachments[0];
+    entry.removeReason = 'A friendlier reason.'; entry.manifest.subject.removeReason = 'A friendlier reason.';
+    check('a removal detail changed in both the entry and its signed subject fails validation, so a browser save refuses it', !MES.validate(both) && !MES.verifyManifests(both).ok);
   }
   // The removal manifest must say what it signs.
   {
