@@ -286,8 +286,17 @@ try {
     ok('pending ATP software push branch', branches.push.some(t => /Software Engineering .* > \.atp-pushes/.test(t)), JSON.stringify(branches.push));
     ok('external PO branch', branches.po.some(t => /NetSuite PO .* > \.po-request-block/.test(t)), JSON.stringify(branches.po));
     ok('external PO branch covers External Testing too', branches.poTest.some(t => /NetSuite PO .* > \.po-request-block/.test(t)), JSON.stringify(branches.poTest));
+    // An External Testing operation waiting on its PO reaches the order holds and Planning's queue, like External Sub-Processing.
+    const etQueue = await page.evaluate(() => {
+      const o = state.orders.find(x => x.id === 'WO-10006'), op = o.operations.find(x => !x.done), keep = { c: op.classification, po: op.externalPO };
+      op.classification = MES.EXTERNAL_CLASSES.find(c => c !== MES.EXTERNAL_CLASS); op.externalPO = null;
+      try { return { holds: JSON.stringify(orderHolds(o)), tasks: dashboardTasks().filter(t => t.o === o && t.op === op).map(t => t.title), canAdjust: skCan('adjust-wo') }; }
+      finally { op.classification = keep.c; op.externalPO = keep.po; }
+    });
+    ok('an External Testing operation without a PO is listed as an order hold', /NetSuite PO missing/.test(etQueue.holds), etQueue.holds);
+    ok('an External Testing operation without a PO is queued for Planning', etQueue.canAdjust && etQueue.tasks.includes('Add NetSuite PO'), JSON.stringify(etQueue));
     ok('FOD checklist branch', branches.fod.some(t => /FOD checklist .* > \.fod-checklist/.test(t)), JSON.stringify(branches.fod));
-    ok('installation recording branch', branches.recording.some(t => /installation recording\. > \.installation-evidence/.test(t)), JSON.stringify(branches.recording));
+    ok('recording branch', branches.recording.some(t => /(installation|operation) recording\. > \.installation-evidence/.test(t)), JSON.stringify(branches.recording));
     ok('rejected recording branch', branches.rejected.some(t => /rejected recording/.test(t)), JSON.stringify(branches.rejected));
     const stepTool = await page.evaluate(() => { const o = state.orders.find(x => x.id === 'WO-10006'), op = structuredClone(o.operations.find(x => !x.done)); op.requiresTooling = false; op.steps = [{ id: 's1', title: 'Torque', instruction: 'Torque it.' }]; op.stepChecks = { s1: { torque: { tool: 'NOT-IN-LOG-1', value: '5', unit: 'in-lb' } } }; return buyoffPrereqs(o, op).map(x => x.text); });
     ok('a tool captured on a step that is not usable is listed as a blocker', stepTool.some(t => /NOT-IN-LOG-1/.test(t)), JSON.stringify(stepTool));
@@ -346,9 +355,22 @@ try {
       return { without, with: /class="installation-evidence"/.test(withRec) && /Recording required/.test(withRec) };
     });
     ok('a recording-required operation shows the recording section on any order type', rec.with && rec.without === '', JSON.stringify(rec));
+    // The recording labels and context follow the order, not a hard-coded Development / Installation.
+    const labels = await page.evaluate(() => {
+      const o = structuredClone(state.orders.find(x => x.id === 'WO-10006')), op = o.operations.find(x => !x.done); op.evidence = []; op.requiresRecording = true;
+      o.pedigree = 'Production'; o.subcategory = 'Assembly';
+      const asm = { section: renderMediaEvidence(o, op), context: mediaContext(o, op), prereq: buyoffPrereqs(o, op).map(x => x.text).join(' | ') };
+      o.subcategory = 'Installation';
+      const inst = { section: renderMediaEvidence(o, op), prereq: buyoffPrereqs(o, op).map(x => x.text).join(' | ') };
+      return { asm, inst };
+    });
+    ok('an Assembly order labels its recordings as operation evidence, not installation', /<h3 id="media-heading">Operation evidence<\/h3>/.test(labels.asm.section) && !/Installation/.test(labels.asm.section) && /Attach and review the operation recording\./.test(labels.asm.prereq), JSON.stringify(labels.asm));
+    ok('the recording context shows the order pedigree and subcategory', /Production \/ Assembly/.test(labels.asm.context) && !/Development \/ Installation/.test(labels.asm.context), labels.asm.context);
+    ok('an Installation order keeps the installation wording', /<h3 id="media-heading">Installation evidence<\/h3>/.test(labels.inst.section) && /Attach and review the installation recording\./.test(labels.inst.prereq), JSON.stringify(labels.inst));
     await page.evaluate(() => { const o = state.orders.find(x => x.id === 'WO-10006'), op = o.operations.find(x => !x.done); window.__realSub = o.subcategory; window.__realRec = op.requiresRecording; o.subcategory = 'Assembly'; op.requiresRecording = true; openOrder(o.id); });
     await page.waitForTimeout(400);
     ok('the Hangar view shows the recording section for it too', await page.evaluate(() => !!document.querySelector('.installation-evidence')));
+    ok('the Hangar view labels it as operation evidence', await page.evaluate(() => document.querySelector('.installation-evidence #media-heading')?.textContent === 'Operation evidence'));
     await page.evaluate(() => { const o = state.orders.find(x => x.id === 'WO-10006'), op = o.operations.find(x => !x.done); o.subcategory = window.__realSub; op.requiresRecording = window.__realRec; });
     const eng = await page.evaluate(() => { const s = structuredClone(state), o = s.orders.find(x => x.id === 'WO-10006'), op = o.operations.find(x => !x.done); return MES.completeOperation(s, o.id, op.id, '', { stampNumber: MES.buyoffCredential(s.profile, op.buyoffType).holder?.number }); });
     ok('the engine still refuses a buy-off with the standard inspection unconfirmed', !eng.ok && /standard inspection|Check off/.test(eng.message), JSON.stringify(eng));
