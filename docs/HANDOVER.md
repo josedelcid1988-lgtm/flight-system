@@ -152,9 +152,9 @@ does not replace the authenticated MES server. Its protocol and restore checks a
 
 The production build carries no sample data (issue #247). A new production workspace starts with no work
 orders, master WIs, planned orders, Flight Maneuver records, stamps, standard rework operations, calibrated
-tools or NetSuite stock. A new work order's kit starts empty: its lines come from the BOM of an operation
-Manufacturing Engineering adds to the order, or from a sub-assembly issued from another order, and every line
-still needs its lot verified before Building. The device profile names no person ("Not signed in") until an account signs
+tools or NetSuite stock. A new work order's kit holds only real lines: the BOM lines of its WI's operations, of an
+operation added to the order, or a sub-assembly issued from another order. Every line still needs its lot
+verified before Building. The device profile names no person ("Not signed in") until an account signs
 in. The built-in configuration stays: the ESD and FOD training requirements, the default operation step
 text, part catalog, sites, aircraft and work centers. The sample data lives only in `demo.html` and the
 demo fixtures (deviations D-3, D-34, D-37 to D-39 in `docs/DEMO_DEVIATIONS.md`; the demo kit starts with three sample lines). A workspace saved under an

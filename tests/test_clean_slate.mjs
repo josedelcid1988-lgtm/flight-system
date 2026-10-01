@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { createHost } from '../server/mes-host.mjs';
+import { SAMPLE_WIS } from './lib/production-sample.mjs';
 
 const here = rel => fileURLToPath(new URL(rel, import.meta.url));
 const read = rel => fs.readFileSync(here(rel), 'utf8');
@@ -64,6 +65,16 @@ const prod = createHost(here('../index.html'));
   check('Manufacturing Engineering imports the first master WI as a Draft', wi.ok && state.masterWIs.length === 1 && state.masterWIs[0].status === 'Draft', wi.message);
   check('the workspace still validates after the first records', MES.validate(state) === true && MES.verifyManifests(state).ok === true, JSON.stringify(MES.diagnose(state)));
   const po = prod.withAccount(admin, () => FlightPlan.addPlannedOrder(state, { masterWI: `${state.masterWIs[0].id}|A`, pedigree: 'Production', subcategory: 'Mfg.', aircraft: MES.AIRCRAFT[0], site: null, quantity: 1, needDate: '2026-12-01' }), state);
+  // Kit lines come from the released WI's operation BOM (Codex review on #331); a WI without a BOM starts empty.
+  const bomState = load(prod, MES.seed());
+  bomState.masterWIs = JSON.parse(JSON.stringify(SAMPLE_WIS));
+  const bomWi = bomState.masterWIs.find(w => w.status === 'Released');
+  bomWi.operations[0].materials = [{ partNumber: 'BOM-001', name: 'Bracket', required: 2 }];
+  const fromWi = prod.withAccount(admin, () => MES.addOrder(bomState, { masterWI: `${bomWi.id}|${bomWi.revision}`, pedigree: 'Production', subcategory: 'Mfg.', quantity: 1, aircraft: MES.AIRCRAFT[0], site: MES.SITES[0] }), bomState);
+  const bomOrder = fromWi.ok ? MES.getOrder(bomState, fromWi.id) : null;
+  check('a work order from a WI with an operation BOM starts its kit with those lines, unverified', !!bomOrder && bomOrder.materials.length === 1 && bomOrder.materials[0].partNumber === 'BOM-001' && bomOrder.materials[0].required === 2 && bomOrder.materials[0].ready === false && MES.validate(bomState) === true, fromWi.message);
+  const advanced = prod.withAccount(admin, () => { const o = MES.getOrder(bomState, fromWi.id); if (MES.requiresReleaseQA(o)) o.release = { status: 'Approved', name: 'QA Peer', role: 'Quality Engineer', credentialId: 'ACCT-qapeer', at: new Date().toISOString(), note: 'test' }; MES.advance(bomState, fromWi.id); o.kitFiles = [{ id: 'f1', name: 'kit.pdf' }]; return MES.advance(bomState, fromWi.id); }, bomState);
+  check('Building stays refused until that BOM line is kitted with a verified lot', !advanced.ok && /Confirm all materials/.test(advanced.message || '') && MES.getOrder(bomState, fromWi.id).status === 'Kitting', advanced.message);
   const adhoc = prod.withAccount(admin, () => MES.addAdhocOrder(state, { pedigree: 'Production', subcategory: 'Mfg.', quantity: 1, aircraft: MES.AIRCRAFT[0], partNumber: 'GL-PART-001', title: 'First production order', revision: 'A' }), state);
   const first = adhoc.ok ? MES.getOrder(state, adhoc.id) : null;
   check('a production work order starts with an empty kit, not the sample kit lines, and validates', !!first && Array.isArray(first.materials) && first.materials.length === 0 && MES.validate(state) === true, adhoc.message);
@@ -75,7 +86,22 @@ const prod = createHost(here('../index.html'));
   const { MES } = prod;
   const legacy = JSON.parse(read('fixtures/workspace_v82_before_clean_slate.json'));
   legacy.masterWIs = [];
-  check('an empty WI library is refused once a work order cites a master WI, with a plain reason', MES.validate(legacy) === false && /Master WI library is empty, but work orders or planned orders in this workspace cite master WIs/.test((MES.diagnose(legacy) || {}).detail || ''));
+  check('an empty WI library is refused once a work order cites a master WI, with a plain reason', MES.validate(legacy) === false && /Master WI library is empty, but work orders, planned orders or PFMEAs in this workspace cite master WIs/.test((MES.diagnose(legacy) || {}).detail || ''));
+  // A PFMEA names a WI revision too (Codex review on #331): emptying the library under it is refused as well.
+  const withPfmea = load(prod, MES.seed());
+  withPfmea.masterWIs = JSON.parse(JSON.stringify(SAMPLE_WIS));
+  const draft = withPfmea.masterWIs.find(w => w.status === 'Draft');
+  const opened = prod.withAccount(admin, () => prod.FlightManeuver.openPFMEA(withPfmea, draft.id, draft.revision), withPfmea);
+  check('a PFMEA is opened on a WI revision for the check', opened.ok && MES.validate(withPfmea) === true, opened.message);
+  withPfmea.masterWIs = [];
+  check('an empty WI library is refused while a PFMEA cites a master WI', MES.validate(withPfmea) === false && /PFMEAs in this workspace cite master WIs/.test((MES.diagnose(withPfmea) || {}).detail || ''));
+  // A workspace saved before the WI library existed (no masterWIs key, orders with no WI link) gets an empty library.
+  // Earlier builds invented sample released WIs and linked its orders to them; production does not invent records.
+  const preLibrary = JSON.parse(read('fixtures/workspace_v82_before_clean_slate.json'));
+  delete preLibrary.masterWIs; delete preLibrary.plannedOrders; preLibrary.orders.forEach(o => { delete o.masterWI; });
+  const preOrders = JSON.stringify(preLibrary.orders);
+  load(prod, preLibrary);
+  check('a workspace saved before the WI library loads with an empty library, its orders untouched and not linked to invented WIs', Array.isArray(preLibrary.masterWIs) && preLibrary.masterWIs.length === 0 && JSON.stringify(preLibrary.orders) === preOrders && MES.validate(preLibrary) === true, JSON.stringify(MES.diagnose(preLibrary)));
   const fresh = load(prod, MES.seed());
   const old = MES.toolCheck('DMM-08', now, fresh);
   check('a tool of the old snapshot cannot be used until the calibration log records it', !old.ok && /no entry in the calibration log/.test(old.message) && /2026-09-15/.test(old.message), old.message);
