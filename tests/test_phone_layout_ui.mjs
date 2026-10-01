@@ -53,7 +53,11 @@ const blockedFilterCards = async page => {
   await page.locator('#main .fr-order-table thead .log-menu[open] [data-tbl-filter][data-value="Blocked"]').click();
   const ids = await page.evaluate(() => [...document.querySelectorAll('#main .fr-wo-card')].map(card => card.dataset.woCard));
   await page.evaluate(() => { skTable.reset('orders'); render(); });
-  return ids;
+  // The queue's own status select has a Blocked choice as well; both must keep the same cards.
+  await page.locator('#main select[aria-label="Work order status"]').selectOption('Blocked');
+  const selectIds = await page.evaluate(() => [...document.querySelectorAll('#main .fr-wo-card')].map(card => card.dataset.woCard));
+  await page.locator('#main select[aria-label="Work order status"]').selectOption('All');
+  return ids.filter(id => selectIds.includes(id));
 };
 const show = (page, next, setup) => page.evaluate(([v, s]) => { if (s) Function(s)(); view = v; render(); scrollTo(0, 0); }, [next, setup || '']);
 
@@ -224,10 +228,11 @@ try {
         const building = state.orders.find(o => o.status === 'Quality' && o !== nc && o !== fai && o.operations.every(op => op.done) && !MES.blockingTickets(o).length && !MES.engineeringChange(o) && !o.pedigreeChange);
         const inspect = open.find(o => o !== nc && o !== fai && o !== building && !MES.blockingTickets(o).length && !MES.engineeringChange(o) && (o.operations || []).some(op => !op.done));
         const op = inspect.operations.find(item => !item.done);
-        window.__restore = { ticket: [ticket, ticket.hold], seq: [nc, nc.sequenceChange], fai: [fai, fai.fai], building: [building, building.status], op: [op, op.classification, op.sourceInspection] };
+        window.__restore = { ticket: [ticket, ticket.hold], seq: [nc, nc.sequenceChange], fai: [fai, fai.fai, fai.aircraft], building: [building, building.status], op: [op, op.classification, op.sourceInspection] };
         ticket.hold = false;
         delete nc.sequenceChange; // the sample's NC order also has a sequence change awaiting QA, itself a hold
         fai.fai = { ...(fai.fai || {}), required: true };
+        fai.aircraft = 'N349PL';
         building.status = 'Building';
         op.classification = MES.SOURCE_INSPECTION_CLASS; delete op.sourceInspection;
         const hold = MES.sourceInspectionHolds(null, inspect)[0];
@@ -236,19 +241,32 @@ try {
       try {
         assert.ok(setup.holdTitle, 'the source-inspection setup produces a hold');
         assert.ok(setup.buildingAllowed, 'the finished Building order may advance');
+        // Held by its real sequence change while its only open NC does not hold: the hold text names the sequence
+        // release, not the NC, and the NC is still counted beside the Blocked status.
+        await page.evaluate(() => { const r = window.__restore; r.seq[0].sequenceChange = r.seq[1]; });
+        for (const route of ['home', 'orders']) {
+          await show(page, route);
+          const held = page.locator(`#main [data-wo-card="${setup.nc}"]`);
+          assert.equal(await held.locator('.fr-order-blocked').count(), 1, `${route}: the sequence change blocks the card`);
+          const next = await held.locator('.fr-wo-card-next dd').innerText();
+          assert.ok(/QA release of the updated operation sequence/.test(next) && !/NC/.test(next), `${route}: a nonholding NC is not named as a hold (${next})`);
+          assert.equal(await held.locator('.fr-wo-card-nc').innerText(), `${setup.open} open NC`, `${route}: the open NC is still counted`);
+        }
+        await page.evaluate(() => { delete window.__restore.seq[0].sequenceChange; });
         for (const route of ['home', 'orders']) {
           await show(page, route);
           const card = id => page.locator(`#main [data-wo-card="${id}"]`);
           assert.equal(await card(setup.nc).locator('.fr-order-blocked').count(), 0, `${route}: a card with only a nonholding NC is not Blocked`);
           assert.equal(await card(setup.nc).locator('.fr-wo-card-nc').innerText(), `${setup.open} open NC`, `${route}: a nonholding open NC is shown on the card`);
           assert.equal(await card(setup.fai).locator('.fr-wo-card-id .fr-fai-tag').innerText(), 'FAI', `${route}: an FAI order is marked`);
+          assert.match(await card(setup.fai).innerText(), /Aircraft N349PL/, `${route}: the card names the aircraft`);
           assert.equal(await card(setup.inspect).locator('.fr-order-blocked').count(), 1, `${route}: a source-inspection hold blocks the card`);
           if (route === 'orders') assert.ok((await blockedFilterCards(page)).includes(setup.inspect), 'the Blocked filter keeps a card blocked by a source inspection');
           assert.match(await card(setup.inspect).locator('.fr-wo-card-next dd').innerText(), new RegExp(`^Resolve holds before continuing: .*source inspection record for ${setup.holdTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), `${route}: the card names the source inspection`);
           assert.equal(await card(setup.building).locator('.fr-wo-card-next dd').innerText(), 'All operations recorded. Send to QA.', `${route}: a finished build is sent to QA`);
         }
       } finally {
-        await page.evaluate(() => { const r = window.__restore; r.ticket[0].hold = r.ticket[1]; if (r.seq[1] !== undefined) r.seq[0].sequenceChange = r.seq[1]; r.fai[0].fai = r.fai[1]; r.building[0].status = r.building[1]; r.op[0].classification = r.op[1]; if (r.op[2]) r.op[0].sourceInspection = r.op[2]; render(); });
+        await page.evaluate(() => { const r = window.__restore; r.ticket[0].hold = r.ticket[1]; if (r.seq[1] !== undefined) r.seq[0].sequenceChange = r.seq[1]; r.fai[0].fai = r.fai[1]; if (r.fai[2] === undefined) delete r.fai[0].aircraft; else r.fai[0].aircraft = r.fai[2]; r.building[0].status = r.building[1]; r.op[0].classification = r.op[1]; if (r.op[2]) r.op[0].sourceInspection = r.op[2]; render(); });
       }
       assert.equal(await page.evaluate(() => MES.validate(state)), true, 'the restored workspace is valid');
     });
@@ -292,6 +310,10 @@ try {
       await page.waitForFunction(([orderId, value]) => MES.getOrder(state, orderId)?.priority === value, [id, next]);
       assert.equal(await page.evaluate(orderId => document.activeElement?.closest('.fr-wo-card')?.dataset.woCard, id), id, 'focus returns to the visible card control');
       assert.equal(await page.evaluate(() => MES.validate(state)), true);
+      // Widen past 700px without a re-render: the table's own priority control shows the new value, not the old one.
+      await page.setViewportSize({ width: 1024, height: 900 });
+      assert.equal(await page.locator(`#main .fr-order-table select[data-priority-order="${id}"]`).inputValue(), next, 'the table priority control shows the change made on the card');
+      await page.setViewportSize(size);
     });
     await check(`${at} activity: a table that stays a table scrolls inside its own box`, async () => {
       await show(page, 'activity');

@@ -59,7 +59,7 @@ const cardGateOf = (order, MES) => {
   const blockers = MES && MES.blockingTickets ? MES.blockingTickets(order) : [];
   const engineering = !!(MES && MES.engineeringChange && MES.engineeringChange(order));
   return {
-    held: blockers.length > 0 || engineering, engineering,
+    held: blockers.length > 0 || engineering, engineering, blockingTickets: blockers.length,
     openTickets: (order.tickets || []).filter(ticket => ticket.status === 'Open').length,
     aog: order.priority === 'AOG' || !!(MES && MES.aogActive && MES.aogActive(order)),
     superseded: !!(MES && MES.revisionLabel && MES.revisionLabel(order) === 'Superseded'),
@@ -82,7 +82,8 @@ const withCardHolds = (gate, order, MES) => {
 // is recorded, the handoff to QA; a Kitting order that is ready shows the start of the build.
 const cardNextStepOf = (order, gate, MES) => {
   if (gate.held) {
-    const why = [gate.engineering && 'engineering change', gate.openTickets && `${gate.openTickets} open NC`,
+    // Only the NCs that hold the order are named here; every open NC is counted beside the status instead.
+    const why = [gate.engineering && 'engineering change', gate.blockingTickets && `${gate.blockingTickets} NC ${gate.blockingTickets === 1 ? 'hold' : 'holds'}`,
       gate.sequenceChange && 'QA release of the updated operation sequence',
       ...(gate.sourceInspections || []).map(hold => `source inspection record for ${hold.title}`)].filter(Boolean);
     return `Resolve holds before continuing${why.length ? `: ${why.join(', ')}` : ''}`;
@@ -102,9 +103,10 @@ function WorkOrderCards({ orders, onOpen, meta, MES, compact, priority }) {
   return <ul className={`fr-wo-cards${compact ? ' fr-compact' : ''}`} aria-label="Work orders">{orders.map((order, index) => {
     const gate = withCardHolds(meta ? meta[index] : cardGateOf(order, MES), order, MES);
     return <li key={order.id} className={`fr-wo-card${gate.held ? ' is-held' : ''}${gate.aog ? ' is-aog' : ''}`} data-wo-card={order.id}>
-      <div className="fr-wo-card-top"><strong className="fr-wo-card-id">{order.id}{order.fai?.required && <span className="fr-fai-tag">FAI</span>}</strong>{gate.held ? <span className="fr-order-blocked">Blocked</span> : <span className="fr-wo-card-state"><span className="fr-status"><i/>{order.status || 'Draft'}</span>{gate.openTickets ? <small className="fr-wo-card-nc">{gate.openTickets} open NC</small> : null}</span>}</div>
+      <div className="fr-wo-card-top"><strong className="fr-wo-card-id">{order.id}{order.fai?.required && <span className="fr-fai-tag">FAI</span>}</strong><span className="fr-wo-card-state">{gate.held ? <span className="fr-order-blocked">Blocked</span> : <span className="fr-status"><i/>{order.status || 'Draft'}</span>}{gate.openTickets ? <small className="fr-wo-card-nc">{gate.openTickets} open NC</small> : null}</span></div>
       <p className="fr-wo-card-title">{titleOf(order)}</p>
       <p className="fr-wo-card-part">{order.partNumber || 'Part not assigned'}{order.revision ? ` / Rev ${order.revision}` : ''}</p>
+      {order.aircraft && <p className="fr-wo-card-aircraft">Aircraft {order.aircraft}</p>}
       {gate.superseded && <p className="fr-wo-card-warning">Superseded revision</p>}
       <dl className="fr-wo-card-fields">
         <div className="fr-wo-card-next"><dt>Next step</dt><dd>{cardNextStepOf(order, gate, MES)}</dd></div>
@@ -112,7 +114,7 @@ function WorkOrderCards({ orders, onOpen, meta, MES, compact, priority }) {
         <div><dt>Due</dt><dd className={gate.overdue ? 'is-overdue' : ''}><time dateTime={dueOf(order)}>{displayFlightDate(dueOf(order))}</time></dd></div>
       </dl>
       <div className="fr-wo-card-actions">
-        {priority && MES && <select className={`fr-order-priority ${asText(order.priority).toLowerCase()}`} data-priority-order={order.id} aria-label={`Priority for ${order.id}`} disabled={order.status === 'Closed'} defaultValue={order.priority}>{MES.PRIORITIES.map(value => <option key={value}>{value}</option>)}</select>}
+        {priority && MES && <select key={`${order.id}:${order.priority}`} className={`fr-order-priority ${asText(order.priority).toLowerCase()}`} data-priority-order={order.id} aria-label={`Priority for ${order.id}`} disabled={order.status === 'Closed'} defaultValue={order.priority}>{MES.PRIORITIES.map(value => <option key={value}>{value}</option>)}</select>}
         <button className="fr-wo-card-open" aria-label={'Open ' + order.id} onClick={() => onOpen(order)}>Open <ArrowUpRight size={16}/></button>
       </div>
     </li>;
@@ -226,7 +228,7 @@ function WorkOrderQueue({ state, MES, rows: sourceRows, initial, callbacks, onOp
           <td className={`fr-mono${item.overdue ? ' is-overdue' : ''}`}><time dateTime={order.due || ''}>{displayFlightDate(order.due)}</time></td>
           <td className="fr-col-progress"><div dangerouslySetInnerHTML={{ __html: item.progress }}/></td>
           <td>{order.pedigree}{order.subcategory && <small>{order.subcategory}</small>}</td>
-          <td><select className={`fr-order-priority ${asText(order.priority).toLowerCase()}`} data-priority-order={order.id} aria-label={`Priority for ${order.id}`} disabled={order.status === 'Closed'} defaultValue={order.priority}>{MES.PRIORITIES.map(value => <option key={value}>{value}</option>)}</select></td>
+          <td><select key={`${order.id}:${order.priority}`} className={`fr-order-priority ${asText(order.priority).toLowerCase()}`} data-priority-order={order.id} aria-label={`Priority for ${order.id}`} disabled={order.status === 'Closed'} defaultValue={order.priority}>{MES.PRIORITIES.map(value => <option key={value}>{value}</option>)}</select></td>
         </tr>; })}</tbody></table>
         <WorkOrderCards orders={rows.map(item => item.record)} onOpen={setSelected} meta={rows} MES={MES} compact={compact} priority/>
         {!rows.length && <div className="fr-empty">No matching work orders. Adjust the search or filters.</div>}
