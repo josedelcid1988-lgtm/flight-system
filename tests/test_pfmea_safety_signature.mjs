@@ -52,6 +52,7 @@ const variant=(fn)=>run(([fn])=>{const s=structuredClone(state),t=s.maneuver.pfm
   delete t.reviewed[Object.keys(t.reviewed).find(k=>t.reviewed[k].by.credentialId==='ACCT-pqm')];t.rows.push({id:'FM-2',opId:s.masterWIs.find(w=>w.id===t.wiId&&w.revision===t.wiRevision).operations[1].id,mode:'Fastener under-torqued',effect:'Loose joint',cause:'Wrong setting',controls:'Torque audit',s:9,o:2,d:3,rpn:54,action:'Add a torque-limiting driver',owner:'T. Engineer',due:'2026-11-01',done:null,by:{name:'Taylor Engineer',role:'Manufacturing Engineer',credentialId:'ACCT-tme',account:'tme'},at:new Date().toISOString()});
   if(fn==='closer')t.rows[1].done={evidence:'Driver issued and verified.',s:9,o:1,d:2,rpn:18,by:pqm,at:new Date().toISOString()};
   if(fn==='scoper')t.scope={...t.scope,by:pqm};
+  if(fn==='setter')t.rows[1].actionSet={by:pqm,at:new Date().toISOString()};
   if(fn==='actions')t.actionsDone={by:pqm,at:new Date().toISOString()};
   if(fn==='completer'){t.rows[1].done={evidence:'Driver issued and verified.',s:9,o:1,d:2,rpn:18,by:{name:'Taylor Engineer',role:'Manufacturing Engineer',credentialId:'ACCT-tme',account:'tme'},at:new Date().toISOString()};t.analysisDone={by:pqm,at:new Date().toISOString()};}
   const res=FlightManeuver.pfmeaSafetyBuyoff(s,'PFM-301',{decision:'Approve',note:'Controls adequate.'});return {ok:res.ok,message:res.message,valid:MES.validate(s)};},[fn]);
@@ -60,6 +61,9 @@ r=await variant('closer');ok('the QA Manager who closed a PFMEA action is refuse
 r=await variant('completer');ok('the QA Manager who completed the analysis is refused the Safety Team buy-off',r.ok===false&&/you recorded part of this analysis/.test(r.message),JSON.stringify(r));
 r=await variant('scoper');ok('the QA Manager who recorded the scope and team is refused the Safety Team buy-off',r.ok===false&&/you recorded part of this analysis/.test(r.message),JSON.stringify(r));
 r=await variant('actions');ok('the QA Manager who completed the action step is refused the Safety Team buy-off',r.ok===false&&/you recorded part of this analysis/.test(r.message),JSON.stringify(r));
+r=await variant('setter');ok('the QA Manager who set a PFMEA action, owner and due date is refused the Safety Team buy-off',r.ok===false&&/you recorded part of this analysis/.test(r.message),JSON.stringify(r));
+r=await run(()=>{const s=structuredClone(state),t=s.maneuver.pfmeas.find(x=>x.id==='PFM-301');t.status='Analysis';const res=FlightManeuver.setPfmeaAction(s,'PFM-301',t.rows[0].id,{action:'Add a kit label scan',owner:'T. Engineer',due:'2026-12-01'});return {ok:res.ok,message:res.message,by:t.rows[0].actionSet&&t.rows[0].actionSet.by.credentialId,valid:MES.validate(s)};});
+ok('setting a PFMEA action records who set it',r.ok===true&&r.by==='ACCT-pqm'&&r.valid===true,JSON.stringify(r));
 r=await variant('none');ok('with none of that work, the same QA Manager gives the buy-off',r.ok===true,JSON.stringify(r));
 
 // ---- the Safety Team role gives it, and the manifest binds the analysis content ----
@@ -75,9 +79,9 @@ ok('every manifest verifies after the buy-off',r.verify.ok===true,JSON.stringify
 
 // ---- an edit after signing fails verification ----
 const tamper=fn=>run(([fn])=>{const s=structuredClone(state),t=s.maneuver.pfmeas.find(x=>x.id==='PFM-301');
-  if(fn==='note')t.safety.note='Rubber stamp.';if(fn==='cause')t.rows[0].cause='Not recorded';if(fn==='controls')t.rows[0].controls='';if(fn==='reviewed')t.reviewed[Object.keys(t.reviewed)[0]].note='Edited after the buy-off.';if(fn==='scope')t.scope.team='Nobody';if(fn==='analysisBy')t.analysisDone.by={...t.analysisDone.by,credentialId:'ACCT-someone'};if(fn==='actionsAt')t.actionsDone.at='2020-01-01T00:00:00.000Z';
+  if(fn==='note')t.safety.note='Rubber stamp.';if(fn==='cause')t.rows[0].cause='Not recorded';if(fn==='controls')t.rows[0].controls='';if(fn==='reviewed')t.reviewed[Object.keys(t.reviewed)[0]].note='Edited after the buy-off.';if(fn==='scope')t.scope.team='Nobody';if(fn==='signer')t.safety.by={...t.safety.by,credentialId:'ACCT-someone',name:'Someone Else'};if(fn==='signedAt')t.safety.at='2020-01-01T00:00:00.000Z';if(fn==='analysisBy')t.analysisDone.by={...t.analysisDone.by,credentialId:'ACCT-someone'};if(fn==='actionsAt')t.actionsDone.at='2020-01-01T00:00:00.000Z';
   const v=MES.verifyManifests(s);return {ok:v.ok,failures:v.failures};},[fn]);
-for(const [fn,what] of [['note','the Safety Team rationale'],['cause','a failure-mode cause'],['controls','the current controls'],['reviewed','a no-risk rationale'],['scope','the scope and team'],['analysisBy','who completed the analysis'],['actionsAt','when the action step was completed']]){
+for(const [fn,what] of [['note','the Safety Team rationale'],['cause','a failure-mode cause'],['controls','the current controls'],['reviewed','a no-risk rationale'],['scope','the scope and team'],['signer','who gave the Safety Team buy-off'],['signedAt','when the Safety Team buy-off was given'],['analysisBy','who completed the analysis'],['actionsAt','when the action step was completed']]){
   r=await tamper(fn);ok(`editing ${what} after the buy-off fails verification`,r.ok===false&&r.failures.some(f=>/PFM-301 Safety Team buy-off/.test(f.where)),JSON.stringify(r));
 }
 
