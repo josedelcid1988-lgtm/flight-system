@@ -47,7 +47,8 @@ notice. An account a person created while signed in to such a demo cannot be tol
 production account. On any machine that ran an older demo, a QA Manager reviews the account list, or
 the browser's site data is cleared, before production use. The notice stays on every page, the sign-in
 screen included, until a QA Manager or Master Access account marks the review done, which is logged
-(`legacy-demo-reviewed`). Every account creation is now written to
+(`legacy-demo-reviewed`). Drafts and partial sign-in failure counts the older demo could have written are set
+aside under `skyryse-mes-legacy-demo-*` keys; a lockout in force is kept. Every account creation is now written to
 the security log (`account-create`), so this cannot recur unnoticed.
 
 | Rule | What the engine does | Why |

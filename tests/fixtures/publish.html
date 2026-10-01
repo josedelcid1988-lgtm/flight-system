@@ -22,8 +22,8 @@
 // deletions, which would turn the demo's entities into false production deletes) is cleared, and operation drafts,
 // which may hold rehearsal values, move to the demo drafts store.
 function purgeLegacyDemoState(){
- var REVIEW='skyryse-mes-legacy-demo-review-v1',AUTH='skyryse-mes-auth-v1',QK='skyryse-mes-sync-queue-v1',SENT='skyryse-mes-sync-sent-v1',SK='skyryse-mes-security-v1',DR='skyryse-mes-drafts-v1',DSK='skyryse-mes-demo-security-v1',DDR='skyryse-mes-demo-drafts-v1';
- var demo=new Set(),grew=true,removed=[],dropped=0,moved=0,draftsMoved=0,sentCleared=false;
+ var REVIEW='skyryse-mes-legacy-demo-review-v1',AUTH='skyryse-mes-auth-v1',QK='skyryse-mes-sync-queue-v1',SENT='skyryse-mes-sync-sent-v1',SK='skyryse-mes-security-v1',DR='skyryse-mes-drafts-v1',DSK='skyryse-mes-demo-security-v1',LK='skyryse-mes-lockout-v1',LEGACY_DRAFTS='skyryse-mes-legacy-demo-drafts-v1',LEGACY_LOCKS='skyryse-mes-legacy-demo-lockout-v1';
+ var demo=new Set(),grew=true,removed=[],dropped=0,moved=0,draftsMoved=0,locksReset=0,sentCleared=false;
  function get(k){try{return JSON.parse(localStorage.getItem(k)||'null');}catch(e){return null;}}
  function put(k,v){localStorage.setItem(k,JSON.stringify(v));}
  var a=get(AUTH),q=get(QK),log=get(SK);
@@ -39,12 +39,15 @@ function purgeLegacyDemoState(){
  try{if(Array.isArray(log)){var fromDemo=function(e){return !!e&&typeof e.page==='string'&&/(^|\/)demo[^\/]*\.html?$/i.test(e.page);},out=log.filter(fromDemo);moved=out.length;if(moved){var dl=get(DSK);put(DSK,out.concat(Array.isArray(dl)?dl:[]).slice(-5000));put(SK,log.filter(function(e){return !fromDemo(e);}));}}}catch(e){}
  if(removed.length||dropped||moved){
   try{var sent=get(SENT);if(sent&&typeof sent==='object'&&Object.keys(sent).length){localStorage.removeItem(SENT);sentCleared=true;}}catch(e){}
-  try{var dr=get(DR);if(Array.isArray(dr)&&dr.length){var ddr=get(DDR);put(DDR,(Array.isArray(ddr)?ddr:[]).concat(dr));localStorage.removeItem(DR);draftsMoved=dr.length;}}catch(e){}
+  // Drafts and partial sign-in failure counts the older demo could have written are set aside under their own keys,
+  // never merged into the demo's current ones. A lockout still in force is kept.
+  try{var dr=get(DR);if(Array.isArray(dr)&&dr.length){var kept=get(LEGACY_DRAFTS);put(LEGACY_DRAFTS,(Array.isArray(kept)?kept:[]).concat(dr));localStorage.removeItem(DR);draftsMoved=dr.length;}}catch(e){}
+  try{var lk=get(LK);if(lk&&typeof lk==='object'&&Object.keys(lk).length){put(LEGACY_LOCKS,lk);var active={};Object.keys(lk).forEach(function(n){if(lk[n]&&Number(lk[n].until)>Date.now())active[n]={fails:0,until:lk[n].until};});put(LK,active);locksReset=Object.keys(lk).length-Object.keys(active).length;}}catch(e){}
   // Accounts a production user created while a demo page was open carry no mark the cleanup can find, so a QA
   // Manager reviews the account list. The review stays required, across reloads and sign-in, until a QA Manager or
   // Master Access account marks it done, which is logged.
   try{put(REVIEW,{foundAt:new Date().toISOString(),accounts:removed,queuedRecords:dropped,securityEvents:moved,draftsMoved:draftsMoved,mirrorSentIndexCleared:sentCleared});}catch(e){}
-  window.addEventListener('DOMContentLoaded',function(){try{window.dispatchEvent(new CustomEvent('sk-security',{detail:{type:'legacy-demo-removed',at:new Date().toISOString(),accounts:removed,queuedRecords:dropped,securityEvents:moved,draftsMoved:draftsMoved,mirrorSentIndexCleared:sentCleared}}));}catch(e){}});}
+  window.addEventListener('DOMContentLoaded',function(){try{window.dispatchEvent(new CustomEvent('sk-security',{detail:{type:'legacy-demo-removed',at:new Date().toISOString(),accounts:removed,queuedRecords:dropped,securityEvents:moved,draftsMoved:draftsMoved,lockoutsReset:locksReset,mirrorSentIndexCleared:sentCleared}}));}catch(e){}});}
   showLegacyDemoReview();
 }
 // Shown on every page, above the sign-in screen, while the review is outstanding.
@@ -53,7 +56,7 @@ function showLegacyDemoReview(){
  if(!pending)return;
  window.addEventListener('DOMContentLoaded',function(){try{
   var n=document.createElement('div');n.id='sk-legacy-demo-notice';n.setAttribute('role','alert');n.style.cssText='position:fixed;left:12px;right:12px;bottom:12px;z-index:2147483647;background:#fff4df;color:#141413;border:1px solid #a66a00;padding:10px 12px;font:13px/1.4 sans-serif';
-  var t=document.createElement('span');t.textContent='This browser opened an older demo build that shared production storage. Its demo accounts, queued demo records and demo security events were removed from production, and operation drafts were set aside. An account a person created while a demo page was open cannot be told apart from a production account: a QA Manager should review the account list now, or clear this browser\'s site data before production use. ';
+  var t=document.createElement('span');t.textContent='This browser opened an older demo build that shared production storage. Its demo accounts, queued demo records and demo security events were removed from production, and operation drafts and sign-in failure counts were set aside. An account a person created while a demo page was open cannot be told apart from a production account: a QA Manager should review the account list now, or clear this browser\'s site data before production use. ';
   var msg=document.createElement('span');var x=document.createElement('button');x.type='button';x.textContent='Mark account list reviewed';
   x.onclick=function(){var who=window.skAuth&&window.skAuth.user&&window.skAuth.user();var role=who&&window.skAuth.role&&window.skAuth.role();
    if(!who||(role!=='qm'&&role!=='admin')){msg.textContent=' Sign in as a QA Manager or Master Access account to mark the review done.';return;}
