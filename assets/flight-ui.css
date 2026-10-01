@@ -60,6 +60,8 @@
 .fr-queue .fr-filter-select select,.fr-queue .fr-order-flag{min-height:44px}
 .fr-page-heading{flex-wrap:wrap;gap:12px}
 .fr-page-heading>*{min-width:0;max-width:100%}
+.fr-dispatch>.fr-section-heading{flex-direction:column;align-items:stretch}
+.fr-dispatch-controls>label{flex:1 1 100%}
 .fr-dispatch-controls,.fr-dispatch-controls label{min-width:0;max-width:100%}
 .fr-dispatch-controls label{grid-template-columns:minmax(0,1fr)}
 .fr-dispatch-controls input,.fr-dispatch-controls select{width:100%;max-width:100%;min-height:44px}
