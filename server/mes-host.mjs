@@ -115,7 +115,7 @@ export function createHost(indexPath, html = fs.readFileSync(indexPath, 'utf8'))
   // primitives must never become remotely callable just because they are exported on MES.
   const actionName = /^(?:run|add|update|remove|delete|create|complete|close|issue|approve|reject|sign|mark|assign|advance|resolve|disposition|request|release|record|submit|start|stop|review|accept|return|void|reopen|split|move|link|verify|raise|cancel|withdraw|incorporate|peer|roll|set|save|store|open|finish|grant|revoke|capture|attach|detach|quarantine|repair|replace|send|change|configure|stamp|buyoff|log|tick|decide|vote|reset|publish|apply|import|reinspect|firm|convert|carry|propose|escalate|select|clock|aqi|post|acknowledge|edit|revise|ping|push|ical|check|notify|qa|note)/i;
   const actionExact = new Set(['containNC', 'effectivenessCheck', 'pfmeaSafetyBuyoff', 'pruneExpiredNotices']);
-  const actionExclude = new Set(['repair','signManifest','verifyManifests','verifyAIActionLog','stampCheck','stampRegister','stampRegisterCsv','stampCredential','stampHolderFor','ticketAttachments','openProcessECRs','syncAssignments','buyoffCredential','ensure','seedDemoRecords','icalExport','openMaintenanceFor',
+  const actionExclude = new Set(['repair','signManifest','verifyManifests','verifyAIActionLog','stampCheck','stampRegister','stampRegisterProblem','stampRegisterCsv','stampCredential','stampHolderFor','ticketAttachments','openProcessECRs','syncAssignments','buyoffCredential','ensure','seedDemoRecords','icalExport','openMaintenanceFor',
     // Internal record writers: each runs only inside the gated command that owns it (runSkill, a buy-off
     // override, the browser-only demo notice), so calling one directly would fabricate that record.
     'recordAIAction','logSupport','noteDemoBypassRemoved',
@@ -133,7 +133,7 @@ export function createHost(indexPath, html = fs.readFileSync(indexPath, 'utf8'))
   // tests/test_server_security.mjs fails while any command-like function is neither listed nor excluded).
   const actionAllow = new Set([
     'MES.addSavedView', 'MES.removeSavedView',
-    'MES.recordCalibration', 'MES.updateCalibration', 'MES.recordCalibrationArchive',
+    'MES.recordCalibration', 'MES.importCalibrations', 'MES.updateCalibration', 'MES.recordCalibrationArchive',
     'MES.addAttachment', 'MES.addTicketAttachment', 'MES.removeTicketAttachment', 'MES.removeAttachment',
     'MES.logAogBroadcast', 'MES.resolveAog', 'MES.setSchedule', 'MES.editOrderOperation', 'MES.setWIStepImage',
     'MES.selectProfile', 'MES.assignSerial', 'MES.voidSerial', 'MES.moveToInventory', 'MES.markNetSuitePosted',
@@ -145,7 +145,7 @@ export function createHost(indexPath, html = fs.readFileSync(indexPath, 'utf8'))
     'MES.checkConformity', 'MES.complete8130_9', 'MES.void8130_9', 'MES.aqiSign8130_9', 'MES.notifyCertification',
     'MES.addDarFinding', 'MES.acceptDarFinding', 'MES.recordDarApproval', 'MES.record8130_3', 'MES.closeConformity',
     'MES.issueFromOrder', 'MES.returnIssuedOrder', 'MES.qaReviewMasterWI', 'MES.setImpactDecision', 'MES.linkECO', 'MES.setWICriticalSafety', 'MES.addPfmeaRow', 'MES.updatePfmeaRow',
-    'MES.setStampPin', 'MES.setMsdsBook', 'MES.tickFodItem', 'MES.removeKitFile', 'MES.addMasterWI',
+    'MES.setStampPin', 'MES.setMsdsBook', 'MES.tickFodItem', 'MES.removeKitFile', 'MES.addMasterWI', 'MES.importMasterWIs',
     'MES.updateMasterWI', 'MES.saveWIOperations', 'MES.releaseMasterWI', 'MES.reviseMasterWI', 'MES.setStepCheck',
     'MES.pushATPSoftware', 'MES.reviewATPPush', 'MES.linkATPSoftware', 'MES.addPurchaseOrder',
     'MES.requestOrderClosure', 'MES.postNotice', 'MES.acknowledgeNotice', 'MES.updateNotice',
@@ -154,7 +154,7 @@ export function createHost(indexPath, html = fs.readFileSync(indexPath, 'utf8'))
     'MES.completeAssignment', 'MES.pingAssignment', 'MES.addOrderOperation', 'MES.removeOrderOperation',
     'MES.approveSequenceChange', 'MES.setMaterialLot', 'MES.releaseApproval', 'MES.approveRelease', 'MES.approveECR',
     'MES.approveEngineeringChange', 'MES.advance', 'MES.setMaterial', 'MES.setPriority', 'MES.completeOperation',
-    'MES.closeOrder', 'MES.addOrder', 'MES.addAdhocOrder', 'MES.splitOrder', 'MES.splitRequestOrder',
+    'MES.closeOrder', 'MES.addOrder', 'MES.importWorkOrders', 'MES.addAdhocOrder', 'MES.splitOrder', 'MES.splitRequestOrder',
     'MES.requestPedigreeChange', 'MES.approvePedigreeChange', 'MES.peerReviewMasterWI', 'MES.dispositionTicket',
     'MES.addNote', 'MES.createTicket', 'MES.resolveTicket', 'MES.returnDisposition', 'MES.closeSplitRequest',
     'MES.rejectEngineeringChange', 'MES.rejectSequenceChange', 'MES.rejectPedigreeChange', 'MES.returnRelease',
