@@ -13,7 +13,7 @@ try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 980 } });
   await context.addInitScript(() => {
     localStorage.setItem('skyryse-mes-demo-auth-v1', JSON.stringify({ users: [{ username: 'admin', displayName: 'Flight Master', salt: 'test', hash: 'unused', role: 'admin', createdAt: new Date().toISOString() }] }));
-    sessionStorage.setItem('skyryse-mes-session-v1', 'admin');
+    sessionStorage.setItem('skyryse-mes-demo-session-v1', 'admin');
     sessionStorage.setItem('sk-boot-seen', '1');
   });
   const page = await context.newPage(), errors = [];
