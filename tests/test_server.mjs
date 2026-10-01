@@ -184,6 +184,25 @@ try {
     assert.equal(replacement.status, 403, 'even a QA Manager cannot replace initialized records as a snapshot');
     assert.ok((await server.store.auditRows(1000)).some(row => row.action === 'workspace-put-refused' && row.username === 'one'));
   });
+  await check('every refused workspace snapshot write is audited with its status', async () => {
+    const refusals = async () => (await server.store.auditRows(1000)).filter(row => row.action === 'workspace-put-refused' && row.username === 'one').map(row => JSON.parse(row.detail));
+    const statuses = (await refusals()).map(detail => detail.status);
+    assert.ok(statuses.includes(422), 'the invalid initialization (422) is audited');
+    assert.ok(statuses.includes(428), 'the snapshot without If-Match (428) is audited');
+    assert.ok(statuses.includes(403), 'the changed snapshot (403) is audited with its status');
+    const loaded = await api('GET', '/workspace', { token });
+    const before = (await refusals()).length;
+    const stale = await api('PUT', '/workspace', { token, body: loaded.json, headers: { 'If-Match': '"stale-etag"' } });
+    assert.equal(stale.status, 409, 'a stale If-Match is refused');
+    const after = await refusals();
+    assert.equal(after.length, before + 1, 'the stale snapshot (409) adds exactly one refusal entry');
+    assert.equal(after[0].status, 409);
+    assert.equal(after[0].reason, 'stale If-Match');
+    assert.equal(after[0].etag, loaded.etag, 'the entry names the current ETag the client missed');
+    const noop = await api('PUT', '/workspace', { token, body: loaded.json, headers: { 'If-Match': loaded.etag } });
+    assert.equal(noop.status, 204, 'an identical snapshot with the current ETag is a no-op');
+    assert.equal((await refusals()).length, before + 1, 'the no-op is not recorded as a refusal');
+  });
   await check('operator accounts cannot replace the shared workspace snapshot', async () => {
     const currentAccounts = await api('GET', '/auth/accounts', { token });
     assert.equal(currentAccounts.status, 200);
