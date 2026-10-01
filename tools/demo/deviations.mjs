@@ -188,7 +188,8 @@ const LIST = [
     find: EMPTY_CAL, count: 1,
     replace: (ctx, m, id) => {
       const firstLoad = `(function(){try{return localStorage.getItem(${JSON.stringify(ctx.seedMark)})||undefined;}catch(e){return undefined;}})()`;
-      const snapshot = JSON.stringify(ctx.calSnapshot.snapshot).replace(/^"|"$/g, "'");
+      // A JSON string is a valid JavaScript string literal; "<" is escaped so no label can close the script element.
+      const snapshot = JSON.stringify(String(ctx.calSnapshot.snapshot)).replace(/</g, '\\u003c');
       return `/* DEMO ${id} */ const DEMO_CAL = (${ctx.calRebase})(${snapshot}, (typeof window !== 'undefined' && window.__DEMO_SEED) || null, ${firstLoad});\n  const CAL_SNAPSHOT = DEMO_CAL.snapshot;\n  const CAL_TOOLS = Object.freeze(${JSON.stringify(ctx.calSnapshot.tools).replace(/</g, '\\u003c')}.map(([tag, description, serial, expires, status, location]) => Object.freeze({ tag, description, serial, expires: DEMO_CAL.expires(expires), status, location })));`;
     } },
   { area: 'Data', title: 'Sample NetSuite stock, default kit lines and MRP forecast tables',

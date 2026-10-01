@@ -4943,6 +4943,22 @@ const OP_BOM_MAX = 12;
     }
     return { lines: out };
   }
+  // A released WI's operation BOM lines are per unit of the part. For a new work order each is multiplied by the order
+  // quantity; the kit merges a part listed on several operations into one line. Refused when the kit would hold more
+  // than 20 lines or a line more than 999, the limits a work order kit validates against.
+  const KIT_MAX = 20, KIT_LINE_MAX = 999;
+  function wiKitPlan(wi, quantity) {
+    const qty = Number.isInteger(quantity) && quantity > 0 ? quantity : 1, byOp = new Map(), totals = new Map();
+    for (const op of (Array.isArray(wi?.operations) ? wi.operations : [])) {
+      if (!Array.isArray(op.materials) || !op.materials.length) continue;
+      const lines = op.materials.map(line => ({ ...JSON.parse(JSON.stringify(line)), required: line.required * qty }));
+      byOp.set(op.id, lines);
+      lines.forEach(line => totals.set(line.partNumber, (totals.get(line.partNumber) || 0) + line.required));
+    }
+    if (totals.size > KIT_MAX) return { error: `${wiKey(wi)} lists ${totals.size} different BOM parts across its operations, and a work order kit holds up to ${KIT_MAX} lines. Ask Manufacturing Engineering to revise the WI's BOM before this order is created.` };
+    for (const [partNumber, total] of totals) if (total > KIT_LINE_MAX) return { error: `A quantity of ${qty} needs ${total} of ${partNumber}, and a kit line holds up to ${KIT_LINE_MAX}. Create the work order for a smaller quantity.` };
+    return { byOp };
+  }
   // BOM lines become kit lines so they are drawn and lot-controlled with everything else.
   function mergeBOMIntoKit(order, opId, lines) {
     if (!lines || !lines.length) return;
@@ -7506,13 +7522,18 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (!dateOnly(start) || !dateOnly(finish)) return fail('Enter the planned start and finish as calendar dates.');
     if (finish < start) return fail('The planned finish can’t be before the planned start.');
 
+    // The kit starts from the WI's operation BOM, per unit times the order quantity. Checked before anything is created,
+    // so an order whose kit would break the kit limits is refused with a plain reason instead of failing validation.
+    const kitPlan = wiKitPlan(wi, input.quantity);
+    if (kitPlan.error) return fail(kitPlan.error);
     const number = Math.max(10000, ...state.orders.map(order => parseInt(order.id.slice(3), 10))) + 1;
     if (number > 99999999) return fail('The work order number limit has been reached.');
     const id = `WO-${number}`;
     const order = { id, title: part.title, partNumber: part.partNumber, serial: `SN-${number}`, revision, pedigree: input.pedigree, subcategory: input.subcategory, site: input.site ?? null, priority, aircraft: input.aircraft, quantity: input.quantity, status: 'Draft', owner: 'Assembly operator', start, due: finish, materials: materials(), operations: wi.operations.map(op => ({ id: op.id, title: op.title, description: op.description, done: false, note: '', buyoff: null, evidence: [], requiresRecording: op.requiresRecording, buyoffType: op.buyoffType, inspectionPoint: op.inspectionPoint, ...(op.classification ? { classification: op.classification } : {}), ...(op.topLevelType ? { topLevelType: op.topLevelType } : operationType(op.classification || 'Manufacturing')), ...(op.subCode ? { subCode: op.subCode } : {}), ...(op.sourceInspectionPlan ? { sourceInspectionPlan: { ...op.sourceInspectionPlan } } : {}), requiresTooling: op.requiresTooling === true, ...(op.standardHours !== undefined ? { standardHours: op.standardHours } : {}), ...(op.workCenterId ? { workCenterId: op.workCenterId } : {}), callouts: calloutList(op.callouts), ...(Array.isArray(op.training) && op.training.length ? { training: [...op.training] } : {}), ...(op.grounding ? { grounding: op.grounding } : {}), ...(op.fodLevel ? { fodLevel: op.fodLevel } : {}), ...(op.msdsLinks ? { msdsLinks: op.msdsLinks.map(l => ({ ...l })) } : {}), steps: op.steps.map(step => ({ ...step })), stepChecks: {} })), masterWI: wiRef(wi), history: [], tickets: [], reports: [], sourceBuild: sourceUnit ? { serial: sourceUnit.serial, lotNumber: sourceUnit.lotNumber, orderId: sourceUnit.orderId, partNumber: sourceUnit.partNumber, revision: sourceUnit.revision, stockedAt: sourceUnit.stockedAt || null } : null, creationVersion: 1, sourceTicket: source ? { orderId: source.id, ticketId: input.sourceTicketId } : null, releaseApproval: null };
-    // Kit lines come from the released WI's operation BOM lines, the same way an operation added later brings its BOM;
-    // the production build adds no sample kit lines (issue #247), so a WI without a BOM starts with an empty kit.
-    order.operations.forEach(op => { const src = wi.operations.find(w => w.id === op.id); if (src && Array.isArray(src.materials) && src.materials.length) { op.materials = JSON.parse(JSON.stringify(src.materials)); mergeBOMIntoKit(order, op.id, op.materials); } });
+    // Kit lines come from the released WI's operation BOM lines (per unit, times the order quantity), the same way an
+    // operation added later brings its BOM; the production build adds no sample kit lines (issue #247), so a WI without
+    // a BOM starts with an empty kit.
+    order.operations.forEach(op => { const lines = kitPlan.byOp.get(op.id); if (lines) { op.materials = lines; mergeBOMIntoKit(order, op.id, lines.map(line => ({ ...line }))); } });
     state.orders.unshift(order);
     if (faiWant || faiFirst) {
       order.fai = { required: faiWant, wi: wiKey(wi), at: new Date().toISOString(), by: profileSnapshot(state.profile),
