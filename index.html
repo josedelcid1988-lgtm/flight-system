@@ -3281,7 +3281,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // The recorded fields keep only the latest person (a re-set action, a re-recorded scope, a completion cleared by a Safety Team
   // return), so everyone the ticket history names counts too, except the Safety Team's own returns.
   const pfmeaHistoryContributors = t => (Array.isArray(t.history) ? t.history : []).filter(h => plain(h) && typeof h.actor === 'string' && h.actor.includes(' · ') && !String(h.action || '').startsWith('Returned by the Safety Team')).map(h => h.actor.split(' · ').pop().trim()).filter(Boolean);
-  const pfmeaContributors = t => new Set([plain(t.scope) ? credOf(t.scope.by) : null, ...pfmeaHistoryContributors(t), ...(Array.isArray(t.rows) ? t.rows : []).flatMap(r => [credOf(r.by), plain(r.actionSet) ? credOf(r.actionSet.by) : null, plain(r.done) ? credOf(r.done.by) : null]), ...Object.values(plain(t.reviewed) ? t.reviewed : {}).map(v => plain(v) ? credOf(v.by) : null), plain(t.analysisDone) ? credOf(t.analysisDone.by) : null, plain(t.actionsDone) ? credOf(t.actionsDone.by) : null].filter(Boolean));
+  const pfmeaContributors = t => new Set([plain(t.scope) ? credOf(t.scope.by) : null, ...(Array.isArray(t.contributors) ? t.contributors.filter(c => typeof c === 'string') : []), ...pfmeaHistoryContributors(t), ...(Array.isArray(t.rows) ? t.rows : []).flatMap(r => [credOf(r.by), plain(r.actionSet) ? credOf(r.actionSet.by) : null, plain(r.done) ? credOf(r.done.by) : null]), ...Object.values(plain(t.reviewed) ? t.reviewed : {}).map(v => plain(v) ? credOf(v.by) : null), plain(t.analysisDone) ? credOf(t.analysisDone.by) : null, plain(t.actionsDone) ? credOf(t.actionsDone.by) : null].filter(Boolean));
   // Verifies every signature manifest in a workspace. Every manifest found anywhere in the state must
   // have a valid shape (meaning, time, named signer with a credential, SHA-256 hash). Buy-offs, NC/IDR
   // approvals and order closures are recomputed from the stored record; FAIR and 8130-9 chains are
@@ -8983,23 +8983,26 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   function pfmeaTicketValid(t) {
     return plain(t) && /^PFM-\d{3,}$/.test(String(t.id)) && /^MWI-\d{4}$/.test(String(t.wiId)) && str(t.wiRevision, 4) && PFMEA_STATUSES.includes(t.status) && Array.isArray(t.rows) && t.rows.length <= 120 && t.rows.every(pfmRowValid) && uniq(t.rows)
       && plain(t.reviewed) && Object.values(t.reviewed).every(v => plain(v) && text(v.note, 300) && actorValid(v.by)) && (t.scope === null || (plain(t.scope) && text(t.scope.team, 400) && str(t.scope.boundaries ?? '', 800, 0)))
-      && (t.safety === null || (plain(t.safety) && ['Approved'].includes(t.safety.decision) && actorValid(t.safety.by) && safetyManifestValid(t.safety))) && Array.isArray(t.returns) && actorValid(t.openedBy) && timestamp(t.openedAt) && Array.isArray(t.history);
+      && (t.safety === null || (plain(t.safety) && ['Approved'].includes(t.safety.decision) && actorValid(t.safety.by) && safetyManifestValid(t.safety))) && (t.contributors === undefined || (Array.isArray(t.contributors) && t.contributors.length <= 500 && t.contributors.every(c => str(c, 80)) && new Set(t.contributors).size === t.contributors.length)) && Array.isArray(t.returns) && actorValid(t.openedBy) && timestamp(t.openedAt) && Array.isArray(t.history);
   }
   const wiOf = (state, t) => (state.masterWIs || []).find(w => w.id === t.wiId && w.revision === t.wiRevision) || null;
   const pfmeaFor = (state, wiId, rev) => list(state, 'pfmeas').filter(t => t.wiId === wiId && t.wiRevision === rev).sort((a, b) => b.openedAt.localeCompare(a.openedAt))[0] || null;
   const pfmeaEditor = () => can('edit-wi') || can('approve-wi');
   const openPfmea = (state, id) => { const t = get(state, 'pfmeas', id); if (!t) return { error: 'PFMEA not found.' }; if (t.status === 'Approved') return { error: `${t.id} is approved and closed.` }; return { t, wi: wiOf(state, t) }; };
   const coverage = (t, wi) => { const ops = wi ? wi.operations : []; const covered = ops.filter(op => t.rows.some(r => r.opId === op.id) || t.reviewed[op.id]); return { total: ops.length, covered: covered.length, missing: ops.filter(op => !covered.includes(op)) }; };
+  // Every PFMEA step records its actor in t.contributors, a credential list that is never trimmed (the display history
+  // keeps only the last 200 entries). The Safety Team's returns and buy-off are not contributions to the analysis.
+  const plog = (state, t, action) => { log(state, t, action); const c = actor(state).credentialId; if (c && !(Array.isArray(t.contributors) ? t.contributors : []).includes(c)) t.contributors = [...(Array.isArray(t.contributors) ? t.contributors : []), c]; };
   function openPFMEA(state, wiId, rev) {
     if (!can('approve-wi') && !can('edit-wi')) return fail('Your role cannot open a PFMEA.');
     const wi = (state.masterWIs || []).find(w => w.id === wiId && w.revision === rev); if (!wi) return fail('Master WI not found.');
     const existing = pfmeaFor(state, wiId, rev);
-    if (existing && existing.status !== 'Approved') { log(state, existing, 'QA review recorded again; PFMEA continues.'); return { ok: true, id: existing.id, existing: true, message: `${existing.id} continues.` }; }
+    if (existing && existing.status !== 'Approved') { plog(state, existing, 'QA review recorded again; PFMEA continues.'); return { ok: true, id: existing.id, existing: true, message: `${existing.id} continues.` }; }
     bag(state);
     if (list(state, 'pfmeas').length >= MAX) return fail(`This workspace supports up to ${MAX} PFMEAs.`);
     const t = { id: nextId(state, 'pfmeas', 'PFM', 100), wiId, wiRevision: rev, partNumber: wi.partNumber, title: wi.title, status: 'Scoping', scope: null, rows: [], reviewed: {}, analysisDone: null, actionsDone: null, safety: null, returns: [], openedBy: actor(state), openedAt: now(), attachments: [], history: [] };
     state.maneuver.pfmeas.push(t);
-    log(state, t, `Opened from the QA review of ${wiId} Rev ${rev}.`);
+    plog(state, t, `Opened from the QA review of ${wiId} Rev ${rev}.`);
     return { ok: true, id: t.id, message: `${t.id} opened.` };
   }
   function setPfmeaScope(state, id, input) {
@@ -9011,7 +9014,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (boundaries.length > 800) return fail('Keep the scope and boundaries under 800 characters.');
     t.scope = { team, boundaries, by: actor(state), at: now() };
     if (t.status === 'Scoping') t.status = 'Analysis';
-    log(state, t, 'Scope and team recorded.');
+    plog(state, t, 'Scope and team recorded.');
     return { ok: true, message: `${t.id}: scope saved. Work through each operation.` };
   }
   function addPfmeaMode(state, id, input) {
@@ -9029,7 +9032,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const row = { id: `FM-${n}`, opId, mode, effect, cause, controls, s, o, d, rpn: s * o * d, action: '', owner: '', due: null, done: null, by: actor(state), at: now() };
     t.rows.push(row); delete t.reviewed[opId];
     if (t.status === 'Actions' && isHigh(row)) t.actionsDone = null;
-    log(state, t, `${row.id} on ${opId}: ${mode} (S${s} O${o} D${d}, RPN ${row.rpn}).`);
+    plog(state, t, `${row.id} on ${opId}: ${mode} (S${s} O${o} D${d}, RPN ${row.rpn}).`);
     return { ok: true, message: `${row.id} added, RPN ${row.rpn}${isHigh(row) ? ', high risk: needs an action' : ''}.`, id: row.id };
   }
   function removePfmeaMode(state, id, rowId) {
@@ -9038,7 +9041,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (t.status !== 'Analysis') return fail('Rows are removed during analysis only.');
     if (!t.rows.some(r => r.id === rowId)) return fail('Row not found.');
     const row = t.rows.find(r => r.id === rowId), what = `${t.id} (${t.wiId} Rev ${t.wiRevision}): ${rowId} removed, ${row.mode} (S${row.s} O${row.o} D${row.d}, RPN ${row.rpn}).`;
-    t.rows = t.rows.filter(r => r.id !== rowId); log(state, t, what);
+    t.rows = t.rows.filter(r => r.id !== rowId); plog(state, t, what);
     return { ok: true, message: what };
   }
   function markOpNoRisk(state, id, opId, note) {
@@ -9049,7 +9052,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (t.rows.some(r => r.opId === opId)) return fail('This operation already has failure modes recorded.');
     note = clean(note); if (!text(note, 300)) return fail('Say why no credible failure mode exists (1 to 300 characters).');
     t.reviewed[opId] = { note, by: actor(state), at: now() };
-    log(state, t, `${opId} reviewed: no credible failure mode. ${note}`);
+    plog(state, t, `${opId} reviewed: no credible failure mode. ${note}`);
     return { ok: true, message: `${opId} reviewed.` };
   }
   function completePfmeaAnalysis(state, id) {
@@ -9063,7 +9066,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const high = t.rows.filter(isHigh);
     t.status = high.length ? 'Actions' : 'Safety review';
     if (!high.length) t.actionsDone = { by: actor(state), at: now() };
-    log(state, t, `Analysis complete: ${t.rows.length} failure mode${t.rows.length === 1 ? '' : 's'}, ${high.length} high risk.`);
+    plog(state, t, `Analysis complete: ${t.rows.length} failure mode${t.rows.length === 1 ? '' : 's'}, ${high.length} high risk.`);
     return { ok: true, message: high.length ? `${high.length} high-risk row${high.length === 1 ? '' : 's'} need an action.` : 'No high-risk rows. Sent to the Safety Team.' };
   }
   function setPfmeaAction(state, id, rowId, input) {
@@ -9076,7 +9079,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (!text(owner, 80)) return fail('Name the action owner.');
     if (!dateOnly(due)) return fail('Enter the due date as a calendar date.');
     Object.assign(row, { action, owner, due }); row.actionSet = { by: actor(state), at: now() }; row.done = null;
-    log(state, t, `${row.id} action: ${action} (owner ${owner}, due ${due}).`);
+    plog(state, t, `${row.id} action: ${action} (owner ${owner}, due ${due}).`);
     return { ok: true, message: `${row.id}: action assigned to ${owner}.` };
   }
   function closePfmeaAction(state, id, rowId, input) {
@@ -9090,7 +9093,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (![s, o, d].every(score)) return fail('Re-score severity, occurrence and detection after the action.');
     if (s > row.s) return fail('A process action cannot raise the severity. Keep it at or below the original.');
     row.done = { evidence, s, o, d, rpn: s * o * d, by: actor(state), at: now() };
-    log(state, t, `${row.id} action closed. Revised RPN ${row.done.rpn} (was ${row.rpn}).`);
+    plog(state, t, `${row.id} action closed. Revised RPN ${row.done.rpn} (was ${row.rpn}).`);
     return { ok: true, message: `${row.id} closed. RPN ${row.rpn} to ${row.done.rpn}.` };
   }
   function completePfmeaActions(state, id) {
@@ -9100,7 +9103,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const open = t.rows.filter(r => isHigh(r) && !(r.action && r.owner && r.due && r.done));
     if (open.length) return fail(`Close the actions on ${open.map(r => r.id).join(', ')} first.`);
     t.actionsDone = { by: actor(state), at: now() }; t.status = 'Safety review';
-    log(state, t, 'Actions complete. Sent to the Safety Team.');
+    plog(state, t, 'Actions complete. Sent to the Safety Team.');
     return { ok: true, message: `${t.id} sent to the Safety Team.` };
   }
   function pfmeaSafetyBuyoff(state, id, input) {

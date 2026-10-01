@@ -50,8 +50,8 @@ ok('the person who completed the analysis has no safety-buyoff and is refused',r
 // An action closer and the analysis completer are refused the same way.
 const variant=(fn)=>run(([fn])=>{const s=structuredClone(state),t=s.maneuver.pfmeas.find(x=>x.id==='PFM-301'),pqm={name:'Parker Manager',role:'Quality Manager',credentialId:'ACCT-pqm',account:'pqm'};
   delete t.reviewed[Object.keys(t.reviewed).find(k=>t.reviewed[k].by.credentialId==='ACCT-pqm')];t.rows.push({id:'FM-2',opId:s.masterWIs.find(w=>w.id===t.wiId&&w.revision===t.wiRevision).operations[1].id,mode:'Fastener under-torqued',effect:'Loose joint',cause:'Wrong setting',controls:'Torque audit',s:9,o:2,d:3,rpn:54,action:'Add a torque-limiting driver',owner:'T. Engineer',due:'2026-11-01',done:null,by:{name:'Taylor Engineer',role:'Manufacturing Engineer',credentialId:'ACCT-tme',account:'tme'},at:new Date().toISOString()});
-  // Parker's no-risk review was removed above; drop its history entry too, so each variant adds only its own contribution.
-  t.history=(t.history||[]).filter(h=>!String(h.actor||'').endsWith('ACCT-pqm'));
+  // Parker's no-risk review was removed above; drop its history entry and contributor record too, so each variant adds only its own contribution.
+  t.history=(t.history||[]).filter(h=>!String(h.actor||'').endsWith('ACCT-pqm'));t.contributors=(t.contributors||[]).filter(c=>c!=='ACCT-pqm');
   // FM-2 is a row saved before actionSet existed: its action setter is named only in the ticket history.
   t.history.push({at:new Date().toISOString(),action:'FM-2 action: Add a torque-limiting driver (owner T. Engineer, due 2026-11-01).',actor:'Taylor Engineer · ACCT-tme'});
   if(fn==='legacySetter')t.history[t.history.length-1].actor='Parker Manager · ACCT-pqm';
@@ -60,6 +60,7 @@ const variant=(fn)=>run(([fn])=>{const s=structuredClone(state),t=s.maneuver.pfm
   if(fn==='overwrittenSetter'){hist('FM-2 action: Add a torque-limiting driver (owner T. Engineer, due 2026-11-01).','Parker Manager · ACCT-pqm');t.rows[1].actionSet={by:{name:'Taylor Engineer',role:'Manufacturing Engineer',credentialId:'ACCT-tme',account:'tme'},at:new Date().toISOString()};}
   if(fn==='clearedCloser')hist('FM-2 action closed. Revised RPN 18 (was 54).','Parker Manager · ACCT-pqm');
   if(fn==='clearedCompleter')hist('Analysis complete: 2 failure modes, 1 high risk.','Parker Manager · ACCT-pqm');
+  if(fn==='agedOut')t.contributors=[...(t.contributors||[]),'ACCT-pqm'];
   if(fn==='returner')hist('Returned by the Safety Team: Re-score FM-2 after the driver trial.','Parker Manager · ACCT-pqm');
   if(fn==='closer')t.rows[1].done={evidence:'Driver issued and verified.',s:9,o:1,d:2,rpn:18,by:pqm,at:new Date().toISOString()};
   if(fn==='scoper')t.scope={...t.scope,by:pqm};
@@ -79,6 +80,11 @@ r=await variant('overwrittenSetter');ok('a QA Manager whose action assignment wa
 r=await variant('clearedCloser');ok('a QA Manager whose action closure was later cleared is still refused the Safety Team buy-off',r.ok===false&&/you recorded part of this analysis/.test(r.message),JSON.stringify(r));
 r=await variant('clearedCompleter');ok('a QA Manager who completed the analysis before a Safety Team return is still refused the Safety Team buy-off',r.ok===false&&/you recorded part of this analysis/.test(r.message),JSON.stringify(r));
 r=await variant('returner');ok('a Safety Team member who returned the PFMEA may still give the buy-off after the rework',r.ok===true,JSON.stringify(r));
+r=await variant('agedOut');ok('a QA Manager whose contribution has aged out of the 200-entry history is still refused, from the contributor list',r.ok===false&&/you recorded part of this analysis/.test(r.message),JSON.stringify(r));
+r=await run(()=>{const s=structuredClone(state),t=s.maneuver.pfmeas.find(x=>x.id==='PFM-301');t.status='Analysis';const before=(t.contributors||[]).length;const res=FlightManeuver.setPfmeaAction(s,'PFM-301',t.rows[0].id,{action:'Add a kit label scan',owner:'T. Engineer',due:'2026-12-01'});return {ok:res.ok,has:(t.contributors||[]).includes('ACCT-pqm'),valid:MES.validate(s),dup:(()=>{FlightManeuver.setPfmeaAction(s,'PFM-301',t.rows[0].id,{action:'Add a kit label scan',owner:'T. Engineer',due:'2026-12-02'});return t.contributors.filter(c=>c==='ACCT-pqm').length;})()};});
+ok('a PFMEA step records its actor once in the contributor list, which validates',r.ok===true&&r.has===true&&r.valid===true&&r.dup===1,JSON.stringify(r));
+r=await run(()=>{const out={};const mk=f=>{const s=structuredClone(state),t=s.maneuver.pfmeas.find(x=>x.id==='PFM-301');f(t);return MES.validate(s);};out.notArray=mk(t=>{t.contributors='ACCT-x';});out.dup=mk(t=>{t.contributors=['ACCT-x','ACCT-x'];});out.nonString=mk(t=>{t.contributors=[{}];});return out;});
+ok('validation refuses a malformed contributor list',r.notArray===false&&r.dup===false&&r.nonString===false,JSON.stringify(r));
 r=await variant('legacySetter');ok('a QA Manager named in the history as setting an action on a pre-upgrade row is refused the Safety Team buy-off',r.ok===false&&/you recorded part of this analysis/.test(r.message),JSON.stringify(r));
 r=await variant('legacyUnknown');ok('a pre-upgrade action whose setter is not on record refuses the Safety Team buy-off until it is recorded again',r.ok===false&&/does not show who assigned the action on FM-2/.test(r.message),JSON.stringify(r));
 r=await run(()=>[...MES.pfmeaContributors({rows:[{id:'FM-9',by:null,action:'Scan the label'}],history:[{action:'FM-9 action: Scan the label (owner A, due 2026-12-01).',actor:'A · B · ACCT-x'},{action:'FM-90 action: other',actor:'Z · ACCT-z'}],reviewed:{}})]);
