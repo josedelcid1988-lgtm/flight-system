@@ -62,6 +62,9 @@ try {
     assert.equal(layout.breakAnywhere, false, 'no order-table cell may break a word mid-letter');
     assert.deepEqual(layout.hidden, ['Created', 'Flight progress'], 'below 1200px Created and Flight progress are hidden');
     assert.deepEqual(layout.headerBreaks, [], 'one-word headers never wrap letter by letter');
+    await page.emulateMedia({ media: 'print' });
+    assert.equal(await page.evaluate(() => [...document.querySelectorAll('.fr-order-table thead th')].filter(th => getComputedStyle(th).display !== 'none').length), 8, 'a printed queue keeps Created and Flight progress');
+    await page.emulateMedia({ media: 'screen' });
   });
 
   await check('H2 work-order section tabs are visible below a read-only stepper and navigate', async () => {
@@ -123,6 +126,9 @@ try {
     await page.locator('[aria-label="Filter NC intake"]').selectOption('Open');
     assert.equal(await page.locator('.fr-queue tbody tr').count(), Number(await page.locator('#mnv-intake-count').textContent()), 'NC intake badge equals the Open list');
     assert.ok(Number(await page.locator('#mnv-intake-count').textContent()) > 0, 'an open NC inside a work order is counted');
+    await go(page, 'mnv-mrb');
+    await page.locator('.fr-count-open').waitFor();
+    assert.equal(await page.locator('.fr-queue tbody tr').filter({ hasText: /Open/ }).count(), Number(await page.locator('#mnv-mrb-count').textContent()), 'the MRB badge counts only boards the MRB list shows as open');
   });
 
   await check('M17 empty lists say whether nothing exists or nothing matches', async () => {
@@ -132,6 +138,7 @@ try {
     assert.equal(await page.locator('.fr-maneuver footer').innerText(), '0 problem reports');
     await page.locator('[aria-label="Search Flight Maneuver records"]').fill('nothing-like-this');
     assert.match(await page.locator('.fr-empty').innerText(), /^No records match the search or filters/);
+    assert.ok(bundle.includes('Nothing needs attention right now.'), 'an empty Quality Hangar says nothing needs attention, not that no records exist');
   });
 
   await check('M18 an expired lot reads Expired N days ago in the danger colour', async () => {
@@ -169,6 +176,10 @@ try {
     assert.equal(await lock.getAttribute('aria-label'), 'Keep screen awake');
     assert.equal((await lock.locator('.wakelock-label').innerText()).trim(), 'Stay awake');
     assert.ok(await lock.locator('.wakelock-label').isVisible());
+    await page.setViewportSize({ width: 360, height: 740 });
+    assert.equal(await lock.locator('.wakelock-label').isVisible(), false, 'on a phone the label hides so the top bar fits');
+    assert.equal(await lock.getAttribute('aria-label'), 'Keep screen awake', 'the accessible name stays on a phone');
+    await page.setViewportSize({ width: 1024, height: 768 });
   });
 
   await check('M12 conformity history uses human labels', async () => {

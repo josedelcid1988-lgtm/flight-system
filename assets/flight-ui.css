@@ -24,6 +24,6 @@
 .fr-activity .fr-activity-order{display:block;margin-top:5px;color:var(--fr-muted);font-size:11px}.fr-activity .fr-activity-order .record-link{font-size:11px}
 .fr-activity-overlay{position:fixed;z-index:10000;inset:0;display:flex;justify-content:flex-end;background:rgba(9,21,39,.34);backdrop-filter:blur(5px)}.fr-activity-overlay .fr-drawer-panel{width:min(470px,92vw);height:100%;overflow:auto}
 .fr-order-page .table-wrap.tbl-wrap>.fr-order-table{min-width:0!important}.fr-order-page .table-wrap.tbl-wrap .fr-order-table th,.fr-order-page .table-wrap.tbl-wrap .fr-order-table td{overflow-wrap:normal;word-break:normal}.fr-order-table .fr-record-link,.fr-order-table .fr-record-link strong,.fr-order-table time,.fr-order-table .fr-fai-tag,.fr-order-table .fr-status,.fr-order-table .fr-order-blocked{white-space:nowrap}
-@media(max-width:1199px){.fr-order-table th:nth-child(4),.fr-order-table td.fr-col-created,.fr-order-table th:nth-child(6),.fr-order-table td.fr-col-progress{display:none}}
+@media screen and (max-width:1199px){.fr-order-table th:nth-child(4),.fr-order-table td.fr-col-created,.fr-order-table th:nth-child(6),.fr-order-table td.fr-col-progress{display:none}}
 .fr-count-open{margin-left:6px;color:var(--fr-muted);font-size:12px;font-weight:600}
 .fr-expired-label{color:#b42318;font-weight:650}

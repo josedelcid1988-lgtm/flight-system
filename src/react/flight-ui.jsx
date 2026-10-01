@@ -433,11 +433,11 @@ function ManeuverDrawer({ item, onClose, onOpen }) {
 }
 
 // The sidebar badge and the list heading count the same records: open NCs, open corrective actions,
-// boards that are open or still needed, and problem reports that are not closed.
+// open boards, and problem reports that are not closed.
 function navOpenCount(state, FM, kind) {
   if (kind === 'NC') return FM.intake(state).filter(row => row.ticketStatus === 'Open').length;
   if (kind === 'CAR') return FM.list(state, 'cars').filter(row => !['Closed', 'Cancelled'].includes(row.status)).length;
-  if (kind === 'MRB') return FM.list(state, 'mrb').filter(row => row.status === 'Open').length + FM.intake(state).filter(row => row.mrbState === 'Needed').length;
+  if (kind === 'MRB') return FM.list(state, 'mrb').filter(row => row.status === 'Open').length;
   if (kind === 'SPR') return FM.list(state, 'sprs').filter(row => row.status !== 'Closed').length;
   return null;
 }
@@ -499,7 +499,7 @@ function ManeuverHangar({ state, FM, view, onOpen }) {
       </div>
       <div className="fr-table-scroll"><table className={compact ? 'fr-compact' : ''}><thead><tr><th>Record</th><th>Details</th><th>Owner</th><th>Due</th><th>Status</th><th><span className="fr-visually-hidden">Open detail</span></th></tr></thead><tbody>
         {rows.map(row => <tr key={`${row.kind}/${row.id}`} className={row.dueDate && row.dueDate < new Date().toISOString().slice(0, 10) && !recordIsTerminal(row.status) ? 'fr-overdue' : ''}><td><button className="fr-record-link" onClick={() => setSelected(row)}><strong>{row.id}</strong><small>{row.kind} · {row.title}</small></button></td><td><strong>{row.summary || row.nextStep}</strong>{row.workOrderId && <small>{row.workOrderId}{row.partNumber ? ` · ${row.partNumber}` : ''}</small>}</td><td>{row.owner || 'Unassigned'}</td><td>{displayFlightDate(row.dueDate)}</td><td><span className="fr-status"><i/>{row.status || 'Open'}</span></td><td><button className="fr-open-button" aria-label={`View ${row.id} details`} onClick={() => setSelected(row)}><ArrowUpRight size={18}/></button></td></tr>)}
-      </tbody></table>{!rows.length && <div className="fr-empty">{filtered ? 'No records match the search or filters. Clear them to see every record.' : `No ${recordNoun[1]} yet.`}</div>}</div>
+      </tbody></table>{!rows.length && <div className="fr-empty">{filtered ? 'No records match the search or filters. Clear them to see every record.' : pageKind === 'All' ? 'Nothing needs attention right now.' : `No ${recordNoun[1]} yet.`}</div>}</div>
       <footer><span>{rows.length} {recordNoun[rows.length === 1 ? 0 : 1]}</span></footer>
     </section>
     {pageKind === 'All' && <div className="fr-mnv-create"><button data-action="mnv-nc-new"><Plus size={15}/> Raise NC</button><button data-action="mnv-spr-new"><Plus size={15}/> Raise SPR</button><button data-action="nav" data-view="mnv-intake">NC intake <ArrowUpRight size={15}/></button></div>}
