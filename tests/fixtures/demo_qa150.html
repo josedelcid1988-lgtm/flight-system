@@ -14405,8 +14405,12 @@ function holdActionButtons(o,h){const me=skActorId();const out=[];
   // Write ids are unique per page (client id, page id, a counter of this page), so two tabs of one device never
   // reuse an id, whether for ordinary writes or for a resend after a restore.
   var pageSeq = 0;
+  // This page's newest acknowledgement, also kept in memory: when the browser refuses to save it, the tab still
+  // names it on its next post and so still finds a restore.
+  var memAck = null;
   function ackSlots() {
     var out = [];
+    if (memAck) out.push({ key: null, epoch: memAck.epoch, ack: memAck.ack, at: 0 });
     if (client.ack && Number.isInteger(client.ack.id)) out.push({ key: null, epoch: Number.isInteger(client.ackEpoch) ? client.ackEpoch : 0, ack: client.ack, at: 0 });
     try { for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k && k.indexOf(ACK_PREFIX) === 0) { var v = read(k, null); if (v && Number.isInteger(v.epoch)) out.push({ key: k, epoch: v.epoch, ack: v.ack && Number.isInteger(v.ack.id) ? v.ack : null, at: Number(v.at) || 0 }); } } } catch (e) {}
     return out;
@@ -14418,6 +14422,7 @@ function holdActionButtons(o,h){const me=skActorId();const out=[];
     return { epoch: epoch, ack: ack, slots: slots };
   }
   function writeAck(epoch, ack) {
+    if (!memAck || epoch > memAck.epoch || (epoch === memAck.epoch && ack && (!memAck.ack || ack.id > memAck.ack.id))) memAck = { epoch: epoch, ack: ack };
     var mine = read(ACK_PREFIX + pageId, null);
     if (mine && mine.epoch === epoch && mine.ack && ack && mine.ack.id >= ack.id) return;
     try { localStorage.setItem(ACK_PREFIX + pageId, JSON.stringify({ epoch: epoch, ack: ack, at: Date.now() })); } catch (e) { memoryOnly = true; }
@@ -14612,7 +14617,7 @@ function holdActionButtons(o,h){const me=skActorId();const out=[];
     resentAt = new Date().toISOString();
     persist();
   }
-  function status() { return { enabled: true, unsynced: queue.length, rejected: queue.filter(function (r) { return r.rejected; }).length, lastError: lastError, lastSyncAt: lastSyncAt, clientId: client.id, memoryOnly: memoryOnly, url: base, resentAt: resentAt }; }
+  function status() { return { enabled: true, ack: currentAck().ack, unsynced: queue.length, rejected: queue.filter(function (r) { return r.rejected; }).length, lastError: lastError, lastSyncAt: lastSyncAt, clientId: client.id, memoryOnly: memoryOnly, url: base, resentAt: resentAt }; }
   function paint() {
     try {
       var el = document.getElementById('sync-indicator');

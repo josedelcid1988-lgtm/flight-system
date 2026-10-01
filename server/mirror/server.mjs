@@ -309,16 +309,27 @@ const BACKUP_RE = /^flight-system-mirror-(\d{4}-\d{2}-\d{2})T(\d{6})Z\.sqlite$/;
 // the server is single threaded and no write runs between the two. The database is first checked in full
 // against its trusted live anchor; a database that no longer matches it is never copied, so a backup cannot
 // carry a fresh anchor for a truncated or rewritten chain.
-export function backupNow(db, dir, when = new Date(), { anchor } = {}) {
-  const v = verifyChain(db, { anchor: anchor === undefined ? null : anchor });
-  if (!v.ok) throw new Error(`backup refused: the database does not match its chain anchor (${v.firstBreak.reason}). Investigate before backing up; see Restore procedure in server/mirror/README.md.`);
+// Another connection can commit between that check and VACUUM INTO, so the copy itself is checked against the
+// same trusted anchor, and its own anchor is written from the copy, never from the live database. A copy that does
+// not match is removed and the backup refused. beforeCopy exists only so the suite can commit in that window.
+export function backupNow(db, dir, when = new Date(), { anchor, beforeCopy } = {}) {
+  const trusted = anchor === undefined ? null : anchor;
+  const refuse = reason => new Error(`backup refused: the database does not match its chain anchor (${reason}). Investigate before backing up; see Restore procedure in server/mirror/README.md.`);
+  const v = verifyChain(db, { anchor: trusted });
+  if (!v.ok) throw refuse(v.firstBreak.reason);
   fs.mkdirSync(dir, { recursive: true });
   const iso = when.toISOString();
   const name = `flight-system-mirror-${iso.slice(0, 10)}T${iso.slice(11, 19).replace(/:/g, '')}Z.sqlite`;
   const file = path.join(dir, name);
   if (fs.existsSync(file)) fs.rmSync(file);
+  if (beforeCopy) beforeCopy();
   db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
-  writeAnchor(defaultAnchorPath(file), db, when);
+  const copy = new DatabaseSync(file);
+  try {
+    const cv = verifyChain(copy, { anchor: trusted });
+    if (!cv.ok) { copy.close(); fs.rmSync(file, { force: true }); throw refuse(`the copy taken: ${cv.firstBreak.reason}`); }
+    writeAnchor(defaultAnchorPath(file), copy, when);
+  } finally { try { copy.close(); } catch { /* closed above */ } }
   return file;
 }
 // Keeps the newest copy of each day for keepDays days and removes the rest.
@@ -354,10 +365,13 @@ export function createMirror(options = {}) {
   const refusal = startRefusal(cfg);
   if (refusal) throw new Error(refusal);
   const anchorPath = cfg.anchorPath ? path.resolve(cfg.anchorPath) : defaultAnchorPath(cfg.dbPath);
+  // Only a database file this start creates gets a fresh anchor. An existing file with no anchor is refused even
+  // with no rows: it may have been emptied, or its anchor (on separate storage) may not be mounted.
+  const existed = fs.existsSync(cfg.dbPath);
   const db = openDatabase(cfg.dbPath);
   if (!fs.existsSync(anchorPath)) {
     const rows = Number(db.prepare('SELECT COUNT(*) n FROM records').get().n);
-    if (rows > 0) { db.close(); throw new Error(`The chain anchor ${anchorPath} is missing for a database that already holds ${rows} records. Check the chain, then write the anchor: node server/mirror/server.mjs --reanchor --db ${cfg.dbPath}${cfg.anchorPath ? ` --anchor ${anchorPath}` : ''}. After a restore, copy the backup's .anchor.json into place with it.`); }
+    if (existed) { db.close(); throw new Error(`The chain anchor ${anchorPath} is missing for the existing database ${cfg.dbPath} (${rows} records). If the anchor is kept on separate storage, make sure it is mounted. Otherwise check the chain, then write the anchor: node server/mirror/server.mjs --reanchor --db ${cfg.dbPath}${cfg.anchorPath ? ` --anchor ${anchorPath}` : ''}. After a restore, copy the backup's .anchor.json into place with it.`); }
     writeAnchor(anchorPath, db);
   } else {
     // An anchor that no longer matches means rows were removed or the last row changed while the server was

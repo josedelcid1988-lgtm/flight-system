@@ -309,6 +309,30 @@ await m.close();
  const inj=spawnSync(process.execPath,[path.join(ROOT,'server/mirror/restore-test.mjs'),bki,'--against',tp],{encoding:'utf8'});
  ok('a manifest injected for a chain-covered row of a backup fails the restore test',inj.status===1&&/BROKEN/.test(inj.stdout)&&/signature manifests/.test(inj.stdout+inj.stderr),inj.stdout+inj.stderr);}
 
+// A backup is checked again after the copy: a commit by another connection between the check and the copy is found
+// in the copy, the copy is removed and the backup refused; the copy's anchor comes from the copy, not the live file.
+{const {DatabaseSync}=await import('node:sqlite');const {backupNow,chainTip,linkHash}=await import(path.join(ROOT,'server/mirror/server.mjs'));
+ const tp=path.join(tmp,'race.sqlite');const mr=createMirror({dbPath:tp,backupDir:path.join(tmp,'b23'),port:0,backupEveryMinutes:0,...SECURE});const ar=await mr.listen();
+ await fetch(`http://127.0.0.1:${ar.port}/api/v1/writes`,{method:'POST',headers:{'content-type':'application/json',...WAUTH},body:JSON.stringify({clientId:'r',records:[rec(801),rec(802)]})});
+ const anchor=readAnchor(tp+'.anchor.json');const dir=path.join(tmp,'b23race');
+ let msg='',checkedFirst=false;
+ try{backupNow(mr.db,dir,new Date('2026-10-01T12:00:00Z'),{anchor,beforeCopy:()=>{checkedFirst=true;const d=new DatabaseSync(tp);const prev=d.prepare('SELECT * FROM records ORDER BY id DESC LIMIT 1').get();const x=rec(803);d.prepare('INSERT INTO records (client_write_id,store_key,entity_type,entity_id,operation,payload_json,payload_sha256,prev_sha256,actor,credential,client_ts,server_ts,build_version,build_sha256,client_id,manifests_sha256) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(x.clientWriteId,x.storeKey,x.entityType,x.entityId,x.operation,x.payloadJson,x.payloadSha256,linkHash(prev),x.actor,x.credential,x.clientTs,new Date().toISOString(),x.buildVersion,x.buildSha256,'r',sha256(JSON.stringify([])));d.close();}});}catch(e){msg=e.message;}
+ ok('the refusal case is real: the live database passed the check before the copy',checkedFirst);
+ ok('a commit between the check and the copy is found in the copy and the backup is refused',/backup refused/.test(msg)&&/the copy taken/.test(msg),msg);
+ ok('a refused copy leaves no backup and no anchor behind',!fs.existsSync(dir)||fs.readdirSync(dir).length===0,fs.existsSync(dir)?JSON.stringify(fs.readdirSync(dir)):'');
+ await mr.close();
+ const tq=path.join(tmp,'race2.sqlite');const mq=createMirror({dbPath:tq,backupDir:path.join(tmp,'b24'),port:0,backupEveryMinutes:0,...SECURE});const aq=await mq.listen();
+ await fetch(`http://127.0.0.1:${aq.port}/api/v1/writes`,{method:'POST',headers:{'content-type':'application/json',...WAUTH},body:JSON.stringify({clientId:'q',records:[rec(811)]})});
+ const good=mq.backup();const ca=readAnchor(good+'.anchor.json');const cd=new DatabaseSync(good,{readOnly:true});const ct=chainTip(cd);cd.close();
+ ok('an undisturbed backup is kept, with an anchor taken from the copy itself',ca&&ca.records===ct.records&&ca.tip===ct.tip&&ct.records===1,JSON.stringify({ca,ct}));
+ await mq.close();}
+// Only a database file the server creates gets a fresh anchor: an existing file with no anchor is refused even
+// when it holds no rows (it may have been emptied, or the anchor's storage is not mounted).
+{const tp=path.join(tmp,'emptyold.sqlite');const me=createMirror({dbPath:tp,backupDir:path.join(tmp,'b25'),port:0,backupEveryMinutes:0,...SECURE});
+ ok('a new database file gets its anchor on first start',readAnchor(tp+'.anchor.json')?.records===0);me.db.close();
+ fs.rmSync(tp+'.anchor.json');let msg='';try{const x=createMirror({dbPath:tp,backupDir:path.join(tmp,'b25'),port:0,backupEveryMinutes:0,...SECURE});x.db.close();}catch(e){msg=e.message;}
+ ok('an existing database with no rows and no anchor is refused and the next step named',/missing for the existing database/.test(msg)&&/--reanchor/.test(msg)&&!fs.existsSync(tp+'.anchor.json'),msg);}
+
 // Fail closed (issue 76): no token configured refuses to start, no origin configured sends no CORS header, and
 // health tells a caller without the token only that the mirror is up.
 {let refusedStart='';try{createMirror({dbPath:path.join(tmp,'none.sqlite'),backupDir:path.join(tmp,'b5'),port:0,backupEveryMinutes:0});}catch(e){refusedStart=e.message;}
@@ -519,6 +543,18 @@ const snapshots=()=>m.db.prepare("SELECT id,payload_json FROM records WHERE enti
  ok('an upgraded device with confirmed records and no acknowledgement sends everything once on its first post, then records an acknowledgement',pre.ack===null&&pre.sent>0&&pre.resent===null&&w5.ok&&!!st.resentAt&&count()-before>=pre.sent&&!!post&&Number.isInteger(post.id),JSON.stringify({pre,added:count()-before,post}));
  const b2=count();await mkOrder(p);st=await drain();
  ok('after that baseline the next write sends only what changed',count()-b2<=3,JSON.stringify({added:count()-b2}));}
+// When the browser refuses to save an acknowledgement, the tab keeps it in memory and still names it on its next
+// post, so a restore during that session is still found.
+{const before=await devAck();
+ await p.evaluate(()=>{const set=Storage.prototype.setItem;window.__ackSet=set;Storage.prototype.setItem=function(k,v){if(String(k).startsWith('skyryse-mes-sync-ack-v1:'))throw new DOMException('Browser storage refused the write.','QuotaExceededError');return set.call(this,k,v);};});
+ const r0=count();await mkOrder(p);const s1=await drain();const stored=await devAck();
+ const newest=Number(m.db.prepare('SELECT MAX(id) n FROM records').get().n);
+ ok('the refusal case is real: no acknowledgement newer than before was saved in the browser',newest>r0&&!(stored.ack&&stored.ack.id>(before.ack?before.ack.id:0)&&stored.ack.id>r0),JSON.stringify({stored:stored.ack,r0}));
+ ok('the tab keeps the newest acknowledgement in memory',s1.ack&&s1.ack.id>r0&&s1.ack.id<=newest,JSON.stringify({ack:s1.ack,r0,newest}));
+ let sentAck=null;await ctx.route(/\/api\/v1\/writes$/,async route=>{if(sentAck===null){try{sentAck=JSON.parse(route.request().postData()).lastAck||false;}catch(e){sentAck=false;}}await route.continue();});
+ await mkOrder(p);await drain();await ctx.unroute(/\/api\/v1\/writes$/);
+ ok('its next post names that acknowledgement',sentAck&&s1.ack&&sentAck.id>=s1.ack.id,JSON.stringify({sentAck,mem:s1.ack}));
+ await p.evaluate(()=>{Storage.prototype.setItem=window.__ackSet;});await mkOrder(p);await drain();}
 // The demo never uses the mirror a production setting names: an SK_MIRROR set before load (as a page, proxy or
 // the suite runner could) is replaced with an empty address, nothing is queued and no request leaves the page.
 // Only the suite runner's own hook, __FS_SUITE_DEMO_MIRROR__, turns the demo's mirror on, under its own keys.

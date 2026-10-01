@@ -124,7 +124,9 @@ Every endpoint except `POST /api/v1/writes` and health needs the operator token.
 
 The server takes an online backup on its schedule with SQLite `VACUUM INTO`, which produces a
 consistent copy while the server keeps accepting writes, and writes the copy's own anchor next to it
-(`<backup>.sqlite.anchor.json`). Keep the two together. After each backup it keeps the newest copy
+(`<backup>.sqlite.anchor.json`). The database is checked against its trusted anchor before the copy and the
+copy is checked against the same anchor after it, so a change made by another process in between is never
+backed up; the copy's anchor is taken from the copy itself. Keep the two together. After each backup it keeps the newest copy
 of each day for `backup-keep-days` days and deletes the rest. Take one on demand with:
 
 ```bash
@@ -150,7 +152,8 @@ of that disk.
 4. Move the current database aside; do not delete it. Move its `-wal` and `-shm` files with it.
 5. Copy the tested backup into place under the database file name, and its `.anchor.json` into
    place as the anchor (`FS_MIRROR_ANCHOR`, or `<database file>.anchor.json`). The server refuses to
-   start on a database with records and no anchor; for a database written before anchors existed,
+   start on an existing database with no anchor, even one with no rows (only a database file the server
+   creates itself gets a fresh anchor); for a database written before anchors existed,
    run `node server/mirror/server.mjs --reanchor --db <database-file>` once, which checks the chain
    first.
 6. Start the server and check that `GET /api/v1/verify` shows `chainIntact: true`.
