@@ -31,6 +31,9 @@ const cases = [
   // Codex 4160965078: every password assignment leaves the argument, and the last one is the password libpq uses.
   ['keywords with a repeated password', 'password=old host=db password=current dbname=flight', { dbname: 'host=db dbname=flight', env: { PGPASSWORD: 'current' } }],
   ['keywords with no password', 'host=db dbname=flight', { dbname: 'host=db dbname=flight', env: {} }],
+  // Codex 4161235788: libpq unescapes a backslash in an unquoted value too, so \\ is one backslash.
+  ['keywords with an escaped backslash, unquoted', 'host=db password=pa\\\\ss dbname=flight', { dbname: 'host=db dbname=flight', env: { PGPASSWORD: 'pa\\ss' } }],
+  ['keywords with an escaped quote, unquoted', "host=db password=it\\'s", { dbname: 'host=db', env: { PGPASSWORD: "it's" } }],
   ['a bare database name', 'flight', { dbname: 'flight', env: {} }],
 ];
 for (const [label, input, want] of cases) {
@@ -45,6 +48,15 @@ const refusals = [
   ['a password beside service=', 'host=db service=prod password=Hidden-1', {}, /connection service/],
   ['a URI password beside ?service=', 'postgresql://flight:Hidden-1@db/flight?service=prod', {}, /connection service/],
   ['a password with PGSERVICE set', 'postgresql://flight:Hidden-1@db/flight', { PGSERVICE: 'prod' }, /connection service/],
+  // Codex 4161235803: libpq has no environment variable for sslpassword, so it is refused, with or without a password.
+  ['a URI client key passphrase', 'postgresql://flight:pw@db/flight?sslkey=client.key&sslpassword=Hidden-1', {}, /client key passphrase/],
+  ['a URI client key passphrase with no password', 'postgresql://flight@db/flight?sslpassword=Hidden-1', {}, /client key passphrase/],
+  ['a keyword client key passphrase', 'host=db sslkey=client.key sslpassword=Hidden-1', {}, /client key passphrase/],
+  // Codex 4161235818: an unencoded ? / or # cuts the user info short; the @ after it is refused, not passed on.
+  ['user info cut short by an unencoded ?', 'postgresql://flight:Hidden-1?Tail@db/flight', {}, /@ outside its user info/],
+  ['user info cut short by an unencoded /', 'postgresql://flight:Hidden-1/Tail@db/flight', {}, /@ outside its user info/],
+  // Codex 4161235811: a NUL cannot go into an environment variable; spawn would quote it, so it is refused first.
+  ['a URI password with a NUL', 'postgresql://flight:Hidden-1%00tail@db/flight', {}, /NUL character/],
 ];
 for (const [label, input, env, pattern] of refusals) {
   let error = null;
@@ -79,6 +91,8 @@ try {
   if (savedService !== undefined) process.env.PGSERVICE = savedService;
   fs.rmSync(dir, { recursive: true, force: true });
 }
+
+check('spawn errors (which quote the bad value) are replaced with a fixed message in both tools', (fs.readFileSync(new URL('../server/db-postgres.mjs', import.meta.url), 'utf8').match(/catch \{ reject\(new Error\('pg_(dump|restore) could not be started\. Check FLIGHT_DATABASE_URL and the PostgreSQL client tools\.'\)\); return; \}/g) || []).length === 2);
 
 // ---- pg_dump (store.backup) takes the same path ----------------------------------------------------------------
 const source = fs.readFileSync(new URL('../server/db-postgres.mjs', import.meta.url), 'utf8');

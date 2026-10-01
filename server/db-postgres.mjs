@@ -194,6 +194,9 @@ export async function restoreListWithoutSessions(archivePath) {
 // since it may hold the password. A password beside a connection service (service= in the string, or PGSERVICE) is
 // refused too: libpq lets a service file's password override PGPASSWORD, so moving the password out of the string
 // would change which password is used.
+// libpq has no environment variable for a client key passphrase, so one in the string cannot be moved out of the
+// arguments; it is refused instead (Codex 4161235803).
+const SSL_PASSWORD_REFUSAL = 'carries a client key passphrase (sslpassword), which pg_dump and pg_restore would show in their arguments; use an unencrypted key file readable only by the server account, or remove sslpassword';
 export function pgRestoreTarget(connectionString, env = process.env) {
   const raw = String(connectionString);
   const refuse = why => { throw new Error(`The PostgreSQL connection string ${why}. Nothing was run. Fix FLIGHT_DATABASE_URL and try again.`); };
@@ -205,6 +208,9 @@ export function pgRestoreTarget(connectionString, env = process.env) {
     const uri = raw.match(/^(postgres(?:ql)?:\/\/)([^/?#]*)([^?#]*)(?:\?([^#]*))?(#.*)?$/i);
     if (!uri) refuse('is not a URI libpq can read');
     const [, scheme, authority, path, query, fragment = ''] = uri;
+    // An @ past the authority means user info was cut short by an unencoded / ? or #, so a password may sit in what
+    // looks like the path or query (Codex 4161235818). libpq needs those characters percent-encoded anyway.
+    if (`${path}${query ?? ''}${fragment}`.includes('@')) refuse('has an @ outside its user info; percent-encode any / ? # or @ in the user name and password');
     const at = authority.lastIndexOf('@');
     let userinfo = at >= 0 ? authority.slice(0, at) : null;
     const hosts = at >= 0 ? authority.slice(at + 1) : authority;
@@ -217,13 +223,15 @@ export function pgRestoreTarget(connectionString, env = process.env) {
       const eq = part.indexOf('='), key = pct(eq >= 0 ? part.slice(0, eq) : part);
       if (key === 'password') { password = pct(eq >= 0 ? part.slice(eq + 1) : ''); continue; }
       if (key === 'service') service = true;
+      if (key === 'sslpassword') refuse(SSL_PASSWORD_REFUSAL);
       kept.push(part);
     }
     if (password === null) return { dbname: raw, env: {} };
     dbname = `${scheme}${userinfo !== null ? `${userinfo}@` : ''}${hosts}${path}${kept.length ? `?${kept.join('&')}` : ''}${fragment}`;
   } else {
-    // keyword=value pairs: a value is single-quoted (backslash escapes a quote or a backslash) or runs to whitespace.
-    const pair = /\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*('(?:\\.|[^'\\])*'|[^\s']*)/y;
+    // keyword=value pairs: a value is single-quoted or runs to whitespace; in either, a backslash escapes the next
+    // character (libpq's rule for a quote or a backslash), so both forms are unescaped the same way (Codex 4161235788).
+    const pair = /\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*('(?:\\.|[^'\\])*'|(?:\\.|[^\s'\\])*)/y;
     const kept = [];
     let index = 0;
     while (index < raw.length) {
@@ -233,20 +241,27 @@ export function pgRestoreTarget(connectionString, env = process.env) {
       if (!match) refuse('is not a list of keyword=value settings libpq can read');
       index = pair.lastIndex;
       const [text, key, value] = match;
-      if (key === 'password') { password = value.startsWith("'") ? value.slice(1, -1).replace(/\\(.)/g, '$1') : value; continue; }
+      if (key === 'password') { password = (value.startsWith("'") ? value.slice(1, -1) : value).replace(/\\(.)/g, '$1'); continue; }
       if (key === 'service') service = true;
+      if (key === 'sslpassword') refuse(SSL_PASSWORD_REFUSAL);
       kept.push(text.trim());
     }
     if (password === null) return { dbname: raw, env: {} };
     dbname = kept.join(' ');
   }
+  // A NUL cannot pass through an environment variable; spawn would refuse it with an error quoting the value, so it is
+  // refused here with words that never repeat it (Codex 4161235811).
+  if (password.includes('\0')) refuse('has a password with a NUL character');
   if (service || (env && env.PGSERVICE)) refuse('names a password and a connection service; keep the password in the service file or in PGPASSWORD, not in the string, so backups and restores use the same password as the server');
   return { dbname, env: { PGPASSWORD: password } };
 }
 
 function runPgRestore(args, capture = false, env = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn('pg_restore', args, { stdio: ['ignore', capture ? 'pipe' : 'ignore', 'ignore'], env: { ...process.env, ...env } });
+    // spawn throws synchronously on a bad argument or environment value and quotes it; that message is never passed on.
+    let child;
+    try { child = spawn('pg_restore', args, { stdio: ['ignore', capture ? 'pipe' : 'ignore', 'ignore'], env: { ...process.env, ...env } }); }
+    catch { reject(new Error('pg_restore could not be started. Check FLIGHT_DATABASE_URL and the PostgreSQL client tools.')); return; }
     let out = '';
     if (capture) child.stdout.on('data', chunk => { out += chunk; });
     child.once('error', reject);
@@ -408,7 +423,10 @@ function makeStore(pool, query, inTransaction, connectionString) {
       return new Promise((resolve, reject) => {
         // The password goes through the child's environment, not its arguments (#234; see pgRestoreTarget).
         const target = pgRestoreTarget(connectionString);
-        const child = spawn('pg_dump', ['--format=custom', '--file', destination, '--dbname', target.dbname], { stdio: 'ignore', env: { ...process.env, ...target.env } });
+        // spawn throws synchronously on a bad argument or environment value and quotes it; that message is never passed on.
+        let child;
+        try { child = spawn('pg_dump', ['--format=custom', '--file', destination, '--dbname', target.dbname], { stdio: 'ignore', env: { ...process.env, ...target.env } }); }
+        catch { reject(new Error('pg_dump could not be started. Check FLIGHT_DATABASE_URL and the PostgreSQL client tools.')); return; }
         child.once('error', reject);
         child.once('exit', (code, signal) => {
           if (code === 0) resolve(0);
