@@ -19,7 +19,7 @@ The accounts `tech`, `quality`, `mfgeng`, `operations`, `engineering` are pilot 
 their real role (Technician, Quality, Manufacturing Engineering, Operations, Engineering) so a pilot
 can rehearse the real hand-offs. Every other demo account (`demo`, `master`, `safety`,
 `certification` and any account a person creates) has full access (D-6 to D-36). The stamp,
-PIN and separation-of-duties relaxations (D-13 to D-19; D-20 to D-44) apply to every
+PIN and separation-of-duties relaxations (D-13 to D-19; D-20 to D-45) apply to every
 demo account so no scenario stalls. Sign in with any account and the password `demo1234`.
 
 Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-28 to D-29).
@@ -82,3 +82,4 @@ Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-2
 | D-42 | Separation of duties | The person who opened an equipment maintenance record may close it | One person can take a tool out of service and verify and close its maintenance record, so the demo does not stall on equipment. Production requires a different person to verify and close it. | 1 |
 | D-43 | Separation of duties | The author or reviewer of a controlled document may release it | One person can author, review and release a controlled document, so a document can be walked to Released alone. Production requires a third person, different from the author and the reviewer. | 1 |
 | D-44 | Separation of duties | System QMS records validate when one person signed every step | The workspace check accepts a controlled document reviewed or released by its author and an audit or finding closed by the person who opened it, matching the two rules above, so a demo workspace stays valid. Production rejects each of these records. | 4 |
+| D-45 | Separation of duties | Equipment maintenance validates when the opener closed it | The workspace check accepts a maintenance record verified and closed by the person who opened it, matching the closing rule lifted above, so the change saves instead of rolling back. Production rejects such a record. | 1 |

@@ -225,7 +225,8 @@ try {
 console.log('\nWorkflow'.padEnd(64) + 'Result');
 for (const r of RESULTS) console.log(r.flow.padEnd(63) + (r.pass ? 'pass' : 'FAIL') + (r.note ? '  ' + r.note : ''));
 const named = ALL_REFUSALS.filter(r => r.user === 'master' && NEEDS_ANOTHER_PERSON.test(r.text));
-console.log(`refusals seen as master ${ALL_REFUSALS.filter(r => r.user === 'master').length}, naming another person ${named.length}`);
+// Page messages that did not come back from a successful engine call: refusals and plain notices (a print opened, a tool logged).
+console.log(`page messages seen as master ${ALL_REFUSALS.filter(r => r.user === 'master').length}, refusals naming another person ${named.length}`);
 fs.writeFileSync(path.join(TESTS, 'qa_demo_solo_master_results.json'), JSON.stringify({ results: RESULTS, refusals: ALL_REFUSALS }, null, 1));
 console.log('page errors', JSON.stringify(pageErrors));
 console.log('FAILS', JSON.stringify(FAILS));

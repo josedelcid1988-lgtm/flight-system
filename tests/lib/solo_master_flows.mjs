@@ -857,7 +857,7 @@ async function answerDialog(u, defaults = {}) {
   await u.submitDialog();
 }
 const plan = {
-  name: 'plan', title: "Flight Plan: planned order to work order, kanban, Today's Big Three",
+  name: 'plan', title: "Flight Plan: planned order to work order, kanban, Big Three, maintenance",
   async run(u) {
     const id = await u.step('plan an order from master WI MWI-0004', async () => {
       await u.nav('plan');
@@ -903,7 +903,28 @@ const plan = {
       const carried = await u.read(() => { const t = new Date(Date.now() + 86400000).toISOString().slice(0, 10), me = skAuth.user().username; return (state.planner.days[me][t]?.big3 || []).filter(s => s.t).length; });
       if (!carried) throw new Error('nothing carried to tomorrow: ' + await u.toast());
     });
-    return `${id} converted to ${wo}; Big Three accepted and carried`;
+    const mnt = await u.step('take a tool out of service for maintenance', async () => {
+      await u.nav('plan');
+      const box = u.page.locator('#main details.fr-equipment-setup');
+      if (!(await box.evaluate(d => d.open))) { await box.locator('summary').click(); await u.settle(); }
+      const f = box.locator('form').filter({ has: u.page.locator('[name=assetTag]') }).first();
+      await f.locator('[name=description]').fill('Torque check drifted; sent for adjustment.');
+      const before = await u.read(() => (state.resources?.maintenance || []).length);
+      await f.locator('button[type=submit]').click(); await u.wait(450);
+      const m = await u.read(() => (state.resources?.maintenance || []).slice(-1)[0]);
+      if ((await u.read(() => (state.resources?.maintenance || []).length)) !== before + 1 || m.status !== 'Open') throw new Error('maintenance not opened: ' + await u.toast());
+      return m.id;
+    });
+    await u.step('verify and return it to service (the person who opened it)', async () => {
+      const box = u.page.locator('#main details.fr-equipment-setup');
+      if (!(await box.evaluate(d => d.open))) { await box.locator('summary').click(); await u.settle(); }
+      const f = box.locator('form').filter({ hasText: mnt }).first();
+      await f.locator('[name=result]').fill('Adjusted and verified against the reference standard.');
+      await f.locator('button[type=submit]').click(); await u.wait(450);
+      const m = await u.read(i => (state.resources?.maintenance || []).find(x => x.id === i), mnt);
+      if (m?.status !== 'Closed') throw new Error(`${mnt} is ${m?.status}: ` + await u.toast());
+    });
+    return `${id} converted to ${wo}; Big Three accepted and carried; ${mnt} opened and closed by one person`;
   },
 };
 

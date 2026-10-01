@@ -199,6 +199,10 @@ const LIST = [
     why: 'The workspace check accepts a controlled document reviewed or released by its author and an audit or finding closed by the person who opened it, matching the two rules above, so a demo workspace stays valid. Production rejects each of these records.',
     find: /reviewers\.includes\(doc\.(?:reviewer|releaser)\.credentialId\)|[fa]\.closer\.credentialId!==[fa]\.openedBy\.credentialId/g, count: 4,
     replace: (ctx, m, id) => m.startsWith('reviewers') ? `(false/* DEMO ${id} */&&${m})` : `(true/* DEMO ${id} */||${m})` },
+  { area: 'Separation of duties', title: 'Equipment maintenance validates when the opener closed it',
+    why: 'The workspace check accepts a maintenance record verified and closed by the person who opened it, matching the closing rule lifted above, so the change saves instead of rolling back. Production rejects such a record.',
+    find: 'item.closedBy.credentialId !== item.openedBy.credentialId', count: 1,
+    replace: (ctx, m, id) => `(true /* DEMO ${id} */ || ${m})` },
 ];
 
 export const DEVIATIONS = LIST.map((d, i) => Object.freeze({ ...d, id: `D-${i + 1}` }));
