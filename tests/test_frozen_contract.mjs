@@ -65,7 +65,7 @@ const SOD=[
   ['nobody inspects their own work: buy-off',"    { const own = ownWorkRefusal(state, order, operation); if (own) return own; }",1],
   ['nobody inspects their own work: step check',"if (checked) { const own = ownWorkRefusal(state, order, operation); if (own) return own; }",1],
   ['the person who verified a FAIR cannot sign box 22',"    if (fairSelfReview(fair, by)) return fail('The FAI reviewer in box 22 is a second person.",1],
-  ['the box 22 second-person rule is a single check shared by the engine and validation',"const fairSelfReview = (fair, by) => !!(fair && plain(fair.verified) && plain(fair.verified.by) && plain(by) && by.credentialId === fair.verified.by.credentialId);",1],
+  ['the box 22 second-person rule is a single check shared by the engine and validation',"const fairSelfReview = (fair, by) => !!(fair && plain(fair.verified) && plain(by) && ((plain(fair.verified.by) && by.credentialId === fair.verified.by.credentialId) || (plain(fair.verified.manifest) && plain(fair.verified.manifest.signer) && by.credentialId === fair.verified.manifest.signer.credentialId)));",1],
   ['validation refuses a box 22 signed by the FAIR verifier',"&& !fairSelfReview(f, f.reviewed.by)",1],
   ['the Skyryse QA approval of a FAIR signs the box 22 review',"{ fair: fairId(order), verified: fair.verified.manifest.hash, reviewed: fair.reviewed.manifest.hash,",1],
   ['the Skyryse QA approval of a FAIR waits for box 22',"    if (!plain(fair.reviewed)) return fail('Box 22 is not signed.",1],

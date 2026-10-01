@@ -3109,9 +3109,11 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       (order.tickets || []).forEach(t => { if (!plain(t.manifest) || t.status !== 'Resolved') return; const carried = order.splitFrom && plain(t.carriedFrom) ? t.carriedFrom : null; recheck(`${order.id} ${t.id} approval`, t.manifest, carried ? { ...ticketSubject(order, t), orderId: carried.orderId } : ticketSubject(order, t)); });
       if (plain(order.closure) && plain(order.closure.manifest)) recheck(`${order.id} closure`, order.closure.manifest, closureSubject(state, order));
       const fair = order.fair;
+      if (plain(fair)) [['verified', 'FAIR verification'], ['reviewed', 'FAIR box 22'], ['approved', 'FAIR approval']].forEach(([k, label]) => { if (plain(fair[k]) && !plain(fair[k].manifest)) failures.push({ where: `${order.id} ${label}`, reason: `the ${label} has no signature manifest` }); });
+      if (plain(fair) && plain(fair.verified) && plain(fair.verified.manifest) && plain(fair.verified.by) && plain(fair.verified.manifest.signer) && fair.verified.by.credentialId !== fair.verified.manifest.signer.credentialId) failures.push({ where: `${order.id} FAIR verification`, reason: 'the recorded verifier does not match the verification signature' });
       // Box 22 chains to the verified FAIR, and an approval signed since box 22 was bound into it chains to box 22.
       // An approval signed before that carries no reviewed key and is checked as it was signed.
-      if (plain(fair) && plain(fair.reviewed) && plain(fair.reviewed.manifest) && plain(fair.verified) && plain(fair.verified.manifest)) { recomputed++; const rm = fair.reviewed.manifest, current = !plain(rm.subject) || Object.hasOwn(rm.subject, 'reviewer'); const sub = current ? fairReviewSubject(order, fair, fair.reviewed.by, fair.reviewed.at, rm.override) : { fair: fairId(order), verified: fair.verified.manifest.hash, ...(rm.override ? { override: rm.override } : {}) }; if (sha256(canonical(sub)) !== fair.reviewed.manifest.hash) failures.push({ where: `${order.id} FAIR box 22`, reason: 'box 22 does not chain to the verified FAIR' }); }
+      if (plain(fair) && plain(fair.reviewed) && plain(fair.reviewed.manifest) && plain(fair.verified) && plain(fair.verified.manifest)) { recomputed++; const rm = fair.reviewed.manifest, current = plain(rm.subject) && Object.hasOwn(rm.subject, 'reviewer'); const sub = current ? fairReviewSubject(order, fair, fair.reviewed.by, fair.reviewed.at, rm.override) : { fair: fairId(order), verified: fair.verified.manifest.hash, ...(rm.override ? { override: rm.override } : {}) }; if (sha256(canonical(sub)) !== fair.reviewed.manifest.hash) failures.push({ where: `${order.id} FAIR box 22`, reason: 'box 22 does not chain to the verified FAIR' }); }
       if (plain(fair) && plain(fair.approved) && plain(fair.approved.manifest) && plain(fair.verified) && plain(fair.verified.manifest)) { recomputed++; const bindsReview = plain(fair.approved.manifest.subject) && Object.hasOwn(fair.approved.manifest.subject, 'reviewed'); const sub = { fair: fairId(order), verified: fair.verified.manifest.hash, ...(bindsReview ? { reviewed: plain(fair.reviewed) && plain(fair.reviewed.manifest) ? fair.reviewed.manifest.hash : null } : {}), ...(fair.approved.manifest.override ? { override: fair.approved.manifest.override } : {}) }; if (sha256(canonical(sub)) !== fair.approved.manifest.hash) failures.push({ where: `${order.id} FAIR approval`, reason: bindsReview ? 'approval does not chain to the verified FAIR and its box 22 review' : 'approval does not chain to the verified FAIR' }); }
       // FAIR verification (blocks 20 and 21): the FAIR's own content (Forms 1 to 3 as entered on the FAIR) must still
       // match what the verifier signed. Order-level fields in the snapshot (serials, quantity) may change later.
@@ -3125,12 +3127,13 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       // 8130-9: the completed form, the AQI signature and the DAR acceptance are recomputed from the package,
       // so an edit to the form, the AQI record or the DAR record after signing fails here.
       (Array.isArray(order.conformity) ? order.conformity : []).forEach(p => {
-        if (!plain(p) || !plain(p.form)) return;
-        const pm = plain(p.form.prepared) ? p.form.prepared.manifest : null;
-        if (!plain(pm)) failures.push({ where: `${order.id} ${p.serial} 8130-9`, reason: 'the completed 8130-9 has no signature manifest' });
+        if (!plain(p)) return;
+        if (!plain(p.form)) { if (CONF_STATUS.indexOf(p.status) > 0 || plain(p.aqi) || plain(p.darApproval)) failures.push({ where: `${order.id} ${p.serial} 8130-9`, reason: 'the package is past completion of the 8130-9, or carries an AQI or DAR signature, but has no completed 8130-9' }); }
+        const pm = plain(p.form) && plain(p.form.prepared) ? p.form.prepared.manifest : null;
+        if (plain(p.form) && !plain(pm)) failures.push({ where: `${order.id} ${p.serial} 8130-9`, reason: 'the completed 8130-9 has no signature manifest' });
         if (plain(p.aqi) && !plain(p.aqi.manifest)) failures.push({ where: `${order.id} ${p.serial} 8130-9 AQI signature`, reason: 'the AQI signature has no signature manifest' });
         if (plain(p.darApproval) && !plain(p.darApproval.manifest)) failures.push({ where: `${order.id} ${p.serial} DAR acceptance`, reason: 'the DAR acceptance has no signature manifest' });
-        if (plain(pm)) recheck(`${order.id} ${p.serial} 8130-9`, pm, { order: order.id, ...p.form, prepared: undefined, ...(pm.override ? { override: pm.override } : {}) });
+        if (plain(pm) && plain(p.form)) recheck(`${order.id} ${p.serial} 8130-9`, pm, { order: order.id, ...p.form, prepared: undefined, ...(pm.override ? { override: pm.override } : {}) });
         const am = plain(p.aqi) ? p.aqi.manifest : null;
         if (plain(am)) recheck(`${order.id} ${p.serial} 8130-9 AQI signature`, am, { order: order.id, serial: p.serial, form: plain(pm) ? pm.hash : null, ...(p.aqi.selfSigned ? { selfSigned: true } : {}), ...(am.override ? { override: am.override } : {}) });
         const dm = plain(p.darApproval) ? p.darApproval.manifest : null;
@@ -5591,7 +5594,7 @@ const OP_BOM_MAX = 12;
   // Skyryse QA approval signed. Box 22 records signed before this carry no reviewer key and keep their form.
   // The person who verified a FAIR (boxes 20 and 21) does not sign box 22. The engine refuses it and validation refuses a
   // saved or imported FAIR that records it.
-  const fairSelfReview = (fair, by) => false /* DEMO D-33 */ && !!(fair && plain(fair.verified) && plain(fair.verified.by) && plain(by) && by.credentialId === fair.verified.by.credentialId);
+  const fairSelfReview = (fair, by) => false /* DEMO D-33 */ && !!(fair && plain(fair.verified) && plain(by) && ((plain(fair.verified.by) && by.credentialId === fair.verified.by.credentialId) || (plain(fair.verified.manifest) && plain(fair.verified.manifest.signer) && by.credentialId === fair.verified.manifest.signer.credentialId)));
   const fairReviewSubject = (order, fair, by, at, override) => ({ fair: fairId(order), verified: fair.verified.manifest.hash, reviewer: plain(by) ? by.credentialId : null, reviewedAt: at, ...(override ? { override } : {}) });
   function reviewFair(state, id, execution) {
     { const d = denied('approve-wo', 'review the FAIR (box 22)'); if (d) return d; }
