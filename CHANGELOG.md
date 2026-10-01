@@ -5,6 +5,14 @@
 - Inspection and MRB seats now follow role capabilities in production and demo; only conformity and AQI require named, current-training grants. MRB disposition training tiers remain optional and off by default.
 - Server-side grant routes reject attempts to grant inspection or MRB seat capabilities individually.
 - Support Access only lifts stamp binding for one operation; its documentation now matches the enforced rule.
+- UI polish from the Jinx UX audit (visual and wording only; no engine, gate, record or storage change): calibration
+  status pills are neutral blue for In Calibration and Out for Calibration, red for Quarantined and gray for Retired;
+  open audits are neutral blue; a Draft controlled document uses the new neutral `.pill.draft`. The calibration log is a
+  table (entry, tool tag, status, due date, recorded by) with the note and signature in an expandable row. FAIR and
+  conformity stamp PIN fields are tied to their labels. Trace search and archived print or export say they are busy and
+  hold their buttons while the server answers, and say plainly when it does not. The Hangar holds panel counts every
+  held order and links to All work orders filtered to Blocked. The work order queue footer reads "Work order progress
+  and approval rules are unchanged." `test_ui_polish_ui` covers each change.
 
 What changed in Flight System, newest first. The build id is set in `VERSION.md`; the release record at
 the end of `VERSION.md` names the exact files and the suite results for the build. Storage keys, form
