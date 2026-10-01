@@ -183,6 +183,30 @@ try {
     assert.equal((await api('GET', `/evidence/${loose}`, { token: other })).status, 403, 'the unnamed recording stays refused');
   });
 
+  // Codex review of #96: an archived order authorizes a recording only through an operation's evidence or
+  // quarantinedEvidence entry (id or copyOf, exact). An ID planted in any other archived string names nothing.
+  await check('an evidence ID planted in an unrelated archived string does not authorize reading it', async () => {
+    const uploader = await signIn('sec-tech', 'sec-tech-pass-1'), other = await signIn('sec-tech2', 'sec-tech2-pass-1');
+    const planted = 'EV-00000000-0000-4000-8000-0000000c0201', viaCopy = 'EV-00000000-0000-4000-8000-0000000c0202';
+    for (const id of [planted, viaCopy]) { const bytes = Buffer.from(`evidence ${id}`); assert.equal((await api('POST', `/evidence/${id}`, { token: uploader, raw: true, body: bytes, headers: { 'Content-Type': 'video/webm', 'X-Evidence-Sha256': createHash('sha256').update(bytes).digest('hex') } })).status, 201); }
+    const archive = async (orderId, entry) => { const json = JSON.stringify(entry); await server.store.putArchived({ id: orderId, json, sha256: createHash('sha256').update(json).digest('hex'), schema: 1, keys: { partNumber: 'P', serials: [], lots: [], parts: ['P'], title: 'Planted', closedAt: null }, by: 'security-test' }); };
+    // The ID as a whole quoted JSON string in every place that is not an evidence reference.
+    await archive('WO-SEC-PLANT', { order: { id: 'WO-SEC-PLANT', status: 'Closed', title: planted, notes: [{ text: planted, evidence: [{ id: planted }] }],
+      operations: [{ id: 'op-010', title: planted, evidence: { id: planted }, attachments: [{ id: planted }], buyoff: { evidenceId: planted, evidence: [{ id: planted }] }, quarantinedEvidence: [planted, { name: planted, ref: { id: planted } }] }, planted] },
+      activity: [{ orderId: 'WO-SEC-PLANT', action: planted, evidence: [{ id: planted }] }], [planted]: { id: planted } });
+    assert.equal(await server.store.archiveNamesEvidence(planted), false, 'the store finds no evidence reference to the planted ID');
+    for (const suffix of ['', '/meta']) {
+      const refused = await api('GET', `/evidence/${planted}${suffix}`, { token: other });
+      assert.equal(refused.status, 403, `a planted ID does not open ${suffix || 'the bytes'}`);
+      assert.match(refused.json.error, new RegExp(`^${planted} is not attached to a record yet\\. Until it is saved on an operation, only the account that uploaded it, a QA Manager, or a Master Access account can open it\\.`));
+    }
+    // The legitimate reference still authorizes: the stored copy behind another ID on an archived operation.
+    await archive('WO-SEC-COPY', { order: { id: 'WO-SEC-COPY', status: 'Closed', operations: [{ id: 'op-010', evidence: [{ id: 'EV-00000000-0000-4000-8000-0000000c0299', copyOf: viaCopy }] }] }, activity: [] });
+    assert.equal(await server.store.archiveNamesEvidence(viaCopy), true);
+    assert.equal((await api('GET', `/evidence/${viaCopy}`, { token: other })).status, 200, 'an archived copyOf reference still authorizes');
+    assert.equal((await api('GET', `/evidence/${planted}`, { token: other })).status, 403, 'the planted ID stays refused');
+  });
+
   // #103, #104: the read decision is the same for every role before and after the workspace changes, the refusal
   // names everyone who can open the recording, and repeated reads of an unchanged workspace do not parse it again.
   await check('evidence read decisions match every role across workspace writes, without reparsing an unchanged workspace', async () => {

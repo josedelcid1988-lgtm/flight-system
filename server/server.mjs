@@ -13,6 +13,7 @@ import { createHash, randomBytes, scrypt as scryptCb, timingSafeEqual } from 'no
 import { openDb } from './db.mjs';
 import { openPostgres } from './db-postgres.mjs';
 import { createHost } from './mes-host.mjs';
+import { evidenceIdsInWorkspace } from './evidence-refs.mjs';
 import { stamp, verify } from '../tools/stamp-build.mjs';
 
 process.on('warning', w => { if (w.name === 'ExperimentalWarning' && /SQLite/.test(w.message)) return; console.warn(w); });
@@ -272,11 +273,7 @@ export function createServer(options = {}) {
   // A cached set is reused only when the stored row has the same ETag and byte-identical JSON text, so a write by
   // any path (a record action, a snapshot, another server process on the same database) forces a rebuild before
   // the next read decision. The string comparison costs far less than JSON.parse; if in doubt, the set is rebuilt.
-  const evidenceIdsIn = doc => {
-    const ids = new Set();
-    for (const o of Array.isArray(doc?.orders) ? doc.orders : []) for (const op of Array.isArray(o?.operations) ? o.operations : []) for (const e of [...(Array.isArray(op?.evidence) ? op.evidence : []), ...(Array.isArray(op?.quarantinedEvidence) ? op.quarantinedEvidence : [])]) if (e) { ids.add(e.id); ids.add(e.copyOf); }
-    return ids;
-  };
+  const evidenceIdsIn = evidenceIdsInWorkspace;
   let namedEvidenceCache = null;
   const liveEvidenceIds = async () => {
     const doc = await store.getDoc(TENANT);

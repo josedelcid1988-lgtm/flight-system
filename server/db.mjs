@@ -4,6 +4,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { archivedEntryNamesEvidence } from './evidence-refs.mjs';
 
 export function openDb(path) {
   const db = new DatabaseSync(path);
@@ -139,8 +140,14 @@ export function openDb(path) {
     archived(id) { const r = db.prepare('SELECT order_id, json, sha256, schema, archived_at, archived_by FROM archive WHERE order_id = ?').get(id); return r ? { id: r.order_id, entry: JSON.parse(r.json), sha256: r.sha256, schema: r.schema, archivedAt: r.archived_at, archivedBy: r.archived_by } : null; },
     archivedSha(id) { const r = db.prepare('SELECT sha256 FROM archive WHERE order_id = ?').get(id); return r ? r.sha256 : null; },
     putArchived(e) { db.prepare('INSERT INTO archive (order_id, json, sha256, schema, part_number, serials, lots, parts, title, closed_at, archived_at, archived_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(e.id, e.json, e.sha256, e.schema, e.keys.partNumber || null, JSON.stringify(e.keys.serials), JSON.stringify(e.keys.lots), JSON.stringify(e.keys.parts), e.keys.title || null, e.keys.closedAt || null, now(), e.by || null); },
-    // Whether any archived order names this evidence ID. IDs are EV- and a UUID, so the quoted ID matches exactly.
-    archiveNamesEvidence(id) { return !!db.prepare('SELECT 1 AS found FROM archive WHERE instr(json, ?) > 0 LIMIT 1').get(JSON.stringify(String(id))); },
+    // Whether any archived order names this evidence ID in an operation's evidence or quarantinedEvidence entry (id
+    // or copyOf, exact). The text search only narrows the rows to parse; the structural check decides, so an ID
+    // planted in a note or title names nothing.
+    archiveNamesEvidence(id) {
+      const key = String(id);
+      for (const row of db.prepare('SELECT json FROM archive WHERE instr(json, ?) > 0').iterate(JSON.stringify(key))) if (archivedEntryNamesEvidence(row.json, key)) return true;
+      return false;
+    },
     archiveCount() { return db.prepare('SELECT COUNT(*) AS c FROM archive').get().c; },
     // Exact match on an order ID, serial, lot or part (case-insensitive), or a list when the query is empty.
     archiveSearch(query, limit = 200) {

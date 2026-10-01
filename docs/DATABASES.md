@@ -91,6 +91,11 @@ including the stored copy behind another ID. A recording no record names yet (up
 an operation) can be opened only by the account that uploaded it and by a QA Manager or Master Access
 account. Other requests are refused with 403 and recorded as `evidence-read-refused`.
 
+A record names a recording only through an operation's `evidence` or `quarantinedEvidence` entry, by its `id`
+or its `copyOf`, matched exactly. The live check and the archive check use the same rule
+(`server/evidence-refs.mjs`) in both the SQLite and the PostgreSQL store. A recording ID written anywhere else in
+an order, such as a title, a note or an activity line, names nothing and does not open the recording.
+
 ## First-run setup code
 
 The first account on a new server becomes Master Access, so creating it needs a setup code that only

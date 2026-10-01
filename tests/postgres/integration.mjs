@@ -139,6 +139,13 @@ try {
   assert.equal(await server.store.archiveNamesEvidence(evidenceId), false, 'no archived order names the new recording yet');
   await server.store.putArchived({ id: 'WO-PG-EVIDENCE', json: arcJson, sha256: createHash('sha256').update(arcJson).digest('hex'), schema: 1, keys: { partNumber: 'P', serials: [], lots: [], parts: ['P'], title: 'Evidence', closedAt: null }, by: 'postgres-test' });
   assert.equal(await server.store.archiveNamesEvidence(evidenceId), true, 'an archived order that names the recording is found');
+  // The archive check is structural, as in SQLite: the ID planted in unrelated archived strings names nothing.
+  const plantedId = `EV-${randomUUID()}`, plantedJson = JSON.stringify({ order: { id: 'WO-PG-PLANT', status: 'Closed', title: plantedId, notes: [{ evidence: [{ id: plantedId }] }], operations: [{ id: 'op-010', title: plantedId, evidence: { id: plantedId }, quarantinedEvidence: [plantedId, { ref: { id: plantedId } }] }] }, activity: [{ action: plantedId, evidence: [{ id: plantedId }] }] });
+  await server.store.putArchived({ id: 'WO-PG-PLANT', json: plantedJson, sha256: createHash('sha256').update(plantedJson).digest('hex'), schema: 1, keys: { partNumber: 'P', serials: [], lots: [], parts: ['P'], title: 'Planted', closedAt: null }, by: 'postgres-test' });
+  assert.equal(await server.store.archiveNamesEvidence(plantedId), false, 'an ID planted in unrelated archived strings is not an evidence reference');
+  const copiedId = `EV-${randomUUID()}`, copyJson = JSON.stringify({ order: { id: 'WO-PG-COPY', status: 'Closed', operations: [{ id: 'op-010', quarantinedEvidence: [{ id: `EV-${randomUUID()}`, copyOf: copiedId }] }] }, activity: [] });
+  await server.store.putArchived({ id: 'WO-PG-COPY', json: copyJson, sha256: createHash('sha256').update(copyJson).digest('hex'), schema: 1, keys: { partNumber: 'P', serials: [], lots: [], parts: ['P'], title: 'Copy', closedAt: null }, by: 'postgres-test' });
+  assert.equal(await server.store.archiveNamesEvidence(copiedId), true, 'a quarantined copyOf reference on an archived operation is found');
   console.log('ok PostgreSQL evidence bytes round-trip with SHA-256');
 
   const backupPath = path.join(exportDir, 'flight-postgres.dump');

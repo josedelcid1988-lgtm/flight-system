@@ -2,6 +2,7 @@
 // use one checked-out client so the statements share the same database session.
 import { createHash, randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { archivedEntryNamesEvidence } from './evidence-refs.mjs';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS documents (tenant TEXT PRIMARY KEY, json TEXT NOT NULL, etag TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, updated_by TEXT);
@@ -215,7 +216,11 @@ function makeStore(pool, query, inTransaction, connectionString) {
     async archived(id) { const r = (await query('SELECT order_id,json,sha256,schema,archived_at,archived_by FROM archive WHERE order_id=$1', [id])).rows[0]; return r ? { id: r.order_id, entry: parsed(r.json), sha256: r.sha256, schema: Number(r.schema), archivedAt: r.archived_at, archivedBy: r.archived_by } : null; },
     async archivedSha(id) { return (await query('SELECT sha256 FROM archive WHERE order_id=$1', [id])).rows[0]?.sha256 || null; },
     async putArchived(e) { await query('INSERT INTO archive (order_id,json,sha256,schema,part_number,serials,lots,parts,title,closed_at,archived_at,archived_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)', [e.id,e.json,e.sha256,e.schema,e.keys.partNumber||null,json(e.keys.serials),json(e.keys.lots),json(e.keys.parts),e.keys.title||null,e.keys.closedAt||null,now(),e.by||null]); },
-    async archiveNamesEvidence(id) { return (await query('SELECT 1 AS found FROM archive WHERE position($1 in json) > 0 LIMIT 1', [JSON.stringify(String(id))])).rows.length > 0; },
+    // Same rule as the SQLite store: the text search narrows, the structural check on the parsed entry decides.
+    async archiveNamesEvidence(id) {
+      const key = String(id);
+      return (await query('SELECT json FROM archive WHERE position($1 in json) > 0', [JSON.stringify(key)])).rows.some(row => archivedEntryNamesEvidence(row.json, key));
+    },
     async archiveCount() { return Number((await query('SELECT COUNT(*) AS c FROM archive')).rows[0].c); },
     async archiveSearch(term, limit = 200) {
       const q = String(term || '').trim().toUpperCase();
