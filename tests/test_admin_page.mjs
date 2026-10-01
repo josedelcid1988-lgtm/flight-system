@@ -66,6 +66,16 @@ await p.focus('[data-admin-tab="accounts"]');await p.keyboard.press('ArrowRight'
 ok('arrow keys move between tabs',await run(()=>document.activeElement?.dataset.adminTab==='training'&&!document.getElementById('admin-panel-training').hidden&&document.getElementById('admin-panel-accounts').hidden));
 await p.click('[data-admin-tab="accounts"]');
 
+// Opening Admin after an order writes a clean #admin route, and that route reloads onto Admin.
+// The production fixture holds no orders, so leave an order id and tab selected, as an order visit does.
+await run(()=>{view='orders';selectedId='SWO-101';tab='operations';});
+const orderHash=await run(()=>({selectedId,tab}));
+await run(()=>{const x=document.createElement('button');x.dataset.action='open-admin';document.body.appendChild(x);x.click();x.remove();});
+const adminHash=await run(()=>({view,hash:location.hash}));
+ok('Open Admin from an order writes the clean #admin route, with no order or tab left in it',orderHash.selectedId==='SWO-101'&&orderHash.tab==='operations'&&adminHash.view==='admin'&&adminHash.hash==='#admin',JSON.stringify({orderHash,adminHash}));
+await p.reload();await p.waitForFunction(()=>typeof view!=='undefined'&&!document.getElementById('sk-boot'));await p.waitForTimeout(800);
+ok('the #admin route reloads onto the Admin page for a manager',await run(()=>view==='admin'&&location.hash==='#admin'&&!!document.querySelector('#main [data-admin-tab]')));
+
 // Readable authority names, never the raw capability id.
 const chips=await run(()=>[...document.querySelectorAll('.access-table .grant-cell .pill')].map(x=>x.textContent));
 ok('authorities read in words in the access table',chips.length>0&&chips.every(t=>/^(Conformity inspection|AQI signature): (granted|not granted|paused, )/.test(t))&&!chips.some(t=>/conformity granted|aqi-sign/.test(t)),JSON.stringify(chips));
@@ -88,6 +98,9 @@ ok('the grant form opens on the Admin page and its Reason label does not overlap
 await p.locator('[data-access-cancel]').click();
 
 // Password reset from the Admin page returns to the Admin page.
+await p.locator('[data-account-password="kqe"]').click();
+await p.locator('#account-password-form button[type=button]').click();await p.waitForTimeout(300);
+ok('Cancel on a password reset opened from the Admin page returns to the Admin page, not Your credentials',await run(()=>view==='admin'&&!document.getElementById('dialog').open&&!document.querySelector('#profile-form')&&!!document.querySelector('#main [data-admin-tab]')));
 await p.locator('[data-account-password="kqe"]').click();
 await p.locator('#account-new-password').fill('demo12345');await p.locator('#account-confirm-password').fill('demo12345');
 await p.locator('#account-password-form button[type=submit]').click();
@@ -174,6 +187,18 @@ ok('1024: account table buttons (Reset password, More roles) stay on one line',a
 await p.click('[data-admin-tab="training"]');
 const trainReason=await run(()=>{const ta=document.querySelector('#training-form textarea[name=reason]'),label=ta.closest('label');const r=document.createRange();r.selectNodeContents(label.firstChild);return r.getBoundingClientRect().bottom<=ta.getBoundingClientRect().top+0.5;});
 ok('1024: the training form Reason label sits above its box',trainReason);
+
+// ---------------- the accounts table at phone width ----------------
+await p.setViewportSize({width:375,height:812});await p.click('[data-admin-tab="accounts"]');await p.waitForTimeout(400);
+const phone=await run(()=>{
+  const wrap=document.querySelector('#admin-panel-accounts .admin-scroll'),table=wrap&&wrap.querySelector('table.access-table');if(!table)return {missing:true};
+  const wr=wrap.getBoundingClientRect(),cue=wrap.parentNode.querySelector('.scroll-cue');
+  const clipped=[...table.querySelectorAll('input,select,button')].filter(el=>{const r=el.getBoundingClientRect();return r.left<wr.left-1||r.right>wr.left+wrap.scrollWidth+1;}).map(el=>el.outerHTML.slice(0,60));
+  return {scrollable:getComputedStyle(wrap).overflowX==='auto',overflow:wrap.scrollWidth>wrap.clientWidth,inView:wr.right<=window.innerWidth+1,page:document.documentElement.scrollWidth<=window.innerWidth,cue:!!cue&&!cue.hidden,clipped};
+});
+ok('375: the accounts table scrolls sideways inside its panel and the page does not widen',!phone.missing&&phone.scrollable&&phone.inView&&phone.page&&phone.clipped.length===0,JSON.stringify(phone));
+ok('375: a visible cue says the accounts table scrolls sideways',phone.overflow&&phone.cue,JSON.stringify(phone));
+await p.setViewportSize({width:1440,height:900});
 
 ok('state valid at the end',await run(()=>MES.validate(state)));
 ok('no page errors',errs.length===0,JSON.stringify(errs));
