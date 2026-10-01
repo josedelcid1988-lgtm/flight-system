@@ -192,6 +192,8 @@ try {
   // A previous-release server that keeps archiving while this one reconciles must not keep reconciliation (and so a
   // missed lookup or a server start) running forever: each pass covers the rows present when it started.
   const writerPool = new (await import('pg')).Pool({ connectionString, max: 2 });
+  // 2,000 unmarked rows already waiting give the pass real work; the writer then keeps adding more while it runs.
+  await writerPool.query("INSERT INTO archive (order_id,json,sha256,schema,part_number,serials,lots,parts,title,closed_at,archived_at,archived_by) SELECT 'WO-PG-ZY-' || lpad(g::text, 9, '0'), '{\"order\":{\"id\":\"x\",\"status\":\"Closed\",\"operations\":[]},\"activity\":[]}', repeat('0', 64), 1, 'P', '[]', '[]', '[\"P\"]', 'Old writer', NULL, '2026-10-01T00:00:00.000Z', 'old-release' FROM generate_series(1, 2000) AS g");
   let writing = true, written = 0;
   const writer = (async () => {
     // 1,000 unmarked rows per statement, faster than any reconciler can index them.
@@ -200,13 +202,15 @@ try {
       written += 1000;
     }
   })();
-  await new Promise(resolve => setTimeout(resolve, 300));
   const missing = `EV-${randomUUID()}`, started = Date.now();
   const outcome = await Promise.race([reopened.archiveNamesEvidence(missing).then(found => ({ found })), new Promise(resolve => setTimeout(() => resolve({ timedOut: true }), 15000))]);
   writing = false; await writer; await writerPool.end();
   assert.ok(!outcome.timedOut, `a missed lookup finishes while an older server keeps archiving (${written} rows written)`);
   assert.equal(outcome.found, false);
   assert.ok(Date.now() - started < 15000);
+  // The writer's rows stand in for another release's archive; remove them so the backup checks below stay small.
+  await refPool.query("DELETE FROM archive_evidence_indexed WHERE order_id LIKE 'WO-PG-Z_-%'");
+  await refPool.query("DELETE FROM archive WHERE order_id LIKE 'WO-PG-Z_-%'");
   await reopened.close?.();
   await refPool.end();
   console.log('ok PostgreSQL evidence bytes round-trip with SHA-256');
