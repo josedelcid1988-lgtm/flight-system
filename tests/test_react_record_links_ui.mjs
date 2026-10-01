@@ -14,7 +14,7 @@ const buttons = parts => merge(parts).filter(p => p.button).map(p => p.button);
 try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 980 }, reducedMotion: 'reduce' });
   await context.addInitScript(() => {
-    localStorage.setItem('skyryse-mes-auth-v1', JSON.stringify({ users: [{ username: 'admin', displayName: 'Flight Master', salt: 'test', hash: 'unused', role: 'admin', createdAt: new Date().toISOString() }] }));
+    localStorage.setItem('skyryse-mes-demo-auth-v1', JSON.stringify({ users: [{ username: 'admin', displayName: 'Flight Master', salt: 'test', hash: 'unused', role: 'admin', createdAt: new Date().toISOString() }] }));
     sessionStorage.setItem('skyryse-mes-session-v1', 'admin');
     sessionStorage.setItem('sk-boot-seen', '1');
   });
