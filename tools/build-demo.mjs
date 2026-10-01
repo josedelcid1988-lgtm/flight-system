@@ -58,6 +58,7 @@ export function buildDemo(production, dataset) {
     overlay: read('tools/demo/overlay.js').replace('__SEED_MARK__', seedMark),
     rebase: rebaseDemoSeed.toString(),
     calRebase: rebaseCalSnapshot.toString(),
+    calSnapshot: JSON.parse(read('tools/demo/cal-snapshot.json')),
   };
   if (ctx.seed.includes('</script')) throw new Error(`tools/demo/seed-${dataset}.json contains "</script" and would break the page.`);
   let out = production;

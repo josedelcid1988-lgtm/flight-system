@@ -5,6 +5,7 @@
 - Inspection and MRB seats now follow role capabilities in production and demo; only conformity and AQI require named, current-training grants. MRB disposition training tiers remain optional and off by default.
 - Server-side grant routes reject attempts to grant inspection or MRB seat capabilities individually.
 - Support Access only lifts stamp binding for one operation; its documentation now matches the enforced rule.
+- Go-live clean slate (#247): a new production workspace starts with no sample master WIs, planned orders, stamp placeholders, standard rework drafts, calibrated tool snapshot, NetSuite lots, MRP sample tables or sample person, and a new work order's kit starts empty instead of with three sample lines (SR-2401 to SR-2403) that only the sample lots could fill. The demo keeps all of them through deviations D-37 to D-39. A workspace saved under an earlier build loads unchanged.
 
 What changed in Flight System, newest first. The build id is set in `VERSION.md`; the release record at
 the end of `VERSION.md` names the exact files and the suite results for the build. Storage keys, form

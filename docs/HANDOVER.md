@@ -148,6 +148,41 @@ same async store contract. Setup, backup and PostgreSQL integration instructions
 does not replace the authenticated MES server. Its protocol and restore checks are documented in
 [`server/README.md`](../server/README.md).
 
+### Clean slate at go-live
+
+The production build carries no sample data (issue #247). A new production workspace starts with no work
+orders, master WIs, planned orders, Flight Maneuver records, stamps, standard rework operations, calibrated
+tools or NetSuite stock. A new work order's kit starts empty: its lines come from the BOM of an operation
+Manufacturing Engineering adds to the order, or from a sub-assembly issued from another order, and every line
+still needs its lot verified before Building. The device profile names no person ("Not signed in") until an account signs
+in. The built-in configuration stays: the ESD and FOD training requirements, the default operation step
+text, part catalog, sites, aircraft and work centers. The sample data lives only in `demo.html` and the
+demo fixtures (deviations D-3, D-34, D-37 to D-39 in `docs/DEMO_DEVIATIONS.md`; the demo kit starts with three sample lines). A workspace saved under an
+earlier build keeps everything it holds; the clean slate applies only to a new workspace. One thing does change for such a
+workspace: a tool that was only in the old shipped snapshot (2026-09-15) can no longer be used until the
+calibration log records it, so import the current calibration log before resuming tooled work.
+
+At handover:
+
+1. Start the handover server on a fresh store: a new SQLite file (`--db` naming a file that does not
+   exist yet) or an empty PostgreSQL database. Do not copy the pilot database, its evidence, archive or
+   audit chain unless carrying them over is the intent; the audit chain starts again with the new store.
+2. Create the accounts (first Master Access account, then the rest; see `docs/ROLE_MATRIX.md`).
+3. QA Manager: enter the training requirements with their QMS references, then load the current stamp
+   register (Issue stamp per person, or the stamp register CSV import) and the training records.
+4. QA Manager: import the current calibrated tools on System QMS records (calibration CSV import). A
+   tool can be used at buy-off only once the calibration log records it.
+5. Manufacturing Engineering: import the master WIs (WI CSV import, as Drafts), then peer review and QA
+   release by other people.
+6. Work orders: create them from released WIs, or import them (work order CSV import).
+7. Final check: open the production build on the new store and confirm the work order list, the Master WI
+   library, Flight Plan, Flight Maneuver, the calibration log and the stamp register hold only what was
+   loaded above. `node tests/test_clean_slate.mjs` checks the same on a new workspace.
+
+Kitting draws lots from the inventory ledger. Until the NetSuite read is connected (section 11), a lot has to be
+received into the ledger (`MES.postInventoryTransaction`, type Receive, through the server action) before
+a BOM line can be kitted; there is no receiving screen yet.
+
 ## 7. Integration seams
 
 Every seam is a configuration object at the top of its block, empty by default, so the app runs today
@@ -230,8 +265,9 @@ out. The results are kept as a run artifact.
 | Persistence server host and backup location, after security issue 12 is resolved | IT | 14 Oct 2026 |
 | Backup restore test on the chosen host (`server/restore-test.mjs`) | IT | 14 Oct 2026 |
 | NetSuite MCP bridge | IT | 14 Oct 2026 |
-| Stamp register and training records (holders into the SKY placeholders or by CSV import, PINs, training requirements with their QMS references, training records, then the authority grants) | QA Manager | 2 Oct 2026 |
+| Stamp register and training records (the register starts empty: Issue stamp per person or the CSV import, PINs, training requirements with their QMS references, training records, then the authority grants) | QA Manager | 2 Oct 2026 |
 
-Security issues 12 and 13 in `KNOWN-ISSUES.md` remain open. The stamp register and the people in the sample data that ship with the app are fictional placeholders.
-The real register is entered in the Organization view before production use. There are no open
+Security issues 12 and 13 in `KNOWN-ISSUES.md` remain open. The production build ships no stamp register,
+tools, stock or people; the sample data and its fictional people exist only in the demo build. The real
+register is entered in the Organization view before production use (section 6, Clean slate at go-live). There are no open
 issues; `KNOWN-ISSUES.md` records what was found, fixed, and remains open.

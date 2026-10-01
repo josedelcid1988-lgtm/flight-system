@@ -74,9 +74,9 @@ export function rebaseDemoSeed(seed, now) {
   return out;
 }
 
-// Moves the Calibrated Tool Log snapshot shipped in index.html (CAL_SNAPSHOT and each CAL_TOOLS expiry) forward
-// by the same days as rebaseDemoSeed moves the seed, for the demo build only (deviation "Calibrated tool
-// snapshot follows the first-load day"). The demo seeds carry no calibration log, so without this every
+// Moves the sample Calibrated Tool Log snapshot the demo build loads (tools/demo/cal-snapshot.json, as CAL_SNAPSHOT
+// and each CAL_TOOLS expiry) forward by the same days as rebaseDemoSeed moves the seed, for the demo build only
+// (deviation "Sample calibrated tool snapshot, following the first-load day"; production ships no snapshot). The demo seeds carry no calibration log, so without this every
 // snapshot tool expires within a year of capture and every operation that needs tooling is blocked in the demo.
 // Signed buy-offs keep the tool expiries they recorded: those live in the seed and this function never sees them.
 //
