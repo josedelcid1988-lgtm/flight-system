@@ -151,12 +151,18 @@ try {
   const refRows = async () => (await refPool.query("SELECT evidence_id, order_id FROM archive_evidence WHERE order_id IN ('WO-PG-PLANT','WO-PG-COPY') ORDER BY order_id, evidence_id")).rows.map(r => `${r.evidence_id}@${r.order_id}`);
   const recorded = await refRows();
   assert.ok(recorded.includes(`${copiedId}@WO-PG-COPY`) && !recorded.some(row => row.endsWith('@WO-PG-PLANT')), 'only structural references are recorded');
-  await refPool.query('DROP TABLE archive_evidence');
+  await refPool.query('DROP TABLE archive_evidence; DROP TABLE archive_evidence_indexed');
   const { openPostgres } = await import('../../server/db-postgres.mjs');
   const reopened = await openPostgres(connectionString);
   assert.equal(await reopened.archiveNamesEvidence(copiedId), true, 'the reference table is rebuilt from every archived order');
   assert.equal(await reopened.archiveNamesEvidence(plantedId), false);
   assert.equal(await reopened.archiveNamesEvidence(evidenceId), true);
+  // A previous-release server sharing the database archives an order without recording its references, during or
+  // after this server's start: the next lookup that misses records it, so the recording is never left unreadable.
+  const lateId = `EV-${randomUUID()}`, lateJson = JSON.stringify({ order: { id: 'WO-PG-OLD', status: 'Closed', operations: [{ id: 'op-010', evidence: [{ id: lateId }] }] }, activity: [] });
+  await refPool.query("INSERT INTO archive (order_id,json,sha256,schema,part_number,serials,lots,parts,title,closed_at,archived_at,archived_by) VALUES ('WO-PG-OLD',$1,$2,1,'P','[]','[]','[\"P\"]','Old writer',NULL,'2026-10-01T00:00:00.000Z','old-release')", [lateJson, createHash('sha256').update(lateJson).digest('hex')]);
+  assert.equal(await reopened.archiveNamesEvidence(lateId), true, 'an order archived by a previous-release server is indexed on the next lookup');
+  assert.equal(await reopened.archiveNamesEvidence(plantedId), false);
   await reopened.close?.();
   await refPool.end();
   console.log('ok PostgreSQL evidence bytes round-trip with SHA-256');
