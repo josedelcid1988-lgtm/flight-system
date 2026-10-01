@@ -370,6 +370,89 @@ function surfaces(state) {
   check('a removal record edited after signing fails manifest verification', !MES.verifyManifests(edited).ok);
 }
 
+// ---- engine: a removed recording is signed, bound to its operation, capped and counted like a removed file (#426) ----
+const evidenceRecordOf = e => { const { removedAt, removedBy, removeReason, manifest, ...kept } = e; return kept; };
+const clip = id => ({ id, fileName: `${id}.webm`, mimeType: 'video/webm', size: 10, source: 'upload', description: 'Torque application recording.' });
+const evId = n => `EV-00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+// The current, unblocked Building operation where recordings may change now.
+const recordingTarget = state => { for (const order of state.orders) { const op = order.operations.find(item => !item.done); if (op && order.status === 'Building' && host.withAccount(technician, () => MES.attachEvidence(structuredClone(state), order.id, op.id, clip(evId(999))).ok, state)) return { order, op }; } return null; };
+{
+  const state = curated();
+  const { order, op } = recordingTarget(state);
+  host.withAccount(technician, () => { MES.attachEvidence(state, order.id, op.id, clip(evId(1))); MES.attachEvidence(state, order.id, op.id, clip(evId(2))); }, state);
+  const before = JSON.stringify(state);
+  for (const bad of [undefined, '', '  ', 'ok', { text: REASON }, 'x'.repeat(301)]) {
+    const refused = host.withAccount(technician, () => MES.removeEvidence(state, order.id, op.id, evId(1), bad), state);
+    check(`a recording is not removed with reason ${JSON.stringify(bad)?.slice(0, 20)}, nothing changes`, !refused.ok && /Give the reason for removing this recording/.test(refused.message) && JSON.stringify(state) === before);
+  }
+  const removed = host.withAccount(technician, () => MES.removeEvidence(state, order.id, op.id, evId(1), REASON), state);
+  const entry = op.quarantinedEvidence.find(e => e.id === evId(1));
+  check('a reasoned recording removal leaves the live list and is kept in quarantine', removed.ok && !op.evidence.some(e => e.id === evId(1)) && !!entry);
+  check('the removed recording carries a signed manifest naming its operation, remover, time and reason', entry.manifest.meaning === 'Recording removed and quarantined' && entry.manifest.subject.scope === 'evidence' && entry.manifest.subject.orderId === order.id && entry.manifest.subject.operationId === op.id && entry.manifest.subject.evidenceId === evId(1) && entry.manifest.subject.removeReason === REASON && entry.manifest.subject.removedBy.name === 'Terry Tech' && entry.manifest.hash === MES.sha256(MES.canonical(entry.manifest.subject)));
+  check('the workspace validates and every manifest verifies after a recording removal', MES.validate(structuredClone(state)) && MES.verifyManifests(state).ok);
+
+  const tamper = (label, edit) => { const copy = structuredClone(state); const target = copy.orders.find(o => o.id === order.id).operations.find(x => x.id === op.id); edit(target); check(`validation refuses a removed recording whose ${label}`, !MES.validate(copy) && !MES.verifyManifests(copy).ok); };
+  tamper('reason was edited', t => { t.quarantinedEvidence[0].removeReason = 'Edited after the fact.'; });
+  tamper('reason was edited in both copies', t => { const e = t.quarantinedEvidence[0]; e.removeReason = 'Edited after the fact.'; e.manifest.subject.removeReason = e.removeReason; });
+  tamper('description was edited', t => { t.quarantinedEvidence[0].description = 'A different recording.'; });
+  tamper('manifest meaning was changed', t => { const e = t.quarantinedEvidence[0]; e.manifest.meaning = 'File removed and quarantined'; });
+  tamper('copy was moved to another operation', t => { const e = t.quarantinedEvidence[0]; const subject = { ...e.manifest.subject, operationId: 'op-elsewhere' }; t.quarantinedEvidence[0] = { ...e, manifest: { ...e.manifest, subject, hash: MES.sha256(MES.canonical(subject)) } }; });
+  tamper('id is also listed live', t => { t.evidence.push(evidenceRecordOf(t.quarantinedEvidence[0])); });
+  { const copy = structuredClone(state); const target = copy.orders.find(o => o.id === order.id).operations.find(x => x.id === op.id);
+    const sibling = copy.orders.find(o => o.id !== order.id && o.operations.length); const other = sibling.operations[0]; other.quarantinedEvidence = [structuredClone(target.quarantinedEvidence[0])];
+    check('validation refuses a signed recording removal copied onto another order', !MES.validate(copy) && !MES.verifyManifests(copy).ok); }
+
+  // A migration records where the bytes went after upload; that bookkeeping keeps the removal valid, a changed signed hash does not.
+  { const moved = structuredClone(state); const e = moved.orders.find(o => o.id === order.id).operations.find(x => x.id === op.id).quarantinedEvidence[0];
+    Object.assign(e, { sha256: 'a'.repeat(64), stored: { where: 'server', at: new Date().toISOString(), sha256: 'a'.repeat(64) } });
+    check('a removed recording stays valid after a migration records where its bytes are stored', MES.validate(structuredClone(moved)) && MES.verifyManifests(moved).ok);
+    const subject = { ...e.manifest.subject, evidence: { ...e.manifest.subject.evidence, sha256: 'a'.repeat(64) } }; e.manifest = { ...e.manifest, subject, hash: MES.sha256(MES.canonical(subject)) }; e.sha256 = 'b'.repeat(64);
+    check('a removed recording whose signed content hash was changed is refused', !MES.validate(moved) && !MES.verifyManifests(moved).ok); }
+  const reuse = host.withAccount(technician, () => MES.attachEvidence(state, order.id, op.id, clip(evId(1))), state);
+  check('a removed recording ID cannot be attached again as live evidence', !reuse.ok && /removed recording kept in quarantine/.test(reuse.message));
+
+  // A recording removed before removals were signed has no manifest; a saved workspace holding one still loads.
+  { const legacy = structuredClone(state); const target = legacy.orders.find(o => o.id === order.id).operations.find(x => x.id === op.id);
+    target.quarantinedEvidence.push({ ...clip(evId(50)), addedAt: '2026-01-05T10:00:00.000Z', capturedBy: target.evidence[0].capturedBy, reviewedAt: null, reviewedBy: null, removedAt: '2026-01-06T10:00:00.000Z', removedBy: target.evidence[0].capturedBy, removeReason: 'Wrong operation recorded.' });
+    check('a saved workspace with an unsigned recording removal made before this change still validates', MES.validate(legacy)); }
+
+  // The quarantine is capped: a full one refuses both further removals and further recordings, with a next step.
+  { const full = structuredClone(state); const fo = full.orders.find(o => o.id === order.id), fop = fo.operations.find(x => x.id === op.id);
+    const seed = fop.quarantinedEvidence[0];
+    fop.quarantinedEvidence = Array.from({ length: 50 }, (_, i) => { const id = evId(100 + i); const subject = { ...seed.manifest.subject, evidenceId: id, evidence: { ...seed.manifest.subject.evidence, id } }; return { ...seed, id, manifest: { ...seed.manifest, subject, hash: MES.sha256(MES.canonical(subject)) } }; });
+    check('a full recording quarantine of 50 signed removals still validates', MES.validate(structuredClone(full)) && MES.verifyManifests(full).ok);
+    const snapshot = JSON.stringify(full);
+    const noRoom = host.withAccount(technician, () => MES.removeEvidence(full, fo.id, fop.id, evId(2), REASON), full);
+    check('a recording is not removed into a full quarantine; the refusal says to record a note, nothing changes', !noRoom.ok && /50 removed recordings in quarantine/.test(noRoom.message) && /note/.test(noRoom.message) && JSON.stringify(full) === snapshot);
+    const noAdd = host.withAccount(technician, () => MES.attachEvidence(full, fo.id, fop.id, clip(evId(300))), full);
+    check('an operation whose recordings fill the quarantine takes no new recording', !noAdd.ok && /already holds 50 files/.test(noAdd.message) && JSON.stringify(full) === snapshot);
+    const extra = structuredClone(full); const xop = extra.orders.find(o => o.id === order.id).operations.find(x => x.id === op.id); const s51 = { ...seed.manifest.subject, evidenceId: evId(151), evidence: { ...seed.manifest.subject.evidence, id: evId(151) } };
+    xop.quarantinedEvidence.push({ ...seed, id: evId(151), manifest: { ...seed.manifest, subject: s51, hash: MES.sha256(MES.canonical(s51)) } });
+    check('validation refuses more than 50 signed recording removals on one operation', !MES.validate(extra)); }
+
+  // Recordings count toward the workspace budget, so add and remove cycles cannot grow it without bound.
+  { const heavy = structuredClone(state); const ho = heavy.orders.find(o => o.id === order.id), hop = ho.operations.find(x => x.id === op.id);
+    const base = MES.fileBudgetError(heavy, null);
+    hop.evidence.push({ ...hop.evidence[0], id: evId(400), description: 'x'.repeat(3600000) });
+    check('removed recordings count toward the workspace record budget', base === null && /as many file records as it can/.test(MES.fileBudgetError(heavy, null) || '')); }
+
+  // A split request leaves removed recordings on the parent; the new order starts with none.
+  { const sr = structuredClone(state), admin = { username: 'quar-admin', displayName: 'Flight Master', role: 'admin' };
+    const parent = sr.orders.find(o => o.id === order.id);
+    Object.assign(parent, { quantity: 3 });
+    parent.splitRequests = [{ id: 'SPR-QUAR-EV', ticketId: null, quantity: 1, of: 3, serials: [], reason: 'Split one unit out for the recording check', status: 'Open', requestedBy: { name: 'Flight Master', role: 'Master Access', credentialId: 'MA-1' }, requestedAt: new Date().toISOString() }];
+    const result = host.withAccount(admin, () => MES.splitRequestOrder(sr, parent.id, 'SPR-QUAR-EV'), sr);
+    const child = result.ok && sr.orders.find(o => o.id === result.id);
+    check('a split request leaves removed recordings on the parent, the new order has none, and the workspace verifies', result.ok && !!child && child.operations.every(x => x.quarantinedEvidence === undefined) && parent.operations.find(x => x.id === op.id).quarantinedEvidence.some(e => e.id === evId(1)) && MES.validate(structuredClone(sr)) && MES.verifyManifests(sr).ok); }
+  // Rejecting a sequence change keeps a recording removed while it was pending in quarantine, not live again.
+  { const seq = structuredClone(state), qmUser = { username: 'quar-qm', displayName: 'Quincy Manager', role: 'qm' };
+    const so = seq.orders.find(o => o.id === order.id), liveOp = () => so.operations.find(x => x.id === op.id);
+    const added = host.withAccount(me, () => MES.addOrderOperation(seq, so.id, { title: 'Install placard', description: 'Install the data placard.', steps: 'Clean surface\nInstall placard', position: so.operations.length, buyoffType: 'Technician', classification: 'Manufacturing', callouts: [] }), seq);
+    const removedPending = added.ok && host.withAccount(technician, () => MES.removeEvidence(seq, so.id, op.id, evId(2), REASON), seq);
+    const rejected = removedPending && removedPending.ok && host.withAccount(qmUser, () => MES.rejectSequenceChange(seq, so.id, 'Not needed on this build.'), seq);
+    check('after a sequence change is rejected a recording removed while it waited stays quarantined, not live, and the workspace verifies', !!rejected && rejected.ok && !liveOp().evidence.some(e => e.id === evId(2)) && liveOp().quarantinedEvidence.some(e => e.id === evId(2)) && liveOp().quarantinedEvidence.some(e => e.id === evId(1)) && MES.validate(structuredClone(seq)) && MES.verifyManifests(seq).ok); }
+}
+
 // ---- server: POST /api/workspace/actions refuses a reasonless or unauthorized removal and quarantines a reasoned one ----
 {
   const server = createServer({ dbPath: ':memory:', quiet: true, setupCode: 'attachment-quarantine' });

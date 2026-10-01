@@ -3356,6 +3356,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       });
     };
     walk(state, 'state');
+    listOf(state.orders).forEach(order => listOf(order && order.operations).forEach(op => { signedEvidence(op && op.quarantinedEvidence).forEach(e => { if (!evidenceQuarantineBound(e) || !quarantineHeldBy(e, evidenceHolder(order, op))) failures.push({ where: `${order.id} ${op.id} removed recording ${e.id}`, reason: 'removed recording does not match its signed removal record' }); }); if (op && !liveAndQuarantinedDisjoint(op.evidence, signedEvidence(op.quarantinedEvidence))) failures.push({ where: `${order.id} ${op.id} recordings`, reason: 'a removed recording is also listed as live' }); }));
     quarantineHolders(state).forEach(([where, list, holder, live]) => { listOf(list).forEach((f, i) => { if (!quarantineHeldBy(f, holder)) failures.push({ where: `${where} quarantine[${i}]`, reason: 'quarantined file is signed for a different record' }); }); if (!liveAndQuarantinedDisjoint(live, list)) failures.push({ where: `${where} files`, reason: 'a quarantined file is also listed as live' }); });
     const recheck = (where, manifest, subject) => { recomputed++; if (sha256(canonical(subject)) !== manifest.hash) failures.push({ where, reason: 'hash does not match the signed record' }); };
     if(!aiGovernanceValid(state))failures.push({where:'AI governance',reason:'model configuration history or AI action hash chain is invalid'});
@@ -6513,7 +6514,7 @@ const OP_BOM_MAX = 12;
   const fileBytes = files => files.reduce((n, file) => { if (!plain(file)) return n; const { dataUrl, ...record } = file; return n + (typeof dataUrl === 'string' ? dataUrl.length : 0) + JSON.stringify(record).length; }, 0);
   // Every stored file counts, live or quarantined, on work orders (operations, kit list, tickets) and on quality
   // records: a removed file is kept, so it still takes room. Every file adder checks this budget.
-  const heldBytes = holder => holder ? fileBytes(listOf(holder.attachments)) + fileBytes(listOf(holder.quarantinedAttachments)) : 0;
+  const heldBytes = holder => holder ? fileBytes(listOf(holder.attachments)) + fileBytes(listOf(holder.quarantinedAttachments)) + fileBytes(listOf(holder.evidence)) + fileBytes(listOf(holder.quarantinedEvidence)) : 0;
   const recordFileBytes = state => plain(state.maneuver) ? Object.values(state.maneuver).reduce((total, records) => total + listOf(records).reduce((sum, rec) => sum + heldBytes(rec), 0), 0) : 0;
   const attachmentBytes = state => recordFileBytes(state) + state.orders.reduce((total, order) => total + fileBytes(listOf(order.kitFiles)) + fileBytes(listOf(order.quarantinedKitFiles)) + order.operations.reduce((sum, op) => sum + heldBytes(op), 0) + listOf(order.tickets).reduce((sum, t) => sum + heldBytes(t), 0), 0);
   // A split copies the order's live files onto the new order, so the copy must fit the workspace limit too.
@@ -6577,7 +6578,30 @@ const OP_BOM_MAX = 12;
     ]),
     ...(plain(state.maneuver) ? Object.values(state.maneuver).flatMap(records => listOf(records).filter(plain).map(rec => [rec.id, rec.quarantinedAttachments, recordHolder(rec), rec.attachments])) : [])
   ];
-  const orderQuarantineValid = order => liveAndQuarantinedDisjoint(order.kitFiles, order.quarantinedKitFiles) && order.operations.every(op => liveAndQuarantinedDisjoint(op.attachments, op.quarantinedAttachments)) && listOf(order.tickets).every(t => !t || liveAndQuarantinedDisjoint(t.attachments, t.quarantinedAttachments)) && validQuarantineList(order.quarantinedKitFiles, { scope: 'kit', orderId: order.id }) && order.operations.every(op => validQuarantineList(op.quarantinedAttachments, { scope: 'operation', orderId: order.id, operationId: op.id })) && listOf(order.tickets).every(t => validQuarantineList(t && t.quarantinedAttachments, ticketHolder(order, t)));
+  // A removed recording follows the same rule as a removed file: it leaves the live list and is kept on its
+  // operation with the reason, who removed it and when, under a SHA-256 signature manifest that covers the whole
+  // recording record and names the operation it was removed from. Removals saved before recordings were signed
+  // carry no manifest and are kept exactly as they were saved; every new removal is signed. Where the bytes are
+  // stored (`stored`) is bookkeeping a migration adds after the bytes reach the server, and so is the content hash
+  // when the recording had none at removal; a content hash that was signed cannot change.
+  const EVIDENCE_QUARANTINE_MEANING = 'Recording removed and quarantined';
+  const evidenceRecord = e => { const { removedAt, removedBy, removeReason, manifest, stored, ...kept } = e; return kept; };
+  const evidenceSignedAs = (e, signed) => { const kept = evidenceRecord(e); if (plain(signed) && signed.sha256 === undefined) delete kept.sha256; return kept; };
+  const evidenceHolder = (order, op) => ({ scope: 'evidence', orderId: order && order.id, operationId: op && op.id });
+  function evidenceQuarantine(state, evidence, reason, where, held) {
+    if (listOf(held).length >= MAX_QUARANTINED) return { error: `This operation already holds ${MAX_QUARANTINED} removed recordings in quarantine, so this recording cannot be removed. Record the correction in a note on the operation; the recording stays as it is.` };
+    const text = typeof reason === 'string' ? reason.trim() : '';
+    if (!str(text, REMOVE_REASON_MAX) || text.length < REMOVE_REASON_MIN) return { error: `Give the reason for removing this recording (${REMOVE_REASON_MIN} to ${REMOVE_REASON_MAX} characters). The recording is kept in quarantine on the record with your reason.` };
+    const at = new Date().toISOString(), by = actor(state);
+    const subject = { ...where, evidenceId: evidence.id, evidence: evidenceRecord(evidence), removedAt: at, removedBy: by, removeReason: text };
+    return { entry: { ...evidence, removedAt: at, removedBy: by, removeReason: text, manifest: signManifest(state, EVIDENCE_QUARANTINE_MEANING, subject, at) } };
+  }
+  const evidenceQuarantineBound = e => plain(e) && plain(e.manifest) && e.manifest.meaning === EVIDENCE_QUARANTINE_MEANING && plain(e.manifest.subject) && e.manifest.algorithm === 'SHA-256' && /^[0-9a-f]{64}$/.test(String(e.manifest.hash || '')) && sha256(canonical(e.manifest.subject)) === e.manifest.hash && e.manifest.at === e.removedAt && plain(e.manifest.signer) && plain(e.removedBy) && e.manifest.signer.name === e.removedBy.name && e.manifest.signer.credentialId === e.removedBy.credentialId && e.manifest.subject.evidenceId === e.id && canonical(e.manifest.subject.evidence) === canonical(evidenceSignedAs(e, e.manifest.subject.evidence)) && e.manifest.subject.removedAt === e.removedAt && e.manifest.subject.removeReason === e.removeReason && canonical(e.manifest.subject.removedBy) === canonical(e.removedBy);
+  const signedEvidence = list => listOf(list).filter(e => plain(e) && e.manifest !== undefined);
+  const quarantinedEvidenceValid = (e, holder) => plain(e) && typeof e.id === 'string' && (e.manifest === undefined || (timestamp(e.removedAt) && plain(e.removedBy) && str(e.removedBy.name, 80) && str(e.removedBy.credentialId, 40) && typeof e.removeReason === 'string' && e.removeReason.trim().length >= REMOVE_REASON_MIN && e.removeReason.length <= REMOVE_REASON_MAX && evidenceValid(evidenceRecord(e)) && evidenceQuarantineBound(e) && quarantineHeldBy(e, holder)));
+  // Signed removals are capped like removed files, unique, never also live, and signed for this operation.
+  const evidenceQuarantineValid = (order, op) => { const list = op.quarantinedEvidence; if (list === undefined) return true; if (!Array.isArray(list)) return false; const signed = signedEvidence(list); return signed.length <= MAX_QUARANTINED && unique(signed.map(e => e.id)) && liveAndQuarantinedDisjoint(op.evidence, signed) && list.every(e => quarantinedEvidenceValid(e, evidenceHolder(order, op))); };
+  const orderQuarantineValid = order => order.operations.every(op => evidenceQuarantineValid(order, op)) && liveAndQuarantinedDisjoint(order.kitFiles, order.quarantinedKitFiles) && order.operations.every(op => liveAndQuarantinedDisjoint(op.attachments, op.quarantinedAttachments)) && listOf(order.tickets).every(t => !t || liveAndQuarantinedDisjoint(t.attachments, t.quarantinedAttachments)) && validQuarantineList(order.quarantinedKitFiles, { scope: 'kit', orderId: order.id }) && order.operations.every(op => validQuarantineList(op.quarantinedAttachments, { scope: 'operation', orderId: order.id, operationId: op.id })) && listOf(order.tickets).every(t => validQuarantineList(t && t.quarantinedAttachments, ticketHolder(order, t)));
 
   // Operation attachments follow the step media on the same operation: the person running it (operate-steps) or
   // inspecting it (inspect-steps).
@@ -7511,8 +7535,8 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     delete child.engineeringChanges; delete child.splitInto; delete child.quarantinedKitFiles;
     // Removal records stay on the order the file was removed from; the split starts with none, in its captured
     // sequence baseline as well.
-    if (Array.isArray(child.sequenceBaseline)) child.sequenceBaseline.forEach(op => { if (op) delete op.quarantinedAttachments; });
-    child.operations = child.operations.map(op => { const { quarantinedAttachments, ...rest } = op; return { ...rest, done: false, note: '', buyoff: null, evidence: [], stepChecks: {}, stepPerformers: [] }; });
+    if (Array.isArray(child.sequenceBaseline)) child.sequenceBaseline.forEach(op => { if (op) { delete op.quarantinedAttachments; delete op.quarantinedEvidence; } });
+    child.operations = child.operations.map(op => { const { quarantinedAttachments, quarantinedEvidence, ...rest } = op; return { ...rest, done: false, note: '', buyoff: null, evidence: [], stepChecks: {}, stepPerformers: [] }; });
     { const over = splitBudgetError(state, child); if (over) return fail(over); }
     const approvalReset = order.releaseApproval !== null && order.releaseApproval !== undefined;
     order.quantity -= qty;
@@ -7557,8 +7581,8 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     delete child.engineeringChanges; delete child.splitInto; delete child.splitRequests;
     delete child.closureRequest; delete child.pedigreeChange; delete child.sequenceChange;
     // Removal records stay on the order the file was removed from; the split starts with none.
-    delete child.quarantinedKitFiles; child.operations.forEach(op => { delete op.quarantinedAttachments; });
-    if (Array.isArray(child.sequenceBaseline)) child.sequenceBaseline.forEach(op => { if (op) delete op.quarantinedAttachments; });
+    delete child.quarantinedKitFiles; child.operations.forEach(op => { delete op.quarantinedAttachments; delete op.quarantinedEvidence; });
+    if (Array.isArray(child.sequenceBaseline)) child.sequenceBaseline.forEach(op => { if (op) { delete op.quarantinedAttachments; delete op.quarantinedEvidence; } });
     // Completed work carries over: these units were built alongside the rest up to this point.
     // Evidence ids are unique workspace-wide, so the child's copies are re-keyed; the recordings
     // themselves stay stored against the parent order's ids.
@@ -7772,6 +7796,8 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (error) return fail(error);
     if (!evidenceInputValid(input)) return fail('Provide a unique EV-UUID, video file name, supported video type, 1 byte to 100 MB file size, source, and a description of 3 to 1,000 characters.');
     if (operation.evidence.length >= 3) return fail('Each operations supports up to three video attachments.');
+    { const room = fileRoomError(operation.evidence, operation.quarantinedEvidence) || fileBudgetError(state, null); if (room) return fail(room); }
+    if (state.orders.some(item => item.operations.some(step => listOf(step.quarantinedEvidence).some(kept => plain(kept) && kept.id === input.id)))) return fail('This evidence ID belongs to a removed recording kept in quarantine. Attach the recording under a new EV-UUID.');
     if (state.orders.some(item => item.operations.some(step => step.evidence.some(evidence => evidence.id === input.id)))) return fail('This evidence ID is already attached to another operation.');
     operation.evidence.push({ id: input.id, fileName: input.fileName.trim(), mimeType: input.mimeType, size: input.size, source: input.source, description: input.description.trim(), addedAt: new Date().toISOString(), capturedBy: profileSnapshot(state.profile), reviewedAt: null, reviewedBy: null });
     record(state, order, `Video metadata attached to ${opId}: ${input.fileName.trim()} (${input.id}).`);
@@ -7817,12 +7843,11 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (error) return fail(error);
     const index = operation.evidence.findIndex(item => item.id === evidenceId);
     if (index === -1) return fail('Video evidence not found on this operation.');
-    const text = String(reason ?? '').trim();
-    if (!str(text, 300) || text.length < 3) return fail('Give the reason for removing this recording (3 to 300 characters).');
-    const [removed] = operation.evidence.splice(index, 1);
-    if (!Array.isArray(operation.quarantinedEvidence)) operation.quarantinedEvidence = [];
-    operation.quarantinedEvidence.push({ ...removed, removedAt: new Date().toISOString(), removedBy: actor(state), removeReason: text });
-    record(state, order, `Video ${evidenceId} removed from ${opId} and quarantined: ${text}`);
+    const { entry, error: refused } = evidenceQuarantine(state, operation.evidence[index], reason, evidenceHolder(order, operation), operation.quarantinedEvidence);
+    if (refused) return fail(refused);
+    operation.evidence.splice(index, 1);
+    operation.quarantinedEvidence = [...listOf(operation.quarantinedEvidence), entry];
+    record(state, order, `Video ${evidenceId} removed from ${opId} and quarantined: ${entry.removeReason}`);
     return { ok: true, message: 'Recording removed from the operation and kept in quarantine on the record.', id: evidenceId };
   }
 
@@ -8043,8 +8068,15 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     // quarantine of the live operation with the same id, and a file removed since is not restored as live.
     const dropped = order.operations.find(op => !order.sequenceBaseline.some(b => b && b.id === op.id) && operationHoldsFiles(op));
     if (dropped) return fail(`${dropped.id} was added by this sequence change and holds files that are part of the record, so rejecting the change would erase them. Approve the sequence change instead; the operation and its files then stay on the record.`);
-    const keptQuarantine = new Map(order.operations.filter(op => listOf(op.quarantinedAttachments).length).map(op => [op.id, op.quarantinedAttachments]));
-    order.operations = order.sequenceBaseline.map(op => { const kept = keptQuarantine.get(op.id); if (!kept) return op; const ids = new Set(kept.map(f => f.id)); return { ...op, attachments: listOf(op.attachments).filter(f => !ids.has(f.id)), quarantinedAttachments: kept }; });
+    const keptQuarantine = new Map(order.operations.filter(op => listOf(op.quarantinedAttachments).length || listOf(op.quarantinedEvidence).length).map(op => [op.id, op]));
+    order.operations = order.sequenceBaseline.map(op => {
+      const live = keptQuarantine.get(op.id); if (!live) return op;
+      const files = new Set(listOf(live.quarantinedAttachments).map(f => f && f.id)), clips = new Set(listOf(live.quarantinedEvidence).map(e => e && e.id));
+      const next = { ...op, attachments: listOf(op.attachments).filter(f => !files.has(f && f.id)), evidence: listOf(op.evidence).filter(e => !clips.has(e && e.id)) };
+      if (listOf(live.quarantinedAttachments).length) next.quarantinedAttachments = live.quarantinedAttachments; else delete next.quarantinedAttachments;
+      if (listOf(live.quarantinedEvidence).length) next.quarantinedEvidence = live.quarantinedEvidence; else delete next.quarantinedEvidence;
+      return next;
+    });
     delete order.sequenceBaseline;
     order.sequenceChange = null;
     order.tickets.forEach(t => { if (t.status === 'Open' && plain(t.reworkPlan) && t.reworkPlan.opId && !order.operations.some(op => op.id === t.reworkPlan.opId)) t.reworkPlan = { ...t.reworkPlan, stage: 'Awaiting ME operation', opId: null }; });
