@@ -14249,6 +14249,9 @@ window.SK_MIRROR = window.SK_MIRROR || {
   // by an older build in the client record counts as one more slot and is never rewritten.
   var ACK_PREFIX = 'skyryse-mes-sync-ack-v1' + ':', ACK_PRUNE_MS = 10 * 60 * 1000;
   var pageId = 'page-' + (window.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
+  // Write ids are unique per page (client id, page id, a counter of this page), so two tabs of one device never
+  // reuse an id, whether for ordinary writes or for a resend after a restore.
+  var pageSeq = 0;
   function ackSlots() {
     var out = [];
     if (client.ack && Number.isInteger(client.ack.id)) out.push({ key: null, epoch: Number.isInteger(client.ackEpoch) ? client.ackEpoch : 0, ack: client.ack, at: 0 });
@@ -14333,8 +14336,8 @@ window.SK_MIRROR = window.SK_MIRROR || {
   // A deleted entity is queued as a delete record and remembered as a tombstone (the newest 5000 are kept).
   function pushDelete(key, acct, b, now) {
     var type = key.split('|')[0], id = key.slice(type.length + 1), json = JSON.stringify({ entityType: type, entityId: id, deleted: true });
-    client.seq += 1;
-    queue.push({ clientWriteId: client.id + '-' + client.seq, storeKey: type === 'account' ? AUTH_KEY : (typeof KEY !== 'undefined' ? KEY : 'skyryse-mes-work-order-v1'), entityType: type, entityId: id, operation: 'delete', payloadJson: json, payloadSha256: hash(json), actor: acct ? acct.name + ' · ' + acct.credentialId : null, credential: acct ? acct.credentialId : null, clientTs: now, buildVersion: b.version, buildSha256: b.sha256, manifests: [], synced: false });
+    pageSeq += 1;
+    queue.push({ clientWriteId: client.id + '-' + pageId + '-' + pageSeq, storeKey: type === 'account' ? AUTH_KEY : (typeof KEY !== 'undefined' ? KEY : 'skyryse-mes-work-order-v1'), entityType: type, entityId: id, operation: 'delete', payloadJson: json, payloadSha256: hash(json), actor: acct ? acct.name + ' · ' + acct.credentialId : null, credential: acct ? acct.credentialId : null, clientTs: now, buildVersion: b.version, buildSha256: b.sha256, manifests: [], synced: false });
     delete tombs[key]; tombs[key] = 1;
     var keys = Object.keys(tombs); if (keys.length > 5000) keys.slice(0, keys.length - 5000).forEach(function (k) { delete tombs[k]; });
   }
@@ -14346,8 +14349,8 @@ window.SK_MIRROR = window.SK_MIRROR || {
       if (lastJson[key] === json) return;
       var h = hash(json);
       if (sent[key] === h) { lastJson[key] = json; return; }
-      client.seq += 1;
-      queue.push({ clientWriteId: client.id + '-' + client.seq, storeKey: e.storeKey, entityType: e.type, entityId: e.id, operation: 'upsert', payloadJson: json, payloadSha256: h, actor: acct ? acct.name + ' · ' + acct.credentialId : null, credential: acct ? acct.credentialId : null, clientTs: now, buildVersion: b.version, buildSha256: b.sha256, manifests: manifestsOf(JSON.parse(json), e.type, []), synced: false });
+      pageSeq += 1;
+      queue.push({ clientWriteId: client.id + '-' + pageId + '-' + pageSeq, storeKey: e.storeKey, entityType: e.type, entityId: e.id, operation: 'upsert', payloadJson: json, payloadSha256: h, actor: acct ? acct.name + ' · ' + acct.credentialId : null, credential: acct ? acct.credentialId : null, clientTs: now, buildVersion: b.version, buildSha256: b.sha256, manifests: manifestsOf(JSON.parse(json), e.type, []), synced: false });
       sent[key] = h; lastJson[key] = json; added += 1;
       if (tombs[key]) delete tombs[key];
     });
@@ -14380,7 +14383,8 @@ window.SK_MIRROR = window.SK_MIRROR || {
     var batch = pending().slice(0, Math.max(1, Math.min(500, Number(cfg.batchSize) || 50)));
     if (!batch.length) { paint(); return Promise.resolve(); }
     var headers = { 'content-type': 'application/json' }; if (cfg.token) headers.authorization = 'Bearer ' + cfg.token;
-    var body = JSON.stringify({ clientId: client.id, lastAck: currentAck().ack || undefined, records: batch.map(function (r) { var c = {}; Object.keys(r).forEach(function (k) { if (k !== 'synced' && k !== 'rejected') c[k] = r[k]; }); return c; }) });
+    var sentWith = currentAck(), reqEpoch = sentWith.epoch;
+    var body = JSON.stringify({ clientId: client.id, lastAck: sentWith.ack || undefined, records: batch.map(function (r) { var c = {}; Object.keys(r).forEach(function (k) { if (k !== 'synced' && k !== 'rejected') c[k] = r[k]; }); return c; }) });
     inflight = fetch(base + '/api/v1/writes', { method: 'POST', headers: headers, body: body })
       .then(function (res) { return res.json().catch(function () { return {}; }).then(function (j) { if (!res.ok || !j.ok) throw new Error((j.error && j.error.message) || ('HTTP ' + res.status)); return j; }); })
       .then(function (j) {
@@ -14393,8 +14397,12 @@ window.SK_MIRROR = window.SK_MIRROR || {
         queue = queue.filter(function (r) { return !done[r.clientWriteId]; });
         // After a restore (or on a device's first post since upgrading), only rows confirmed in this answer are
         // known to be on the server; everything else is sent again.
-        if (j.ackCheck === 'missing' || needBaseline) { writeAck(currentAck().epoch + 1, fresh); needBaseline = false; resendAll(); }
-        else if (fresh) writeAck(currentAck().epoch, fresh);
+        var nowEpoch = currentAck().epoch;
+        if (j.ackCheck === 'missing' || needBaseline) { writeAck(nowEpoch + 1, fresh); needBaseline = false; resendAll(); }
+        // Another tab found a restore while this request was out: this answer predates it, so its row may be gone.
+        // It is not recorded in the new epoch; everything is sent again instead.
+        else if (nowEpoch !== reqEpoch) resendAll();
+        else if (fresh) writeAck(nowEpoch, fresh);
         queue.forEach(function (r) { if (bad[r.clientWriteId]) r.rejected = bad[r.clientWriteId]; });
         persist(); attempt = 0; lastError = Object.keys(bad).length ? 'The mirror refused ' + Object.keys(bad).length + ' record(s): ' + bad[Object.keys(bad)[0]] : ''; lastSyncAt = new Date().toISOString();
         inflight = null; paint();
@@ -14422,8 +14430,8 @@ window.SK_MIRROR = window.SK_MIRROR || {
     // A snapshot record lists every entity this device holds now. A reader of the mirror treats anything from
     // this device absent from it as deleted, which also covers deletions made before tombstones existed.
     var json = JSON.stringify({ snapshot: true, clientId: client.id, takenAt: now, keys: Object.keys(sent).sort() });
-    client.seq += 1;
-    queue.push({ clientWriteId: client.id + '-' + client.seq, storeKey: typeof KEY !== 'undefined' ? KEY : 'skyryse-mes-work-order-v1', entityType: 'snapshot', entityId: client.id, operation: 'upsert', payloadJson: json, payloadSha256: hash(json), actor: acct ? acct.name + ' · ' + acct.credentialId : null, credential: acct ? acct.credentialId : null, clientTs: now, buildVersion: b.version, buildSha256: b.sha256, manifests: [], synced: false });
+    pageSeq += 1;
+    queue.push({ clientWriteId: client.id + '-' + pageId + '-' + pageSeq, storeKey: typeof KEY !== 'undefined' ? KEY : 'skyryse-mes-work-order-v1', entityType: 'snapshot', entityId: client.id, operation: 'upsert', payloadJson: json, payloadSha256: hash(json), actor: acct ? acct.name + ' · ' + acct.credentialId : null, credential: acct ? acct.credentialId : null, clientTs: now, buildVersion: b.version, buildSha256: b.sha256, manifests: [], synced: false });
     resentAt = new Date().toISOString();
     persist();
   }

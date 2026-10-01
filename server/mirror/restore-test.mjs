@@ -56,14 +56,20 @@ try {
     if (hasM(db) !== hasM(live)) { console.error('FAIL the backup and the live database differ in schema (manifests_sha256): one predates signature manifests in the chain'); ok = false; }
     const cols = 'id, client_write_id, store_key, entity_type, entity_id, operation, payload_json, payload_sha256, prev_sha256, actor, credential, client_ts, server_ts, build_version, build_sha256, client_id' + (hasM(db) && hasM(live) ? ', manifests_sha256' : '');
     const get = live.prepare(`SELECT ${cols} FROM records WHERE id = ?`);
-    let mismatch = null;
+    // Each row's signature manifests are compared too: rows written before manifests joined the chain
+    // (manifests_sha256 null) are not covered by any hash, so only a direct comparison finds a change to theirs.
+    const mq = 'SELECT path, meaning, signer_name, signer_credential, signed_at, algorithm, hash FROM signature_manifests WHERE record_id = ? ORDER BY id';
+    const mine = db.prepare(mq), theirs = live.prepare(mq);
+    let mismatch = null, manifestMismatch = null;
     for (const row of db.prepare(`SELECT ${cols} FROM records ORDER BY id`).iterate()) {
       const other = get.get(row.id);
       if (!other || JSON.stringify(other) !== JSON.stringify(row)) { mismatch = Number(row.id); break; }
+      if (JSON.stringify(mine.all(row.id)) !== JSON.stringify(theirs.all(row.id))) { manifestMismatch = Number(row.id); break; }
     }
+    if (manifestMismatch !== null) { console.error(`FAIL the signature manifests of row ${manifestMismatch} differ between the backup and the live database`); ok = false; }
     const liveCount = Number(live.prepare('SELECT COUNT(*) n FROM records').get().n);
     if (mismatch !== null) { console.error(`FAIL row ${mismatch} in the backup differs from the live database`); ok = false; }
-    else console.log(`backup matches the first ${v.records} of ${liveCount} live records`);
+    else if (manifestMismatch === null) console.log(`backup matches the first ${v.records} of ${liveCount} live records`);
     live.close();
   }
   db.close();

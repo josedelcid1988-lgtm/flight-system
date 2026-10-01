@@ -126,11 +126,17 @@ export function exportAnchor(db, anchor) {
   return matchesPending(chainTip(db), anchor) ? { records: anchor.pending.records, tip: anchor.pending.tip, anchoredAt: anchor.anchoredAt, settledFromPending: true } : anchor;
 }
 
+// Durable before it returns: the temporary file is flushed before the rename and the directory after it, so a
+// pending anchor is on disk before the database commit and a final one before the write is acknowledged.
 const putAnchor = (file, a) => {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const dir = path.dirname(file);
+  fs.mkdirSync(dir, { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(a) + '\n');
+  const fd = fs.openSync(tmp, 'w');
+  try { fs.writeSync(fd, JSON.stringify(a) + '\n'); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
   fs.renameSync(tmp, file);
+  let dfd = null;
+  try { dfd = fs.openSync(dir, 'r'); fs.fsyncSync(dfd); } catch (e) { if (process.platform !== 'win32') throw e; } finally { if (dfd !== null) fs.closeSync(dfd); }
   return a;
 };
 export function writeAnchor(file, db, when = new Date()) {
@@ -151,6 +157,9 @@ export function settleAnchor(file, db) {
   return a;
 }
 
+// Optional text is stored as NULL when empty, so the CSV export (where both are an empty cell) still carries every
+// value linkHash covers, and the chain can be recomputed from it.
+const optional = v => (v === undefined || v === null || v === '' ? null : v);
 const str = (v, max) => typeof v === 'string' && v.length > 0 && v.length <= max;
 const optStr = (v, max) => v === null || v === undefined || (typeof v === 'string' && v.length <= max);
 
@@ -203,10 +212,13 @@ export function appendRecords(db, clientId, records, now = () => new Date().toIS
       if (problem) { results.push({ clientWriteId: r && r.clientWriteId, status: 'rejected', reason: problem }); continue; }
       const seen = byId.get(r.clientWriteId);
       if (seen) { results.push(seen.payload_sha256 === r.payloadSha256 ? { clientWriteId: r.clientWriteId, status: 'duplicate', id: Number(seen.id) } : { clientWriteId: r.clientWriteId, status: 'rejected', reason: 'clientWriteId was already used for a different payload' }); continue; }
+      // The manifests in exactly the shape that is stored, so the hash in the link is the hash verify recomputes;
+      // any other field a client sends (another spelling of the same name included) is ignored, not hashed.
+      const stored = (r.manifests || []).map(m => ({ path: m.path, meaning: m.meaning, signer_name: m.signerName, signer_credential: m.signerCredential, signed_at: m.signedAt, algorithm: m.algorithm, hash: m.hash }));
       const prev = last.get();
-      const info = insert.run(r.clientWriteId, r.storeKey, r.entityType, r.entityId, r.operation, r.payloadJson, r.payloadSha256, prev ? linkHash(prev) : ZERO, r.actor ?? null, r.credential ?? null, r.clientTs, now(), r.buildVersion, r.buildSha256, clientId, manifestSetHash(r.manifests || []));
+      const info = insert.run(r.clientWriteId, r.storeKey, r.entityType, r.entityId, r.operation, r.payloadJson, r.payloadSha256, prev ? linkHash(prev) : ZERO, optional(r.actor), optional(r.credential), optional(r.clientTs), now(), optional(r.buildVersion), optional(r.buildSha256), clientId, manifestSetHash(stored));
       const id = Number(info.lastInsertRowid);
-      for (const m of r.manifests || []) manifest.run(id, m.path, m.meaning, m.signerName, m.signerCredential, m.signedAt, m.algorithm, m.hash);
+      for (const m of stored) manifest.run(id, m.path, m.meaning, m.signer_name, m.signer_credential, m.signed_at, m.algorithm, m.hash);
       results.push({ clientWriteId: r.clientWriteId, status: 'stored', id });
     }
     // Phase one of the anchor update runs inside the transaction: if it cannot be written, nothing commits.

@@ -149,12 +149,19 @@ await m.close();
  {const old=path.join(tmp,'legacy.sqlite');const db=new DatabaseSync(old);db.exec(fs.readFileSync(path.join(ROOT,'server/mirror/schema.sql'),'utf8').replace(',\n  -- SHA-256 of this record','\n  -- SHA-256 of this record').replace(/\n  manifests_sha256 TEXT/,''));
   const legacyLink=r=>sha256(JSON.stringify([r.id,r.client_write_id,r.store_key,r.entity_type,r.entity_id,r.operation,r.payload_sha256,r.prev_sha256,r.actor,r.credential,r.client_ts,r.server_ts,r.build_version,r.build_sha256,r.client_id]));
   let prev='0'.repeat(64);for(const i of [1,2]){const x=rec(60+i);db.prepare('INSERT INTO records (client_write_id,store_key,entity_type,entity_id,operation,payload_json,payload_sha256,prev_sha256,actor,credential,client_ts,server_ts,build_version,build_sha256,client_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(x.clientWriteId,x.storeKey,x.entityType,x.entityId,x.operation,x.payloadJson,x.payloadSha256,prev,x.actor,x.credential,x.clientTs,'2026-01-01T00:00:00Z',x.buildVersion,x.buildSha256,'old');prev=legacyLink(db.prepare('SELECT * FROM records ORDER BY id DESC LIMIT 1').get());}
+  db.prepare("INSERT INTO signature_manifests (record_id,path,meaning,signer_name,signer_credential,signed_at,algorithm,hash) VALUES (1,'order.closure','Closure approval','Old Signer','ACCT-old','2026-01-01T00:00:00Z','SHA-256',?)").run('e'.repeat(64));
   db.close();
   const ra=spawnSync(process.execPath,[path.join(ROOT,'server/mirror/server.mjs'),'--reanchor','--db',old],{encoding:'utf8'});
   const ml=createMirror({dbPath:old,backupDir:path.join(tmp,'b11'),port:0,backupEveryMinutes:0,...SECURE});const al=await ml.listen();
   const more=await fetch(`http://127.0.0.1:${al.port}/api/v1/writes`,{method:'POST',headers:{'content-type':'application/json',...WAUTH},body:JSON.stringify({clientId:'new',records:[rec(63)]})}).then(r=>r.json());
   const vl=ml.verify();
-  ok('a database from before this change gains the column, keeps its links and keeps writing',ra.status===0&&more.results[0].status==='stored'&&vl.ok&&vl.records===3&&vl.legacyRows===2,JSON.stringify({vl,ra:ra.stderr}));await ml.close();}
+  ok('a database from before this change gains the column, keeps its links and keeps writing',ra.status===0&&more.results[0].status==='stored'&&vl.ok&&vl.records===3&&vl.legacyRows===2,JSON.stringify({vl,ra:ra.stderr}));
+  // A legacy row's manifests are covered by no hash, so restore-test --against compares them directly.
+  const bkl=ml.backup();await ml.close();
+  {const d=new DatabaseSync(old);d.exec('DROP TRIGGER manifests_no_update');d.prepare("UPDATE signature_manifests SET signer_credential='ACCT-forged' WHERE record_id=1").run();d.close();}
+  {const d=new DatabaseSync(old,{readOnly:true});ok('the refusal case is real: the chain still verifies with a legacy manifest changed',verifyChain(d,{anchor:readAnchor(old+'.anchor.json')}).ok);d.close();}
+  const rl=spawnSync(process.execPath,[path.join(ROOT,'server/mirror/restore-test.mjs'),bkl,'--against',old],{encoding:'utf8'});
+  ok('restore-test --against finds a changed manifest on a legacy row',rl.status===1&&/signature manifests of row 1 differ/.test(rl.stderr),rl.stdout+rl.stderr);}
 }
 
 // The anchor is never overwritten to cover a change: a mismatching database is refused at start, on every
@@ -231,6 +238,23 @@ await m.close();
  const j=await (await get(base+'/export?format=json')).json();
  ok('the JSON export carries the same, and verifies against it',j.anchor.records===a.records&&j.anchor.tip===a.tip&&j.verify.ok,JSON.stringify({anchor:j.anchor,ok:j.verify.ok}));
  await mp.close();}
+// Every anchor write is flushed (the file before its rename, then the directory) before the server goes on.
+{const tp=path.join(tmp,'durable.sqlite');const md=createMirror({dbPath:tp,backupDir:path.join(tmp,'b19'),port:0,backupEveryMinutes:0,...SECURE});const ad=await md.listen();
+ const real=fs.fsyncSync;let calls=0;fs.fsyncSync=fd=>{calls+=1;return real(fd);};
+ try{await fetch(`http://127.0.0.1:${ad.port}/api/v1/writes`,{method:'POST',headers:{'content-type':'application/json',...WAUTH},body:JSON.stringify({clientId:'d',records:[rec(401)]})});}finally{fs.fsyncSync=real;}
+ ok('a write flushes the pending and the final anchor, each file and its directory',calls>=4,String(calls));
+ // Empty optional text is stored as NULL, so the CSV (an empty cell either way) still carries what the chain hashes.
+ const pj=JSON.stringify({id:'WO-402'});const r0=await fetch(`http://127.0.0.1:${ad.port}/api/v1/writes`,{method:'POST',headers:{'content-type':'application/json',...WAUTH},body:JSON.stringify({clientId:'d',records:[{...rec(402),actor:'',credential:''}]})});
+ const row=md.db.prepare("SELECT actor,credential FROM records WHERE client_write_id='srv-402'").get();
+ const j0=await r0.json();// A manifest that also carries another spelling of a field (signer_credential beside signerCredential) is hashed
+// in the shape that is stored, so one such write cannot poison the chain.
+ {const m0=rec(403).manifests[0];const r1=await fetch(`http://127.0.0.1:${ad.port}/api/v1/writes`,{method:'POST',headers:{'content-type':'application/json',...WAUTH},body:JSON.stringify({clientId:'d',records:[{...rec(403),manifests:[{...m0,signer_credential:'ACCT-other',signer_name:'Someone Else',signed_at:'1999-01-01'}]}]})});
+  const j1=await r1.json();const v1=md.verify();
+  ok('a manifest with alias fields is stored and the chain still verifies',j1.results[0].status==='stored'&&v1.ok,JSON.stringify({j1,v1}));
+  ok('the stored manifest keeps the camel-case values, not the aliases',md.db.prepare("SELECT s.signer_credential c FROM signature_manifests s JOIN records r ON r.id=s.record_id WHERE r.client_write_id='srv-403'").get().c===m0.signerCredential);}
+ ok('an empty actor and credential are stored as NULL',j0.results&&j0.results[0].status==='stored'&&row&&row.actor===null&&row.credential===null,JSON.stringify({row,j0}));
+ ok('the chain is still intact',md.verify().ok);
+ await md.close();}
 // restore-test --against takes the live anchor from where the server keeps it: --live-anchor or FS_MIRROR_ANCHOR.
 {const {DatabaseSync}=await import('node:sqlite');const tp=path.join(tmp,'custom.sqlite'),ap=path.join(tmp,'anchors','custom.anchor.json');const mc=createMirror({dbPath:tp,anchorPath:ap,backupDir:path.join(tmp,'b17'),port:0,backupEveryMinutes:0,...SECURE});const ac=await mc.listen();
  const pc=body=>fetch(`http://127.0.0.1:${ac.port}/api/v1/writes`,{method:'POST',headers:{'content-type':'application/json',...WAUTH},body:JSON.stringify(body)});
@@ -294,6 +318,8 @@ const w1=await mkOrder(p);let st=await drain();
 const count=()=>Number(m.db.prepare('SELECT COUNT(*) n FROM records').get().n);
 ok('mirror on: a committed write saves locally and every queued record reaches the server',w1.ok&&w1.saved&&st.unsynced===0&&count()>0,JSON.stringify({w1,st,rows:count()}));
 ok('the order written is on the server with the build and the signed-in person',!!m.db.prepare("SELECT 1 FROM records WHERE entity_type='order' AND entity_id=? AND actor LIKE 'Jordan Doe%' AND build_version=? AND build_sha256=?").get(w1.id,STAMP.build,STAMP.sha256));
+{const ids=m.db.prepare("SELECT client_write_id c FROM records WHERE client_id LIKE 'client-%' ORDER BY id DESC LIMIT 5").all().map(r=>r.c);
+ ok('write ids carry the page that made them, so two tabs of one device never reuse one',ids.length>0&&ids.every(c=>/^client-[^]+-page-[^]+-\d+$/.test(c)),JSON.stringify(ids));}
 ok('accounts are mirrored with name and role',!!m.db.prepare("SELECT 1 FROM records WHERE entity_type='account' AND entity_id='rpark' AND payload_json LIKE '%\"role\":\"qm\"%'").get());
 ok('the header shows Synced',await p.evaluate(()=>document.getElementById('sync-indicator')?.textContent)==='Synced');
 // A closure signed by a second account carries a manifest to the server.
@@ -366,6 +392,17 @@ const devAck=()=>p.evaluate(()=>{const P='skyryse-mes-sync-ack-v1:',slots=[];con
  const before=d.epoch;await p.evaluate(([k,e])=>localStorage.setItem(k,JSON.stringify({epoch:e,ack:null,at:Date.now()})),[OTHER,before+1]);
  const r0=count();await mkOrder(p);const st2=await drain();const after=await devAck();
  ok('a reset another tab saved (a newer epoch) is kept, and this page\'s next acknowledgement joins that epoch',after.epoch===before+1&&after.ack&&after.ack.id>r0&&st2.unsynced===0,JSON.stringify({before,after:{e:after.epoch,ack:after.ack},r0}));}
+// An answer that predates a restore another tab found meanwhile is not recorded in the new epoch: the tab sends
+// everything again instead, since the row it names may be gone.
+{const OTHER='skyryse-mes-sync-ack-v1:page-other-tab';let held=null;
+ const resentBefore=await p.evaluate(()=>window.skMirror.status().resentAt);const e0=(await devAck()).epoch;
+ await ctx.route(/\/api\/v1\/writes$/,async route=>{const resp=await route.fetch();if(!held){const j=await resp.json();held=Math.max(...(j.results||[]).filter(x=>Number.isInteger(x.id)).map(x=>x.id));
+   await p.evaluate(([k,v])=>localStorage.setItem(k,JSON.stringify(v)),[OTHER,{epoch:e0+1,ack:null,at:Date.now()}]);}
+  await route.fulfill({response:resp});});
+ await mkOrder(p);await drain();await ctx.unroute(/\/api\/v1\/writes$/);
+ const d=await devAck(),resentAfter=await p.evaluate(()=>window.skMirror.status().resentAt);
+ ok('an answer from before another tab\'s restore reset is not recorded in the new epoch',Number.isFinite(held)&&!d.slots.some(x=>x.epoch===e0+1&&x.ack&&x.ack.id===held),JSON.stringify({held,slots:d.slots.map(x=>[x.epoch,x.ack&&x.ack.id])}));
+ ok('instead the tab sends everything again',!!resentAfter&&resentAfter!==resentBefore,JSON.stringify({resentBefore,resentAfter}));}
 // A device upgraded from a build without acknowledgements: it has confirmed records but no lastAck, so its
 // first confirmed post sends everything once instead of trusting a mirror that may have been restored.
 {await p.evaluate(()=>{const c=JSON.parse(localStorage.getItem('skyryse-mes-sync-client-v1'));delete c.ack;delete c.ackEpoch;localStorage.setItem('skyryse-mes-sync-client-v1',JSON.stringify(c));Object.keys(localStorage).filter(k=>k.startsWith('skyryse-mes-sync-ack-v1:')).forEach(k=>localStorage.removeItem(k));});
