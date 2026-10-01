@@ -261,6 +261,13 @@ await p.goto('file://'+FIXTURES+'demo_publish.html');await p.waitForTimeout(1500
 const key='skyryse-mes-work-order-qa100-v1';
 ok('fixture: the demo keeps its workspace in browser storage',await run(k=>!!localStorage.getItem(k),key),key);
 await run(([json,key])=>localStorage.setItem(key,json),[confJson,key]);await p.reload();await p.waitForTimeout(2500);
+// A standalone copy migrated by an earlier build (closed escape NC with the system migration entry but no migrated-escape
+// record) opens: the load backfills the record before it validates and verifies.
+await run(([json,nc,key])=>{const s=JSON.parse(json),t=s.maneuver.ncs.find(x=>x.id===nc);delete t.resolution.manifest;t.dispo=null;t.affected=null;t.mrbId=null;t.escape={from:'Final inspection',detectedAt:'Customer'};t.history=[...(t.history||[]),{at:'2030-01-01T00:00:00.000Z',action:'Migrated from escape ESC-0001.',actor:'system'}];localStorage.setItem(key,JSON.stringify(s));},[confJson,nc,key]);
+await p.reload();await p.waitForTimeout(2500);
+r=await run(([nc])=>{const box=document.querySelector('#storage-alert');const t=state.maneuver.ncs.find(x=>x.id===nc);return {alert:box&&!box.hidden?box.textContent:'',legacy:t&&t.resolution&&t.resolution.legacy||null};},[nc]);
+ok('#302 a standalone copy migrated by an earlier build opens, with the migrated-escape record backfilled on load',r.alert===''&&r.legacy&&r.legacy.escapeId==='ESC-0001',JSON.stringify(r));
+await run(([json,key])=>localStorage.setItem(key,json),[confJson,key]);await p.reload();await p.waitForTimeout(2500);
 // ---- standalone save and load recompute every signature (#315) ----
 // A save that would break a signature is refused and rolled back.
 r=await run(([mrb])=>{const before=JSON.stringify(state);const m=state.maneuver.mrb.find(x=>x.id===mrb);m.decision.note='Edited after the decision.';const saved=save();const after=JSON.stringify(state);return {saved,rolledBack:after===before};},[mrb]);

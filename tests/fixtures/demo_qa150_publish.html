@@ -3347,6 +3347,12 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const e = t.history.find(e => plain(e) && e.actor === 'system' && ESCAPE_MIGRATION_RE.test(String(e.action || '')) && typeof e.at === 'string' && !Number.isNaN(Date.parse(e.at)) && t.resolution.at <= e.at);
     return e ? { source: 'escape', escapeId: ESCAPE_MIGRATION_RE.exec(e.action)[1], migratedAt: e.at } : null;
   }
+  // Runs in MES.upgrade, so every load path (standalone, shared workspace load and refresh, server) backfills before it validates.
+  function backfillLegacyEscapes(state) {
+    const ncs = plain(state) && plain(state.maneuver) && Array.isArray(state.maneuver.ncs) ? state.maneuver.ncs : [];
+    ncs.forEach(t => { const mk = legacyEscapeBackfill(t); if (mk) t.resolution.legacy = mk; });
+    return state;
+  }
   // Server write gate: every NC that carries a legacy escape record in the new workspace must hold the same closure in the
   // stored copy, or be the stored record with only the backfilled record added, or come from a closed escape the stored
   // copy still holds (the migration itself). Anything else is refused. An initial upload has no stored copy to compare.
@@ -6859,7 +6865,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     try {
       state = renameKitOp(migrateEngineeringChanges(migrateSplitIds(state)));
       try { migrateChangeIds(state); } catch (e) {}
-      if (plain(state)) { sealCalibrationLog(state); markCalibrationStart(state); }
+      if (plain(state)) { sealCalibrationLog(state); markCalibrationStart(state); backfillLegacyEscapes(state); }
       if (validate(state)) { const migrated = JSON.parse(JSON.stringify(state)); ['audits','certifications','supplierApprovals','qualityValues','qualityVerdicts'].forEach(key=>{if(!Array.isArray(migrated[key]))migrated[key]=[];}); migrateOperationTypes(migrated); return validate(migrated) ? migrated : JSON.parse(JSON.stringify(state)); }
       if (!validateVersion(state, 1) && !validateVersion(state, 2)) return null;
       const upgraded = JSON.parse(JSON.stringify(state));
@@ -8897,7 +8903,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   MES.seed = () => { const state = ensurePlanner(seedWithPlanner()); ['audits','certifications','supplierApprovals','qualityValues','qualityVerdicts','controlledDocuments','modelAdapterHistory','aiActionLog','aiSkillDrafts','aiSkillTriggers','aiSkillTriggerHistory','calibrationLog'].forEach(key=>{if(!Array.isArray(state[key]))state[key]=[];}); if(!plain(state.modelAdapter))state.modelAdapter=emptyModelAdapter(); ensureInventoryLedger(state); ensureResources(state); ensureProjects(state); syncPlanningBlockers(state); return state; };
   const upgradeWithPlanner = MES.upgrade;
   MES.upgrade = state => { const upgraded = upgradeWithPlanner(state); if (!upgraded) return null; ensurePlanner(upgraded); if(!Array.isArray(upgraded.controlledDocuments))upgraded.controlledDocuments=[];if(!Array.isArray(upgraded.modelAdapterHistory))upgraded.modelAdapterHistory=[];if(!Array.isArray(upgraded.aiActionLog))upgraded.aiActionLog=[];if(!Array.isArray(upgraded.aiSkillDrafts))upgraded.aiSkillDrafts=[];if(!Array.isArray(upgraded.aiSkillTriggers))upgraded.aiSkillTriggers=[];if(!Array.isArray(upgraded.aiSkillTriggerHistory))upgraded.aiSkillTriggerHistory=[];if(!Array.isArray(upgraded.calibrationLog))upgraded.calibrationLog=[];if(!plain(upgraded.modelAdapter))upgraded.modelAdapter=emptyModelAdapter(); ensureInventoryLedger(upgraded); ensureResources(upgraded); ensureProjects(upgraded); retireOutOfBoundSprints(upgraded); syncPlanningBlockers(upgraded); return upgraded; };
-  Object.assign(MES, { missingSignatures, ncApprovalSubject, mrbDecisionHashOf, legacyEscapeValid, legacyEscapeBackfill, legacyEscapeChanges, carClosureSubject, mrbDecisionSubject, archivable, archiveOrders, archivedOrderValid, ownWorkRefusal, coveredBuildOps, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, verifyManifests, reviewFair, NFF, recordTraining, personTraining, trainingCurrentFor, trainingCertificateValid, ownWorkHit, OWN_WORK_EXEMPT_PEDIGREES, scryptHex, PIN_KDF, saveTraining, trainingCatalog, requiredTrainings, trainingDef, TRAINING_CODE_RE, importStamps, stampRegisterCsv, nextStampNumber, isPlaceholderStamp, STAMP_NUMBER_RE, wiAuthors, wiAuthorRefusal, wiPeerReviewRefusal, buildStamp, buildStampValid, supportActor, supportGrant, logSupport, SUPPORT_RULES, SUPPORT_KINDS, recordSupportAccess, noteDemoBypassRemoved, supportLogValid, recordCalibration, importCalibrations, updateCalibration, calibrationStatus, calibrationChainProblem, calibrationEntryHash, calibrationLegacyHash, calibrationLogChanges, recordCalibrationArchive, calibrationArchivable, calibrationArchiveSummary, calibrationArchivedEntries, calibrationArchiveHeldProblem, calibrationCapacity, CALIBRATION_LOG_LIMIT, calibrationCurrentIds, calibratedToolChecks, toolUseRecords, calibrationEntryValid, CALIBRATION_STATUSES });
+  Object.assign(MES, { missingSignatures, backfillLegacyEscapes, ncApprovalSubject, mrbDecisionHashOf, legacyEscapeValid, legacyEscapeBackfill, legacyEscapeChanges, carClosureSubject, mrbDecisionSubject, archivable, archiveOrders, archivedOrderValid, ownWorkRefusal, coveredBuildOps, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, verifyManifests, reviewFair, NFF, recordTraining, personTraining, trainingCurrentFor, trainingCertificateValid, ownWorkHit, OWN_WORK_EXEMPT_PEDIGREES, scryptHex, PIN_KDF, saveTraining, trainingCatalog, requiredTrainings, trainingDef, TRAINING_CODE_RE, importStamps, stampRegisterCsv, nextStampNumber, isPlaceholderStamp, STAMP_NUMBER_RE, wiAuthors, wiAuthorRefusal, wiPeerReviewRefusal, buildStamp, buildStampValid, supportActor, supportGrant, logSupport, SUPPORT_RULES, SUPPORT_KINDS, recordSupportAccess, noteDemoBypassRemoved, supportLogValid, recordCalibration, importCalibrations, updateCalibration, calibrationStatus, calibrationChainProblem, calibrationEntryHash, calibrationLegacyHash, calibrationLogChanges, recordCalibrationArchive, calibrationArchivable, calibrationArchiveSummary, calibrationArchivedEntries, calibrationArchiveHeldProblem, calibrationCapacity, CALIBRATION_LOG_LIMIT, calibrationCurrentIds, calibratedToolChecks, toolUseRecords, calibrationEntryValid, CALIBRATION_STATUSES });
   Object.assign(MES, { SOURCE_INSPECTION_CLASS, SOURCE_INSPECTION_CODES, CONFORMITY_SUBCODES, TEST_SUBCODES, operationType, migrateOperationTypes, sourceInspectionCodes, conformitySubcodes, testSubcodes, operationSubcodes, operationSubcode, saveSourceInspectionCodes, saveOperationSubcodes, mrbTrainingTiers, saveMrbTrainingTiers, recordSourceInspection, sourceInspectionHolds, sourceInspectionWorkspaceValid });
   MES.roleDeniedMessage = roleDeniedMessage;
   const validateWithSourceInspection = MES.validate;
@@ -9212,7 +9218,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     (Array.isArray(m.cars) ? m.cars : []).forEach(c => { if (plain(c) && c.sourceType === 'IDR') c.sourceType = 'NC'; });
     (Array.isArray(state.orders) ? state.orders : []).forEach(o => (plain(o) && Array.isArray(o.tickets) ? o.tickets : []).forEach(t => { if (plain(t) && t.type === 'IDR') t.type = 'NC'; }));
     // A stock NC migrated from a closed escape before the migration recorded it gets its legacy record (MES.legacyEscapeBackfill).
-    (Array.isArray(m.ncs) ? m.ncs : []).forEach(t => { const mk = MES.legacyEscapeBackfill(t); if (mk) t.resolution.legacy = mk; });
+    MES.backfillLegacyEscapes(state);
     if (m.__ticketsV2 === 2) return;
     const h = (at, action, who) => ({ at, action, actor: who });
     if (Array.isArray(m.fracas)) {

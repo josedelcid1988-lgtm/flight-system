@@ -109,6 +109,16 @@ try {
     assert.equal(second.status, 200, JSON.stringify(second.json));
   });
 
+  await check('#302 MES.upgrade alone backfills an NC migrated before the record existed, so every load path validates it', async () => {
+    const live = await started(raw);
+    const old = premarker(JSON.parse(live.server.store.getDoc('default').json));
+    const up = MES.upgrade(structuredClone(old));
+    assert.ok(up, 'the earlier migration upgrades');
+    assert.equal(migratedNcs(up).length, 2, 'upgrade wrote the migrated-escape record');
+    assert.equal(MES.validate(up), true, JSON.stringify(MES.diagnose(up)));
+    assert.equal(MES.verifyManifests(up).ok, true);
+  });
+
   // A signed, resolved stock NC from the curated set: the target of each forgery below.
   const signedNc = s => s.maneuver.ncs.find(t => t.status === 'Resolved' && t.resolution && t.resolution.manifest);
   const asMigrated = t => { delete t.resolution.manifest; t.dispo = null; t.affected = null; t.mrbId = null; t.escape = { from: 'Final inspection', detectedAt: 'Customer' }; };
