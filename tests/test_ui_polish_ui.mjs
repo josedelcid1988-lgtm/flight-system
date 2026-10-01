@@ -137,6 +137,15 @@ try {
     });
     const search = page.getByRole('textbox', { name: 'Traceability search' });
     const submit = page.locator('.fr-trace form button[type="submit"]');
+    // Settle every pending archive search the same way until the busy line clears. A re-render can leave an earlier
+    // request abandoned beside the live one; settling all of them avoids racing the debounce.
+    const settle = async (kind, payload) => {
+      for (let i = 0; i < 40; i++) {
+        await page.evaluate(([k, p]) => window.__traceCalls.forEach(c => { if (!c.done) { c.done = true; k === 'reject' ? c.reject(new Error(p)) : c.resolve(p); } }), [kind, payload]);
+        if (!(await page.locator('[data-trace-busy]').count())) return;
+        await page.waitForTimeout(100);
+      }
+    };
     await search.fill('FC-200-00001');
     await page.locator('[data-trace-busy]').waitFor();
     check('trace search says it is searching while the server request is in flight', /Searching archived work orders/.test(await page.locator('[data-trace-busy]').innerText()) && await page.locator('[data-trace-busy]').getAttribute('role') === 'status');
@@ -145,7 +154,7 @@ try {
     await search.press('Enter');
     check('Enter searches while the server request is in flight', await page.evaluate(() => traceQuery) === 'FC-200-00001');
     await page.waitForFunction(() => window.__traceCalls.length > 0);
-    await page.evaluate(() => window.__traceCalls.at(-1).resolve({ ok: true, status: 200, json: { results: [{ source: 'archive', orderId: 'WO-ARCH-1', title: 'Archived assembly', partNumber: 'SR-1', serials: ['FC-200-00001'], lots: [], closedAt: '2026-01-02' }] } }));
+    await settle('resolve', { ok: true, status: 200, json: { results: [{ source: 'archive', orderId: 'WO-ARCH-1', title: 'Archived assembly', partNumber: 'SR-1', serials: ['FC-200-00001'], lots: [], closedAt: '2026-01-02' }] } });
     await page.locator('[data-trace-busy]').waitFor({ state: 'detached' });
     check('the Search button is enabled again when the search succeeds', await submit.isEnabled() && (await submit.innerText()).trim() === 'Search');
     check('archived matches are listed after the search', /WO-ARCH-1/.test(await page.locator('.fr-trace').innerText()));
@@ -160,20 +169,36 @@ try {
     await page.locator('[data-archive-busy]').waitFor({ state: 'detached' });
     check('archived print and export are enabled again after a failure', await exportButton.isEnabled() && await printButton.isEnabled());
     check('the export failure is shown plainly', /WO-ARCH-1 could not be opened because the server did not answer/.test(await page.locator('.fr-trace').innerText()));
+    // The busy line and a later failure stay visible when the search changes to one with no archived matches.
+    await exportButton.click();
+    await page.locator('[data-archive-busy]').waitFor();
+    await search.fill('NO-ARCHIVE-MATCH');
+    await settle('resolve', { ok: true, status: 200, json: { results: [] } });
+    check('the archive busy line stays visible after the search changes to one with no archived matches', await page.locator('[data-archive-busy]').count() === 1 && await page.getByRole('button', { name: 'Export archived WO-ARCH-1' }).count() === 0);
+    await page.evaluate(() => window.__archiveFetch.reject(new Error('offline')));
+    await page.locator('[data-archive-busy]').waitFor({ state: 'detached' });
+    check('the archive failure still shows after the search changed', /WO-ARCH-1 could not be opened because the server did not answer/.test(await page.locator('[data-archive-note]').innerText()));
     await page.evaluate(() => { window.fetch = window.__fetch; });
     // A server search that fails re-enables Search and says what happened.
     await search.fill('FC-200-00002');
-    await page.waitForFunction(() => window.__traceCalls.length > 1);
+    await page.locator('[data-trace-busy]').waitFor();
     check('a new search is busy again', await submit.isDisabled());
-    await page.evaluate(() => window.__traceCalls.at(-1).reject(new Error('offline')));
+    await settle('reject', 'offline');
     await page.locator('[data-trace-error]').waitFor();
     check('a failed server search re-enables Search', await submit.isEnabled());
     check('a failed server search says so plainly and keeps the live results', /Archived work orders could not be searched because the server did not answer\. Live results are shown\./.test(await page.locator('[data-trace-error]').innerText()));
     await search.fill('FC-200-00003');
-    await page.waitForFunction(() => window.__traceCalls.length > 2);
-    await page.evaluate(() => window.__traceCalls.at(-1).resolve({ ok: false, status: 503, json: {} }));
-    await page.locator('[data-trace-error]').waitFor();
-    check('a refused server search names the status and re-enables Search', /could not be searched \(503\)/.test(await page.locator('[data-trace-error]').innerText()) && await submit.isEnabled());
+    await page.locator('[data-trace-busy]').waitFor();
+    await settle('resolve', { ok: false, status: 503, json: {} });
+    await page.locator('[data-trace-error]', { hasText: '(503)' }).waitFor();
+    const unavailable = await page.locator('[data-trace-error]').innerText();
+    check('a refused server search names the status and re-enables Search', /could not be searched \(503\)/.test(unavailable) && await submit.isEnabled());
+    check('a server failure says to search again later, not to sign in', /Search again in a few minutes/.test(unavailable) && !/Sign in again/.test(unavailable), unavailable);
+    await search.fill('FC-200-00004');
+    await page.locator('[data-trace-busy]').waitFor();
+    await settle('resolve', { ok: false, status: 401, json: {} });
+    await page.locator('[data-trace-error]', { hasText: '(401)' }).waitFor();
+    check('an expired session says to sign in again', /Sign in again, then search again\./.test(await page.locator('[data-trace-error]').innerText()));
     await context.close();
   }
 
@@ -205,13 +230,15 @@ try {
     check('the old footer wording is gone', !/existing MES command gates/.test(await page.content()));
     // An order held only by a pending source inspection is counted on the Hangar and listed under On hold.
     const sourceOnly = await page.evaluate(() => {
-      const o = state.orders.find(x => !['Closed', 'Cancelled', 'Scrapped'].includes(x.status) && !MES.blockingTickets(x).length && !MES.sourceInspectionHolds(state, x).length);
+      const o = state.orders.find(x => !['Closed', 'Cancelled', 'Scrapped'].includes(x.status) && !MES.blockingTickets(x).length && !MES.sourceInspectionHolds(state, x).length && !MES.engineeringChange(x));
       const original = MES.sourceInspectionHolds;
-      MES.sourceInspectionHolds = (s, order) => order && order.id === o.id ? [{ id: 'SI-TEST', status: 'Pending' }] : original(s, order);
+      MES.sourceInspectionHolds = (s, order) => order && order.id === o.id ? [{ id: 'SI-TEST', status: 'Pending', title: 'Source inspection pending at the supplier' }] : original(s, order);
       view = 'orders'; render();
       return o.id;
     });
-    check('an order held only by a source inspection is listed under On hold', await page.locator(`.fr-order-table tbody tr[data-order-row="${sourceOnly}"]`).count() === 1);
+    const sourceRow = page.locator(`.fr-order-table tbody tr[data-order-row="${sourceOnly}"]`);
+    check('an order held only by a source inspection is listed under On hold', await sourceRow.count() === 1);
+    check('that row shows it is on hold and why', /On hold/.test(await sourceRow.innerText()) && /Source inspection pending at the supplier/.test(await sourceRow.locator('[data-hold-reason]').innerText()) && /hold-row/.test(await sourceRow.getAttribute('class')));
     // Navigation without a status still clears the filter.
     await page.evaluate(() => { const b = document.createElement('button'); b.dataset.action = 'nav'; b.dataset.view = 'orders'; document.body.append(b); b.click(); b.remove(); });
     check('ordinary navigation to All work orders shows every status', await page.getByRole('combobox', { name: 'Work order status' }).inputValue() === 'All');
