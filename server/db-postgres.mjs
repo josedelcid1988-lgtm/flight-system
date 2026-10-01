@@ -243,6 +243,9 @@ function makeStore(pool, query, inTransaction, connectionString) {
     },
     // The per-workspace advisory lock putDoc takes, taken earlier in a transaction so the archive probes run under it.
     async lockDoc(tenant) { if (!inTransaction) throw new Error('The workspace lock is taken inside a transaction.'); await query('SELECT pg_advisory_xact_lock(hashtext($1))', [tenant]); },
+    // The lock every audit append takes before reading the chain head, taken earlier in a transaction so a read of the
+    // chain and a later append in the same transaction see no other append between them.
+    async lockAudit() { if (!inTransaction) throw new Error('The audit lock is taken inside a transaction.'); await query('SELECT pg_advisory_xact_lock($1)', [78124031]); },
     async putDoc(tenant, value, expectedEtag, by) {
       if (!inTransaction) return store.transaction(tx => tx.putDoc(tenant, value, expectedEtag, by));
       await query('SELECT pg_advisory_xact_lock(hashtext($1))', [tenant]);

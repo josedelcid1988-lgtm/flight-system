@@ -10,7 +10,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { chromium } from 'playwright';
-import { createServer, servedIndex, parseTrainingSetting, TRAINING_MARK, trainingPage, trainingPrintMark } from '../server/server.mjs';
+import { createServer, servedIndex, parseTrainingSetting, TRAINING_MARK, trainingPage, trainingPrintMark, redactConnectors } from '../server/server.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fails = [], errors = [];
@@ -29,6 +29,11 @@ const count = (text, needle) => text.split(needle).length - 1;
   ok('the mark reads TRAINING, NOT THE RECORD and has no em dash', TRAINING_MARK === 'TRAINING, NOT THE RECORD' && !/\u2014/.test(page));
   ok('FLIGHT_TRAINING 1, true, yes and on turn training on', ['1', 'true', 'TRUE', ' yes ', 'On'].every(v => parseTrainingSetting(v) === true));
   ok('FLIGHT_TRAINING unset, empty, 0, false, no and off leave it off', [undefined, '', '0', 'false', 'No', 'off'].every(v => parseTrainingSetting(v) === false));
+  const configured = "<script>window.SK_MIRROR = window.SK_MIRROR || {\n  url: 'https://mirror.example/x',\n  token: \"mirror-secret\",\n  batchSize: 50\n};\nwindow.SK_INTEGRATIONS = window.SK_INTEGRATIONS || {\n  jira: { enabled: false, baseUrl: 'https://jira.example', endpoint: 'https://jira.example/e' },\n  mode: 'mcp',\n  endpoint: `https://bridge.example/mcp`,\n  authHeader: 'Authorization',\n  token: 'bridge-\\'secret'\n};\nconst other = { token: 'kept' };</script>";
+  const redacted = redactConnectors(configured);
+  ok('the connector blocks lose every token, url and endpoint value, whatever the quotes', !/secret|mirror\.example|bridge\.example|jira\.example/.test(redacted) && /token: '',?/.test(redacted) && redacted.includes("authHeader: 'Authorization'") && redacted.includes("mode: 'mcp'") && redacted.includes('batchSize: 50'), redacted);
+  ok('text outside the connector blocks is left alone', redacted.includes("const other = { token: 'kept' };") && redactConnectors('<p>token: "x"</p>') === '<p>token: "x"</p>', redacted);
+  ok('trainingPage serves the redacted connector blocks', !/secret/.test(trainingPage(`<html><head></head><body>${configured}</body></html>`)));
   let thrown = '';
   try { parseTrainingSetting('enabled'); } catch (error) { thrown = error.message; }
   ok('any other FLIGHT_TRAINING value stops the server instead of starting it unmarked', /FLIGHT_TRAINING is "enabled"\. Set it to 1/.test(thrown), thrown);
@@ -97,6 +102,27 @@ async function serverCase(training) {
   const prodAgain = await start('production.sqlite', false);
   ok('a production server still opens its own database', !!prodAgain.server, prodAgain.error);
   await prodAgain.server.closeAsync();
+  // A server refused at start writes nothing to the database it refused: the legacy password migration waits for
+  // the designation check, so neither a training server on a production database nor a production server on a
+  // training database wraps a legacy SHA-256 hash or appends password-wrap.
+  const { openDb } = await import('../server/db.mjs');
+  const legacy = { username: 'legacy', displayName: 'Legacy Account', salt: 'legacy-salt', hash: createHash('sha256').update('legacy-salt:legacy-password-1').digest('hex'), role: 'tech' };
+  const plant = file => { const db = openDb(path.join(dir, file)); db.upsertAccount(legacy); db.close(); };
+  const untouched = async file => { await new Promise(resolve => setTimeout(resolve, 1500)); const db = openDb(path.join(dir, file)); const account = db.accounts().find(a => a.username === 'legacy'), rows = db.auditRows(50); db.close(); return { hash: account?.hash, wraps: rows.filter(row => row.action === 'password-wrap').length, actions: rows.map(row => row.action) }; };
+  plant('legacy-production.sqlite');
+  const trainingOnLegacy = await start('legacy-production.sqlite', true);
+  const afterTraining = await untouched('legacy-production.sqlite');
+  ok('a training server refused on a production database does not migrate its legacy password hashes or write to its audit chain', /already holds records/.test(trainingOnLegacy.error || '') && afterTraining.hash === legacy.hash && afterTraining.wraps === 0 && afterTraining.actions.length === 0, JSON.stringify({ error: trainingOnLegacy.error, ...afterTraining }));
+  const designatedLegacy = await start('legacy-training.sqlite', true);
+  await designatedLegacy.server.closeAsync();
+  plant('legacy-training.sqlite');
+  const productionOnLegacy = await start('legacy-training.sqlite', false);
+  const afterProduction = await untouched('legacy-training.sqlite');
+  ok('a production server refused on a training database does not migrate its legacy password hashes or write to its audit chain', /created for a training server/.test(productionOnLegacy.error || '') && afterProduction.hash === legacy.hash && afterProduction.wraps === 0 && afterProduction.actions.join() === 'training-database', JSON.stringify({ error: productionOnLegacy.error, ...afterProduction }));
+  const acceptedLegacy = await start('legacy-training.sqlite', true);
+  const afterAccepted = acceptedLegacy.server && { hash: (await acceptedLegacy.server.store.account('legacy'))?.hash, wraps: (await acceptedLegacy.server.store.auditRows(50)).filter(row => row.action === 'password-wrap').length };
+  ok('once the database is accepted, the legacy password hash is wrapped as before', !!afterAccepted && afterAccepted.hash !== legacy.hash && afterAccepted.wraps === 1, JSON.stringify(afterAccepted));
+  await acceptedLegacy.server?.closeAsync();
   fs.rmSync(dir, { recursive: true, force: true });
 }
 {
@@ -131,6 +157,16 @@ async function serverCase(training) {
   const t = await boot(true);
   const init = await fetch(`${t.base}/api/workspace`, { method: 'PUT', headers: t.headers, body: JSON.stringify(seed) });
   const saved = await (await fetch(`${t.base}/api/workspace`, { headers: t.headers })).json();
+  const governanceCheck = async (base, headers) => {
+    const response = await fetch(`${base}/api/governance`, { headers });
+    const doc = await response.json().catch(() => ({}));
+    const { manifest, ...content } = doc;
+    const hash = value => engine.sha256(engine.canonical(value));
+    return { status: response.status, doc, verifies: !!manifest && hash(content) === manifest.hash, strippedVerifies: !!manifest && hash({ ...content, training: undefined }) === manifest.hash && hash(Object.fromEntries(Object.entries(content).filter(([key]) => key !== 'training'))) === manifest.hash };
+  };
+  const govTraining = await governanceCheck(t.base, t.headers);
+  ok('a training server governance export carries the training mark inside the manifest hash, and removing it breaks the hash', govTraining.status === 200 && govTraining.doc.training === TRAINING_MARK && govTraining.verifies && !govTraining.strippedVerifies && /TRAINING, NOT THE RECORD$/.test(govTraining.doc.manifest?.meaning || ''), JSON.stringify({ status: govTraining.status, training: govTraining.doc.training, error: govTraining.doc.error, meaning: govTraining.doc.manifest?.meaning, verifies: govTraining.verifies }));
+  ok('a training server records that its governance export was a training export', (await t.server.store.auditRows(20)).some(row => row.action === 'governance-export' && /"training":true/.test(row.detail || '')));
   ok('a training server marks the workspace it saves', init.status === 204 && saved.trainingServer?.mark === TRAINING_MARK && engine.validate(engine.upgrade(structuredClone(saved))) === true, `${init.status} ${JSON.stringify(saved.trainingServer)}`);
   await t.server.closeAsync();
   const p = await boot(false);
@@ -142,6 +178,8 @@ async function serverCase(training) {
   ok('a production server still initializes from a workspace with no training mark', plainInit.status === 204, String(plainInit.status));
   const prodSaved = await (await fetch(`${p.base}/api/workspace`, { headers: p.headers })).json();
   ok('a production server does not mark its workspace', !Object.hasOwn(prodSaved, 'trainingServer'));
+  const govProduction = await governanceCheck(p.base, p.headers);
+  ok('a production governance export carries no training mark and its manifest still verifies', govProduction.status === 200 && !Object.hasOwn(govProduction.doc, 'training') && govProduction.verifies && govProduction.doc.manifest.meaning === 'ISO/IEC 42001 evidence export', JSON.stringify({ status: govProduction.status, meaning: govProduction.doc.manifest?.meaning }));
   await p.server.closeAsync();
 }
 
@@ -229,7 +267,10 @@ async function serverCase(training) {
   const configured = clear(source, verify(source).build)
     .replace("  url: '',        // e.g. https://mes-mirror.internal:8787", "  url: 'http://127.0.0.1:9/mirror',        // e.g. https://mes-mirror.internal:8787")
     .replace("  mode: 'local',            // 'local' keeps", "  mode: 'mcp',            // 'local' keeps")
-    .replace("  endpoint: '',             // e.g. https://mes-bridge.internal/mcp", "  endpoint: 'http://127.0.0.1:9/bridge',             // e.g. https://mes-bridge.internal/mcp");
+    .replace("  endpoint: '',             // e.g. https://mes-bridge.internal/mcp", "  endpoint: 'http://127.0.0.1:9/bridge',             // e.g. https://mes-bridge.internal/mcp")
+    .replace("  token: '',      // sent as Authorization", "  token: 'mirror-token-literal',      // sent as Authorization")
+    .replace("  token: ''                 // bearer token for the bridge", "  token: 'bridge-token-literal'                 // bearer token for the bridge");
+  ok('the connector test build really carries both tokens', configured.includes("'mirror-token-literal'") && configured.includes("'bridge-token-literal'"));
   const indexPath = path.join(dir, 'index.html');
   fs.writeFileSync(indexPath, configured);
   const browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
@@ -237,6 +278,9 @@ async function serverCase(training) {
     for (const training of [true, false]) {
       const server = createServer({ dbPath: ':memory:', quiet: true, training, setupCode: 'connector-ui', indexPath });
       const port = await server.listenAsync(0, '127.0.0.1');
+      const raw = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+      if (training) ok('the training page sent before sign-in carries neither connector token nor their addresses', !raw.includes('mirror-token-literal') && !raw.includes('bridge-token-literal') && !raw.includes('127.0.0.1:9/'), raw.match(/token: '[^']*'/g)?.join());
+      else ok('the same build on a production server is served unchanged, tokens included (the test configuration is real)', raw.includes('mirror-token-literal') && raw.includes('bridge-token-literal'));
       const page = await browser.newPage();
       const outbound = [];
       page.on('request', request => { if (/127\.0\.0\.1:9\//.test(request.url())) outbound.push(request.url()); });
@@ -352,6 +396,26 @@ try {
       const shown = await hostile.evaluate(() => { const m = document.querySelector('.training-print-mark'), f = document.querySelector('iframe'); return { mark: !!m && getComputedStyle(m).display !== 'none' && m.getBoundingClientRect().height > 0, ran: window.__ran === 1, sandbox: f && f.getAttribute('sandbox') === '', text: f && f.contentDocument ? null : 'opaque' }; });
       ok('a downloaded HTML document cannot hide or remove the mark: its CSS and script stay inside the sandboxed frame', shown.mark && !shown.ran && shown.sandbox, JSON.stringify(shown));
       await hostile.close();
+      // saveFile can wait on a downloads service. An HTML document downloaded while it waits is still wrapped: only the
+      // blob saveFile marked is trusted, not every blob made during the wait.
+      const slow = await context.newPage();
+      slow.on('pageerror', error => errors.push(`slow save: ${error.message}`));
+      await slow.goto(`http://127.0.0.1:${port}/`);
+      await slow.locator('#sk-login').waitFor({ state: 'visible', timeout: 15000 });
+      const [during] = await Promise.all([slow.waitForEvent('download', { timeout: 10000 }), slow.evaluate(async () => {
+        let release = () => {}, saved = null;
+        window.claude = { use: async () => ({ save: ({ data }) => new Promise(resolve => { saved = data; release = resolve; }) }) };
+        const pending = saveFile(new Blob(['<html><body><p>ATP report</p></body></html>'], { type: 'text/html' }), 'slow-atp.html');
+        await new Promise(resolve => setTimeout(resolve, 150));
+        const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['<!doctype html><html><head><style>.training-print-mark{display:none!important}</style></head><body><p>During save</p></body></html>'], { type: 'text/html' })); a.download = 'during.html'; a.click();
+        await new Promise(resolve => setTimeout(resolve, 150));
+        release(); await pending;
+        window.__slowSaved = saved ? await saved.text() : '';
+      })]);
+      const duringText = fs.readFileSync(await during.path(), 'utf8'), slowSaved = await slow.evaluate(() => window.__slowSaved);
+      ok('an HTML document downloaded while saveFile waits still gets the sandboxed wrapper with the mark first', /^TRAINING-during\.html$/.test(during.suggestedFilename()) && duringText.indexOf('class="training-print-mark"') >= 0 && duringText.indexOf('class="training-print-mark"') < duringText.indexOf('<iframe sandbox ') && duringText.includes('srcdoc="'), `${during.suggestedFilename()} ${duringText.slice(0, 160)}`);
+      ok('the file saveFile hands to the downloads service still carries the mark once', count(slowSaved, TRAINING_MARK) === 1, slowSaved.slice(0, 160));
+      await slow.close();
     } else {
       ok('production saves files under their own names with no training mark', downloads.map(d => d.name).join() === 'report.html,atp-report.html,export.json,record.html,procedure.html,hostile.html' && downloads.every(d => !d.text.includes(TRAINING_MARK)), downloads.map(d => d.name).join(', '));
     }
@@ -380,6 +444,11 @@ try {
     await server.closeAsync();
   }
 } finally { await browser.close(); }
+
+{
+  const guide = fs.readFileSync(path.join(ROOT, 'docs/TRAINING_SERVER_SETUP.md'), 'utf8').replace(/\s+/g, ' ');
+  ok('the setup guide asks for a training-only password and a training-only stamp PIN on plain HTTP', /training password they use nowhere else/.test(guide) && /training-only stamp PIN here and never enters the PIN they use on the production system/.test(guide), '');
+}
 
 ok('no page errors', errors.length === 0, errors.join(' | '));
 console.log(`checks ${checks} pass ${checks - fails.length} fail ${fails.length}`);

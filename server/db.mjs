@@ -124,6 +124,8 @@ export function openDb(path) {
     async lockAuthority() {},
     // A write already holds the database lock (BEGIN IMMEDIATE), so the workspace lock is a no-op here.
     async lockDoc() {},
+    // BEGIN IMMEDIATE already holds the only write lock, so the audit chain cannot move under a transaction.
+    async lockAudit() {},
     putDoc(tenant, json, expectedEtag, by) {
       const cur = this.getDoc(tenant);
       if (cur && expectedEtag === null) return null; // null: the document must not exist yet (first initialization)

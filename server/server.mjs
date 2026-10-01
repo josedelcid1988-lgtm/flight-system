@@ -191,16 +191,18 @@ const TRAINING_TAIL = `<script id="flight-training">(function(){var MARK=${JSON.
   + 'var TAG=\'<div class="training-print-mark"\';'
   + 'function mark(html){html=String(html);if(html.indexOf(TAG)>=0)return html;return /<body[^>]*>/i.test(html)?html.replace(/<body[^>]*>/i,function(b){return b+MARK;}):MARK+html;}'
   + 'var isHtml=function(type){return !type||/html/i.test(String(type));};'
-  // Object URLs made while the page builds an already marked file are trusted; any other HTML file is marked on download.
-  + 'var blobs=new Map(),trusted=new Set(),trust=0,make=URL.createObjectURL,revoke=URL.revokeObjectURL;'
-  + 'URL.createObjectURL=function(o){var u=make.call(URL,o);if(o instanceof Blob){blobs.set(u,o);if(trust)trusted.add(u);}return u;};'
+  // Object URLs made while the page synchronously builds an already marked file, and the URL of the exact blob saveFile
+  // marked, are trusted; any other HTML file is marked on download. saveFile can wait on a downloads service, so it
+  // trusts its own blob only, never every blob made while it waits.
+  + 'var blobs=new Map(),trusted=new Set(),saved=new WeakSet(),trust=0,make=URL.createObjectURL,revoke=URL.revokeObjectURL;'
+  + 'URL.createObjectURL=function(o){var u=make.call(URL,o);if(o instanceof Blob){blobs.set(u,o);if(trust||saved.has(o))trusted.add(u);}return u;};'
   + 'URL.revokeObjectURL=function(u){blobs.delete(u);trusted.delete(u);return revoke.call(URL,u);};'
   + 'function trusting(f){return function(){trust++;try{return f.apply(this,arguments);}finally{trust--;}};}'
   + 'var md=window.markDocument;if(typeof md==="function")window.markDocument=function(html){return mark(md(html));};'
   + 'var df=window.dlFile;if(typeof df==="function")window.dlFile=trusting(function(name,text,type){return df(name,isHtml(type)?mark(text):text,type);});'
   + 'if(typeof window.printRecord==="function")window.printRecord=trusting(window.printRecord);'
   + 'if(typeof window.deliverTraveler==="function")window.deliverTraveler=trusting(window.deliverTraveler);'
-  + 'var sf=window.saveFile;if(typeof sf==="function")window.saveFile=async function(blob,name){var n=/^TRAINING-/.test(String(name))?name:"TRAINING-"+name;if(blob&&/html/i.test(blob.type||"")){try{blob=new Blob([mark(await blob.text())],{type:blob.type});}catch(e){}}trust++;try{return await sf(blob,n);}finally{trust--;}};'
+  + 'var sf=window.saveFile;if(typeof sf==="function")window.saveFile=async function(blob,name){var n=/^TRAINING-/.test(String(name))?name:"TRAINING-"+name;if(blob&&/html/i.test(blob.type||"")){try{blob=new Blob([mark(await blob.text())],{type:blob.type});}catch(e){}}if(blob instanceof Blob)saved.add(blob);return sf(blob,n);};'
   + 'var click=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){'
   + 'if(this.hasAttribute("download")){if(this.download&&!/^TRAINING-/.test(this.download))this.download="TRAINING-"+this.download;'
   // Any other HTML file is saved as a wrapper page: the mark, then the original document escaped into a sandboxed
@@ -222,7 +224,23 @@ export function parseTrainingSetting(value) {
   if (['', '0', 'false', 'no', 'off'].includes(text)) return false;
   throw new Error(`FLIGHT_TRAINING is "${String(value).slice(0, 40)}". Set it to 1 to mark this server as a training server, or remove it.`);
 }
-export const trainingPage = html => {
+// The deployed build may carry a mirror or integration bridge token, url or endpoint. A training page never sends
+// them, and since the page is served before sign-in it must not carry them either: their literal values are blanked
+// in the HTML this server sends, not only switched off at run time.
+const CONNECTOR_BLOCKS = ['window.SK_MIRROR = window.SK_MIRROR || {', 'window.SK_INTEGRATIONS = window.SK_INTEGRATIONS || {'];
+const CONNECTOR_SECRET = /\b(token|url|endpoint|baseUrl)(\s*:\s*)(['"`])(?:\\.|(?!\3)[^\\\n])*\3/g;
+export const redactConnectors = html => {
+  let out = String(html);
+  for (const opening of CONNECTOR_BLOCKS) {
+    const start = out.indexOf(opening);
+    if (start < 0) continue;
+    const close = out.indexOf('\n};', start), end = close < 0 ? out.length : close;
+    out = out.slice(0, start) + out.slice(start, end).replace(CONNECTOR_SECRET, "$1$2''") + out.slice(end);
+  }
+  return out;
+};
+export const trainingPage = source => {
+  const html = redactConnectors(source);
   const end = html.lastIndexOf('</body>');
   const withTail = end >= 0 ? `${html.slice(0, end)}${TRAINING_BODY}${TRAINING_TAIL}${html.slice(end)}` : `${html}${TRAINING_BODY}${TRAINING_TAIL}`;
   return withTail.replace('<head>', `<head>${TRAINING_HEAD}`).replace(/<body[^>]*>/i, body => body + TRAINING_PRINT_TOP);
@@ -243,6 +261,12 @@ export function createServer(options = {}) {
   const host = createHost(indexPath, servedIndex(indexPath));
   // Expanded roles, named grants and new trained accounts all cite a training: it must be an active catalog
   // entry and the person must hold a current record of it on the shared workspace.
+  // A governance evidence export from a training server carries the training mark inside the document its manifest
+  // hashes, so removing the mark (or renaming the file) breaks the hash the page and any reader check.
+  const trainingGovernance = document => {
+    const { manifest, ...content } = document, marked = { ...content, training: TRAINING_MARK };
+    return { ...marked, manifest: { ...manifest, hash: host.MES.sha256(host.MES.canonical(marked)), meaning: `${manifest.meaning}, ${TRAINING_MARK}` } };
+  };
   const trainingQualifies = (state, username, code) => !!state && !!code && host.MES.trainingCatalog(state).some(item => item.status === 'Active' && item.code === code) && host.MES.trainingCurrentFor(state, username, code).ok;
   // demo.html relaxes separation of duties, PINs and the stamp gate. It is a training page, not part of the
   // production server: served only when the operator asks (options.serveDemo, FLIGHT_SERVE_DEMO=1 or --serve-demo).
@@ -275,8 +299,13 @@ export function createServer(options = {}) {
   const hashReport = async () => { const out = { current: 0, weak: 0, wrapped: 0, sha256: 0, unknown: 0, sso: 0 }; for (const a of await store.accounts()) { if (a.sso) out.sso += 1; else out[hashKind(a.hash)] += 1; } return out; };
   // No SHA-256-only password hash is left at rest: each is wrapped in scrypt at startup (and on receipt),
   // and replaced with a plain scrypt hash of the password at that person's next sign-in.
+  // It starts only once the database's training designation has been checked and accepted, so a server pointed at
+  // the wrong database writes nothing to it before refusing to start.
+  let acceptDatabase, refuseDatabase;
+  const databaseAccepted = new Promise((resolve, reject) => { acceptDatabase = resolve; refuseDatabase = reject; });
   const wrapped = (async () => {
     await storeReady;
+    await databaseAccepted;
     let n = 0;
     for (const a of await store.accounts()) if (!a.sso && hashKind(a.hash) === 'sha256') { await store.upsertAccount({ ...a, hash: await wrapLegacy(a.hash) }); n += 1; }
     if (n) await store.audit(null, 'password-wrap', { accounts: n });
@@ -284,6 +313,7 @@ export function createServer(options = {}) {
     log(`password hashes: ${r.current} current scrypt, ${r.wrapped} legacy wrapped in scrypt (replaced at next sign-in), ${r.weak} below current parameters, ${r.sha256} SHA-256 only`);
     return r;
   })();
+  wrapped.catch(() => {});
 
   // ---- helpers ----
   const send = (res, status, body, headers = {}) => { const json = body === undefined ? '' : JSON.stringify(body); res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers }); res.end(json); };
@@ -1175,7 +1205,7 @@ export function createServer(options = {}) {
       }
 
       // -- read-only reports the engine already computes --
-      if (route === '/governance' && m === 'GET') { const { state } = await loadState(); if (!state) { send(res, 404, { error: 'No workspace yet.' }); return; } const r = host.withAccount(session.account, () => host.MES.governanceExport ? host.MES.governanceExport(state) : { ok: false, message: 'Not in this build.' }, state); if (!r.ok) { send(res, 403, { error: r.message }); return; } await store.audit(session.username, 'governance-export', {}); send(res, 200, r.document); return; }
+      if (route === '/governance' && m === 'GET') { const { state } = await loadState(); if (!state) { send(res, 404, { error: 'No workspace yet.' }); return; } const r = host.withAccount(session.account, () => host.MES.governanceExport ? host.MES.governanceExport(state) : { ok: false, message: 'Not in this build.' }, state); if (!r.ok) { send(res, 403, { error: r.message }); return; } await store.audit(session.username, 'governance-export', training ? { training: true } : {}); send(res, 200, training ? trainingGovernance(r.document) : r.document); return; }
       if (route === '/b2mml' && m === 'GET') { const { state } = await loadState(); if (!state) { send(res, 404, { error: 'No workspace yet.' }); return; } send(res, 200, host.withAccount(session.account, () => host.MES.b2mml ? host.MES.b2mml(state) : { error: 'Not in this build.' }, state)); return; }
       if (route === '/big-three' && m === 'GET') { const { state } = await loadState(); if (!state) { send(res, 404, { error: 'No workspace yet.' }); return; } send(res, 200, host.withAccount(session.account, () => host.MES.bigThree(state), state)); return; }
       // -- configured final-record delivery. Secret values remain server environment variables; the
@@ -1270,7 +1300,7 @@ export function createServer(options = {}) {
   // a store that row already designates. A production server refuses a designated training database. The audit chain
   // makes the designation part of the record, so training data cannot pass as production data or the reverse.
   const checkTrainingDesignation = async () => {
-    if (typeof store.firstAuditRow !== 'function') {
+    if (typeof store.firstAuditRow !== 'function' || typeof store.lockAudit !== 'function') {
       if (training) throw new Error('Training mode needs a store that can record its training designation.');
       return;
     }
@@ -1279,11 +1309,16 @@ export function createServer(options = {}) {
       if (designatedRow(await store.firstAuditRow())) throw new Error('This database was created for a training server. Start it with --training (or FLIGHT_TRAINING=1), or start the production server on its own database.');
       return;
     }
-    // The check and the designation are one transaction under the workspace lock (an exclusive write transaction in
-    // SQLite, an advisory lock in PostgreSQL), so two servers starting on the same new database cannot both claim it.
+    // The check and the designation are one transaction under the workspace lock and the audit lock (an exclusive
+    // write transaction in SQLite, advisory locks in PostgreSQL), so two servers starting on the same new database
+    // cannot both claim it, and no other audit row can come first once the check has found the database empty.
     let refusal = null, designated = false;
     await store.transaction(async tx => {
       await tx.lockDoc(TENANT);
+      // Every audit writer takes the audit lock before it reads the chain head, so holding it from this read to the
+      // designation write means no other row (a failed sign-in, say) can land between them: the designation is row 1
+      // or the start is refused.
+      await tx.lockAudit();
       const first = await tx.firstAuditRow();
       if (designatedRow(first)) return true;
       if (first || (await tx.accounts()).length || await tx.getDoc(TENANT)) { refusal = 'Training mode opens only a training database, and this database already holds records. Start the training server on a new database file, for example --db training.sqlite.'; return false; }
@@ -1294,7 +1329,7 @@ export function createServer(options = {}) {
     if (refusal) throw new Error(refusal);
     if (designated) log(`designated this new database as a training database (${TRAINING_MARK})`);
   };
-  server.store = store; server.host = host; server.training = training; server.validState = validState; server.ready = storeReady.then(checkTrainingDesignation).then(async () => { await wrapped; await verifyStoredCalibrationArchive(); void drainExports(); });
+  server.store = store; server.host = host; server.training = training; server.validState = validState; server.ready = storeReady.then(checkTrainingDesignation).then(acceptDatabase, error => { refuseDatabase(error); throw error; }).then(async () => { await wrapped; await verifyStoredCalibrationArchive(); void drainExports(); });
   // Bind address: 127.0.0.1 unless options.host, FLIGHT_HOST or --host names another.
   // Once listening, the archive check starts on a later turn of the event loop, so startup does not wait for it.
   server.listenAsync = async (port, host = options.host || process.env.FLIGHT_HOST || DEFAULT_HOST) => {

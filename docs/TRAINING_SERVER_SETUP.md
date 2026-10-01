@@ -28,7 +28,9 @@ You need Node.js 22 LTS (22.13 or later) and a copy of this repository or the re
    set sleep to Never while plugged in. A sleeping laptop stops the session for everyone.
 5. Plain HTTP: passwords, sign-in sessions and everything on screen cross the network unencrypted, so
    anyone on that network could read them or take over a session. Use it only on a trusted office network,
-   and give everyone a training password they use nowhere else. Until the first account exists, anyone who
+   and give everyone a training password they use nowhere else. The same goes for the stamp PIN: every
+   buy-off sends the PIN across the network, so each person sets a training-only stamp PIN here and never
+   enters the PIN they use on the production system. Until the first account exists, anyone who
    can reach the address sees the setup screen: the setup code in your window is the only thing that
    protects it, so keep that window to yourself and create your account right away.
 6. Do the setup on the laptop itself, at `http://localhost:8080`. Over plain HTTP, Chrome and Edge on other
@@ -72,7 +74,8 @@ You need Node.js 22 LTS (22.13 or later) and a copy of this repository or the re
    Accounts and roles, citing the training.
 5. Stamps and training: the **second QA Manager** signs in on their own computer, records your training and
    uses **Issue a stamp** for each technician, each inspector and you. Each holder then sets their own
-   **Stamp PIN** in Your credentials before their first buy-off.
+   **Stamp PIN** in Your credentials before their first buy-off: a training-only PIN, never the one they
+   use on the production system.
 6. Sample data from `samples/training/` (see its README): a QA Manager imports `calibration.csv`; an
    engineer imports `master_wis.csv`; a different engineer peer reviews each WI and Quality releases it;
    then `work_orders.csv` is imported on **All work orders**.
