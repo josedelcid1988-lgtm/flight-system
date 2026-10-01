@@ -144,6 +144,52 @@ export function servedIndex(indexPath) {
   return html;
 }
 
+// Training mode (--training, FLIGHT_TRAINING=1 or options.training) runs the production build with every gate on and
+// marks it as training: a strip on every page, the sign-in screen included, a mark at the top of every print and
+// HTML download, and the tab title. The mark is added to the page this server sends, so it is there before any
+// script runs and a browser cannot opt out of it. Production default: off, and the served page is unchanged.
+export const TRAINING_MARK = 'TRAINING, NOT THE RECORD';
+const TRAINING_STRIP = 24;
+const TRAINING_PRINT_MARK = `<div class="training-print-mark" style="margin:0 0 8px;padding:6px 10px;border:2px solid #0b3a6e;color:#0b3a6e;font:700 14px/18px sans-serif;text-align:center;letter-spacing:.06em">${TRAINING_MARK}</div>`
+  // On screen the print preview's fixed Print button sits at the top right; start the mark below it. Print is unchanged.
+  + '<style>@media screen{.training-print-mark{margin-top:56px!important}}</style>';
+export const trainingPrintMark = html => /<body[^>]*>/i.test(html) ? html.replace(/<body[^>]*>/i, b => b + TRAINING_PRINT_MARK) : TRAINING_PRINT_MARK + html;
+const TRAINING_HEAD = '<style id="flight-training-style">'
+  + `.training-banner{position:fixed;left:var(--fs-rail,0px);right:0;bottom:0;height:${TRAINING_STRIP}px;z-index:2147483000;pointer-events:none;display:flex;align-items:center;justify-content:center;background:#0b3a6e;color:#fff;font:700 12px/16px -apple-system,BlinkMacSystemFont,sans-serif;letter-spacing:.06em;white-space:nowrap}`
+  + `body{padding-bottom:${TRAINING_STRIP}px}html .next-action{bottom:${TRAINING_STRIP}px}html .toast,html .sk-idle-warning{bottom:${TRAINING_STRIP + 24}px}`
+  + `@media(min-width:1181px){html .next-action{bottom:${TRAINING_STRIP + 28}px}}`
+  + 'body:has(#sk-boot)>.training-banner{visibility:visible!important;left:0}'
+  + '@media print{body{padding-bottom:0}.training-banner{position:static;height:auto;display:block;text-align:center;margin:0 auto 8px;background:none;color:#0b3a6e;border:2px solid #0b3a6e;padding:4px}}'
+  + '</style>';
+const TRAINING_BODY = `<div class="training-banner" role="note">${TRAINING_MARK}</div>`;
+// Runs after the app's own scripts. Prints and HTML downloads go through markDocument, dlFile or saveFile, so the mark
+// is added there, once; every file the page saves is named TRAINING-<name>; the strip is put back if a render
+// removes it, and the tab title keeps the word Training.
+const TRAINING_TAIL = `<script id="flight-training">(function(){var MARK=${JSON.stringify(TRAINING_PRINT_MARK)};`
+  + 'function mark(html){html=String(html);if(html.indexOf("training-print-mark")>=0)return html;return /<body[^>]*>/i.test(html)?html.replace(/<body[^>]*>/i,function(b){return b+MARK;}):MARK+html;}'
+  + 'var isHtml=function(type){return !type||/html/i.test(String(type));};'
+  + 'var md=window.markDocument;if(typeof md==="function")window.markDocument=function(html){return mark(md(html));};'
+  + 'var df=window.dlFile;if(typeof df==="function")window.dlFile=function(name,text,type){return df(name,isHtml(type)?mark(text):text,type);};'
+  + 'var sf=window.saveFile;if(typeof sf==="function")window.saveFile=async function(blob,name){var n=/^TRAINING-/.test(String(name))?name:"TRAINING-"+name;if(blob&&/html/i.test(blob.type||"")){try{blob=new Blob([mark(await blob.text())],{type:blob.type});}catch(e){}}return sf(blob,n);};'
+  + 'var click=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){if(this.hasAttribute("download")&&this.download&&!/^TRAINING-/.test(this.download))this.download="TRAINING-"+this.download;return click.apply(this,arguments);};'
+  + `function strip(){if(document.body&&!document.querySelector(".training-banner")){var d=document.createElement("div");d.className="training-banner";d.setAttribute("role","note");d.textContent=${JSON.stringify(TRAINING_MARK)};document.body.appendChild(d);}}`
+  + 'function title(){if(!/^Training \\u00b7 /.test(document.title))document.title="Training \\u00b7 "+document.title;}'
+  + 'strip();title();try{new MutationObserver(strip).observe(document.body,{childList:true});var t=document.querySelector("title");if(t)new MutationObserver(title).observe(t,{childList:true,characterData:true,subtree:true});}catch(e){}'
+  + '})();</script>';
+// FLIGHT_TRAINING: 1, true, yes or on turns training mode on; empty, 0, false, no or off leaves it off. Anything else
+// stops the server, so a misspelled setting never starts an unmarked training server.
+export function parseTrainingSetting(value) {
+  const text = String(value ?? '').trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(text)) return true;
+  if (['', '0', 'false', 'no', 'off'].includes(text)) return false;
+  throw new Error(`FLIGHT_TRAINING is "${String(value).slice(0, 40)}". Set it to 1 to mark this server as a training server, or remove it.`);
+}
+export const trainingPage = html => {
+  const end = html.lastIndexOf('</body>');
+  const withTail = end >= 0 ? `${html.slice(0, end)}${TRAINING_BODY}${TRAINING_TAIL}${html.slice(end)}` : `${html}${TRAINING_BODY}${TRAINING_TAIL}`;
+  return withTail.replace('<head>', `<head>${TRAINING_HEAD}`);
+};
+
 export function createServer(options = {}) {
   const indexPath = options.indexPath || path.join(ROOT, 'index.html');
   const dbPath = options.dbPath || process.env.FLIGHT_DB || path.join(ROOT, 'data', 'flight.sqlite');
@@ -163,6 +209,7 @@ export function createServer(options = {}) {
   // demo.html relaxes separation of duties, PINs and the stamp gate. It is a training page, not part of the
   // production server: served only when the operator asks (options.serveDemo, FLIGHT_SERVE_DEMO=1 or --serve-demo).
   const serveDemo = options.serveDemo !== undefined ? options.serveDemo === true : process.env.FLIGHT_SERVE_DEMO === '1';
+  const training = options.training !== undefined ? options.training === true : parseTrainingSetting(process.env.FLIGHT_TRAINING);
   const jira = options.jira || {};
   const jiraConfig = {
     baseUrl: String(jira.baseUrl || process.env.FLIGHT_JIRA_BASE_URL || '').replace(/\/$/, ''),
@@ -442,9 +489,10 @@ export function createServer(options = {}) {
     // Nor the account directory: a visitor who has not signed in learns only whether the first account still has
     // to be set up. A signed-in page reads the list from GET /api/auth/accounts with its session.
     const accounts = await store.accounts();
-    const ctx = { api: '/api', etag: null, workspace: null, workspaceAvailable: !!row, jiraConfigured, auth: { users: session ? accounts.map(publicAccount) : [], setupRequired: accounts.length === 0 }, account: session ? publicAccount(session.account) : null, served: new Date().toISOString() };
+    const ctx = { api: '/api', etag: null, workspace: null, workspaceAvailable: !!row, jiraConfigured, auth: { users: session ? accounts.map(publicAccount) : [], setupRequired: accounts.length === 0 }, account: session ? publicAccount(session.account) : null, served: new Date().toISOString(), ...(training ? { training: true, trainingMark: TRAINING_MARK } : {}) };
     const script = `<script id="flight-server">window.FLIGHT_SERVER=${JSON.stringify(ctx).replace(/</g, '\\u003c')};</script>`;
-    return host.html.replace('<head>', `<head>${script}`);
+    const html = training ? trainingPage(host.html) : host.html;
+    return html.replace('<head>', `<head>${script}`);
   };
   // Writes the archive export JSON with each recording's bytes base64-encoded in bounded chunks, one recording at a
   // time and respecting backpressure, so an evidence-heavy archive never has to fit in memory as one object.
@@ -1035,6 +1083,7 @@ export function createServer(options = {}) {
           const summary = { orderId: a.id, partNumber: a.entry.order.partNumber, status: a.entry.order.status, operationCount: (a.entry.order.operations || []).length, closedAt: a.entry.order.closure && a.entry.order.closure.at || null };
           const stamp = await recordExtract(a.id, 'print', session.username, { order: a.entry.order, activity: a.entry.activity, archiveSha256: a.sha256, mode }, summary);
           html = html.replace('</body>', `${printExtractStamp(stamp)}</body>`);
+          if (training) html = trainingPrintMark(html);
           await store.audit(session.username, 'archive-print', { orderId: a.id, mode });
           res.writeHead(200, { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-store' }); res.end(html); return;
         }
@@ -1051,7 +1100,8 @@ export function createServer(options = {}) {
         const stamp = await recordExtract(a.id, 'json-download', session.username, content, summary);
         await store.audit(session.username, 'archive-export', { orderId: a.id, exportId: stamp.exportId, sha256: stamp.sha256 });
         const head = { application: 'Flight System', kind: 'archived-work-order', exportId: stamp.exportId, exportedAt: stamp.exportedAt, exportedBy: stamp.exportedBy, hashAlgorithm: 'SHA-256', extractSha256: stamp.sha256, extractHashCovers: 'order, activity, evidence metadata including each recording SHA-256, archiveSha256, archivedAt, archivedBy, schema', dataSummary: summary, ...content, evidence: undefined };
-        res.writeHead(200, { 'Content-Type': MIME['.json'], 'Content-Disposition': `attachment; filename="${a.id}-archive.json"`, 'Cache-Control': 'no-store' });
+        if (training) head.training = TRAINING_MARK;
+        res.writeHead(200, { 'Content-Type': MIME['.json'], 'Content-Disposition': `attachment; filename="${training ? 'TRAINING-' : ''}${a.id}-archive.json"`, 'Cache-Control': 'no-store' });
         await streamArchiveExport(res, head, evidence);
         return;
       }
@@ -1147,7 +1197,7 @@ export function createServer(options = {}) {
   };
 
   server = http.createServer((req, res) => { handle(req, res); });
-  server.store = store; server.host = host; server.validState = validState; server.ready = storeReady.then(async () => { await wrapped; await verifyStoredCalibrationArchive(); void drainExports(); });
+  server.store = store; server.host = host; server.training = training; server.validState = validState; server.ready = storeReady.then(async () => { await wrapped; await verifyStoredCalibrationArchive(); void drainExports(); });
   // Bind address: 127.0.0.1 unless options.host, FLIGHT_HOST or --host names another.
   // Once listening, the archive check starts on a later turn of the event loop, so startup does not wait for it.
   server.listenAsync = async (port, host = options.host || process.env.FLIGHT_HOST || DEFAULT_HOST) => {
@@ -1198,10 +1248,11 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
     catch (e) { console.error(`Restore failed: ${e.message} The restore runs as one transaction, so it left the database unchanged.`); process.exit(1); }
   } else {
   const host = arg('host', process.env.FLIGHT_HOST || DEFAULT_HOST);
-  const server = createServer({ dbPath, databaseUrl, host, ...(process.argv.includes('--serve-demo') ? { serveDemo: true } : {}) });
+  const server = createServer({ dbPath, databaseUrl, host, ...(process.argv.includes('--serve-demo') ? { serveDemo: true } : {}), ...(process.argv.includes('--training') ? { training: true } : {}) });
   server.listenAsync(Number(arg('port', process.env.PORT || 8080)), host).then(port => {
     const a = server.address();
     console.log(`Flight System server listening on ${a.address}:${port} (${a.address === '127.0.0.1' || a.address === '::1' ? 'loopback only: this machine and its reverse proxy' : 'bound as --host or FLIGHT_HOST asked: allow it only behind a firewall or on a trusted network'}) (db ${server.store.db.location ? server.store.db.location() : 'sqlite'})`);
+    if (server.training) console.log(`Training mode: every page, print and download is marked ${TRAINING_MARK}. Every rule and gate is enforced as in production.`);
     server.firstRunSetupCode().then(code => { if (code) console.log(`First-run setup code: ${code}\nEnter it on the Set up Master Access screen to create the first account. It is not needed again once that account exists.`); }).catch(() => {});
   }, e => { console.error(`Flight System server could not listen on ${host}: ${e.message}. Check --host names an address on this machine and the port is free.`); process.exit(1); });
   }

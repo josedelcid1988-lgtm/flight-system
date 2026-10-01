@@ -77,6 +77,19 @@ The server also runs this scan once each time it starts, against the store it wa
 not serve it. To offer it from a training server, start that server with `--serve-demo` or
 `FLIGHT_SERVE_DEMO=1`. Every page of the demo still says DEMO, NOT FOR ACCEPTANCE.
 
+## Training mode
+
+`--training` or `FLIGHT_TRAINING=1` runs the production build, with every rule and gate enforced, for a training
+session on its own database (`--db training.sqlite`). The server adds TRAINING, NOT THE RECORD to the page it sends:
+a strip on every screen, the sign-in screen included, the word Training in the tab title, and a mark at the top of
+every print and HTML download, the archive print included. Every file the page saves is named `TRAINING-<name>`, and
+the archive export's head carries `"training": "TRAINING, NOT THE RECORD"` (outside the extract hash, which is
+unchanged). Without the option nothing is added and the page is served as before. `FLIGHT_TRAINING` accepts 1, true,
+yes or on, and 0, false, no or off; any other value stops the server so a misspelled setting never starts an unmarked
+training server. Nothing stops a training server from opening a production database, so always give it its own
+`--db` file. Setup steps for a laptop rehearsal and an IT machine are in
+[`TRAINING_SERVER_SETUP.md`](TRAINING_SERVER_SETUP.md).
+
 ## Health check
 
 `GET /api/health` answers `{ "ok": true }` to anyone, for a load balancer or monitor. The product name,

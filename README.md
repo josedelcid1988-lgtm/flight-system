@@ -26,6 +26,10 @@ PostgreSQL is selected with `FLIGHT_DATABASE_URL`. See
 PostgreSQL integration check. The optional append-only browser mirror in
 `server/mirror/` is separate from the authenticated server.
 
+For a training session on a separate database, add `--training` (or set `FLIGHT_TRAINING=1`): every rule
+stays enforced and every page, print and download is marked TRAINING, NOT THE RECORD. See
+[`docs/TRAINING_SERVER_SETUP.md`](docs/TRAINING_SERVER_SETUP.md) and the sample data in `samples/training/`.
+
 For standalone use, open `index.html` with `assets/` beside it. Browser storage
 is local to that browser and is not shared with the server workspace.
 

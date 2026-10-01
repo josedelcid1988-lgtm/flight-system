@@ -1,0 +1,21 @@
+tag,description,torque,serial,calibratedAt,expires,status,location,note
+TRN-TW-001,TRAINING TORQUE WRENCH 20-100 IN-LB,Yes,TRN-SN-1001,2026-09-15,2027-09-15,In Calibration,Training Cell 1,Fake training tool. Not for acceptance.
+TRN-TW-002,TRAINING TORQUE WRENCH 20-100 IN-LB,Yes,TRN-SN-1002,2026-09-15,2027-09-15,In Calibration,Training Cell 1,Fake training tool. Not for acceptance.
+TRN-TW-003,TRAINING TORQUE WRENCH 30-150 IN-LB,Yes,TRN-SN-1003,2026-09-16,2027-09-16,In Calibration,Training Cell 2,Fake training tool. Not for acceptance.
+TRN-TW-004,TRAINING TORQUE WRENCH 30-150 IN-LB,Yes,TRN-SN-1004,2026-09-16,2027-09-16,In Calibration,Training Cell 2,Fake training tool. Not for acceptance.
+TRN-TW-005,TRAINING TORQUE WRENCH 5-75 FT-LB,Yes,TRN-SN-1005,2026-08-20,2027-08-20,In Calibration,Training Cell 3,Fake training tool. Not for acceptance.
+TRN-TW-006,TRAINING TORQUE WRENCH 5-75 FT-LB,Yes,TRN-SN-1006,2026-06-10,2027-06-10,Out for Calibration,Training Crib,Fake training tool. Sent out to show an unusable tool.
+TRN-TD-001,TRAINING TORQUE DRIVER 4-40 IN-LB,Yes,TRN-SN-1101,2026-09-10,2027-09-10,In Calibration,Training Cell 1,Fake training tool. Not for acceptance.
+TRN-TD-002,TRAINING TORQUE DRIVER 4-40 IN-LB,Yes,TRN-SN-1102,2026-09-10,2027-09-10,In Calibration,Training Cell 2,Fake training tool. Not for acceptance.
+TRN-TD-003,TRAINING TORQUE DRIVER 4-40 IN-LB,Yes,TRN-SN-1103,2026-09-11,2027-09-11,In Calibration,Training Cell 3,Fake training tool. Not for acceptance.
+TRN-CAL-001,TRAINING DIGITAL CALIPER 0-6 IN,No,TRN-SN-1201,2026-09-01,2027-09-01,In Calibration,Training Cell 1,Fake training tool. Not for acceptance.
+TRN-CAL-002,TRAINING DIGITAL CALIPER 0-6 IN,No,TRN-SN-1202,2026-09-01,2027-09-01,In Calibration,Training Cell 2,Fake training tool. Not for acceptance.
+TRN-CAL-003,TRAINING DIGITAL CALIPER 0-12 IN,No,TRN-SN-1203,2026-09-02,2027-09-02,In Calibration,Training Cell 3,Fake training tool. Not for acceptance.
+TRN-CAL-004,TRAINING DIGITAL CALIPER 0-6 IN,No,TRN-SN-1204,2026-07-15,2027-07-15,Quarantined,Training Crib,Fake training tool. Quarantined to show a blocked tool.
+TRN-MIC-001,TRAINING OUTSIDE MICROMETER 0-1 IN,No,TRN-SN-1301,2026-08-25,2027-08-25,In Calibration,Training Cell 1,Fake training tool. Not for acceptance.
+TRN-MIC-002,TRAINING OUTSIDE MICROMETER 1-2 IN,No,TRN-SN-1302,2026-08-25,2027-08-25,In Calibration,Training Cell 3,Fake training tool. Not for acceptance.
+TRN-HG-001,TRAINING HEIGHT GAUGE 0-12 IN,No,TRN-SN-1401,2026-08-05,2028-02-05,In Calibration,Training Cell 3,Fake training tool. Not for acceptance.
+TRN-PG-001,TRAINING PIN GAUGE SET 0.061-0.250 IN,No,TRN-SN-1501,2026-07-01,2028-01-01,In Calibration,Training Cell 3,Fake training tool. Not for acceptance.
+TRN-TG-001,TRAINING THREAD GAUGE 10-32 GO/NO-GO,No,TRN-SN-1601,2026-07-01,2028-01-01,In Calibration,Training Cell 1,Fake training tool. Not for acceptance.
+TRN-DMM-001,TRAINING DIGITAL MULTIMETER,No,TRN-SN-1701,2026-09-20,2027-09-20,In Calibration,Training Cell 2,Fake training tool. Not for acceptance.
+TRN-DMM-002,TRAINING DIGITAL MULTIMETER,No,TRN-SN-1702,2026-09-20,2027-09-20,In Calibration,Training Cell 2,Fake training tool. Not for acceptance.
