@@ -174,6 +174,10 @@ const writeBig3Collapsed = (username, collapsed) => { try { localStorage.setItem
 // workspace through the same engine commands (and, with a server, the same server actions) as Flight Plan.
 const plannerReadCopy = state => { try { return structuredClone(state); } catch { return JSON.parse(JSON.stringify(state)); } };
 
+function BigThreeAccept({ item, index }) {
+  return item.status === 'accepted' ? <span className="pill accepted">Accepted</span> : <button className="btn quiet" data-action="big3-decide" data-index={index} data-decision="accept">Accept</button>;
+}
+
 function BigThreeSlotActions({ index, block }) {
   return <>
     <label className="sr-only" htmlFor={`big3-reason-${index}`}>Reason for declining task {index + 1}</label><input id={`big3-reason-${index}`} className="big3-reason" maxLength="300" placeholder="Reason to decline"/>
@@ -206,7 +210,7 @@ function BigThree({ state, MES, variant = 'plan' }) {
   return <section className={`panel big3-panel fr-big3${hangar ? ' fr-big3-hangar' : ''}${collapsed ? ' is-collapsed' : ''}`} aria-labelledby={headingId} data-big3-variant={variant}>
     {hangar ? <div className="panel-head"><div className="fr-big3-title"><h2 id={headingId}>Today's Big Three</h2><span className="fr-big3-owner">Your day · {snap.username}</span></div>
       <div className="fr-big3-head-tools"><span className="fr-big3-date"><span className="fr-big3-day">{displayDate(date)} · </span><span data-big3-status>{status}</span> · {snap.total} open blocker{snap.total === 1 ? '' : 's'}</span>{actions}</div>
-      <button type="button" className="fr-big3-toggle" aria-expanded={!collapsed} aria-controls={bodyId} onClick={toggle}>{collapsed ? 'Show' : 'Hide'}<span className="sr-only"> Today's Big Three</span></button>
+      <button type="button" className="fr-big3-toggle" aria-expanded={!collapsed} aria-controls={collapsed ? undefined : bodyId} onClick={toggle}>{collapsed ? 'Show' : 'Hide'}<span className="sr-only"> Today's Big Three</span></button>
     </div> : <div className="panel-head"><div><p className="hero-eyebrow">Flight Plan · {snap.username}</p><h2 id={headingId}>Today's Big Three</h2></div><span className="fr-big3-date">{displayDate(date)}</span></div>}
     {!collapsed && <div id={hangar ? bodyId : undefined}>
     {slots.length ? <ol className="big3-list">{slots.map((slot, index) => {
@@ -223,10 +227,10 @@ function BigThree({ state, MES, variant = 'plan' }) {
         </div>
         {!hasPlan && task && !hangar && <span className="fr-big3-priority">Priority {index + 1}</span>}
         {hasPlan && !resolved && item?.t && (hangar ? <div className="big3-slot-actions fr-big3-quick">
-          {item.status === 'accepted' ? <span className="pill accepted">Accepted</span> : <button className="btn quiet" data-action="big3-decide" data-index={index} data-decision="accept">Accept</button>}
+          <BigThreeAccept item={item} index={index}/>
           <details className="fr-big3-more"><summary>Decline or schedule</summary><div className="fr-big3-more-body"><BigThreeSlotActions index={index} block={block}/></div></details>
         </div> : <div className="big3-slot-actions">
-          {item.status === 'accepted' ? <span className="pill accepted">Accepted</span> : <button className="btn quiet" data-action="big3-decide" data-index={index} data-decision="accept">Accept</button>}
+          <BigThreeAccept item={item} index={index}/>
           <BigThreeSlotActions index={index} block={block}/>
         </div>)}
       </li>;

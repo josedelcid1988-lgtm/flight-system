@@ -112,6 +112,7 @@ try {
   // 3. Collapse is remembered per person.
   await big3.locator('.fr-big3-toggle').click();
   check(await big3.locator('.big3-list').count() === 0 && await big3.locator('.fr-big3-toggle').getAttribute('aria-expanded') === 'false', 'Hide collapses the Hangar panel');
+  check(await big3.locator('.fr-big3-toggle').getAttribute('aria-controls') === null, 'the collapsed toggle does not point at a panel body that is not on the page');
   check(await quality.evaluate(() => localStorage.getItem('flight-system-big3-hangar-v1:quality')) === 'collapsed', 'the collapsed choice is stored for the signed-in person');
   // A fresh mount reads the choice back from storage, as a reload or the next visit does.
   await quality.evaluate(() => { window.FlightReact.unmount(); view = 'home'; render(); });
