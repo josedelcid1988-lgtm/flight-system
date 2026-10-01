@@ -267,6 +267,8 @@ try {
     ok('rejected recording branch', branches.rejected.some(t => /rejected recording/.test(t)), JSON.stringify(branches.rejected));
     const stepTool = await page.evaluate(() => { const o = state.orders.find(x => x.id === 'WO-10006'), op = structuredClone(o.operations.find(x => !x.done)); op.requiresTooling = false; op.steps = [{ id: 's1', title: 'Torque', instruction: 'Torque it.' }]; op.stepChecks = { s1: { torque: { tool: 'NOT-IN-LOG-1', value: '5', unit: 'in-lb' } } }; return buyoffPrereqs(o, op).map(x => x.text); });
     ok('a tool captured on a step that is not usable is listed as a blocker', stepTool.some(t => /NOT-IN-LOG-1/.test(t)), JSON.stringify(stepTool));
+    const conf = await page.evaluate(() => { const o = structuredClone(state.orders.find(x => x.operations.some(op => MES.isPartsConformityOperation(op)))); o.conformity = []; const op = o.operations.find(x => MES.isPartsConformityOperation(x)); return buyoffPrereqs(o, op).map(x => x.text + ' > ' + x.target); });
+    ok('an unfinished conformity package is listed, with a way to the checklist', conf.some(t => /^Part Conformity: finish Phases 1 to 6 .* > \.conf-op$/.test(t)), JSON.stringify(conf));
     ok('torque value branch', branches.torque.some(t => /^Enter the torque value applied with .* > #torque-/.test(t)), JSON.stringify(branches.torque));
     const eng = await page.evaluate(() => { const s = structuredClone(state), o = s.orders.find(x => x.id === 'WO-10006'), op = o.operations.find(x => !x.done); return MES.completeOperation(s, o.id, op.id, '', { stampNumber: MES.buyoffCredential(s.profile, op.buyoffType).holder?.number }); });
     ok('the engine still refuses a buy-off with the standard inspection unconfirmed', !eng.ok && /standard inspection|Check off/.test(eng.message), JSON.stringify(eng));
@@ -274,7 +276,9 @@ try {
     await page.evaluate(() => { const o = state.orders.find(x => x.id === 'WO-10006'), op = o.operations.find(x => !x.done); op.steps = []; op.stepChecks = {}; op.classification = MES.EXTERNAL_CLASS; op.externalPO = null; openOrder(o.id); });
     await page.waitForTimeout(400);
     const hold = await page.evaluate(() => { const b = document.querySelector('#operation-form .task-actions button[type=submit]'), r = document.getElementById('buyoff-hold-reason'); return { found: !!b, disabled: b?.disabled, described: b?.getAttribute('aria-describedby'), reason: r?.textContent.trim(), visible: !!r && r.offsetParent !== null }; });
-    ok('a held no-step buy-off shows its reason beside the disabled button', hold.found && hold.disabled && hold.visible && hold.reason === 'Add the NetSuite PO for this sub-processing operation.' && hold.described === 'buyoff-hold-reason', JSON.stringify(hold));
+    ok('a held no-step buy-off shows its reason beside the disabled button', hold.found && hold.disabled && hold.visible && hold.reason.startsWith('Add the NetSuite PO for this sub-processing operation.') && hold.described === 'buyoff-hold-reason', JSON.stringify(hold));
+    const goto = await page.evaluate(() => { const b = document.querySelector('#buyoff-hold-reason [data-action="buyoff-goto"]'); if (!b) return { found: false }; const target = b.dataset.target, text = b.textContent.trim(); b.click(); const el = document.querySelector(target); return { found: true, target, text, focusInside: !!el && (el === document.activeElement || el.contains(document.activeElement)) }; });
+    ok('the hold reason has a Go to button that moves focus to the PO', goto.found && goto.target === '.po-request-block' && /^Go to the PO/.test(goto.text) && goto.focusInside, JSON.stringify(goto));
     await page.context().close();
   }
 } catch (error) {
