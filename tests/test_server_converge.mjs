@@ -44,6 +44,8 @@ try {
   // The fixture ships an empty planned-order list; let the engine seed one so there are orders to lose.
   delete base.plannedOrders;
   FlightPlan.ensure(base);
+  // Move closed orders out now, as the first commit would, so the base can be stored again between checks.
+  assert.ok(MES.archiveOrders(base).ok, 'the base workspace archives its closed orders');
   assert.ok(MES.validate(base) && base.plannedOrders.length > 2 && base.stamps.length > 2, 'the base workspace has planned orders and a stamp register');
 
   // A planned-order list with one damaged entry (two orders share an id) and a planner's change on another order.
@@ -116,6 +118,36 @@ try {
       const etag = server.store.putDoc('default', json, current ? current.etag : null, 'converge-test');
       assert.ok(etag, 'the damaged workspace is stored');
       const result = await api('POST', '/workspace/actions/MES.setPriority', { token, body: { args: [order.id, 'AOG'] }, headers: { 'If-Match': etag } });
+      assert.equal(result.status, 422, JSON.stringify(result.json));
+      assert.match(result.json.error, pattern);
+      const after = server.store.getDoc('default');
+      assert.equal(after.etag, etag, 'nothing was committed');
+      assert.equal(after.json, json, 'the stored workspace is byte for byte unchanged');
+      assert.ok(kept(JSON.parse(after.json)), `the stored ${label} still holds its records`);
+    });
+  }
+
+  // Codex review of #220 (r4150944125, r4150944131): some actions run the initializer themselves before the
+  // write gate sees the state. issueStamp calls ensureStamps first, and addPlannedOrder replaces a planned-order
+  // value that is not a list with []. The stored registers are checked before any action runs, so neither can
+  // replace them either.
+  const wi = base.masterWIs.find(item => item.status === 'Released');
+  const need = new Date(Date.now() + 21 * 86400000).toISOString().slice(0, 10);
+  const planInput = { masterWI: `${wi.id}|${wi.revision}`, partNumber: wi.partNumber, revision: MES.partDefinition(wi.partNumber)?.revision, quantity: 1, needDate: need, need, pedigree: 'Production', subcategory: 'Mfg.', aircraft: MES.AIRCRAFT[0], site: MES.SITES[0], source: 'Converge test' };
+  const stampInput = { name: 'Converge Inspector', department: 'Quality', buyoffType: base.stamps.find(stamp => stamp.status === 'Active').buyoffType, expires: new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 10) };
+  const plainList = () => { const s = structuredClone(base); s.plannedOrders = { damaged: true }; return s; };
+  for (const [label, make, action, args, pattern, kept] of [
+    ['stamp register', damagedStamps, 'MES.issueStamp', [stampInput], /stamp register/i, s => s.stamps.some(stamp => stamp.account === 'inspector-a')],
+    ['planned-order list', plainList, 'FlightPlan.addPlannedOrder', [planInput], /planned order/i, s => s.plannedOrders && s.plannedOrders.damaged === true]
+  ]) {
+    await check(`${action}, which runs the initializer itself, is refused on a stored damaged ${label} and the stored copy is unchanged`, async () => {
+      const current = server.store.getDoc('default');
+      const intact = server.store.putDoc('default', JSON.stringify(base), current.etag, 'converge-test');
+      const control = await api('POST', `/workspace/actions/${action}`, { token, body: { args }, headers: { 'If-Match': intact } });
+      assert.equal(control.status, 200, `the same ${action} succeeds on an intact workspace: ${JSON.stringify(control.json)}`);
+      const json = JSON.stringify(make());
+      const etag = server.store.putDoc('default', json, control.etag, 'converge-test');
+      const result = await api('POST', `/workspace/actions/${action}`, { token, body: { args }, headers: { 'If-Match': etag } });
       assert.equal(result.status, 422, JSON.stringify(result.json));
       assert.match(result.json.error, pattern);
       const after = server.store.getDoc('default');

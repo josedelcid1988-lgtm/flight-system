@@ -229,7 +229,12 @@ export function createServer(options = {}) {
   const noteFailure = async username => { const r = await store.noteFailedSignin(username, LOCK_AFTER, Date.now() + LOCK_MS); if (r.locked) await store.audit(username, 'lockout', { minutes: LOCK_MS / 60000 }); return { n: r.fails, until: r.until }; };
 
   // The document as the engine sees it: upgraded, blockers synced, validated. Returns the state or a problem.
-  const loadState = async () => { const row = await store.getDoc(TENANT); if (!row) return { state: null, etag: null }; const parsed = JSON.parse(row.json); const state = host.MES.upgrade(structuredClone(parsed)); return { state, etag: row.etag, raw: parsed, problem: state ? null : (host.MES.diagnose(parsed) || {}).detail || 'The document does not match the current record format.' }; };
+  // registers names a stored stamp register or planned-order list that exists but is damaged. It is read from the
+  // stored copy before any engine code runs, because some actions run the initializer themselves (issueStamp calls
+  // ensureStamps; addPlannedOrder replaces a value that is not a list), and the write gate would only see the
+  // replacement (Codex review of #220). A write path refuses when it is set; reads are unaffected.
+  const registerProblem = state => host.MES.stampRegisterProblem?.(state) || host.FlightPlan.plannedOrdersProblem?.(state) || null;
+  const loadState = async () => { const row = await store.getDoc(TENANT); if (!row) return { state: null, etag: null }; const parsed = JSON.parse(row.json); const state = host.MES.upgrade(structuredClone(parsed)); return { state, etag: row.etag, raw: parsed, registers: state ? registerProblem(state) : null, problem: state ? null : (host.MES.diagnose(parsed) || {}).detail || 'The document does not match the current record format.' }; };
   // Derived-state convergence: the browser engine recomputes these on boot, refresh and render
   // without ever queuing them as commands (planning blockers, assignment auto-close, master WI /
   // plan / maneuver defaults). The server runs them here, inside every commit path, before
@@ -701,6 +706,7 @@ export function createServer(options = {}) {
         const loaded = await loadState();
         if (!loaded.state) { send(res, 404, { error: 'The shared workspace is not initialized.' }); return; }
         if (loaded.problem) { send(res, 422, { error: `The shared workspace cannot be used: ${loaded.problem}` }); return; }
+        if (loaded.registers) { send(res, 422, { error: `The shared workspace cannot be used: ${loaded.registers}` }); return; }
         const state = loaded.state;
         let record, issue, capability, linkAction;
         if (recordType === 'ECR') {
@@ -831,8 +837,9 @@ export function createServer(options = {}) {
           if (!modelAdapterSettings.includes(settingName) || !String(process.env[settingName] || '').trim()) { send(res, 422, { error: 'The named server environment setting is not configured for the model adapter. Ask the server operator to set it and list it in FLIGHT_MODEL_ADAPTER_SETTINGS. The model adapter remains off.' }); return; }
           args.push(true); // This flag is derived by the server, never accepted from the client.
         }
-        const { state, etag, problem, raw } = await loadState();
+        const { state, etag, problem, raw, registers } = await loadState();
         if (!state) { send(res, problem ? 422 : 404, { error: problem || 'No workspace yet.' }); return; }
+        if (registers) { send(res, 422, { error: registers }); return; }
         const ifMatch = req.headers['if-match'] || null;
         if (!ifMatch) { send(res, 428, { error: 'Include the current workspace ETag in If-Match before running an action.' }); return; }
         if (ifMatch && ifMatch !== etag) { send(res, 409, { error: 'The workspace changed on another device. Reload to continue.', etag }); return; }
