@@ -301,11 +301,20 @@ export function createServer(options = {}) {
   // summary and the record digest. Run when a workspace initializes the server and when the server starts on a stored
   // workspace, so history left from another workspace or brought back by a partial restore is refused, not served.
   // Returns a plain refusal or null.
+  const CALIBRATION_ARCHIVE_SCAN_PAGE = 1000;
   const calibrationArchiveProblem = async state => {
     const named = (state && state.calibrationLogHead && Array.isArray(state.calibrationLogHead.archived) ? state.calibrationLogHead.archived : []).flatMap(record => (record && record.manifest && record.manifest.subject && Array.isArray(record.manifest.subject.entries) ? record.manifest.subject.entries : []).map(summary => summary && summary.id));
+    // Read the whole table in pages of CALIBRATION_ARCHIVE_SCAN_PAGE rows, not one query per entry, then check in memory.
+    const rows = new Map();
+    for (let after = ''; ;) {
+      const page = await store.calibrationArchiveRows(after, CALIBRATION_ARCHIVE_SCAN_PAGE);
+      for (const row of page) rows.set(row.id, row);
+      if (page.length < CALIBRATION_ARCHIVE_SCAN_PAGE) break;
+      after = page[page.length - 1].id;
+    }
     const held = [];
     for (const id of named) {
-      const row = await store.calibrationArchived(id);
+      const row = rows.get(id);
       if (!row) continue;
       if (sha256hex(JSON.stringify(row.entry)) !== row.sha256) return `Archived calibration entry ${id} on this server no longer matches the SHA-256 it was stored with. Restore the server database from a good backup. Nothing was saved.`;
       // The indexed tool column is what the listing filters on, so it must be the signed entry's tool.
@@ -315,7 +324,7 @@ export function createServer(options = {}) {
     const heldProblem = host.MES.calibrationArchiveHeldProblem(state, held);
     if (heldProblem) return heldProblem;
     // Every row in the table must be one the workspace's archive records name: rows from elsewhere are not this history.
-    const namedIds = new Set(named), unnamed = (await store.calibrationArchiveIds()).filter(id => !namedIds.has(id));
+    const namedIds = new Set(named), unnamed = [...rows.keys()].filter(id => !namedIds.has(id));
     if (unnamed.length) return `This server's calibration archive holds ${unnamed.length} entr${unnamed.length === 1 ? 'y' : 'ies'} that no archive record in the workspace names, starting with ${unnamed.slice(0, 5).join(', ')}. They belong to other history. Restore the server database that holds this workspace's calibration archive. Nothing was saved.`;
     return null;
   };

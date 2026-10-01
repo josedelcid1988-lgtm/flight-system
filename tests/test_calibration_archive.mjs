@@ -390,6 +390,42 @@ const setUpAccounts = async call => {
       check('the server refuses to initialize when a stored row files an archived entry under another tool', refusedTag.status === 422 && /CALLOG-00004/.test(refusedTag.json?.error || '') && /tool|tag/.test(refusedTag.json?.error || '') && !tagged.server.store.getDoc('default'), JSON.stringify(refusedTag.json));
     } finally { tagged.server.store.close(); }
   }
+  {
+    // Codex review on #194: the archive check reads the table in pages, not one query per archived entry, so a
+    // long-lived archive does not cost a database round trip per entry at startup or initialization.
+    const batched = makeServer();
+    await batched.server.ready;
+    try {
+      await setUpAccounts(batched.call);
+      const batchedToken = await signIn(batched.call, 'arc-admin');
+      const moved = structuredClone(before);
+      as(qa, moved, () => MES.recordCalibrationArchive(moved));
+      for (const id of ['CALLOG-00001', 'CALLOG-00003', 'CALLOG-00004', 'CALLOG-00006', 'CALLOG-00008']) {
+        const e = before.calibrationLog.find(x => x.id === id), json = JSON.stringify(e);
+        batched.server.store.putCalibrationArchived({ id, tag: e.tag, recordId: 'CALARC-0001', json, sha256: sha256(json), by: 'restore' });
+      }
+      const lookup = batched.server.store.calibrationArchived;
+      let lookups = 0;
+      batched.server.store.calibrationArchived = id => { lookups += 1; return lookup.call(batched.server.store, id); };
+      const accepted = await batched.call('PUT', '/api/workspace', { token: batchedToken, body: moved });
+      check('the server checks a held calibration archive without one lookup per archived entry', accepted.status === 204 && lookups === 0, `${accepted.status} ${lookups} ${JSON.stringify(accepted.json)}`);
+    } finally { batched.server.store.close(); }
+  }
+  {
+    // More rows than one page holds: the paged scan still sees every one of them.
+    const many = makeServer();
+    await many.server.ready;
+    try {
+      await setUpAccounts(many.call);
+      const manyToken = await signIn(many.call, 'arc-admin');
+      for (let n = 0; n < 1205; n++) {
+        const id = `CALLOG-${String(10001 + n).padStart(5, '0')}`, e = { ...before.calibrationLog[0], id }, json = JSON.stringify(e);
+        many.server.store.putCalibrationArchived({ id, tag: e.tag, recordId: 'CALARC-0009', json, sha256: sha256(json), by: 'someone-else' });
+      }
+      const refusedMany = await many.call('PUT', '/api/workspace', { token: manyToken, body: before });
+      check('the paged archive check counts every unnamed row across pages', refusedMany.status === 422 && /1205 entries/.test(refusedMany.json?.error || '') && /CALLOG-10001/.test(refusedMany.json?.error || ''), JSON.stringify(refusedMany.json));
+    } finally { many.server.store.close(); }
+  }
   // A workspace that names archived entries the server does not hold is refused at initialization.
   const { server, call } = makeServer();
   await server.ready;

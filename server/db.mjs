@@ -159,7 +159,8 @@ export function openDb(path) {
     },
     // ---- archived calibration entries (#130) ----
     calibrationArchived(id) { const r = db.prepare('SELECT entry_id, tag, record_id, json, sha256, archived_at, archived_by FROM calibration_archive WHERE entry_id = ?').get(id); return r ? { id: r.entry_id, tag: r.tag, recordId: r.record_id, entry: JSON.parse(r.json), sha256: r.sha256, archivedAt: r.archived_at, archivedBy: r.archived_by } : null; },
-    calibrationArchiveIds() { return db.prepare('SELECT entry_id FROM calibration_archive ORDER BY entry_id').all().map(r => r.entry_id); },
+    // Full rows in entry id order after the given entry id, one page at a time, for the startup and initialization check.
+    calibrationArchiveRows(after = '', limit = 1000) { return db.prepare('SELECT entry_id, tag, record_id, json, sha256 FROM calibration_archive WHERE entry_id > ? ORDER BY entry_id LIMIT ?').all(String(after || ''), limit).map(r => ({ id: r.entry_id, tag: r.tag, recordId: r.record_id, entry: JSON.parse(r.json), sha256: r.sha256 })); },
     putCalibrationArchived(e) { db.prepare('INSERT INTO calibration_archive (entry_id, tag, record_id, json, sha256, archived_at, archived_by) VALUES (?, ?, ?, ?, ?, ?, ?)').run(e.id, e.tag, e.recordId, e.json, e.sha256, now(), e.by || null); },
     // The archived entries for one tool, or all of them, in entry id order after the given entry id (a page cursor).
     calibrationArchiveList(tag, limit = 500, after = '') {
