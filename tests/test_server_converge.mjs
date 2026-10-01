@@ -157,6 +157,23 @@ try {
     });
   }
 
+  // Codex review of #220 (r4151179105): a workspace the server has converged carries planning blockers, and on it
+  // MES.upgrade itself throws on a planned-order value that is not a list. That must still be the plain 422 refusal,
+  // not an unexpected-failure response.
+  await check('a stored, converged workspace whose planned orders are not a list gets the plain refusal, not an unexpected failure', async () => {
+    const converged = structuredClone(base);
+    MES.syncBlockers(converged);
+    converged.plannedOrders = { damaged: true };
+    assert.throws(() => MES.upgrade(structuredClone(converged)), 'the engine upgrade throws on this workspace');
+    const current = server.store.getDoc('default');
+    const json = JSON.stringify(converged);
+    const etag = server.store.putDoc('default', json, current.etag, 'converge-test');
+    const result = await api('POST', '/workspace/actions/MES.setPriority', { token, body: { args: [order.id, 'AOG'] }, headers: { 'If-Match': etag } });
+    assert.equal(result.status, 422, JSON.stringify(result.json));
+    assert.match(result.json.error, /planned order/i);
+    assert.equal(server.store.getDoc('default').json, json, 'the stored workspace is byte for byte unchanged');
+  });
+
   await check('the same action on an intact stored workspace is committed', async () => {
     const current = server.store.getDoc('default');
     const etag = server.store.putDoc('default', JSON.stringify(base), current.etag, 'converge-test');

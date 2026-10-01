@@ -234,7 +234,9 @@ export function createServer(options = {}) {
   // ensureStamps; addPlannedOrder replaces a value that is not a list), and the write gate would only see the
   // replacement (Codex review of #220). A write path refuses when it is set; reads are unaffected.
   const registerProblem = state => host.MES.stampRegisterProblem?.(state) || host.FlightPlan.plannedOrdersProblem?.(state) || null;
-  const loadState = async () => { const row = await store.getDoc(TENANT); if (!row) return { state: null, etag: null }; const parsed = JSON.parse(row.json); const state = host.MES.upgrade(structuredClone(parsed)); return { state, etag: row.etag, raw: parsed, registers: state ? registerProblem(state) : null, problem: state ? null : (host.MES.diagnose(parsed) || {}).detail || 'The document does not match the current record format.' }; };
+  // A damaged planned-order value can make MES.upgrade itself throw (planning blockers read it as a list); that is
+  // reported as the same plain register problem, not an unexpected failure (Codex review of #220).
+  const loadState = async () => { const row = await store.getDoc(TENANT); if (!row) return { state: null, etag: null }; const parsed = JSON.parse(row.json); let state; try { state = host.MES.upgrade(structuredClone(parsed)); } catch (e) { const damaged = registerProblem(parsed); if (damaged) return { state: null, etag: row.etag, raw: parsed, registers: damaged, problem: damaged }; throw e; } return { state, etag: row.etag, raw: parsed, registers: state ? registerProblem(state) : null, problem: state ? null : (host.MES.diagnose(parsed) || {}).detail || 'The document does not match the current record format.' }; };
   // Derived-state convergence: the browser engine recomputes these on boot, refresh and render
   // without ever queuing them as commands (planning blockers, assignment auto-close, master WI /
   // plan / maneuver defaults). The server runs them here, inside every commit path, before
@@ -704,7 +706,7 @@ export function createServer(options = {}) {
         const body = await readJson(req), recordType = String(body.recordType || '').toUpperCase(), recordId = String(body.recordId || '').trim();
         if (!['ECR', 'SPR', 'SCAR'].includes(recordType) || !/^[A-Z0-9-]{3,40}$/.test(recordId)) { send(res, 400, { error: 'Choose a supported Flight Jira record and its record ID.' }); return; }
         const loaded = await loadState();
-        if (!loaded.state) { send(res, 404, { error: 'The shared workspace is not initialized.' }); return; }
+        if (!loaded.state && !loaded.problem) { send(res, 404, { error: 'The shared workspace is not initialized.' }); return; }
         if (loaded.problem) { send(res, 422, { error: `The shared workspace cannot be used: ${loaded.problem}` }); return; }
         if (loaded.registers) { send(res, 422, { error: `The shared workspace cannot be used: ${loaded.registers}` }); return; }
         const state = loaded.state;
