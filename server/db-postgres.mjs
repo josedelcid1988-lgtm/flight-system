@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { evidenceIdsInOrder } from './evidence-refs.mjs';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS documents (tenant TEXT PRIMARY KEY, json TEXT NOT NULL, etag TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, updated_by TEXT);
@@ -64,12 +65,49 @@ const hashAudit = row => createHash('sha256').update(JSON.stringify({ id: Number
 const tokenHash = token => createHash('sha256').update(String(token)).digest('hex');
 const etagFor = (value, revision) => `"${revision}-${createHash('sha256').update(value).digest('hex').slice(0, 16)}"`;
 
+const archivedEvidenceIds = json => { try { return evidenceIdsInOrder(parsed(json)?.order); } catch { return new Set(); } };
+
+// The evidence references of each archived order (see server/evidence-refs.mjs) and, per order, a marker that its
+// references are recorded. putArchived writes both with the archive row. reconcileArchiveEvidence records any archived
+// order without a marker: an older database's whole archive at the first start, and any order archived by a server
+// still on an earlier release (which writes neither) at the next start or the next lookup that misses. Every insert
+// skips a row already there, so two servers reconciling at once is harmless.
+const ARCHIVE_EVIDENCE_SCHEMA = `CREATE TABLE IF NOT EXISTS archive_evidence (evidence_id TEXT NOT NULL, order_id TEXT NOT NULL, PRIMARY KEY (evidence_id, order_id));
+CREATE TABLE IF NOT EXISTS archive_evidence_indexed (order_id TEXT PRIMARY KEY);`;
+async function recordArchiveEvidence(query, orderId, json) {
+  for (const id of archivedEvidenceIds(json)) await query('INSERT INTO archive_evidence (evidence_id,order_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [id, orderId]);
+  await query('INSERT INTO archive_evidence_indexed (order_id) VALUES ($1) ON CONFLICT DO NOTHING', [orderId]);
+}
+// One pass covers the archive as it stood when the pass started: the highest order_id then is the end, and a key cursor
+// walks up to it, so every row is visited at most once and a server still archiving on an earlier release cannot keep
+// the pass (a start, or a lookup that missed) running. Rows archived after the pass began are indexed by the next pass.
+async function reconcileArchiveEvidence(pool) {
+  const end = (await pool.query('SELECT MAX(order_id) AS last FROM archive')).rows[0]?.last;
+  if (end == null) return;
+  for (let after = '';;) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const rows = (await client.query('SELECT a.order_id, a.json FROM archive a WHERE a.order_id > $1 AND a.order_id <= $2 AND NOT EXISTS (SELECT 1 FROM archive_evidence_indexed i WHERE i.order_id = a.order_id) ORDER BY a.order_id LIMIT 200', [after, end])).rows;
+      for (const row of rows) await recordArchiveEvidence(client.query.bind(client), row.order_id, row.json);
+      await client.query('COMMIT');
+      if (!rows.length) return;
+      after = rows[rows.length - 1].order_id;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally { client.release(); }
+  }
+}
+
 export async function openPostgres(connectionString, options = {}) {
   if (!connectionString) throw new Error('Set FLIGHT_DATABASE_URL to enable PostgreSQL storage.');
   const { Pool } = await import('pg');
   const pool = new Pool({ connectionString, max: Number(options.maxConnections) || 10, application_name: 'Flight System' });
   try {
     await pool.query(SCHEMA);
+    await pool.query(ARCHIVE_EVIDENCE_SCHEMA);
+    await reconcileArchiveEvidence(pool);
     const store = makeStore(pool, pool.query.bind(pool), false, connectionString);
     // Refuse to start on a tampered audit trail, as the SQLite store does: a server that kept running would append new
     // entries to a chain that no longer verifies.
@@ -255,7 +293,7 @@ function makeStore(pool, query, inTransaction, connectionString) {
     async lockouts(at = Date.now()) { return (await query('SELECT username,fails,locked_until,last_failed_at FROM lockouts WHERE locked_until>$1 ORDER BY locked_until DESC', [at])).rows.map(r => ({ username: r.username, until: new Date(Number(r.locked_until)).toISOString(), lastFailedAt: r.last_failed_at })); },
     async archived(id) { const r = (await query('SELECT order_id,json,sha256,schema,archived_at,archived_by FROM archive WHERE order_id=$1', [id])).rows[0]; return r ? { id: r.order_id, entry: parsed(r.json), sha256: r.sha256, schema: Number(r.schema), archivedAt: r.archived_at, archivedBy: r.archived_by } : null; },
     async archivedSha(id) { return (await query('SELECT sha256 FROM archive WHERE order_id=$1', [id])).rows[0]?.sha256 || null; },
-    async putArchived(e) { await query('INSERT INTO archive (order_id,json,sha256,schema,part_number,serials,lots,parts,title,closed_at,archived_at,archived_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)', [e.id,e.json,e.sha256,e.schema,e.keys.partNumber||null,json(e.keys.serials),json(e.keys.lots),json(e.keys.parts),e.keys.title||null,e.keys.closedAt||null,now(),e.by||null]); },
+    async putArchived(e) { await query('INSERT INTO archive (order_id,json,sha256,schema,part_number,serials,lots,parts,title,closed_at,archived_at,archived_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)', [e.id,e.json,e.sha256,e.schema,e.keys.partNumber||null,json(e.keys.serials),json(e.keys.lots),json(e.keys.parts),e.keys.title||null,e.keys.closedAt||null,now(),e.by||null]); await recordArchiveEvidence(query, e.id, e.json); },
     async calibrationArchived(id) { const r = (await query('SELECT entry_id,tag,record_id,json,sha256,archived_at,archived_by FROM calibration_archive WHERE entry_id=$1', [id])).rows[0]; return r ? { id: r.entry_id, tag: r.tag, recordId: r.record_id, entry: parsed(r.json), sha256: r.sha256, archivedAt: r.archived_at, archivedBy: r.archived_by } : null; },
     async calibrationArchiveRows(after = '', limit = 1000) { return (await query('SELECT entry_id,tag,record_id,json,sha256 FROM calibration_archive WHERE entry_id>$1 ORDER BY entry_id LIMIT $2', [String(after || ''), limit])).rows.map(r => ({ id: r.entry_id, tag: r.tag, recordId: r.record_id, entry: parsed(r.json), sha256: r.sha256 })); },
     async putCalibrationArchived(e) { await query('INSERT INTO calibration_archive (entry_id,tag,record_id,json,sha256,archived_at,archived_by) VALUES ($1,$2,$3,$4,$5,$6,$7)', [e.id, e.tag, e.recordId, e.json, e.sha256, now(), e.by || null]); },
@@ -264,7 +302,15 @@ function makeStore(pool, query, inTransaction, connectionString) {
       const rows = t ? (await query('SELECT entry_id,tag,record_id,json,archived_at FROM calibration_archive WHERE tag=$1 AND entry_id>$2 ORDER BY entry_id LIMIT $3', [t, a, limit])).rows : (await query('SELECT entry_id,tag,record_id,json,archived_at FROM calibration_archive WHERE entry_id>$1 ORDER BY entry_id LIMIT $2', [a, limit])).rows;
       return rows.map(r => { const e = parsed(r.json); return { id: r.entry_id, tag: r.tag, recordId: r.record_id, status: e.status, calibratedAt: e.calibratedAt, expires: e.expires, recordedAt: e.recordedAt, recordedBy: e.recordedBy, archivedAt: r.archived_at }; });
     },
-    async archiveNamesEvidence(id) { return (await query('SELECT 1 AS found FROM archive WHERE position($1 in json) > 0 LIMIT 1', [JSON.stringify(String(id))])).rows.length > 0; },
+    // Same rule as the SQLite store: the references recorded at archive time, one indexed lookup; a miss first records
+    // any order a previous-release server archived.
+    async archiveNamesEvidence(id) {
+      const find = async () => (await query('SELECT 1 AS found FROM archive_evidence WHERE evidence_id=$1 LIMIT 1', [String(id)])).rows.length > 0;
+      if (await find()) return true;
+      if (inTransaction) return false;
+      await reconcileArchiveEvidence(pool);
+      return find();
+    },
     async archiveCount() { return Number((await query('SELECT COUNT(*) AS c FROM archive')).rows[0].c); },
     async archiveSearch(term, limit = 200) {
       const q = String(term || '').trim().toUpperCase();
