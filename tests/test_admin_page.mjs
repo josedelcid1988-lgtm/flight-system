@@ -47,6 +47,8 @@ const deep=await run(()=>({view,user:skAuth.user()?.username,refused:!!document.
 ok('the #admin deep link is refused for a non-manager after reload',deep.view==='admin'&&deep.refused&&!deep.tabs,JSON.stringify(deep));
 await run(()=>profileDialog());
 const plain=await run(()=>{const d=document.getElementById('dialog');const r={open:d.open,admin:d.querySelectorAll('details.access-panel,.stamp-register,#stamp-issue-form,#stamp-import-form,#training-form,#training-record-form,#msds-book-form,[data-role-user],[data-grant-user]').length,own:!!d.querySelector('.own-profile'),openAdmin:!!d.querySelector('[data-action="open-admin"]'),switch:!!d.querySelector('#account-switch-form'),form:!!d.querySelector('#profile-form'),signout:/Sign out/.test(d.textContent),stamps:!!d.querySelector('.own-stamps')};d.close();return r;});
+const guide=await run(()=>document.querySelector('#dialog .own-profile')?.textContent||document.getElementById('dialog').textContent);
+ok('Your credentials tells a non-manager that only Master Access or a QA Manager issues and changes stamps',/Stamps are issued and changed only by a Master Access or QA Manager account/.test(guide)&&!/Roles, training and stamps are changed by a Master Access, QA Manager or Quality Supervisor/.test(guide),guide.slice(0,400));
 ok('Your credentials for a non-manager: own profile, own stamps, account switch, credential choice and sign out; no admin section and no Admin link',plain.open&&plain.admin===0&&plain.own&&!plain.openAdmin&&plain.switch&&plain.form&&plain.signout&&plain.stamps,JSON.stringify(plain));
 
 // ---------------- a manager: every tab, every moved action ----------------
@@ -58,6 +60,8 @@ await run(()=>{view='home';render();});
 ok('pqm: the Admin entry is shown to an account that manages access',await run(()=>skAuth.can('manage-access')&&!document.querySelector('[data-admin-nav]').hidden));
 await p.getByRole('button',{name:'Admin',exact:true}).click();
 await p.getByRole('heading',{name:'Admin',exact:true}).waitFor();
+const heading=await run(()=>document.querySelector('.admin-page .page-heading').textContent);
+ok('the Admin heading claims a reason only for the changes that ask for one',/recorded with your name and the time/.test(heading)&&/Authority grants, added or removed roles and training requirement changes also record the reason/.test(heading)&&!/recorded with your name and its reason/.test(heading),heading);
 const tabs=await run(()=>[...document.querySelectorAll('[role=tab][data-admin-tab]')].map(t=>({k:t.dataset.adminTab,name:t.textContent,sel:t.getAttribute('aria-selected'),panel:!!document.getElementById(t.getAttribute('aria-controls'))})));
 ok('pqm sees the four tabs, each with its panel, Accounts and roles first',JSON.stringify(tabs.map(t=>t.name))===JSON.stringify(['Accounts and roles','Training','Stamps','Master SDS book'])&&tabs.every(t=>t.panel)&&tabs[0].sel==='true',JSON.stringify(tabs));
 const panels=await run(()=>({acc:!!document.querySelector('#admin-panel-accounts details.access-panel [data-access-add]'),tr:!!document.querySelector('#admin-panel-training #training-form')&&!!document.querySelector('#admin-panel-training #training-record-form'),st:!!document.querySelector('#admin-panel-stamps .stamp-register #stamp-issue-form')&&!!document.querySelector('#admin-panel-stamps #stamp-import-form'),sds:!!document.querySelector('#admin-panel-sds #msds-book-form'),hidden:['training','stamps','sds'].every(k=>document.getElementById('admin-panel-'+k).hidden)}));
@@ -187,6 +191,33 @@ ok('1024: account table buttons (Reset password, More roles) stay on one line',a
 await p.click('[data-admin-tab="training"]');
 const trainReason=await run(()=>{const ta=document.querySelector('#training-form textarea[name=reason]'),label=ta.closest('label');const r=document.createRange();r.selectNodeContents(label.firstChild);return r.getBoundingClientRect().bottom<=ta.getBoundingClientRect().top+0.5;});
 ok('1024: the training form Reason label sits above its box',trainReason);
+
+// ---------------- stamp state reads as the buy-off gate reads it ----------------
+await as('pqm');await openAdmin();await p.click('[data-admin-tab="stamps"]');
+const rowFlag=id=>run(id=>{const el=document.querySelector(`[data-stamp-status="${id}"]`);const tr=el&&el.closest('tr');return tr?[...tr.querySelectorAll('.pill')].map(x=>x.textContent).join('|'):'';},id);
+// An additional stamp whose qualifying training lapses is refused at buy-off, so the register must not say OK.
+const extra=await run(f=>{const r=MES.issueStamp(state,{name:'Kai Quality',buyoffType:'Engineering',account:'kqe',expires:f,trainingCode:'ESD'});save();return r;},future());
+ok('setup: an additional Engineering stamp for kqe on current ESD training',extra.ok,JSON.stringify(extra));
+await run(()=>{render();});await p.click('[data-admin-tab="stamps"]');
+ok('an additional stamp on current training reads OK',/\bOK\b/.test(await rowFlag(extra.id)),await rowFlag(extra.id));
+await run(()=>{window.__esd=JSON.stringify(state.trainingRecords);state.trainingRecords.filter(r=>r.account==='kqe'&&r.code==='ESD').forEach(r=>{r.expires='2020-01-01';});render();});
+await p.click('[data-admin-tab="stamps"]');
+const lapsed={gate:await run(()=>MES.trainingCurrentFor(state,'kqe','ESD').ok),flag:await rowFlag(extra.id)};
+ok('an additional stamp whose ESD training lapsed reads Needs current ESD training, not OK',!lapsed.gate&&/Needs current ESD training/.test(lapsed.flag)&&!/\bOK\b/.test(lapsed.flag),JSON.stringify(lapsed));
+await run(()=>{state.trainingRecords=JSON.parse(window.__esd);render();});
+// A stamp expiring today (Pacific) is still valid in the evening, when the UTC date has moved on.
+const pday=ms=>new Date(ms).toLocaleDateString('en-CA',{timeZone:'America/Los_Angeles'});
+const E=pday(Date.now()+2*86400000);
+const late=await run(e=>{const r=MES.issueStamp(state,{name:'Kai Quality',buyoffType:'A&P',account:'kqe',expires:e,trainingCode:'ESD'});save();return r;},E);
+ok('setup: a stamp expiring in two days',late.ok,JSON.stringify(late));
+await p.clock.setFixedTime(new Date(`${E}T23:30:00-07:00`));
+await run(()=>{render();document.querySelector('[data-admin-tab="stamps"]').click();});
+const eve={utc:await run(()=>new Date().toISOString().slice(0,10)),flag:await rowFlag(late.id)};
+ok('at 23:30 Pacific on its expiry day the stamp reads Expires soon, not Expired (UTC date '+eve.utc+')',eve.utc>E&&/Expires soon/.test(eve.flag)&&!/Expired/.test(eve.flag),JSON.stringify(eve));
+await p.clock.setFixedTime(new Date(`${pday(new Date(`${E}T23:30:00-07:00`).getTime()+86400000)}T09:00:00-07:00`));
+await run(()=>{render();document.querySelector('[data-admin-tab="stamps"]').click();});
+ok('the next Pacific morning the same stamp reads Expired',/Expired/.test(await rowFlag(late.id)),await rowFlag(late.id));
+await p.clock.setFixedTime(new Date());
 
 // ---------------- the accounts table at phone width ----------------
 await p.setViewportSize({width:375,height:812});await p.click('[data-admin-tab="accounts"]');await p.waitForTimeout(400);
