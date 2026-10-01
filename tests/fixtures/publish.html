@@ -14553,10 +14553,10 @@ window.SK_MIRROR = window.SK_MIRROR || {
     // device as deleted when it is absent from the snapshot and its last record was written before takenAt, which
     // also covers deletions made before tombstones existed. Its list is rebuilt from the saved workspace just
     // before it is sent (refreshSnapshots), so another tab's entity saved meanwhile is listed, and one saved after
-    // that read carries a later time. Without a trusted workspace the recovery stays pending (client.recoveryPending)
+    // that read carries a later time. Without a trusted workspace the recovery stays pending (RECOVERY_KEY)
     // and runs again once one is available, so the deletions and snapshot are not lost.
-    if (!ws) { client.recoveryPending = true; resentAt = new Date().toISOString(); persist(); return; }
-    client.recoveryPending = false;
+    if (!ws) { setRecoveryPending(true); resentAt = new Date().toISOString(); persist(); return; }
+    setRecoveryPending(false);
     pageSeq += 1;
     queue.push({ clientWriteId: client.id + '-' + pageId + '-' + pageSeq, storeKey: wsKey, entityType: 'snapshot', entityId: client.id, operation: 'upsert', payloadJson: '', payloadSha256: '', actor: acct ? acct.name + ' · ' + acct.credentialId : null, credential: acct ? acct.credentialId : null, clientTs: now, buildVersion: b.version, buildSha256: b.sha256, manifests: [], synced: false });
     resentAt = new Date().toISOString();
@@ -14569,7 +14569,7 @@ window.SK_MIRROR = window.SK_MIRROR || {
   function refreshSnapshots() {
     if (!queue.some(function (r) { return r.entityType === 'snapshot' && !r.rejected; })) return;
     var wsKey = typeof KEY !== 'undefined' ? KEY : 'skyryse-mes-work-order-v1', ws = recoveryWorkspace(wsKey);
-    if (!ws) { queue = queue.filter(function (r) { return r.entityType !== 'snapshot'; }); client.recoveryPending = true; return; }
+    if (!ws) { queue = queue.filter(function (r) { return r.entityType !== 'snapshot'; }); setRecoveryPending(true); return; }
     var keys = Object.keys(entities(ws, wsKey)).concat(Object.keys(accountEntities())).sort();
     queue.forEach(function (r) {
       if (r.entityType !== 'snapshot' || r.rejected) return;
@@ -14580,9 +14580,18 @@ window.SK_MIRROR = window.SK_MIRROR || {
       r.payloadJson = json; r.payloadSha256 = hash(json); r.clientTs = now;
     });
   }
+  // A pending recovery is kept under its own key, which only a recovery sets or clears, so a tab that holds an older
+  // copy of the client record cannot drop it when it saves that record; this tab's own setting is also kept in
+  // memory in case the browser refuses the write.
+  var RECOVERY_KEY = 'skyryse-mes-sync-recovery-v1', memRecovery = false;
+  function recoveryPending() { return memRecovery || read(RECOVERY_KEY, false) === true; }
+  function setRecoveryPending(on) {
+    memRecovery = on;
+    try { if (on) localStorage.setItem(RECOVERY_KEY, 'true'); else localStorage.removeItem(RECOVERY_KEY); } catch (e) { memoryOnly = true; }
+  }
   // A recovery left pending (no trusted workspace when it ran) runs once one is available.
   function retryRecovery() {
-    if (!client.recoveryPending) return;
+    if (!recoveryPending()) return;
     if (recoveryWorkspace(typeof KEY !== 'undefined' ? KEY : 'skyryse-mes-work-order-v1')) resendAll();
   }
   function status() { return { enabled: true, ack: currentAck().ack, unsynced: queue.length, rejected: queue.filter(function (r) { return r.rejected; }).length, lastError: lastError, lastSyncAt: lastSyncAt, clientId: client.id, memoryOnly: memoryOnly, url: base, resentAt: resentAt }; }
@@ -14613,7 +14622,7 @@ window.SK_MIRROR = window.SK_MIRROR || {
   // acknowledgement to probe with from then on.
   var probe = function () {
     if (needBaseline && !pending().length && !currentAck().ack) { needBaseline = false; resendAll(); return flush(); }
-    if (client.recoveryPending) { retryRecovery(); if (pending().length) return flush(); }
+    if (recoveryPending()) { retryRecovery(); if (pending().length) return flush(); }
     return pending().length ? flush() : flush(true);
   };
   window.addEventListener('online', function () { attempt = 0; if (pending().length) schedule(0); else probe(); });

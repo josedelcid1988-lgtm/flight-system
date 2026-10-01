@@ -499,7 +499,8 @@ const snapshots=()=>m.db.prepare("SELECT id,payload_json FROM records WHERE enti
  await p.evaluate(()=>{state=JSON.parse(localStorage.getItem(KEY));lastSaved=structuredClone(state);});}
 // A saved workspace that fails validation is not trusted: no snapshot is sent and no workspace entity is marked
 // deleted; the account records are still sent again.
-{const OTHER='skyryse-mes-sync-ack-v1:page-other-tab';let staged=false;const e0=(await devAck()).epoch;const before=snapshots().length;
+{const tabB=await ctx.newPage();tabB.on('pageerror',e=>errs.push('tab B: '+e.message));await tabB.goto(PROD);await tabB.waitForFunction(()=>!!window.skMirror&&window.skMirror.enabled,null,{timeout:30000});
+const OTHER='skyryse-mes-sync-ack-v1:page-other-tab';let staged=false;const e0=(await devAck()).epoch;const before=snapshots().length;
  await ctx.route(/\/api\/v1\/writes$/,async route=>{const resp=await route.fetch();if(!staged){staged=true;
    await p.evaluate(([k,v])=>{const ws=JSON.parse(localStorage.getItem(KEY));ws.orders=[{id:'not a valid order'}];localStorage.setItem(KEY,JSON.stringify(ws));localStorage.setItem(k,JSON.stringify(v));},[OTHER,{epoch:e0+1,ack:null,at:Date.now()}]);}
   await route.fulfill({response:resp});});
@@ -507,11 +508,18 @@ const snapshots=()=>m.db.prepare("SELECT id,payload_json FROM records WHERE enti
  const added=m.db.prepare('SELECT entity_type t,operation o FROM records WHERE id>?').all(r0);
  ok('the refusal case is real: the saved workspace fails validation',await p.evaluate(()=>!MES.validate(JSON.parse(localStorage.getItem(KEY)))));
  ok('with an invalid saved workspace no snapshot is sent and no order is marked deleted',snapshots().length===before&&!added.some(x=>x.t==='order'&&x.o==='delete')&&added.some(x=>x.t==='account')&&st3.unsynced===0,JSON.stringify({added:added.slice(0,8),st3}));
- const pendingFlag=await p.evaluate(()=>JSON.parse(localStorage.getItem('skyryse-mes-sync-client-v1')).recoveryPending===true);
+ const pendingFlag=await p.evaluate(()=>localStorage.getItem('skyryse-mes-sync-recovery-v1')==='true');
  ok('the refusal case is real: the recovery is left pending while the saved workspace is invalid',pendingFlag);
- const snapsBefore=snapshots().length;await p.evaluate(()=>{save();});await drain();
- const after=await p.evaluate(()=>JSON.parse(localStorage.getItem('skyryse-mes-sync-client-v1')).recoveryPending);
- ok('once a valid workspace is saved, the pending recovery runs: a snapshot is sent and nothing is left pending',snapshots().length>snapsBefore&&after===false,JSON.stringify({before:snapsBefore,now:snapshots().length,after}));}
+ // Another tab, open since before the recovery, saves its older client record (without the pending recovery) and
+ // then commits once the saved workspace is valid again: it still runs the pending recovery.
+ const r1=count();const snapsBefore=snapshots().length;
+ const savedValid=await p.evaluate(()=>{const ws=MES.validate(state)?state:lastSaved;localStorage.setItem(KEY,JSON.stringify(ws));return MES.validate(JSON.parse(localStorage.getItem(KEY)));});
+ ok('the workspace saved for the other tab is valid again',savedValid);
+ await tabB.evaluate(()=>{const c=JSON.parse(localStorage.getItem('skyryse-mes-sync-client-v1'));delete c.recoveryPending;localStorage.setItem('skyryse-mes-sync-client-v1',JSON.stringify(c));window.skMirror.commit(JSON.parse(localStorage.getItem(KEY)));});
+ const sb=await tabB.evaluate(async()=>{for(let i=0;i<80&&window.skMirror.status().unsynced;i++){await window.skMirror.flush();await new Promise(r=>setTimeout(r,100));}return window.skMirror.status();});
+ const after=await p.evaluate(()=>localStorage.getItem('skyryse-mes-sync-recovery-v1'));
+ ok('a tab with an older client record still runs the pending recovery once the workspace is valid: a snapshot is sent and nothing is left pending',snapshots().length>snapsBefore&&after===null&&sb.unsynced===0&&count()>r1,JSON.stringify({before:snapsBefore,now:snapshots().length,after,sb}));
+ await tabB.close();await p.evaluate(()=>{save();});await drain();}
 // A device with nothing queued still finds a restore: it probes the mirror, which no longer holds its last
 // confirmed row, and sends everything again (#374).
 {const w6=await mkOrder(p);await drain();const bk3=m.backup();
