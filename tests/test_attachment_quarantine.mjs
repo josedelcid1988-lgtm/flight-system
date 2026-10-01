@@ -370,12 +370,58 @@ function surfaces(state) {
   check('a removal record edited after signing fails manifest verification', !MES.verifyManifests(edited).ok);
 }
 
-// ---- engine: a removed recording is signed, bound to its operation, capped and counted like a removed file (#426) ----
 const evidenceRecordOf = e => { const { removedAt, removedBy, removeReason, manifest, ...kept } = e; return kept; };
 const clip = id => ({ id, fileName: `${id}.webm`, mimeType: 'video/webm', size: 10, source: 'upload', description: 'Torque application recording.' });
 const evId = n => `EV-00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 // The current, unblocked Building operation where recordings may change now.
 const recordingTarget = state => { for (const order of state.orders) { const op = order.operations.find(item => !item.done); if (op && order.status === 'Building' && host.withAccount(technician, () => MES.attachEvidence(structuredClone(state), order.id, op.id, clip(evId(999))).ok, state)) return { order, op }; } return null; };
+// ---- engine: a removal never grows the workspace past what its live file was already charged ----
+{
+  const state = curated();
+  const worstName = '"'.repeat(160), worstReason = '"\t'.repeat(150);
+  const loud = { technician: account('technician', '"'.repeat(80)), operator: account('operator', '"'.repeat(80)), me: account('me', '"'.repeat(80)), qe: account('qe', '"'.repeat(80)) };
+  const byRole = who => loud[who.role] || who;
+  for (const surface of surfaces(state)) {
+    const added = host.withAccount(byRole(surface.adder), () => surface.add.call(null), state);
+    const ref = { name: worstName, type: 'application/pdf', size: 10 };
+    const list = surface.live(); const before = list.length;
+    // Replace the photo just added by a reference-only record with the longest name, then measure a worst-case removal.
+    if (added.ok) list.splice(before - 1, 1, { ...list[before - 1], name: ref.name, storage: 'reference', dataUrl: undefined });
+    const target = list.at(-1); if (target) delete target.dataUrl;
+    const charged = MES.workspaceFileBytes(state);
+    const removed = host.withAccount(byRole(surface.remover), () => surface.remove(target.id, worstReason), state);
+    const after = MES.workspaceFileBytes(state);
+    check(`removing a ${surface.label} with the longest name and reason does not grow the counted workspace (${charged} to ${after})`, added.ok && removed.ok && after <= charged);
+  }
+  const { order, op } = recordingTarget(state);
+  host.withAccount(loud.technician, () => MES.attachEvidence(state, order.id, op.id, { ...clip(evId(700)), fileName: '"'.repeat(160), description: '"'.repeat(1000) }), state);
+  const charged = MES.workspaceFileBytes(state);
+  const removed = host.withAccount(loud.technician, () => MES.removeEvidence(state, order.id, op.id, evId(700), worstReason), state);
+  check(`removing a recording with the longest fields and reason does not grow the counted workspace (${charged} to ${MES.workspaceFileBytes(state)})`, removed.ok && MES.workspaceFileBytes(state) <= charged);
+}
+
+// ---- engine: a removal is never recorded before the file was added ----
+{
+  const state = curated();
+  const [first] = surfaces(state);
+  host.withAccount(technician, () => first.add(), state);
+  const file = first.live().at(-1); const future = new Date(Date.now() + 3600000).toISOString(); file.addedAt = future;
+  const removed = host.withAccount(technician, () => first.remove(file.id, REASON), state);
+  const entry = first.quarantined().find(f => f.id === file.id);
+  check('a file added with a later clock is recorded as removed no earlier than it was added', removed.ok && Date.parse(entry.removedAt) >= Date.parse(future) && MES.validate(structuredClone(state)) && MES.verifyManifests(state).ok);
+  const backdated = structuredClone(state); const holder = surfaces(backdated)[0];
+  const e = holder.quarantined().find(f => f.id === file.id); const at = new Date(Date.parse(future) - 7200000).toISOString();
+  const subject = { ...e.manifest.subject, removedAt: at }; Object.assign(e, { removedAt: at, manifest: { ...e.manifest, at, subject, hash: MES.sha256(MES.canonical(subject)) } });
+  check('validation refuses a re-signed removal dated before the file was added', !MES.validate(backdated));
+  const { order, op } = recordingTarget(state);
+  host.withAccount(technician, () => MES.attachEvidence(state, order.id, op.id, clip(evId(800))), state);
+  const clipLive = op.evidence.find(x => x.id === evId(800)); clipLive.addedAt = future;
+  const gone = host.withAccount(technician, () => MES.removeEvidence(state, order.id, op.id, evId(800), REASON), state);
+  const kept = op.quarantinedEvidence.find(x => x.id === evId(800));
+  check('a recording added with a later clock is recorded as removed no earlier than it was added', gone.ok && Date.parse(kept.removedAt) >= Date.parse(future) && MES.validate(structuredClone(state)) && MES.verifyManifests(state).ok);
+}
+
+// ---- engine: a removed recording is signed, bound to its operation, capped and counted like a removed file (#426) ----
 {
   const state = curated();
   const { order, op } = recordingTarget(state);
@@ -527,6 +573,12 @@ const recordingTarget = state => { for (const order of state.orders) { const op 
   };
   try {
     const { page, errors, context } = await openAs('admin');
+    const decoded = await page.evaluate(async () => {
+      const bytes = async url => [...new Uint8Array(await dataUrlBlob(url).arrayBuffer())];
+      let malformed = null; try { dataUrlBlob('data:text/plain,%ZZ'); } catch { malformed = 'refused'; }
+      return { escaped: await bytes('data:text/plain,%C3%A9'), literal: await bytes('data:text/plain,\u00e9'), mixed: await bytes('data:text/plain,a%20b'), base64: await bytes('data:application/octet-stream;base64,w6k='), malformed };
+    });
+    check('a quarantined file downloads the exact bytes its data URL holds, and a malformed one is refused', JSON.stringify(decoded) === JSON.stringify({ escaped: [0xc3, 0xa9], literal: [0xc3, 0xa9], mixed: [0x61, 0x20, 0x62], base64: [0xc3, 0xa9], malformed: 'refused' }));
     // An operation attachment on a Building order, shown on its operation.
     const target = await page.evaluate(photo => {
       const o = state.orders.find(o => o.status === 'Building' && !MES.blockingTickets(o).length && !MES.pendingSequenceChange(o) && o.operations.some(op => !op.done));
