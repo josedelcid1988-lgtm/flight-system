@@ -275,7 +275,7 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
 {const ctx=await b.newContext({viewport:{width:1440,height:1000}});const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));
  const posts=[];await ctx.route(/mirror-hold\.test|\/api\/v1\/writes/,route=>{try{posts.push(...(JSON.parse(route.request().postData()||'{}').records||[]));}catch(e){}route.fulfill({status:500,contentType:'application/json',body:'{"ok":false}'});});
  await ctx.addInitScript(()=>{window.SK_MIRROR={url:'http://mirror-hold.test',token:'hold-token',batchSize:50};const real=Storage.prototype.setItem;
-  const refuseQueue=!sessionStorage.getItem('queueOk');
+  const refuseQueue=!/queueOk/.test(location.search);
   Storage.prototype.setItem=function(k,v){if(this===window.localStorage&&(k==='skyryse-mes-legacy-demo-account-queue-v1'||(refuseQueue&&k==='skyryse-mes-sync-queue-v1')))throw new DOMException('full','QuotaExceededError');return real.call(this,k,v);};
   if(sessionStorage.getItem('seeded'))return;sessionStorage.setItem('seeded','1');
   real.call(localStorage,'skyryse-mes-auth-v1',JSON.stringify({users:[{username:'mlee',displayName:'Morgan Lee',salt:'01',hash:'e'.repeat(64),role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'master',displayName:'Master Access',salt:'00',hash:'f'.repeat(64),role:'admin',createdAt:'2026-09-17T00:00:00.000Z',createdBy:'demo build'}]}));
@@ -283,7 +283,8 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(2500);
  const r1=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),queue:JSON.parse(localStorage.getItem('skyryse-mes-sync-queue-v1')||'[]').map(x=>x.clientWriteId)}));
  ok('storage refused the queue rewrite: the review is required, the queue is unchanged, and the mirror is sent nothing at all',r1.gate&&JSON.stringify(r1.queue)==='["prod-w1","old-demo-w1","prod-a1"]'&&posts.length===0,JSON.stringify({r1,posts:posts.map(x=>x.clientWriteId)}));
- await p.evaluate(()=>sessionStorage.setItem('queueOk','1'));await p.reload();await p.waitForTimeout(2500);
+ // The second load is told by its address that storage works again (a flag written just before a reload can be lost here).
+ await p.goto('file://'+FIXTURES+'publish.html?queueOk=1');await p.waitForTimeout(2500);
  const r2=await p.evaluate(()=>({queue:JSON.parse(localStorage.getItem('skyryse-mes-sync-queue-v1')||'[]').map(x=>x.clientWriteId)}));
  ok('the next load cleans the queue: the production workspace record is sent, the older demo\'s record and every account record never are',r2.queue.includes('prod-w1')&&!r2.queue.includes('old-demo-w1')&&!r2.queue.includes('prod-a1')&&posts.some(x=>x.clientWriteId==='prod-w1')&&!posts.some(x=>x.clientWriteId==='old-demo-w1'||x.entityType==='account'),JSON.stringify({r2,posts:posts.map(x=>x.clientWriteId)}));
  await ctx.close();}
