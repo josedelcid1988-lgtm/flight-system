@@ -193,6 +193,9 @@ try {
       return result.ok ? MES.getOrder(state, 'WO-10003').history.at(-1).action : result.message;
     });
     assert.match(entry, /Jira ticket MES-77; DAR name J\. Rivera; DAR designation no\. DAR-F 123/);
+    const reviewEntry = await page.evaluate(() => { const result = MES.saveConformity(state, 'WO-10003', 'CI-110-00001', { darDate: '2026-09-30' }); return result.ok ? MES.getOrder(state, 'WO-10003').history.at(-1).action : result.message; });
+    assert.match(reviewEntry, /DAR review date 2026-09-30/, 'the DAR review date is not recorded as a signature');
+    assert.doesNotMatch(reviewEntry, /DAR signed/);
     assert.doesNotMatch(entry, /darName|darDesignation|jira MES/);
     assert.ok(source.includes('`Completed operation recorded: ${operation.title}.'), 'the buy-off entry starts with its subject');
     assert.ok(!source.includes('record(state, order, ` operation recorded:'), 'no buy-off entry starts with a dropped word');
@@ -206,6 +209,20 @@ try {
     }
   });
   await context.close();
+
+  await check('M5 the tablet top bar never lets the breadcrumb run into the search', async () => {
+    for (const width of [901, 1024]) {
+      const { context: narrow, page: narrowPage } = await open(width, 768);
+      for (const view of ['qms-records', 'orders', 'order']) {
+        if (view === 'order') await narrowPage.evaluate(() => { selectedId = state.orders.find(o => o.operations.length > 4).id; view = 'order'; render(); });
+        else await go(narrowPage, view);
+        const gap = await narrowPage.evaluate(() => document.querySelector('.topbar .global-search').getBoundingClientRect().left - document.querySelector('.breadcrumbs').getBoundingClientRect().right);
+        assert.ok(gap >= 0, `${view} at ${width}px: the breadcrumb ends before the search (gap ${gap})`);
+      }
+      if (width === 1024) assert.equal(await narrowPage.evaluate(() => { const c = document.querySelector('#breadcrumb'); return c.scrollWidth <= c.clientWidth; }), true, 'at 1024 the work-order crumb is shown in full');
+      await narrow.close();
+    }
+  });
 
   await check('H1 at 1440 the Created and Flight progress columns are shown', async () => {
     const { context: wide, page: widePage } = await open(1440, 900);
