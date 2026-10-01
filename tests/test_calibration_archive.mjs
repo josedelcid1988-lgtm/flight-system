@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { Readable, Writable } from 'node:stream';
 import { createHost } from '../server/mes-host.mjs';
 import { createServer } from '../server/server.mjs';
+import { openDb } from '../server/db.mjs';
 import { chromium } from 'playwright';
 
 const indexPath = fileURLToPath(new URL('../index.html', import.meta.url));
@@ -229,6 +230,20 @@ check('MES.recordCalibrationArchive is a reviewed server command', typeof host.r
 
 // Server: the archive runs as a server action, the archived entries are stored unchanged and can be read back.
 const hashPw = (salt, password) => createHash('sha256').update(`${salt}:${password}`).digest('hex');
+// Records, for each workspace or archive read, whether it ran inside a transaction that already holds the workspace
+// lock, so a test can show the archive check reads both sides from one locked snapshot.
+const traceLockedReads = store => {
+  const events = [];
+  let inTx = false, locked = false;
+  const transaction = store.transaction.bind(store), lockDoc = store.lockDoc.bind(store), getDoc = store.getDoc.bind(store), rows = store.calibrationArchiveRows.bind(store);
+  store.transaction = async fn => { const outer = inTx; inTx = true; if (!outer) locked = false; try { return await transaction(fn); } finally { if (!outer) { inTx = false; locked = false; } } };
+  store.lockDoc = async tenant => { if (inTx) locked = true; return lockDoc(tenant); };
+  store.getDoc = (...args) => { events.push({ read: 'doc', locked: inTx && locked }); return getDoc(...args); };
+  store.calibrationArchiveRows = (...args) => { events.push({ read: 'rows', locked: inTx && locked }); return rows(...args); };
+  return events;
+};
+// The archive rows, and the workspace read just before them, were read under the workspace lock.
+const readUnderLock = events => { const first = events.findIndex(e => e.read === 'rows'); const doc = events.slice(0, first).reverse().find(e => e.read === 'doc'); return first >= 0 && events.filter(e => e.read === 'rows').every(e => e.locked) && !!doc && doc.locked; };
 const makeServer = () => {
   const server = createServer({ dbPath: ':memory:', quiet: true, indexPath, setupCode: 'archive-setup' });
   const handler = server.listeners('request')[0];
@@ -336,9 +351,19 @@ const setUpAccounts = async call => {
     const clean = open();
     let cleanStarted = true; try { await clean.server.ready; } catch { cleanStarted = false; }
     check('a restart with an intact calibration archive starts', cleanStarted);
-    const extra = { ...before.calibrationLog[1], id: 'CALLOG-09001' }, extraJson = JSON.stringify(extra);
-    clean.server.store.putCalibrationArchived({ id: 'CALLOG-09001', tag: extra.tag, recordId: 'CALARC-0009', json: extraJson, sha256: sha256(extraJson), by: 'someone-else' });
     clean.server.store.close();
+    // Codex review on #194: the startup check reads the workspace and the archive from one locked snapshot, so a write
+    // another process commits between the two reads cannot make a consistent database look inconsistent.
+    const tracedStore = openDb(dbPath), startupReads = traceLockedReads(tracedStore);
+    const traced = createServer({ store: tracedStore, quiet: true, indexPath, setupCode: 'archive-setup' });
+    let tracedStarted = true; try { await traced.ready; } catch { tracedStarted = false; }
+    check('the startup archive check reads the workspace and the archive under the workspace lock', tracedStarted && readUnderLock(startupReads), JSON.stringify(startupReads));
+    tracedStore.close();
+    const reopened = open();
+    await reopened.server.ready;
+    const extra = { ...before.calibrationLog[1], id: 'CALLOG-09001' }, extraJson = JSON.stringify(extra);
+    reopened.server.store.putCalibrationArchived({ id: 'CALLOG-09001', tag: extra.tag, recordId: 'CALARC-0009', json: extraJson, sha256: sha256(extraJson), by: 'someone-else' });
+    reopened.server.store.close();
     const withExtra = open();
     let extraRefusal = null; try { await withExtra.server.ready; } catch (e) { extraRefusal = e; }
     check('a restart whose calibration archive holds an entry no archive record names refuses to start', extraRefusal && /CALLOG-09001/.test(extraRefusal.message), extraRefusal?.message);
@@ -407,7 +432,9 @@ const setUpAccounts = async call => {
       const lookup = batched.server.store.calibrationArchived;
       let lookups = 0;
       batched.server.store.calibrationArchived = id => { lookups += 1; return lookup.call(batched.server.store, id); };
+      const initReads = traceLockedReads(batched.server.store);
       const accepted = await batched.call('PUT', '/api/workspace', { token: batchedToken, body: moved });
+      check('the initialization archive check reads the archive under the workspace lock', readUnderLock(initReads), JSON.stringify(initReads));
       check('the server checks a held calibration archive without one lookup per archived entry', accepted.status === 204 && lookups === 0, `${accepted.status} ${lookups} ${JSON.stringify(accepted.json)}`);
     } finally { batched.server.store.close(); }
   }

@@ -302,12 +302,12 @@ export function createServer(options = {}) {
   // workspace, so history left from another workspace or brought back by a partial restore is refused, not served.
   // Returns a plain refusal or null.
   const CALIBRATION_ARCHIVE_SCAN_PAGE = 1000;
-  const calibrationArchiveProblem = async state => {
+  const calibrationArchiveProblem = async (state, from = store) => {
     const named = (state && state.calibrationLogHead && Array.isArray(state.calibrationLogHead.archived) ? state.calibrationLogHead.archived : []).flatMap(record => (record && record.manifest && record.manifest.subject && Array.isArray(record.manifest.subject.entries) ? record.manifest.subject.entries : []).map(summary => summary && summary.id));
     // Read the whole table in pages of CALIBRATION_ARCHIVE_SCAN_PAGE rows, not one query per entry, then check in memory.
     const rows = new Map();
     for (let after = ''; ;) {
-      const page = await store.calibrationArchiveRows(after, CALIBRATION_ARCHIVE_SCAN_PAGE);
+      const page = await from.calibrationArchiveRows(after, CALIBRATION_ARCHIVE_SCAN_PAGE);
       for (const row of page) rows.set(row.id, row);
       if (page.length < CALIBRATION_ARCHIVE_SCAN_PAGE) break;
       after = page[page.length - 1].id;
@@ -331,10 +331,17 @@ export function createServer(options = {}) {
   // At startup: a stored workspace that names archived calibration entries must find them intact, or the server refuses
   // to start, as it does for a tampered audit chain.
   const verifyStoredCalibrationArchive = async () => {
-    const row = await store.getDoc(TENANT);
-    if (!row) return;
-    let doc = null; try { doc = JSON.parse(row.json); } catch { return; }
-    const problem = await calibrationArchiveProblem(doc);
+    // Read the workspace and the archive in one transaction under the workspace lock, so a write another process
+    // commits between the two reads cannot make a consistent database look inconsistent. Nothing is written.
+    let problem = null;
+    await store.transaction(async tx => {
+      await tx.lockDoc(TENANT);
+      const row = await tx.getDoc(TENANT);
+      if (!row) return false;
+      let doc = null; try { doc = JSON.parse(row.json); } catch { return false; }
+      problem = await calibrationArchiveProblem(doc, tx);
+      return false;
+    });
     if (problem) { log('calibration archive check failed:', problem); throw new Error(`The calibration archive does not match the stored workspace, so the server did not start. ${problem}`); }
   };
   // Stores a validated state. Closed work orders nothing live points at move to the archive table in the
@@ -357,15 +364,16 @@ export function createServer(options = {}) {
     // Superseded calibration entries an archive record in this write moved out of the live log (#130) go to the
     // calibration archive exactly as the stored log held them, in the same transaction as the document write.
     const calibrationRows = host.MES.calibrationArchivedEntries(beforeState, state).map(({ entry, recordId }) => { const json = JSON.stringify(entry); return { id: entry.id, tag: entry.tag, recordId, json, sha256: sha256hex(json), by: username }; });
-    // A workspace that already names archived entries can only start on a server that holds exactly those entries.
-    if (!beforeState) { const held = await calibrationArchiveProblem(state); if (held) return { problem: held }; }
     const rows = r.archived.map(e => { const json = JSON.stringify({ order: e.order, activity: e.activity }); return { id: e.order.id, json, sha256: sha256hex(json), schema: state.version, keys: e.keys, by: username }; });
-    let etag = null, clash = null, queuedExports = [];
+    let etag = null, clash = null, initProblem = null, queuedExports = [];
     await store.transaction(async tx => {
       // Take the workspace lock before probing the archive tables, so concurrent writers wait here and the later one sees
       // the rows the earlier one stored (a clash or a changed ETag) instead of failing on a duplicate insert.
       await tx.lockDoc(TENANT);
       if (expectedEtag === null && await tx.getDoc(TENANT)) return false;
+      // A workspace that already names archived entries can only start on a server that holds exactly those entries,
+      // checked under the lock so the archive cannot change between this check and the write.
+      if (!beforeState) { initProblem = await calibrationArchiveProblem(state, tx); if (initProblem) return false; }
       for (const row of rows) { if (await tx.archivedSha(row.id)) { clash = row.id; return false; } await tx.putArchived(row); }
       for (const row of calibrationRows) { if (await tx.calibrationArchived(row.id)) { clash = row.id; return false; } await tx.putCalibrationArchived(row); }
       etag = await tx.putDoc(TENANT, JSON.stringify(state), expectedEtag, username);
@@ -377,6 +385,7 @@ export function createServer(options = {}) {
       for (const entry of audits) await tx.audit(username, entry.action, typeof entry.detail === 'function' ? entry.detail(etag) : entry.detail);
       return true;
     });
+    if (initProblem) return { problem: initProblem };
     if (clash) return { problem: `${clash} is already in the archive. Reload to continue.` };
     if (!etag) return { conflict: true };
     namedEvidenceCache = null;
