@@ -33,6 +33,22 @@ try {
   await page.goto(fixture);
   await page.waitForFunction(() => window.__ready === true && !!window.FlightReact);
 
+  // A malformed work-order field that is another record id (#188). The legacy template once linked the ticket
+  // with data-order="ATP-123", then linked ATP-123 again inside that attribute, writing a button inside another
+  // button's attribute. Pinned: the ticket links once, the field value stays plain text in data-order, and the
+  // markup parses back to exactly one button.
+  const malformedOrder = 'ATP-123';
+  const malformed = await page.evaluate(orderId => {
+    const html = recordLinks('NC-1234 raised', orderId);
+    const tpl = document.createElement('template'); tpl.innerHTML = html;
+    const buttons = [...tpl.content.querySelectorAll('button')];
+    return { html, buttons: buttons.map(b => ({ order: b.getAttribute('data-order'), record: b.getAttribute('data-record'), kind: b.getAttribute('data-kind'), label: b.textContent })), text: tpl.content.textContent };
+  }, malformedOrder);
+  check(malformed.html === `<button type="button" class="record-link" data-action="record-link" data-kind="ticket" data-order="${malformedOrder}" data-record="NC-1234" title="Open NC-1234">NC-1234</button> raised`, `a malformed work-order field writes one plain ticket link: ${malformed.html}`);
+  check((malformed.html.match(/<button/g) || []).length === 1, `a malformed work-order field writes no button inside another button (found ${(malformed.html.match(/<button/g) || []).length})`);
+  check(JSON.stringify(malformed.buttons) === JSON.stringify([{ order: malformedOrder, record: 'NC-1234', kind: 'ticket', label: 'NC-1234' }]), `a malformed work-order field parses to one ticket link carrying the field as its order: ${JSON.stringify(malformed.buttons)}`);
+  check(malformed.text === 'NC-1234 raised', `a malformed work-order field leaves the visible text unchanged (got ${JSON.stringify(malformed.text)})`);
+
   const builder = await page.evaluate(() => {
     const b = window.FlightRecordLinks;
     return b ? { frozen: Object.isFrozen(b) && Object.isFrozen(b.patterns), parts: typeof b.parts, attributes: typeof b.attributes, kinds: b.patterns.map(p => p[1]) } : null;
@@ -53,7 +69,8 @@ try {
         { action: `SNL-12345 then LOT-2026010-001 then ${wo} then IDR-1234`, orderId: wo },
         { action: 'Lot LOT-2026010-001 with IDR-1234 and SNL-1234, no work order', orderId: '' },
         { action: `<b>x</b> '${wo}' "NC-1234" (ATP-123) &IDR-12345 ${wo},NC-2345/ATP-124;LOT-2026010-002`, orderId: wo },
-        { action: 'IDR-1234 opened', orderId: '<img src=z onerror="window.__xss=1">' }
+        { action: 'IDR-1234 opened', orderId: '<img src=z onerror="window.__xss=1">' },
+        { action: 'NC-1234 raised', orderId: 'ATP-123' }
       ].map((e, i) => ({ id: `builder-${i}`, at: new Date(base - i * 60000).toISOString(), actor: 'Flight Master · QA-001', ...e }));
       const shapeOf = node => [...node.childNodes].flatMap(n => n.nodeType === 3 ? [{ text: n.textContent }]
         : n.tagName === 'BUTTON' ? [{ attrs: [...n.attributes].map(a => [a.name, a.value]), label: n.textContent }]
@@ -89,6 +106,10 @@ try {
       }
       if (!entry.orderId) check(expected.action.every(p => !p.attrs || ['order', 'serial'].includes(p.attrs[3][1])), `row ${i}: without a work order only order and serial numbers link`);
     });
+    // The malformed work-order row (#188): the React view also links the ticket once, carrying the field as its order.
+    const malformedRow = result.rows[5];
+    const reactLinks = (malformedRow.react?.action || []).filter(p => p.attrs).map(p => Object.fromEntries(p.attrs));
+    check(reactLinks.length === 1 && reactLinks[0]['data-record'] === 'NC-1234' && reactLinks[0]['data-order'] === 'ATP-123', `the React view links a malformed work-order row once (got ${JSON.stringify(reactLinks)})`);
     // Link order follows the text, not the pattern order.
     const second = result.rows[1].expected.action.filter(p => p.attrs).map(p => p.label);
     check(JSON.stringify(second) === JSON.stringify(['SNL-12345', 'LOT-2026010-001', result.wo, 'IDR-1234']), `links follow the order of the text (got ${JSON.stringify(second)})`);
