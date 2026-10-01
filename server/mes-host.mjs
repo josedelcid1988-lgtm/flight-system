@@ -40,6 +40,9 @@ export function createHost(indexPath, html = fs.readFileSync(indexPath, 'utf8'))
   const meta = name => (html.match(new RegExp(`<meta name="${name}" content="([^"]*)">`)) || [])[1] || '';
   sandbox.document = { querySelector: selector => { const name = (String(selector).match(/^meta\[name="(fs-build|fs-build-sha256)"\]$/) || [])[1]; return name ? { getAttribute: () => meta(name) } : null; } };
   sandbox.window = sandbox;
+  // The engine archives superseded calibration entries only where an archive store exists (#130): here, the server's
+  // host. A browser page without the server refuses the archive.
+  sandbox.flightServerHost = true;
   sandbox.globalThis = sandbox;
   const context = vm.createContext(sandbox);
   for (const key of ['roles', 'mes', 'flightPlan', 'flightManeuver', 'print']) {
@@ -112,7 +115,7 @@ export function createHost(indexPath, html = fs.readFileSync(indexPath, 'utf8'))
   // primitives must never become remotely callable just because they are exported on MES.
   const actionName = /^(?:run|add|update|remove|delete|create|complete|close|issue|approve|reject|sign|mark|assign|advance|resolve|disposition|request|release|record|submit|start|stop|review|accept|return|void|reopen|split|move|link|verify|raise|cancel|withdraw|incorporate|peer|roll|set|save|store|open|finish|grant|revoke|capture|attach|detach|quarantine|repair|replace|send|change|configure|stamp|buyoff|log|tick|decide|vote|reset|publish|apply|import|reinspect|firm|convert|carry|propose|escalate|select|clock|aqi|post|acknowledge|edit|revise|ping|push|ical|check|notify|qa|note)/i;
   const actionExact = new Set(['containNC', 'effectivenessCheck', 'pfmeaSafetyBuyoff', 'pruneExpiredNotices']);
-  const actionExclude = new Set(['repair','signManifest','verifyManifests','verifyAIActionLog','stampCheck','stampRegister','stampRegisterCsv','stampCredential','stampHolderFor','ticketAttachments','openProcessECRs','syncAssignments','buyoffCredential','ensure','seedDemoRecords','icalExport','openMaintenanceFor',
+  const actionExclude = new Set(['repair','signManifest','verifyManifests','verifyAIActionLog','stampCheck','stampRegister','stampRegisterProblem','stampRegisterCsv','stampCredential','stampHolderFor','ticketAttachments','openProcessECRs','syncAssignments','buyoffCredential','ensure','seedDemoRecords','icalExport','openMaintenanceFor',
     // Internal record writers: each runs only inside the gated command that owns it (runSkill, a buy-off
     // override, the browser-only demo notice), so calling one directly would fabricate that record.
     'recordAIAction','logSupport','noteDemoBypassRemoved',
@@ -130,7 +133,7 @@ export function createHost(indexPath, html = fs.readFileSync(indexPath, 'utf8'))
   // tests/test_server_security.mjs fails while any command-like function is neither listed nor excluded).
   const actionAllow = new Set([
     'MES.addSavedView', 'MES.removeSavedView',
-    'MES.recordCalibration', 'MES.updateCalibration',
+    'MES.recordCalibration', 'MES.updateCalibration', 'MES.recordCalibrationArchive',
     'MES.addAttachment', 'MES.addTicketAttachment', 'MES.removeTicketAttachment', 'MES.removeAttachment',
     'MES.logAogBroadcast', 'MES.resolveAog', 'MES.setSchedule', 'MES.editOrderOperation', 'MES.setWIStepImage',
     'MES.selectProfile', 'MES.assignSerial', 'MES.voidSerial', 'MES.moveToInventory', 'MES.markNetSuitePosted',
