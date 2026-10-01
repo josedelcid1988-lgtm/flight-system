@@ -17,7 +17,8 @@ shipped default) the app is unchanged.
   database does not match its anchor, so the anchor is never overwritten to cover a change. Before
   the first write, and before any write after another process changed the database file, the
   server walks the whole chain and every manifest, so a changed earlier row or manifest is refused
-  the same way.
+  the same way. These checks run while the write holds the database write lock, so no other process
+  can commit between the check and the append.
 - Two tokens: the page carries an append-only write token; reading, verifying and exporting need
   the operator token, which never goes into the page.
 - Loopback only in plain HTTP: to serve other machines it runs behind a TLS-terminating reverse proxy.

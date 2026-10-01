@@ -202,7 +202,7 @@ export function ackCheck(db, lastAck) {
   return row && row.client_write_id === lastAck.clientWriteId ? 'ok' : 'missing';
 }
 
-export function appendRecords(db, clientId, records, now = () => new Date().toISOString(), { beforeCommit } = {}) {
+export function appendRecords(db, clientId, records, now = () => new Date().toISOString(), { afterLock, beforeCommit } = {}) {
   if (!str(clientId, 120)) return { ok: false, status: 400, error: { code: 'bad_request', message: 'clientId is required.' } };
   if (!Array.isArray(records) || !records.length) return { ok: false, status: 400, error: { code: 'bad_request', message: 'records must be a non-empty list.' } };
   if (records.length > MAX_BATCH) return { ok: false, status: 413, error: { code: 'too_large', message: `Send at most ${MAX_BATCH} records per request.` } };
@@ -214,6 +214,9 @@ export function appendRecords(db, clientId, records, now = () => new Date().toIS
   const results = [];
   db.exec('BEGIN IMMEDIATE');
   try {
+    // Runs holding the write lock, before anything is appended: a refusal here rolls back and stores nothing.
+    const refusal = afterLock ? afterLock() : null;
+    if (refusal) { db.exec('ROLLBACK'); return { ok: false, status: 409, refusal, error: { code: 'anchor_mismatch', message: 'The mirror database no longer matches its chain anchor, so no record is stored until the operator investigates. The app keeps the records queued.' } }; }
     for (const r of records) {
       const problem = checkRecord(r);
       if (problem) { results.push({ clientWriteId: r && r.clientWriteId, status: 'rejected', reason: problem }); continue; }
@@ -233,6 +236,28 @@ export function appendRecords(db, clientId, records, now = () => new Date().toIS
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
   return { ok: true, results };
+}
+
+// One write as the server makes it. The anchor check and, when another connection has committed since the last
+// full check (SQLite's data_version, which does not change for this connection's own commits), the full chain walk
+// run inside the write transaction, so no other connection can commit between the check and the append. The pending
+// anchor is written before COMMIT and the final one after. state.verifiedVersion carries the last fully checked
+// data_version between writes; afterCheck exists only so the suite can act while the lock is held.
+export function guardedAppend(db, anchorPath, state, clientId, records, { afterCheck } = {}) {
+  let anchorNow = null;
+  const r = appendRecords(db, clientId, records, undefined, {
+    afterLock: () => {
+      anchorNow = settleAnchor(anchorPath, db);
+      const version = Number(db.prepare('PRAGMA data_version').get().data_version);
+      let drift = anchorMismatch(db, anchorNow);
+      if (!drift && version !== state.verifiedVersion) { const v = verifyChain(db, { anchor: anchorNow }); if (v.ok) state.verifiedVersion = version; else drift = `the chain is broken at row ${v.firstBreak.id}: ${v.firstBreak.reason}`; }
+      if (afterCheck) afterCheck();
+      return drift;
+    },
+    beforeCommit: next => writePendingAnchor(anchorPath, anchorNow, next),
+  });
+  if (r.ok && r.results.some(x => x.status === 'stored')) writeAnchor(anchorPath, db);
+  return r;
 }
 
 // Walks every row in id order: the payload must still hash to payload_sha256, the row's signature manifests
@@ -384,7 +409,8 @@ export function createMirror(options = {}) {
   // The operator token reads everything; the write token (in the page) can only append.
   const operator = req => cfg.allowNoToken || (!!cfg.token && same(bearer(req), `Bearer ${cfg.token}`));
   const writer = req => operator(req) || (!!cfg.writeToken && same(bearer(req), `Bearer ${cfg.writeToken}`));
-  let lastBackup = null, verifiedVersion = null;
+  let lastBackup = null;
+  const guard = { verifiedVersion: null };
   const send = (res, status, body, type = 'application/json') => {
     const cors = cfg.allowOrigin ? { 'access-control-allow-origin': cfg.allowOrigin, 'access-control-allow-headers': 'content-type, authorization', 'access-control-allow-methods': 'GET, POST, OPTIONS', vary: 'Origin' } : {};
     res.writeHead(status, { 'content-type': type === 'application/json' ? 'application/json; charset=utf-8' : type, ...cors, 'cache-control': 'no-store' });
@@ -410,17 +436,9 @@ export function createMirror(options = {}) {
           if (!str(body.clientId, 120) || !body.lastAck) return fail(res, 400, 'bad_request', 'A post with no records must give clientId and lastAck.');
           return send(res, 200, { ok: true, results: [], ackCheck: ackCheck(db, body.lastAck) });
         }
-        const anchorNow = settleAnchor(anchorPath, db);
-        // SQLite's data_version changes only when another connection commits to the database file. Until it
-        // does, the rows are the ones this server wrote and verified, and the tip check against the anchor is
-        // enough; once it changes, or on the first write, the whole chain and every manifest are walked first.
-        const version = Number(db.prepare('PRAGMA data_version').get().data_version);
-        let drift = anchorMismatch(db, anchorNow);
-        if (!drift && version !== verifiedVersion) { const v = verifyChain(db, { anchor: anchorNow }); if (v.ok) verifiedVersion = version; else drift = `the chain is broken at row ${v.firstBreak.id}: ${v.firstBreak.reason}`; }
-        if (drift) { console.error(`write refused: ${drift}`); return fail(res, 409, 'anchor_mismatch', 'The mirror database no longer matches its chain anchor, so no record is stored until the operator investigates. The app keeps the records queued.'); }
         const check = ackCheck(db, body && body.lastAck);
-        const r = appendRecords(db, body && body.clientId, body && body.records, undefined, { beforeCommit: next => writePendingAnchor(anchorPath, anchorNow, next) });
-        if (r.ok && r.results.some(x => x.status === 'stored')) writeAnchor(anchorPath, db);
+        const r = guardedAppend(db, anchorPath, guard, body && body.clientId, body && body.records);
+        if (r.refusal) console.error(`write refused: ${r.refusal}`);
         return r.ok ? send(res, 200, { ok: true, results: r.results, ...(check ? { ackCheck: check } : {}) }) : send(res, r.status, { ok: false, error: r.error });
       }
       if (url.pathname !== `/api/${API_VERSION}/health` && !operator(req)) return fail(res, 401, 'unauthorized', writer(req) ? 'The write token can only append records. Reading, verifying and exporting need the operator token.' : 'Send the operator token as Authorization: Bearer <token>.');

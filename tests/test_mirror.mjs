@@ -333,6 +333,21 @@ await m.close();
  fs.rmSync(tp+'.anchor.json');let msg='';try{const x=createMirror({dbPath:tp,backupDir:path.join(tmp,'b25'),port:0,backupEveryMinutes:0,...SECURE});x.db.close();}catch(e){msg=e.message;}
  ok('an existing database with no rows and no anchor is refused and the next step named',/missing for the existing database/.test(msg)&&/--reanchor/.test(msg)&&!fs.existsSync(tp+'.anchor.json'),msg);}
 
+// A write's anchor and chain checks run while it holds the database write lock, so no other connection can commit
+// between the check and the append; a change made before the write is still refused and nothing is stored.
+{const {DatabaseSync}=await import('node:sqlite');const srv=await import(path.join(ROOT,'server/mirror/server.mjs'));
+ const tp=path.join(tmp,'lock.sqlite');const ml=createMirror({dbPath:tp,backupDir:path.join(tmp,'b26'),port:0,backupEveryMinutes:0,...SECURE});
+ ok('the server exposes the guarded write it uses',typeof srv.guardedAppend==='function');
+ if(typeof srv.guardedAppend==='function'){
+  const guard={verifiedVersion:null};srv.guardedAppend(ml.db,tp+'.anchor.json',guard,'l',[rec(901),rec(902)]);
+  let other='';const r=srv.guardedAppend(ml.db,tp+'.anchor.json',guard,'l',[rec(903)],{afterCheck:()=>{const d=new DatabaseSync(tp);d.exec('PRAGMA busy_timeout = 0');try{const x=rec(904);d.prepare('INSERT INTO records (client_write_id,store_key,entity_type,entity_id,operation,payload_json,payload_sha256,prev_sha256,actor,credential,client_ts,server_ts,build_version,build_sha256,client_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(x.clientWriteId,x.storeKey,x.entityType,x.entityId,x.operation,x.payloadJson,x.payloadSha256,'0'.repeat(64),null,null,x.clientTs,'t',x.buildVersion,x.buildSha256,'intruder');other='committed';}catch(e){other=e.message;}finally{d.close();}}});
+  ok('another connection cannot commit while a write is being checked',/locked|busy/i.test(other),other);
+  ok('the checked write is stored and the chain stays intact against its anchor',r.ok&&r.results[0].status==='stored'&&ml.verify().ok,JSON.stringify({r,v:ml.verify()}));
+  {const d=new DatabaseSync(tp);d.exec('DROP TRIGGER records_no_delete');d.exec('DROP TRIGGER manifests_no_delete');d.exec('DELETE FROM signature_manifests WHERE record_id=3');d.exec('DELETE FROM records WHERE id=3');d.close();}
+  const n0=Number(ml.db.prepare('SELECT COUNT(*) n FROM records').get().n);const bad=srv.guardedAppend(ml.db,tp+'.anchor.json',guard,'l',[rec(905)]);
+  ok('a change made before the write is refused under the lock and nothing is stored',!bad.ok&&bad.status===409&&/rows/.test(bad.refusal||'')&&Number(ml.db.prepare('SELECT COUNT(*) n FROM records').get().n)===n0,JSON.stringify(bad));}
+ ml.db.close();}
+
 // Fail closed (issue 76): no token configured refuses to start, no origin configured sends no CORS header, and
 // health tells a caller without the token only that the mirror is up.
 {let refusedStart='';try{createMirror({dbPath:path.join(tmp,'none.sqlite'),backupDir:path.join(tmp,'b5'),port:0,backupEveryMinutes:0});}catch(e){refusedStart=e.message;}
@@ -543,6 +558,14 @@ const snapshots=()=>m.db.prepare("SELECT id,payload_json FROM records WHERE enti
  ok('an upgraded device with confirmed records and no acknowledgement sends everything once on its first post, then records an acknowledgement',pre.ack===null&&pre.sent>0&&pre.resent===null&&w5.ok&&!!st.resentAt&&count()-before>=pre.sent&&!!post&&Number.isInteger(post.id),JSON.stringify({pre,added:count()-before,post}));
  const b2=count();await mkOrder(p);st=await drain();
  ok('after that baseline the next write sends only what changed',count()-b2<=3,JSON.stringify({added:count()-b2}));}
+// An upgraded device with confirmed records, no acknowledgement and nothing queued still sends its baseline on its
+// own (on load), so it gets an acknowledgement to probe with and a restore is found without a new edit.
+{await p.evaluate(()=>{const c=JSON.parse(localStorage.getItem('skyryse-mes-sync-client-v1'));delete c.ack;delete c.ackEpoch;localStorage.setItem('skyryse-mes-sync-client-v1',JSON.stringify(c));Object.keys(localStorage).filter(k=>k.startsWith('skyryse-mes-sync-ack-v1:')).forEach(k=>localStorage.removeItem(k));});
+ const r0=count();await p.reload();await p.waitForFunction(()=>window.__ready===true&&!!window.skMirror,null,{timeout:30000});
+ const pre=await p.evaluate(()=>({queued:window.skMirror.status().unsynced,sent:Object.keys(JSON.parse(localStorage.getItem('skyryse-mes-sync-sent-v1')||'{}')).length}));
+ const st6=await p.evaluate(async()=>{for(let i=0;i<100&&!(window.skMirror.status().ack&&!window.skMirror.status().unsynced);i++)await new Promise(r=>setTimeout(r,100));return window.skMirror.status();});
+ ok('the refusal case is real: the reloaded device has confirmed records and nothing queued',pre.sent>0&&pre.queued===0,JSON.stringify(pre));
+ ok('with no edit, the idle upgraded device sends its baseline and gets an acknowledgement',!!st6.resentAt&&!!st6.ack&&st6.unsynced===0&&count()-r0>=pre.sent,JSON.stringify({st6,added:count()-r0,sent:pre.sent}));}
 // When the browser refuses to save an acknowledgement, the tab keeps it in memory and still names it on its next
 // post, so a restore during that session is still found.
 {const before=await devAck();

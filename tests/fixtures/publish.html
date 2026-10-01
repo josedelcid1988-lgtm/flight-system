@@ -14578,7 +14578,13 @@ window.SK_MIRROR = window.SK_MIRROR || {
   // to a backup older than the rows it last confirmed until its next change. It asks on load, when it comes back
   // online, when the tab is shown again and every five minutes; a restore found this way sends everything again.
   var PROBE_MS = 5 * 60 * 1000;
-  var probe = function () { return pending().length ? flush() : flush(true); };
+  // A device upgraded from a build without acknowledgements has none to name, so it cannot probe; with nothing
+  // queued it would never post. It sends everything once instead (its baseline), and the answer gives it an
+  // acknowledgement to probe with from then on.
+  var probe = function () {
+    if (needBaseline && !pending().length && !currentAck().ack) { needBaseline = false; resendAll(); return flush(); }
+    return pending().length ? flush() : flush(true);
+  };
   window.addEventListener('online', function () { attempt = 0; if (pending().length) schedule(0); else probe(); });
   document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible' && !pending().length) probe(); });
   setInterval(function () { if (!pending().length) probe(); }, PROBE_MS);
