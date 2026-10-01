@@ -319,14 +319,8 @@ try {
 
   // #292: the recovery banner clears once the same account has a later write confirmed by the server, and only then.
   const RECOVERY_STORAGE_KEY = 'skyryse-mes-work-order-v1-unconfirmed-server-recovery-v1';
-  // A change counts as the person's only after their own input, so each change below follows a real key press
-  // unless the check is about a change made without one.
   // Priorities toggle between High and Normal: an AOG order would start the page's own AOG broadcast tick mid-check.
-  const recoveryPriorityChange = async (refuse, personInput = true, target = null) => {
-    if (personInput) await page.keyboard.press('Shift');
-    return recoveryPriorityEvaluate({ refuse, target });
-  };
-  const recoveryPriorityEvaluate = ({ refuse, target }) => page.evaluate(({ refuse, target }) => {
+  const recoveryPriorityChange = (refuse, target = null) => page.evaluate(({ refuse, target }) => {
     const order = state.orders.find(item => item.status === 'Building');
     if (!order) throw new Error('No Building order is available for the recovery banner check.');
     const next = target || (order.priority === 'High' ? 'Normal' : 'High');
@@ -385,9 +379,8 @@ try {
     return { otherKept, staleKept, noneKept };
   });
   assert.deepEqual(guarded, { otherKept: true, staleKept: true, noneKept: true }, "a confirmed write does not clear another account's recovery copy, a newer copy, or a copy made after it was sent");
-  // A change confirmed by the server that the page made on its own keeps the copy, even right after the person's
-  // input: credential binding after sign-in or load sends MES.selectProfile as an automatic change.
-  await page.keyboard.press('Shift');
+  // A change confirmed by the server that the page made on its own keeps the copy: credential binding after sign-in
+  // or load sends MES.selectProfile as an automatic change.
   const binding = await page.evaluate(async () => {
     const own = unconfirmedServerRecovery, sent = [], api = window.skServer.api;
     window.skServer.api = async (path, options) => { if (options?.method) sent.push(String(path)); return api(path, options); };
@@ -399,16 +392,38 @@ try {
     return { sent: sent.includes('/workspace/actions/MES.selectProfile'), status: window.skServer.sync.status, kept: unconfirmedServerRecovery === own && sessionStorage.getItem(SERVER_RECOVERY_KEY) !== null && !!document.querySelector('#flight-server-recovery') };
   });
   assert.deepEqual(binding, { sent: true, status: 'synced', kept: true }, 'a confirmed automatic credential binding does not clear the recovery copy');
-  // A change with no input from the person behind it keeps the copy as well.
-  await page.evaluate(() => { serverLastPersonInput = 0; });
-  await recoveryPriorityChange(false, false);
-  await page.waitForFunction(() => window.skServer?.sync?.status === 'synced', null, { timeout: 10000 });
-  assert.deepEqual(await recoveryState(), { banner: true, memory: true, stored: true }, 'a confirmed change that did not follow the person\'s input does not clear the recovery copy');
+  // A workspace snapshot not sent by save() (the first-load initialization, an online retry) is automatic too.
+  const snapshot = await page.evaluate(async () => {
+    const own = unconfirmedServerRecovery, api = window.skServer.api;
+    let put = false;
+    window.skServer.api = async (path, options) => {
+      if (path === '/workspace' && options?.method === 'PUT') { put = true; return { status: 204, etag: serverEtag }; }
+      return api(path, options);
+    };
+    try { pushWorkspace(); await serverPush; } finally { window.skServer.api = api; }
+    return { put, kept: unconfirmedServerRecovery === own && sessionStorage.getItem(SERVER_RECOVERY_KEY) !== null && !!document.querySelector('#flight-server-recovery') };
+  });
+  assert.deepEqual(snapshot, { put: true, kept: true }, 'a confirmed workspace snapshot that save() did not send does not clear the recovery copy');
+  // A person's change keeps its origin through a long await (a file read, a remote call): it is recorded when the
+  // engine call is queued, not from the time since their last input.
+  const awaited = await page.evaluate(async () => {
+    await new Promise(resolve => setTimeout(resolve, 12000));
+    const order = state.orders.find(item => item.status === 'Building');
+    const result = MES.setPriority(state, order.id, order.priority === 'High' ? 'Normal' : 'High');
+    if (!result.ok) throw new Error(result.message);
+    save();
+    await serverActionChain;
+    return { status: window.skServer.sync.status, cleared: unconfirmedServerRecovery === null && sessionStorage.getItem(SERVER_RECOVERY_KEY) === null && !document.querySelector('#flight-server-recovery') };
+  });
+  assert.deepEqual(awaited, { status: 'synced', cleared: true }, "a person's change confirmed after an await clears the recovery copy");
+  await recoveryPriorityChange(true);
+  await page.waitForFunction(() => window.skServer?.sync?.status === 'error', null, { timeout: 10000 });
+  await page.locator('#flight-server-recovery').waitFor({ state: 'visible', timeout: 10000 });
   await page.evaluate(() => document.querySelector('[data-action="dismiss-server-recovery"]').click());
   assert.deepEqual(await recoveryState(), { banner: false, memory: false, stored: false }, 'Dismiss still clears the recovery banner and its copy');
   // Put the order back to its starting priority for the checks that follow.
   if (await page.evaluate(() => state.orders.find(item => item.status === 'Building')?.priority) !== recoveryStartPriority) {
-    await recoveryPriorityChange(false, true, recoveryStartPriority);
+    await recoveryPriorityChange(false, recoveryStartPriority);
     await page.waitForFunction(() => window.skServer?.sync?.status === 'synced', null, { timeout: 10000 });
   }
 
