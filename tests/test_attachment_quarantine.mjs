@@ -152,6 +152,11 @@ function surfaces(state) {
     const blocked = host.withAccount(qmUser, () => MES.rejectSequenceChange(seq, sOrder.id, 'Not needed on this build.'), seq);
     check('rejecting a sequence change is refused while an operation it added holds files, and nothing changes', blocked.ok === false && /holds files that are part of the record, so rejecting the change would erase them/.test(blocked.message) && JSON.stringify(seq) === beforeReject);
     newOp.attachments = [];
+    newOp.evidence = [{ id: 'EV-00000000-0000-4000-8000-00000000e002', fileName: 'placard.mp4', mimeType: 'video/mp4', size: 1000, source: 'upload', description: 'Placard installation', addedAt: new Date().toISOString(), capturedBy: { name: 'Terry Tech', role: 'Assembly technician', credentialId: 'ACCT-quar-technician' }, reviewedAt: null, reviewedBy: null }];
+    const evBefore = JSON.stringify(seq);
+    const evBlocked = host.withAccount(qmUser, () => MES.rejectSequenceChange(seq, sOrder.id, 'Not needed on this build.'), seq);
+    check('rejecting a sequence change is refused while an operation it added holds a recording, and nothing changes', evBlocked.ok === false && /holds files that are part of the record/.test(evBlocked.message) && JSON.stringify(seq) === evBefore);
+    newOp.evidence = [];
     const rejected = host.withAccount(qmUser, () => MES.rejectSequenceChange(seq, sOrder.id, 'Not needed on this build.'), seq);
     check('after the sequence change is rejected the removed file is still quarantined, not live again, and the workspace verifies', rejected.ok && !MES.pendingSequenceChange(sOrder) && !liveOp().attachments.some(f => f.id === fileId) && liveOp().quarantinedAttachments.some(f => f.id === fileId) && MES.validate(seq) && MES.verifyManifests(seq).ok);
     const holder = structuredClone(state), hOrder = holder.orders.find(o => o.operations.some(x => (x.quarantinedAttachments || []).length) && ['Draft', 'Kitting', 'Building'].includes(o.status));
@@ -258,10 +263,42 @@ function surfaces(state) {
     const sample = fOp.quarantinedAttachments[0];
     fOp.quarantinedAttachments = Array.from({ length: 50 }, (_, i) => ({ ...sample, id: `${sample.id}-Q${i}`, manifest: { ...sample.manifest, subject: { ...sample.manifest.subject, fileId: `${sample.id}-Q${i}` } } }));
     check('a full quarantine still validates', MES.validate(full));
-    host.withAccount(technician, () => MES.addAttachment(full, fOrder.id, fOp.id, { name: 'one-more.txt', type: 'text/plain', size: 4 }), full);
-    const fileId = fOp.attachments.at(-1).id, before = JSON.stringify(full);
-    const refused = host.withAccount(technician, () => MES.removeAttachment(full, fOrder.id, fOp.id, fileId, REASON), full);
-    check('a removal into a full quarantine is refused with what to do, and nothing changes', refused.ok === false && /holds 50 removed files in quarantine\. Ask a QA Manager/.test(refused.message) && JSON.stringify(full) === before);
+    const beforeAdd = JSON.stringify(full);
+    const added = host.withAccount(technician, () => MES.addAttachment(full, fOrder.id, fOp.id, { name: 'one-more.txt', type: 'text/plain', size: 4 }), full);
+    check('a record whose files and quarantine reach the cap takes no new file, with what to do, so every live file can always be removed', added.ok === false && /already holds 50 files, counting those removed and kept in quarantine/.test(added.message) && JSON.stringify(full) === beforeAdd);
+    fOp.attachments = [...(fOp.attachments || []), { id: `ATT-${fOp.id}-L1`, name: 'legacy.txt', type: 'text/plain', size: 4, storage: 'reference', addedAt: new Date().toISOString(), addedBy: { name: 'Flight Master', role: 'Master Access', credentialId: 'ACCT-admin' } }];
+    const before = JSON.stringify(full);
+    const refused = host.withAccount(technician, () => MES.removeAttachment(full, fOrder.id, fOp.id, `ATT-${fOp.id}-L1`, REASON), full);
+    check('a removal into a full quarantine is refused with a workable next step, and nothing changes', refused.ok === false && /holds 50 removed files in quarantine, so this file cannot be removed\. Record the correction in a note/.test(refused.message) && JSON.stringify(full) === before);
+  }
+  // The removal manifest must say what it signs.
+  {
+    const relabeled = structuredClone(state), entry = relabeled.orders.flatMap(o => o.operations).find(x => (x.quarantinedAttachments || []).length).quarantinedAttachments[0];
+    entry.manifest.meaning = 'File approved';
+    check('a removal manifest whose meaning was changed fails validation and manifest verification', !MES.validate(relabeled) && !MES.verifyManifests(relabeled).ok);
+  }
+  // Live video evidence counts as a file the record holds: a standard rework pair or a rejected sequence change
+  // that would drop it is refused.
+  {
+    const ev = structuredClone(state), evOrder = ev.orders.find(o => ['Draft', 'Kitting', 'Building'].includes(o.status) && !MES.pendingSequenceChange(o) && o.operations.filter(x => !x.done).length >= 3);
+    const [first, second] = evOrder.operations.filter(x => !x.done).slice(-2);
+    first.stdPair = 'STD-EV'; second.stdPair = 'STD-EV';
+    second.evidence = [{ id: 'EV-00000000-0000-4000-8000-00000000e001', fileName: 'install.mp4', mimeType: 'video/mp4', size: 1000, source: 'upload', description: 'Installation recording', addedAt: new Date().toISOString(), capturedBy: { name: 'Terry Tech', role: 'Assembly technician', credentialId: 'ACCT-quar-technician' }, reviewedAt: null, reviewedBy: null }];
+    const before = JSON.stringify(ev);
+    const removed = host.withAccount(me, () => MES.removeOrderOperation(ev, evOrder.id, first.id, 'Not needed on this build.'), ev);
+    check('a standard rework pair whose partner holds a recording is refused before either operation is removed', removed.ok === false && /standard rework pair holds files/.test(removed.message) && JSON.stringify(ev) === before);
+  }
+  // A split request copies files as a plain split does, so it is held to the same workspace limit.
+  {
+    const heavyReq = structuredClone(state), admin = { username: 'quar-admin', displayName: 'Flight Master', role: 'admin' };
+    const rOrder = heavyReq.orders.find(o => ['Kitting', 'Building'].includes(o.status) && !MES.engineeringChange(o) && o.operations.some(x => !x.done));
+    if (MES.pendingSequenceChange(rOrder)) { rOrder.sequenceChange = null; delete rOrder.sequenceBaseline; }
+    rOrder.operations[0].attachments = [0, 1, 2, 3, 4, 5].map(i => ({ id: `ATT-${rOrder.operations[0].id}-R${i}`, name: `big-${i}.png`, type: 'image/png', size: 200000, storage: 'inline', addedAt: new Date().toISOString(), addedBy: { name: 'Flight Master', role: 'Master Access', credentialId: 'ACCT-admin' }, dataUrl: `data:image/png;base64,${'E'.repeat(290000)}` }));
+    Object.assign(rOrder, { quantity: 3 });
+    rOrder.splitRequests = [{ id: 'SPR-QUAR-3', ticketId: null, quantity: 1, of: 3, serials: [], reason: 'Split one unit out', status: 'Open', requestedBy: { name: 'Flight Master', role: 'Master Access', credentialId: 'MA-1' }, requestedAt: new Date().toISOString() }];
+    const before = JSON.stringify(heavyReq);
+    const result = host.withAccount(admin, () => MES.splitRequestOrder(heavyReq, rOrder.id, 'SPR-QUAR-3'), heavyReq);
+    check('a split request that would copy files past the workspace limit is refused with what to do, and nothing changes', result.ok === false && /Splitting would copy this order.s files/.test(result.message) && JSON.stringify(heavyReq) === before);
   }
   // Splitting an order does not copy removal records onto the new order; they stay where the file was removed.
   {
