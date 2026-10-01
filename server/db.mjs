@@ -1,6 +1,9 @@
 // Embedded storage: one SQLite file, no dependencies (node:sqlite, Node 22.13 or later).
 import { DatabaseSync, backup as sqliteBackup } from 'node:sqlite';
 import { createHash, randomBytes } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { resolve as resolvePath } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 export function openDb(path) {
   const db = new DatabaseSync(path);
@@ -215,6 +218,31 @@ export function openDb(path) {
       return { ok: true, checked, head: previous };
     },
     skillRun(username, skill, input, output, status) { db.prepare('INSERT INTO skill_runs (at, username, skill, input, output, status) VALUES (?, ?, ?, ?, ?, ?)').run(now(), username || null, skill, JSON.stringify(input ?? null).slice(0, 20000), JSON.stringify(output ?? null).slice(0, 200000), status); },
+    close() { db.close(); }
+  };
+}
+
+// Read-only access for one-off operator scans (tools/scan-archive-proto.mjs). It runs no schema step, cannot write,
+// and never creates the file. With no -wal file beside the database nothing is pending, so it opens immutable and
+// leaves no -wal or -shm behind; with one (a running server, or one that stopped uncleanly) it opens read-only so
+// the pending pages are read too.
+export function openDbReadOnly(path) {
+  const file = resolvePath(path);
+  const url = pathToFileURL(file);
+  url.searchParams.set('mode', 'ro');
+  if (!existsSync(`${file}-wal`)) url.searchParams.set('immutable', '1');
+  const db = new DatabaseSync(url, { readOnly: true });
+  return {
+    // Every archive row in order_id order, read in pages inside one read transaction so the scan sees one snapshot.
+    *archiveRows(pageSize = 200) {
+      db.exec('BEGIN');
+      try {
+        const page = db.prepare('SELECT order_id, json FROM archive WHERE order_id > ? ORDER BY order_id LIMIT ?');
+        for (let after = '', rows; (rows = page.all(after, pageSize)).length; after = rows[rows.length - 1].order_id) {
+          for (const r of rows) yield { id: r.order_id, json: r.json };
+        }
+      } finally { db.exec('ROLLBACK'); }
+    },
     close() { db.close(); }
   };
 }

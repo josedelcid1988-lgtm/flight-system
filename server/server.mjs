@@ -1072,11 +1072,19 @@ export function createServer(options = {}) {
   return server;
 }
 
+// The store a command line names: --db picks SQLite; otherwise --database-url or FLIGHT_DATABASE_URL picks
+// PostgreSQL; otherwise FLIGHT_DB or data/flight.sqlite. Operator tools use this so they open the same store.
+export function storeSettings(arg, env = process.env) {
+  const dbOverride = arg('db', null);
+  return {
+    dbPath: dbOverride || env.FLIGHT_DB || path.join(ROOT, 'data', 'flight.sqlite'),
+    databaseUrl: arg('database-url', dbOverride ? null : env.FLIGHT_DATABASE_URL || null)
+  };
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   const arg = (name, fallback) => { const i = process.argv.indexOf(`--${name}`); return i > 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback; };
-  const dbOverride = arg('db', null);
-  const dbPath = dbOverride || process.env.FLIGHT_DB || path.join(ROOT, 'data', 'flight.sqlite');
-  const databaseUrl = arg('database-url', dbOverride ? null : process.env.FLIGHT_DATABASE_URL || null);
+  const { dbPath, databaseUrl } = storeSettings(arg);
   const openCliStore = async () => databaseUrl ? openPostgres(databaseUrl) : openDb(dbPath);
   const backupTo = arg('backup', null), restoreFrom = arg('restore', null), unlockUser = arg('unlock', null);
   if (unlockUser) {

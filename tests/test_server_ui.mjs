@@ -56,8 +56,15 @@ try {
     if (!response.ok) return false;
     const value = await response.json(); return value.orders.find(order => order.id === id)?.priority === 'High';
   }, { port, token, id: priorityChange.id }, { timeout: 15000 });
-  const audit = await server.store.auditRows(1000);
-  const recordedActions = audit.filter(row => row.action === 'action').map(row => JSON.parse(row.detail).action);
+  // #157: the workspace can show the new priority a moment before its audit row is readable, so wait for the row
+  // itself. A priority that reached the server another way never writes this row, and the full-workspace write
+  // check below still fails for it.
+  const actionsRecorded = async () => (await server.store.auditRows(1000)).filter(row => row.action === 'action').map(row => JSON.parse(row.detail).action);
+  let recordedActions = await actionsRecorded();
+  for (const until = Date.now() + 5000; !recordedActions.includes('MES.setPriority') && Date.now() < until;) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+    recordedActions = await actionsRecorded();
+  }
   assert.ok(recordedActions.includes('MES.addAdhocOrder'), 'work-order creation ran through the server MES action endpoint');
   assert.ok(recordedActions.includes('MES.setPriority'), 'the follow-up priority edit ran through the server MES action endpoint');
   const snapshotWrites = (await server.store.auditRows(1000)).filter(row => row.action === 'workspace-put');

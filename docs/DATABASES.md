@@ -47,6 +47,24 @@ A closed work order leaves the live workspace once it is stocked, or when it can
 
 The export's `extractSha256` covers the order, its activity, the archive hash and the metadata of each recording, including that recording's SHA-256. The recording bytes are streamed one at a time, so a large archive never has to fit in server memory. To verify a download, check each recording's base64 bytes against its `sha256`, then hash the rest of the extract as described in `extractHashCovers`.
 
+### One-time scan for a `__proto__` key (issue #174)
+
+Since #168 an order carrying an own `"__proto__"` key cannot enter the archive, because content under that key sits outside the record's signatures. Rows archived before that are served as stored. This read-only scan lists any such row once. It opens the store the way the server does, runs no schema step, writes nothing, and uses the engine's own finder.
+
+Run it from the checkout the server runs from, as a user who can read the database. SQLite, the server's database or a backup copy of it:
+
+```bash
+node tools/scan-archive-proto.mjs --db data/flight.sqlite
+```
+
+PostgreSQL, with the connection string in the environment (the scan never prints it) and a role that can read `archive`. The scan runs in one `REPEATABLE READ READ ONLY` transaction:
+
+```bash
+FLIGHT_DATABASE_URL='postgresql://flight:password@db.internal:5432/flight_system?sslmode=require' node tools/scan-archive-proto.mjs
+```
+
+It prints the rows scanned, the rows flagged, and one `FLAGGED <work order> own "__proto__" key at <path>` line per flagged row. The path names the object that holds the key. Exit status: `0` nothing flagged, `1` one or more rows flagged, `2` the scan could not finish (for example the store could not be opened or a row's JSON does not parse). The server can keep running during the scan. If it is stopped, keep it stopped until the scan finishes: a SQLite file with no `-wal` beside it is opened immutable, which leaves no files behind but assumes nothing writes to it meanwhile. Send the output to the QA Manager; the scan changes nothing, so any follow-up is a separate, recorded decision.
+
 ## Demo build
 
 `demo.html` relaxes separation of duties, PIN entry and the stamp gate, so the production server does
