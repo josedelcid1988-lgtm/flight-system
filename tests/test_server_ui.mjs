@@ -416,6 +416,39 @@ try {
     return { status: window.skServer.sync.status, cleared: unconfirmedServerRecovery === null && sessionStorage.getItem(SERVER_RECOVERY_KEY) === null && !document.querySelector('#flight-server-recovery') };
   });
   assert.deepEqual(awaited, { status: 'synced', cleared: true }, "a person's change confirmed after an await clears the recovery copy");
+  // The person's direct server writes (the model adapter setting and a Jira issue, with the server's acceptance
+  // stubbed) clear the copy once the server confirms them, like a queued change does.
+  const refuseForRecovery = async () => {
+    await recoveryPriorityChange(true);
+    await page.waitForFunction(() => window.skServer?.sync?.status === 'error', null, { timeout: 10000 });
+    await page.locator('#flight-server-recovery').waitFor({ state: 'visible', timeout: 10000 });
+  };
+  const directWrite = async (kind) => page.evaluate(async kind => {
+    const api = window.skServer.api;
+    window.skServer.api = async (path, options) => {
+      if (path === '/workspace/actions/MES.configureModelAdapter' || path === '/jira/issue') return { status: 200, ok: true, etag: serverEtag, json: { message: 'Stubbed confirmation', issue: { key: 'STUB-1' } } };
+      return api(path, options);
+    };
+    const host = document.createElement('div');
+    try {
+      if (kind === 'model') {
+        host.innerHTML = '<form data-ai-model-config><select name="enabled"><option value="true" selected>On</option></select><input name="provider" value="stub"><input name="settingName" value="stub"><input name="rationale" value="stub"><p data-ai-model-error></p></form>';
+        document.body.append(host);
+        host.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      } else {
+        host.innerHTML = '<button type="button" data-action="server-jira-send" data-kind="SPR" data-record="SPR-STUB">Send</button>';
+        document.body.append(host);
+        host.querySelector('button').click();
+      }
+      const started = Date.now();
+      while (unconfirmedServerRecovery && Date.now() - started < 10000) await new Promise(resolve => setTimeout(resolve, 50));
+    } finally { host.remove(); window.skServer.api = api; }
+    return { cleared: unconfirmedServerRecovery === null && sessionStorage.getItem(SERVER_RECOVERY_KEY) === null && !document.querySelector('#flight-server-recovery') };
+  }, kind);
+  await refuseForRecovery();
+  assert.deepEqual(await directWrite('model'), { cleared: true }, 'a confirmed model adapter setting clears the recovery copy');
+  await refuseForRecovery();
+  assert.deepEqual(await directWrite('jira'), { cleared: true }, 'a confirmed Jira issue clears the recovery copy');
   await recoveryPriorityChange(true);
   await page.waitForFunction(() => window.skServer?.sync?.status === 'error', null, { timeout: 10000 });
   await page.locator('#flight-server-recovery').waitFor({ state: 'visible', timeout: 10000 });
