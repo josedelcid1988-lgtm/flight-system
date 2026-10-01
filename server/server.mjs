@@ -381,6 +381,9 @@ export function createServer(options = {}) {
   const commitState = async (state, expectedEtag, username, audits = []) => {
     const exportState = structuredClone(state);
     const beforeRow = await store.getDoc(TENANT);
+    // An initialization (expectedEtag null) that finds a stored workspace lost the race to another request: report the
+    // conflict before any comparison against that workspace, so the loser never reads as a calibration or archive refusal.
+    if (expectedEtag === null && beforeRow) return { conflict: true };
     const beforeState = beforeRow ? JSON.parse(beforeRow.json) : null;
     const r = host.MES.archiveOrders ? host.MES.archiveOrders(state) : { ok: true, archived: [] };
     if (!r.ok) return { problem: r.message };
