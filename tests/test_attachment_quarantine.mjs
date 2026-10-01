@@ -465,6 +465,46 @@ function surfaces(state) {
   forged('content is inline but missing', e => { delete e.dataUrl; e.storage = 'inline'; });
 }
 
+// ---- engine: the whole signer of a removal is bound to the remover, and a browser removal is never "authenticated" ----
+{
+  const state = curated();
+  const [first] = surfaces(state);
+  host.withAccount(technician, () => first.add(), state);
+  const fileId = first.live().at(-1).id;
+  host.withAccount(technician, () => first.remove(fileId, REASON), state);
+  const { order, op } = recordingTarget(state);
+  host.withAccount(technician, () => MES.attachEvidence(state, order.id, op.id, clip(evId(950))), state);
+  host.withAccount(technician, () => MES.removeEvidence(state, order.id, op.id, evId(950), REASON), state);
+  check('a removal signs the remover\u2019s full identity and the signing account', (() => { const e = first.quarantined().find(f => f.id === fileId); return e.manifest.signer.role === e.removedBy.role && e.manifest.subject.signerAccount === e.manifest.signer.account && e.manifest.authenticated === false; })() && MES.validate(structuredClone(state)) && MES.verifyManifests(state).ok);
+  const pick = copy => [surfaces(copy)[0].quarantined().find(f => f.id === fileId), copy.orders.find(o => o.id === order.id).operations.find(x => x.id === op.id).quarantinedEvidence.find(e => e.id === evId(950))];
+  for (const [label, edit] of [['signer role was changed', m => { m.signer.role = 'QA Manager'; }], ['signer account was changed', m => { m.signer.account = 'someone-else'; }], ['removal was marked authenticated', m => { m.authenticated = true; }]]) {
+    for (const [which, i] of [['file', 0], ['recording', 1]]) {
+      const copy = structuredClone(state); edit(pick(copy)[i].manifest);
+      check(`validation refuses a removed ${which} whose ${label}`, !MES.validate(copy) && !MES.verifyManifests(copy).ok);
+    }
+  }
+}
+
+// ---- engine: a sequence change never drops files, and its captured copy is counted, then discarded on release ----
+{
+  const state = curated(), qmUser = { username: 'quar-qm', displayName: 'Quincy Manager', role: 'qm' };
+  const order = state.orders.find(o => ['Kitting', 'Building'].includes(o.status) && !MES.pendingSequenceChange(o) && !MES.engineeringChange(o) && o.operations.some(x => !x.done));
+  const op = order.operations.filter(x => !x.done).at(-1);
+  const pendingChange = () => host.withAccount(me, () => MES.addOrderOperation(state, order.id, { title: 'Install placard', description: 'Install the data placard.', steps: 'Clean surface\nInstall placard', position: order.operations.length, buyoffType: 'Technician', classification: 'Manufacturing', callouts: [] }), state);
+  check('a sequence change is pending for the file checks', pendingChange().ok && !!MES.pendingSequenceChange(order));
+  const before = MES.workspaceFileBytes(state);
+  const added = host.withAccount(technician, () => MES.addAttachment(state, order.id, op.id, photo), state);
+  const newFile = op.attachments.at(-1).id;
+  check('a file added to an existing operation while the change waits is counted along with the captured copy', added.ok && MES.workspaceFileBytes(state) > before);
+  const rejected = host.withAccount(qmUser, () => MES.rejectSequenceChange(state, order.id, 'Not needed on this build.'), state);
+  const restored = order.operations.find(x => x.id === op.id);
+  check('rejecting the change keeps a file added while it waited, and the workspace verifies', rejected.ok && restored.attachments.some(f => f.id === newFile) && order.sequenceBaseline === undefined && MES.validate(structuredClone(state)) && MES.verifyManifests(state).ok);
+  check('a second sequence change is pending for the release check', pendingChange().ok && Array.isArray(order.sequenceBaseline));
+  const withBaseline = MES.workspaceFileBytes(state);
+  const released = host.withAccount(qmUser, () => MES.approveSequenceChange(state, order.id), state);
+  check('releasing the change discards the captured copy, so its files stop counting twice', released.ok && order.sequenceBaseline === undefined && MES.workspaceFileBytes(state) < withBaseline && MES.validate(structuredClone(state)));
+}
+
 // ---- engine: a removal is never recorded before the file was added ----
 {
   const state = curated();

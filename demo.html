@@ -5465,6 +5465,8 @@ const OP_BOM_MAX = 12;
     const at = new Date().toISOString();
     order.sequenceChanges = [...(Array.isArray(order.sequenceChanges) ? order.sequenceChanges: []), { ...pending, status: 'Released', approvedBy: actor(state), approvedAt: at }].slice(-50);
     order.sequenceChange = null;
+    // The captured baseline is only for a rejection; once released it is not kept as a second copy of every file.
+    delete order.sequenceBaseline;
     order.tickets.filter(t => t.status === 'Open' && plain(t.reworkPlan) && t.reworkPlan.stage === 'Awaiting ME operation').forEach(t => linkReworkOperation(state, order, t));
     order.tickets.filter(t => t.status === 'Open' && plain(t.reworkPlan) && t.reworkPlan.stage === 'Awaiting QA release' && order.operations.some(item => item.id === t.reworkPlan.opId)).forEach(t => {
       t.reworkPlan = { ...t.reworkPlan, stage: 'Released', releasedBy: actor(state), releasedAt: at };
@@ -6522,7 +6524,9 @@ const OP_BOM_MAX = 12;
   // records: a removed file is kept, so it still takes room. Every file adder checks this budget.
   const heldBytes = holder => holder ? fileBytes(listOf(holder.attachments)) + fileBytes(listOf(holder.quarantinedAttachments)) + fileBytes(listOf(holder.evidence)) + fileBytes(listOf(holder.quarantinedEvidence)) : 0;
   const recordFileBytes = state => plain(state.maneuver) ? Object.values(state.maneuver).reduce((total, records) => total + listOf(records).reduce((sum, rec) => sum + heldBytes(rec), 0), 0) : 0;
-  const attachmentBytes = state => recordFileBytes(state) + state.orders.reduce((total, order) => total + fileBytes(listOf(order.kitFiles)) + fileBytes(listOf(order.quarantinedKitFiles)) + order.operations.reduce((sum, op) => sum + heldBytes(op), 0) + listOf(order.tickets).reduce((sum, t) => sum + heldBytes(t), 0), 0);
+  // A pending sequence change keeps a copy of every operation, files included, until QA decides; that copy is stored too.
+  const baselineBytes = order => listOf(order.sequenceBaseline).reduce((n, op) => n + (plain(op) ? ['attachments', 'evidence', 'quarantinedAttachments', 'quarantinedEvidence'].reduce((m, key) => m + JSON.stringify(listOf(op[key])).length, 0) : 0), 0);
+  const attachmentBytes = state => recordFileBytes(state) + state.orders.reduce((total, order) => total + baselineBytes(order) + fileBytes(listOf(order.kitFiles)) + fileBytes(listOf(order.quarantinedKitFiles)) + order.operations.reduce((sum, op) => sum + heldBytes(op), 0) + listOf(order.tickets).reduce((sum, t) => sum + heldBytes(t), 0), 0);
   // A split copies the order's live files onto the new order, so the copy must fit the workspace limit too.
   const splitBudgetError = (state, child) => attachmentBytes(state) + fileBytes(listOf(child.kitFiles)) + listOf(child.operations).reduce((sum, op) => sum + fileBytes(listOf(op.attachments)) + fileBytes(listOf(op.evidence)), 0) > MAX_ATTACHMENTS_TOTAL ? 'Splitting would copy this order\u2019s files onto the new order past the workspace attachment limit. Keep the larger files in the controlled document system and reference them here, then split.' : null;
   // Content is held to the workspace attachment limit. A file logged by name only still adds a record (and, once
@@ -6545,6 +6549,10 @@ const OP_BOM_MAX = 12;
   // can always be removed with a reason. Past that, further evidence is kept elsewhere and referenced.
   const fileRoomError = (live, quarantined) => listOf(live).length + listOf(quarantined).length >= MAX_QUARANTINED ? `This record already holds ${MAX_QUARANTINED} files, counting those removed and kept in quarantine, so it takes no more. Keep further evidence in the controlled document system and reference it in a note on this record.` : null;
   // A removal is never recorded before the file was added, even when the device clock has moved back.
+  // The signer of a removal is the remover: name, role, credential and the signed-in account (or none), all recorded
+  // in the signed subject, and a removal made in the browser is never presented as server authenticated.
+  const signingAccount = () => { const acct = accountActor(); return acct && typeof acct.account === 'string' ? acct.account : null; };
+  const signerBound = (m, by) => plain(m.signer) && plain(by) && m.authenticated === false && (m.subject.signerAccount === null || (typeof m.subject.signerAccount === 'string' && str(m.subject.signerAccount, 60))) && canonical(m.signer) === canonical({ name: by.name, role: by.role, credentialId: by.credentialId, account: m.subject.signerAccount });
   const laterThan = addedAt => new Date(Math.max(Date.now(), Number.isFinite(Date.parse(addedAt)) ? Date.parse(addedAt) : 0)).toISOString();
   const removedAfterAdded = f => f.addedAt === undefined || f.addedAt === null || Date.parse(f.removedAt) >= Date.parse(f.addedAt);
   function fileQuarantine(state, file, reason, where, held) {
@@ -6552,7 +6560,7 @@ const OP_BOM_MAX = 12;
     const text = typeof reason === 'string' ? reason.trim() : '';
     if (!str(text, REMOVE_REASON_MAX) || text.length < REMOVE_REASON_MIN) return { error: `Give the reason for removing ${file.name} (${REMOVE_REASON_MIN} to ${REMOVE_REASON_MAX} characters). The file is kept in quarantine on the record with your reason.` };
     const at = laterThan(file.addedAt), by = actor(state);
-    const subject = { ...where, fileId: file.id, name: file.name, type: String(file.type || ''), size: file.size, storage: file.storage, addedAt: file.addedAt ?? null, addedBy: file.addedBy ?? null, contentSha256: typeof file.dataUrl === 'string' ? sha256(file.dataUrl) : null, removedAt: at, removedBy: by, removeReason: text };
+    const subject = { ...where, fileId: file.id, name: file.name, type: String(file.type || ''), size: file.size, storage: file.storage, addedAt: file.addedAt ?? null, addedBy: file.addedBy ?? null, contentSha256: typeof file.dataUrl === 'string' ? sha256(file.dataUrl) : null, removedAt: at, removedBy: by, removeReason: text, signerAccount: signingAccount() };
     return { entry: { ...file, removedAt: at, removedBy: by, removeReason: text, manifest: signManifest(state, QUARANTINE_MEANING, subject, at) } };
   }
   const QUARANTINE_KEYS = ['quarantinedAttachments', 'quarantinedKitFiles'];
@@ -6566,7 +6574,7 @@ const OP_BOM_MAX = 12;
   const MAX_QUARANTINED_FILE = 900000;
   // The removal record shown on the entry must be the one that was signed: every displayed field is compared with
   // the manifest subject, so editing the reason, the remover, the time or the file afterwards fails validation.
-  const quarantineBound = f => plain(f.manifest) && f.manifest.meaning === QUARANTINE_MEANING && plain(f.manifest.subject) && f.manifest.algorithm === 'SHA-256' && /^[0-9a-f]{64}$/.test(String(f.manifest.hash || '')) && sha256(canonical(f.manifest.subject)) === f.manifest.hash && f.manifest.at === f.removedAt && plain(f.manifest.signer) && plain(f.removedBy) && f.manifest.signer.name === f.removedBy.name && f.manifest.signer.credentialId === f.removedBy.credentialId && f.manifest.subject.fileId === f.id && f.manifest.subject.name === f.name && f.manifest.subject.type === String(f.type || '') && f.manifest.subject.addedAt === (f.addedAt ?? null) && canonical(f.manifest.subject.addedBy) === canonical(f.addedBy ?? null) && f.manifest.subject.size === f.size && f.manifest.subject.storage === f.storage && f.manifest.subject.removedAt === f.removedAt && f.manifest.subject.removeReason === f.removeReason && canonical(f.manifest.subject.removedBy) === canonical(f.removedBy) && (f.manifest.subject.contentSha256 === null ? f.dataUrl === undefined : typeof f.dataUrl === 'string' && contentSha256(f.dataUrl) === f.manifest.subject.contentSha256);
+  const quarantineBound = f => plain(f.manifest) && f.manifest.meaning === QUARANTINE_MEANING && plain(f.manifest.subject) && f.manifest.algorithm === 'SHA-256' && /^[0-9a-f]{64}$/.test(String(f.manifest.hash || '')) && sha256(canonical(f.manifest.subject)) === f.manifest.hash && f.manifest.at === f.removedAt && plain(f.removedBy) && signerBound(f.manifest, f.removedBy) && f.manifest.subject.fileId === f.id && f.manifest.subject.name === f.name && f.manifest.subject.type === String(f.type || '') && f.manifest.subject.addedAt === (f.addedAt ?? null) && canonical(f.manifest.subject.addedBy) === canonical(f.addedBy ?? null) && f.manifest.subject.size === f.size && f.manifest.subject.storage === f.storage && f.manifest.subject.removedAt === f.removedAt && f.manifest.subject.removeReason === f.removeReason && canonical(f.manifest.subject.removedBy) === canonical(f.removedBy) && (f.manifest.subject.contentSha256 === null ? f.dataUrl === undefined : typeof f.dataUrl === 'string' && contentSha256(f.dataUrl) === f.manifest.subject.contentSha256);
   // The original attachment's provenance is kept: when and by whom it was added, and its type, all signed.
   const quarantinedFileValid = f => plain(f) && str(f.id, 60) && str(f.name, 160) && str(f.type ?? '', 80, 0) && (f.addedAt === undefined || (typeof f.addedAt === 'string' && Number.isFinite(Date.parse(f.addedAt)))) && (f.addedBy === undefined || profileValid(f.addedBy)) && Number.isInteger(f.size) && f.size >= 0 && ['inline', 'reference'].includes(f.storage) && (f.storage === 'reference' || typeof f.dataUrl === 'string') && (f.dataUrl === undefined || (typeof f.dataUrl === 'string' && f.dataUrl.length <= MAX_QUARANTINED_FILE)) && timestamp(f.removedAt) && plain(f.removedBy) && str(f.removedBy.name, 80) && str(f.removedBy.credentialId, 40) && typeof f.removeReason === 'string' && f.removeReason.trim().length >= REMOVE_REASON_MIN && f.removeReason.length <= REMOVE_REASON_MAX && removedAfterAdded(f) && quarantineBound(f);
   // A removal record belongs to the record it was made on: the signed scope and record identifiers must name the
@@ -6604,10 +6612,10 @@ const OP_BOM_MAX = 12;
     const text = typeof reason === 'string' ? reason.trim() : '';
     if (!str(text, REMOVE_REASON_MAX) || text.length < REMOVE_REASON_MIN) return { error: `Give the reason for removing this recording (${REMOVE_REASON_MIN} to ${REMOVE_REASON_MAX} characters). The recording is kept in quarantine on the record with your reason.` };
     const at = laterThan(evidence.addedAt), by = actor(state);
-    const subject = { ...where, evidenceId: evidence.id, evidence: evidenceRecord(evidence), removedAt: at, removedBy: by, removeReason: text };
+    const subject = { ...where, evidenceId: evidence.id, evidence: evidenceRecord(evidence), removedAt: at, removedBy: by, removeReason: text, signerAccount: signingAccount() };
     return { entry: { ...evidence, removedAt: at, removedBy: by, removeReason: text, manifest: signManifest(state, EVIDENCE_QUARANTINE_MEANING, subject, at) } };
   }
-  const evidenceQuarantineBound = e => plain(e) && plain(e.manifest) && e.manifest.meaning === EVIDENCE_QUARANTINE_MEANING && plain(e.manifest.subject) && e.manifest.algorithm === 'SHA-256' && /^[0-9a-f]{64}$/.test(String(e.manifest.hash || '')) && sha256(canonical(e.manifest.subject)) === e.manifest.hash && e.manifest.at === e.removedAt && plain(e.manifest.signer) && plain(e.removedBy) && e.manifest.signer.name === e.removedBy.name && e.manifest.signer.credentialId === e.removedBy.credentialId && e.manifest.subject.evidenceId === e.id && canonical(e.manifest.subject.evidence) === canonical(evidenceSignedAs(e, e.manifest.subject.evidence)) && e.manifest.subject.removedAt === e.removedAt && e.manifest.subject.removeReason === e.removeReason && canonical(e.manifest.subject.removedBy) === canonical(e.removedBy);
+  const evidenceQuarantineBound = e => plain(e) && plain(e.manifest) && e.manifest.meaning === EVIDENCE_QUARANTINE_MEANING && plain(e.manifest.subject) && e.manifest.algorithm === 'SHA-256' && /^[0-9a-f]{64}$/.test(String(e.manifest.hash || '')) && sha256(canonical(e.manifest.subject)) === e.manifest.hash && e.manifest.at === e.removedAt && plain(e.removedBy) && signerBound(e.manifest, e.removedBy) && e.manifest.subject.evidenceId === e.id && canonical(e.manifest.subject.evidence) === canonical(evidenceSignedAs(e, e.manifest.subject.evidence)) && e.manifest.subject.removedAt === e.removedAt && e.manifest.subject.removeReason === e.removeReason && canonical(e.manifest.subject.removedBy) === canonical(e.removedBy);
   const signedEvidence = list => listOf(list).filter(e => plain(e) && e.manifest !== undefined);
   const quarantinedEvidenceValid = (e, holder) => plain(e) && typeof e.id === 'string' && (e.manifest === undefined || (timestamp(e.removedAt) && plain(e.removedBy) && str(e.removedBy.name, 80) && str(e.removedBy.credentialId, 40) && typeof e.removeReason === 'string' && e.removeReason.trim().length >= REMOVE_REASON_MIN && e.removeReason.length <= REMOVE_REASON_MAX && evidenceValid(evidenceRecord(e)) && removedAfterAdded(e) && evidenceQuarantineBound(e) && quarantineHeldBy(e, holder)));
   // Signed removals are capped like removed files, unique, never also live, and signed for this operation.
@@ -8080,13 +8088,13 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     // quarantine of the live operation with the same id, and a file removed since is not restored as live.
     const dropped = order.operations.find(op => !order.sequenceBaseline.some(b => b && b.id === op.id) && operationHoldsFiles(op));
     if (dropped) return fail(`${dropped.id} was added by this sequence change and holds files that are part of the record, so rejecting the change would erase them. Approve the sequence change instead; the operation and its files then stay on the record.`);
-    const keptQuarantine = new Map(order.operations.filter(op => listOf(op.quarantinedAttachments).length || listOf(op.quarantinedEvidence).length).map(op => [op.id, op]));
+    // Files are part of the record, not of the sequence: each restored operation keeps the files its live copy holds
+    // now, attached or removed while the change waited, so nothing is dropped and no removal is undone.
+    const current = new Map(order.operations.map(op => [op.id, op]));
     order.operations = order.sequenceBaseline.map(op => {
-      const live = keptQuarantine.get(op.id); if (!live) return op;
-      const files = new Set(listOf(live.quarantinedAttachments).map(f => f && f.id)), clips = new Set(listOf(live.quarantinedEvidence).map(e => e && e.id));
-      const next = { ...op, attachments: listOf(op.attachments).filter(f => !files.has(f && f.id)), evidence: listOf(op.evidence).filter(e => !clips.has(e && e.id)) };
-      if (listOf(live.quarantinedAttachments).length) next.quarantinedAttachments = live.quarantinedAttachments; else delete next.quarantinedAttachments;
-      if (listOf(live.quarantinedEvidence).length) next.quarantinedEvidence = live.quarantinedEvidence; else delete next.quarantinedEvidence;
+      const live = current.get(op.id); if (!live) return op;
+      const next = { ...op, attachments: listOf(live.attachments), evidence: listOf(live.evidence) };
+      for (const key of ['quarantinedAttachments', 'quarantinedEvidence']) { if (listOf(live[key]).length) next[key] = live[key]; else delete next[key]; }
       return next;
     });
     delete order.sequenceBaseline;
