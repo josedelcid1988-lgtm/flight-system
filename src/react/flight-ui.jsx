@@ -67,11 +67,14 @@ const cardGateOf = (order, MES) => {
     overdue: order.status !== 'Closed' && !!order.due && order.due < new Date().toISOString().slice(0, 10)
   };
 };
-// A source-inspection operation with no inspection record holds the order (the Hangar holds panel and the drawer list
-// it, and buy-off is refused until it is recorded). Both card lists add it to the gate here, so the card names it.
-const withSourceInspections = (gate, order, MES) => {
+// Two more holds stop work that the list rows do not carry: a source-inspection operation with no inspection record
+// (the Hangar holds panel and the drawer list it; buy-off is refused until it is recorded) and an operation sequence
+// change awaiting QA release (buy-off and MES.advance both refuse the order). Both card lists add them to the gate here,
+// so the card is Blocked and names what clears it.
+const withCardHolds = (gate, order, MES) => {
   const sourceInspections = MES && MES.sourceInspectionHolds ? MES.sourceInspectionHolds(null, order) : [];
-  return sourceInspections.length ? { ...gate, held: true, sourceInspections } : gate;
+  const sequenceChange = !!(MES && MES.pendingSequenceChange && MES.pendingSequenceChange(order));
+  return sourceInspections.length || sequenceChange ? { ...gate, held: true, sourceInspections, sequenceChange } : gate;
 };
 // What the card asks for next follows the workflow gates before the operation list: holds first, then release, then
 // whatever MES.canAdvance says blocks the stage (a pending pedigree change, kitting materials or kit list, the quality
@@ -80,6 +83,7 @@ const withSourceInspections = (gate, order, MES) => {
 const cardNextStepOf = (order, gate, MES) => {
   if (gate.held) {
     const why = [gate.engineering && 'engineering change', gate.openTickets && `${gate.openTickets} open NC`,
+      gate.sequenceChange && 'QA release of the updated operation sequence',
       ...(gate.sourceInspections || []).map(hold => `source inspection record for ${hold.title}`)].filter(Boolean);
     return `Resolve holds before continuing${why.length ? `: ${why.join(', ')}` : ''}`;
   }
@@ -96,7 +100,7 @@ const cardNextStepOf = (order, gate, MES) => {
 function WorkOrderCards({ orders, onOpen, meta, MES, compact, priority }) {
   if (!orders.length) return null;
   return <ul className={`fr-wo-cards${compact ? ' fr-compact' : ''}`} aria-label="Work orders">{orders.map((order, index) => {
-    const gate = withSourceInspections(meta ? meta[index] : cardGateOf(order, MES), order, MES);
+    const gate = withCardHolds(meta ? meta[index] : cardGateOf(order, MES), order, MES);
     return <li key={order.id} className={`fr-wo-card${gate.held ? ' is-held' : ''}${gate.aog ? ' is-aog' : ''}`} data-wo-card={order.id}>
       <div className="fr-wo-card-top"><strong className="fr-wo-card-id">{order.id}{order.fai?.required && <span className="fr-fai-tag">FAI</span>}</strong>{gate.held ? <span className="fr-order-blocked">Blocked</span> : <span className="fr-wo-card-state"><span className="fr-status"><i/>{order.status || 'Draft'}</span>{gate.openTickets ? <small className="fr-wo-card-nc">{gate.openTickets} open NC</small> : null}</span>}</div>
       <p className="fr-wo-card-title">{titleOf(order)}</p>

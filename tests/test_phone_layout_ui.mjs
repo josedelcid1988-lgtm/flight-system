@@ -215,8 +215,9 @@ try {
         const building = state.orders.find(o => o.status === 'Quality' && o !== nc && o !== fai && o.operations.every(op => op.done) && !MES.blockingTickets(o).length && !MES.engineeringChange(o) && !o.pedigreeChange);
         const inspect = open.find(o => o !== nc && o !== fai && o !== building && !MES.blockingTickets(o).length && !MES.engineeringChange(o) && (o.operations || []).some(op => !op.done));
         const op = inspect.operations.find(item => !item.done);
-        window.__restore = { ticket: [ticket, ticket.hold], fai: [fai, fai.fai], building: [building, building.status], op: [op, op.classification, op.sourceInspection] };
+        window.__restore = { ticket: [ticket, ticket.hold], seq: [nc, nc.sequenceChange], fai: [fai, fai.fai], building: [building, building.status], op: [op, op.classification, op.sourceInspection] };
         ticket.hold = false;
+        delete nc.sequenceChange; // the sample's NC order also has a sequence change awaiting QA, itself a hold
         fai.fai = { ...(fai.fai || {}), required: true };
         building.status = 'Building';
         op.classification = MES.SOURCE_INSPECTION_CLASS; delete op.sourceInspection;
@@ -237,7 +238,28 @@ try {
           assert.equal(await card(setup.building).locator('.fr-wo-card-next dd').innerText(), 'All operations recorded. Send to QA.', `${route}: a finished build is sent to QA`);
         }
       } finally {
-        await page.evaluate(() => { const r = window.__restore; r.ticket[0].hold = r.ticket[1]; r.fai[0].fai = r.fai[1]; r.building[0].status = r.building[1]; r.op[0].classification = r.op[1]; if (r.op[2]) r.op[0].sourceInspection = r.op[2]; render(); });
+        await page.evaluate(() => { const r = window.__restore; r.ticket[0].hold = r.ticket[1]; if (r.seq[1] !== undefined) r.seq[0].sequenceChange = r.seq[1]; r.fai[0].fai = r.fai[1]; r.building[0].status = r.building[1]; r.op[0].classification = r.op[1]; if (r.op[2]) r.op[0].sourceInspection = r.op[2]; render(); });
+      }
+      assert.equal(await page.evaluate(() => MES.validate(state)), true, 'the restored workspace is valid');
+    });
+    await check(`${at} home and orders: a sequence change awaiting QA blocks the card and names the QA release`, async () => {
+      const id = await page.evaluate(() => {
+        // Set up a finished build with a sequence change awaiting QA: without the hold it would read "Send to QA".
+        const order = state.orders.find(o => o.status === 'Quality' && o.operations.every(op => op.done) && !MES.blockingTickets(o).length && !MES.engineeringChange(o));
+        window.__seq = [order, order.status, order.sequenceChange];
+        order.status = 'Building'; order.sequenceChange = { status: 'Awaiting QA', entries: [], requestedBy: state.profile.name, requestedAt: new Date().toISOString() };
+        return MES.pendingSequenceChange(order) ? order.id : null;
+      });
+      try {
+        assert.ok(id, 'the setup produces a pending sequence change');
+        for (const route of ['home', 'orders']) {
+          await show(page, route);
+          const card = page.locator(`#main [data-wo-card="${id}"]`);
+          assert.equal(await card.locator('.fr-order-blocked').count(), 1, `${route}: the card is Blocked`);
+          assert.match(await card.locator('.fr-wo-card-next dd').innerText(), /^Resolve holds before continuing: .*QA release of the updated operation sequence/, `${route}: the card asks for the QA release, not the QA handoff`);
+        }
+      } finally {
+        await page.evaluate(() => { const [order, status, change] = window.__seq; order.status = status; if (change === undefined) delete order.sequenceChange; else order.sequenceChange = change; render(); });
       }
       assert.equal(await page.evaluate(() => MES.validate(state)), true, 'the restored workspace is valid');
     });
