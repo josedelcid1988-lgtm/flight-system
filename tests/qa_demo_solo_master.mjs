@@ -17,7 +17,7 @@ const FIXTURES = process.env.FS_FIXTURES_DIR ? path.resolve(process.env.FS_FIXTU
 const DEMO_URL = pathToFileURL(path.join(FIXTURES, 'demo_publish.html')).href;
 const SHOTS = path.join(TESTS, 'shots'); fs.mkdirSync(SHOTS, { recursive: true });
 const SCRATCH = fs.mkdtempSync(path.join(fs.realpathSync(process.env.TMPDIR || '/tmp'), 'fs-solo-'));
-const CHROME = process.env.CHROME_PATH || (fs.existsSync('/opt/pw-browsers/chromium') ? '/opt/pw-browsers/chromium' : undefined);
+const CHROME = process.env.CHROME_PATH; // set CHROME_PATH when the Playwright browser is not the installed one
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',').map(s => s.trim()) : null;
 const PASSWORD = 'demo1234';
 const today = (d = 0) => new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
