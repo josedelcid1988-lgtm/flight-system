@@ -22,7 +22,7 @@
 // deletions, which would turn the demo's entities into false production deletes) is cleared, and operation drafts,
 // which may hold rehearsal values, move to the demo drafts store.
 function purgeLegacyDemoState(){return;/* DEMO D-44 */
- var AUTH='skyryse-mes-demo-auth-v1'/* DEMO D-38 */,QK='skyryse-mes-demo-sync-queue-v1'/* DEMO D-40 */,SENT='skyryse-mes-demo-sync-sent-v1'/* DEMO D-40 */,SK='skyryse-mes-demo-security-v1'/* DEMO D-41 */,DR='skyryse-mes-demo-drafts-v1'/* DEMO D-41 */,DSK='skyryse-mes-demo-security-v1',DDR='skyryse-mes-demo-drafts-v1';
+ var REVIEW='skyryse-mes-legacy-demo-review-v1',AUTH='skyryse-mes-demo-auth-v1'/* DEMO D-38 */,QK='skyryse-mes-demo-sync-queue-v1'/* DEMO D-40 */,SENT='skyryse-mes-demo-sync-sent-v1'/* DEMO D-40 */,SK='skyryse-mes-demo-security-v1'/* DEMO D-41 */,DR='skyryse-mes-demo-drafts-v1'/* DEMO D-41 */,DSK='skyryse-mes-demo-security-v1',DDR='skyryse-mes-demo-drafts-v1';
  var demo=new Set(),grew=true,removed=[],dropped=0,moved=0,draftsMoved=0,sentCleared=false;
  function get(k){try{return JSON.parse(localStorage.getItem(k)||'null');}catch(e){return null;}}
  function put(k,v){localStorage.setItem(k,JSON.stringify(v));}
@@ -40,11 +40,27 @@ function purgeLegacyDemoState(){return;/* DEMO D-44 */
  if(removed.length||dropped||moved){
   try{var sent=get(SENT);if(sent&&typeof sent==='object'&&Object.keys(sent).length){localStorage.removeItem(SENT);sentCleared=true;}}catch(e){}
   try{var dr=get(DR);if(Array.isArray(dr)&&dr.length){var ddr=get(DDR);put(DDR,(Array.isArray(ddr)?ddr:[]).concat(dr));localStorage.removeItem(DR);draftsMoved=dr.length;}}catch(e){}
-  // Accounts a production user created while a demo page was open carry no mark the cleanup can find, so a
-  // person reviews the account list: the notice says so until it is dismissed.
-  window.skLegacyDemo={accounts:removed,queuedRecords:dropped,securityEvents:moved,draftsMoved:draftsMoved,mirrorSentIndexCleared:sentCleared};
-  window.addEventListener('DOMContentLoaded',function(){try{var n=document.createElement('div');n.id='sk-legacy-demo-notice';n.setAttribute('role','alert');n.style.cssText='position:fixed;left:12px;right:12px;bottom:12px;z-index:9999;background:#fff4df;color:#141413;border:1px solid #a66a00;padding:10px 12px;font:13px/1.4 sans-serif';n.textContent='This browser opened an older demo build that shared production storage. Its demo accounts, queued demo records and demo security events were removed from production, and operation drafts were set aside. An account a person created while a demo page was open cannot be told apart from a production account: a QA Manager should review the account list now, or clear this browser\'s site data before production use. ';var x=document.createElement('button');x.type='button';x.textContent='Dismiss';x.onclick=function(){n.remove();};n.appendChild(x);document.body.appendChild(n);}catch(e){}});
+  // Accounts a production user created while a demo page was open carry no mark the cleanup can find, so a QA
+  // Manager reviews the account list. The review stays required, across reloads and sign-in, until a QA Manager or
+  // Master Access account marks it done, which is logged.
+  try{put(REVIEW,{foundAt:new Date().toISOString(),accounts:removed,queuedRecords:dropped,securityEvents:moved,draftsMoved:draftsMoved,mirrorSentIndexCleared:sentCleared});}catch(e){}
   window.addEventListener('DOMContentLoaded',function(){try{window.dispatchEvent(new CustomEvent('sk-security',{detail:{type:'legacy-demo-removed',at:new Date().toISOString(),accounts:removed,queuedRecords:dropped,securityEvents:moved,draftsMoved:draftsMoved,mirrorSentIndexCleared:sentCleared}}));}catch(e){}});}
+  showLegacyDemoReview();
+}
+// Shown on every page, above the sign-in screen, while the review is outstanding.
+function showLegacyDemoReview(){
+ var REVIEW='skyryse-mes-legacy-demo-review-v1',pending=null;try{pending=JSON.parse(localStorage.getItem(REVIEW)||'null');}catch(e){}
+ if(!pending)return;
+ window.addEventListener('DOMContentLoaded',function(){try{
+  var n=document.createElement('div');n.id='sk-legacy-demo-notice';n.setAttribute('role','alert');n.style.cssText='position:fixed;left:12px;right:12px;bottom:12px;z-index:2147483647;background:#fff4df;color:#141413;border:1px solid #a66a00;padding:10px 12px;font:13px/1.4 sans-serif';
+  var t=document.createElement('span');t.textContent='This browser opened an older demo build that shared production storage. Its demo accounts, queued demo records and demo security events were removed from production, and operation drafts were set aside. An account a person created while a demo page was open cannot be told apart from a production account: a QA Manager should review the account list now, or clear this browser\'s site data before production use. ';
+  var msg=document.createElement('span');var x=document.createElement('button');x.type='button';x.textContent='Mark account list reviewed';
+  x.onclick=function(){var who=window.skAuth&&window.skAuth.user&&window.skAuth.user();var role=who&&window.skAuth.role&&window.skAuth.role();
+   if(!who||(role!=='qm'&&role!=='admin')){msg.textContent=' Sign in as a QA Manager or Master Access account to mark the review done.';return;}
+   try{localStorage.removeItem(REVIEW);}catch(e){}
+   try{window.dispatchEvent(new CustomEvent('sk-security',{detail:{type:'legacy-demo-reviewed',at:new Date().toISOString(),by:who.username,accounts:pending.accounts||[],foundAt:pending.foundAt||null}}));}catch(e){}
+   n.remove();};
+  n.appendChild(t);n.appendChild(x);n.appendChild(msg);document.body.appendChild(n);}catch(e){}});
 }
 purgeLegacyDemoState();
 </script>
@@ -1934,7 +1950,7 @@ function skBoot(){
   if(pw.length<8){err.textContent='Password must be at least 8 characters.';return;}
   if(roleOf(me)==='qs'&&(role==='qm'||role==='admin')){err.textContent='A Quality Supervisor cannot create a QA Manager or Master Access account.';return;}
   if(!ROLES.some(function(r){return r.key===role;}))role='general';
-  var salt=randomSalt();hashPassword(salt,pw).then(function(h){a.users.push({username:un,displayName:dn,salt:salt,hash:h,role:role,createdAt:new Date().toISOString(),createdBy:me.username});saveAuth(a);secEvent('account-create',{username:un,role:role,by:me.username});
+  var salt=randomSalt();hashPassword(salt,pw).then(function(h){a.users.push({username:un,displayName:dn,salt:salt,hash:h,role:role,createdAt:new Date().toISOString(),createdBy:me.username});saveAuth(a).then(function(saved){if(saved)secEvent('account-create',{username:un,role:role,by:me.username});});
    var panel=f.closest('.access-panel');if(panel){var wrap=document.createElement('div');wrap.innerHTML=window.skAuth.accessHtml();panel.replaceWith(wrap.firstElementChild);}
   }).catch(function(e){err.textContent=e.message;});},true);
  // Grant or revoke one authority, and add or remove roles: each asks for the reason it is recorded with.

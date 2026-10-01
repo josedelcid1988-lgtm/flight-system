@@ -157,6 +157,22 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  {const sent=JSON.parse(r.sent||'{}'),dels=JSON.parse(r.queueRaw||'[]').filter(x=>x&&x.operation==='delete').map(x=>x.entityId);
  ok('the mirror sent index the older demo shared is cleared, so its entities are never sent as production deletes',sent['order|WO-10009']!=='a'.repeat(64)&&sent['account|master']!=='b'.repeat(64)&&!dels.includes('WO-10009')&&!dels.includes('master'),JSON.stringify({sent:Object.keys(sent).slice(0,5),dels}));}
  ok('operation drafts are moved out of production into the demo drafts store, not deleted',r.drafts===null&&r.demoDrafts.length===1&&r.demoDrafts[0][1].note==='rehearsal note',JSON.stringify({drafts:r.drafts,demoDrafts:r.demoDrafts}));
+ // The review stays required across reloads and over the sign-in screen until a QA Manager marks it done.
+ await p.reload();await p.waitForTimeout(700);
+ const again1=await p.evaluate(()=>{const n=document.getElementById('sk-legacy-demo-notice');return {notice:!!n,z:n&&n.style.zIndex,boot:!!document.getElementById('sk-boot'),flag:!!localStorage.getItem('skyryse-mes-legacy-demo-review-v1')};});
+ ok('the account review notice is shown again after a reload, above the sign-in screen',again1.notice&&again1.boot&&Number(again1.z)>1000&&again1.flag,JSON.stringify(again1));
+ const clickReview=()=>p.evaluate(async()=>{const n=document.getElementById('sk-legacy-demo-notice');n.querySelector('button').click();await new Promise(r=>setTimeout(r,200));return {notice:!!document.getElementById('sk-legacy-demo-notice'),text:n.textContent,flag:!!localStorage.getItem('skyryse-mes-legacy-demo-review-v1'),log:JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').filter(e=>e.type==='legacy-demo-reviewed')};});
+ let rv=await clickReview();
+ ok('nobody signed in cannot mark the review done',rv.notice&&rv.flag&&/Sign in as a QA Manager/.test(rv.text)&&rv.log.length===0,JSON.stringify(rv));
+ await p.evaluate(()=>sessionStorage.setItem('skyryse-mes-session-v1','ops1'));await p.reload();await p.waitForTimeout(900);
+ rv=await clickReview();
+ ok('an Operations Manager cannot mark the review done',rv.notice&&rv.flag&&rv.log.length===0,JSON.stringify(rv));
+ await p.evaluate(()=>sessionStorage.setItem('skyryse-mes-session-v1','mlee'));await p.reload();await p.waitForTimeout(900);
+ rv=await clickReview();
+ ok('a QA Manager marks the review done, and it is logged with who did it',!rv.notice&&!rv.flag&&rv.log.length===1&&rv.log[0].by==='mlee'&&rv.log[0].accounts.includes('qa.boss'),JSON.stringify(rv));
+ await p.reload();await p.waitForTimeout(700);
+ ok('once reviewed, the notice is gone after a reload',await p.evaluate(()=>!document.getElementById('sk-legacy-demo-notice')));
+ await p.evaluate(()=>sessionStorage.removeItem('skyryse-mes-session-v1'));
  await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(600);
  const signIn=await p.evaluate(async()=>{const r=await skAuth.switchAccount('master','demo1234');return r.ok;});
  ok('master with demo1234 no longer signs in to production',signIn===false,String(signIn));
@@ -187,9 +203,38 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  const clean=await p.evaluate(()=>({notice:!!document.getElementById('sk-legacy-demo-notice'),sent:localStorage.getItem('skyryse-mes-sync-sent-v1'),drafts:localStorage.getItem('skyryse-mes-drafts-v1'),log:localStorage.getItem('skyryse-mes-security-v1')||''}));
  ok('a clean production browser keeps its mirror sent index and drafts, shows no notice and logs no removal',!clean.notice&&!!clean.sent&&/production draft/.test(clean.drafts||'')&&!/legacy-demo-removed/.test(clean.log),JSON.stringify(clean));
  await ctx.close();}
-ok('creating an account writes an account-create event with the creator',/createdBy:me\.username\}\);saveAuth\(a\);secEvent\('account-create',\{username:un,role:role,by:me\.username\}\);/.test(prod));
+// Creating an account in production writes account-create with the creator, and only when the save succeeded.
+{const ctx=await b.newContext({viewport:{width:1440,height:1000}});const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));
+ await ctx.addInitScript(()=>{if(sessionStorage.getItem('seeded'))return;sessionStorage.setItem('seeded','1');localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify({users:[{username:'mlee',displayName:'Morgan Lee',salt:'01',hash:'ecad7597c83a96d133e45f9e9d271cbb0d1815dbae29b38b5148be7822799576',role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'}]}));sessionStorage.setItem('skyryse-mes-session-v1','mlee');});
+ await p.goto('file://'+FIXTURES+'publish.html');await p.waitForFunction(()=>!document.getElementById('sk-boot')&&!!window.skAuth,null,{timeout:20000});
+ const add=(un,failSave)=>p.evaluate(async([un,failSave])=>{const wrap=document.createElement('div');wrap.innerHTML=skAuth.accessHtml();document.body.appendChild(wrap);const f=wrap.querySelector('[data-access-add]');f.elements.displayName.value='New Person';f.elements.username.value=un;f.elements.password.value='long-enough-1';f.elements.role.value='general';
+  const real=Storage.prototype.setItem;if(failSave)Storage.prototype.setItem=function(k,v){if(k==='skyryse-mes-auth-v1')throw new Error('storage full');return real.call(this,k,v);};
+  window.addEventListener('unhandledrejection',e=>e.preventDefault(),{once:true});
+  try{f.requestSubmit();await new Promise(r=>setTimeout(r,800));}finally{Storage.prototype.setItem=real;}
+  wrap.remove();return {stored:JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.some(u=>u.username===un),logged:JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').filter(e=>e.type==='account-create'&&e.username===un)};},[un,failSave]);
+ const okAdd=await add('new.person',false);
+ ok('an account created in production is logged as account-create with its creator',okAdd.stored&&okAdd.logged.length===1&&okAdd.logged[0].by==='mlee',JSON.stringify(okAdd));
+ const badAdd=await add('not.saved',true);
+ ok('an account whose save failed is not logged as created',!badAdd.stored&&badAdd.logged.length===0,JSON.stringify(badAdd));
+ await ctx.close();}
+// With the server, the save resolves false when the server refuses it: no account-create is logged then.
+{const ctx=await b.newContext({viewport:{width:1440,height:1000}});const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));
+ const mlee={username:'mlee',displayName:'Morgan Lee',role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'};let refuse=true;
+ await ctx.route(/^http:\/\/flight\.test\//,async route=>{const u=new URL(route.request().url()),m=route.request().method();
+  if(u.pathname==='/api/auth/accounts'&&m==='PUT'){if(refuse)return route.fulfill({status:409,contentType:'application/json',body:JSON.stringify({error:'Role training is not current.'})});return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({users:JSON.parse(route.request().postData()).users})});}
+  if(u.pathname==='/api/auth/session')return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({ok:true,idleMinutes:15,maxHours:12})});
+  return route.fulfill({status:404,contentType:'application/json',body:'{"error":"not here"}'});});
+ await ctx.addInitScript(u=>{window.FLIGHT_SERVER={api:'http://flight.test/api',auth:{users:[u]}};sessionStorage.setItem('skyryse-mes-server-token-v1','tok');sessionStorage.setItem('skyryse-mes-session-v1','mlee');},mlee);
+ await p.goto('file://'+FIXTURES+'publish.html');await p.waitForFunction(()=>window.skAuth&&skAuth.user()&&skAuth.user().username==='mlee',null,{timeout:20000});
+ const add=un=>p.evaluate(async un=>{const wrap=document.createElement('div');wrap.innerHTML=skAuth.accessHtml();document.body.appendChild(wrap);const f=wrap.querySelector('[data-access-add]');f.elements.displayName.value='New Person';f.elements.username.value=un;f.elements.password.value='long-enough-1';f.elements.role.value='general';f.requestSubmit();await new Promise(r=>setTimeout(r,1200));wrap.remove();const log=JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]');return {created:log.filter(e=>e.type==='account-create'&&e.username===un).length,syncFailed:log.filter(e=>e.type==='account-sync-failed').length};},un);
+ const refused=await add('srv.refused');
+ ok('the server refusing a new account is logged as account-sync-failed and not as account-create',refused.syncFailed>=1&&refused.created===0,JSON.stringify(refused));
+ refuse=false;const accepted=await add('srv.accepted');
+ ok('an account the server accepts is logged as account-create',accepted.created===1,JSON.stringify(accepted));
+ await ctx.close();}
+ok('creating an account writes an account-create event with the creator, only once the save succeeded',/createdBy:me\.username\}\);saveAuth\(a\)\.then\(function\(saved\)\{if\(saved\)secEvent\('account-create',\{username:un,role:role,by:me\.username\}\);\}\);/.test(prod));
 // The demo build itself never runs that cleanup on its own accounts.
-ok('the cleanup is switched off in the demo build and active in production',/function purgeLegacyDemoState\(\)\{return;\/\* DEMO D-\d+ \*\//.test(curated)&&/function purgeLegacyDemoState\(\)\{\n var AUTH=/.test(prod));
+ok('the cleanup is switched off in the demo build and active in production',/function purgeLegacyDemoState\(\)\{return;\/\* DEMO D-\d+ \*\//.test(curated)&&/function purgeLegacyDemoState\(\)\{\n var REVIEW=/.test(prod));
 // It runs before anything that reads accounts or the mirror queue: identity (whose Okta callback makes sign-in wait),
 // the sign-in gate and the mirror client.
 {const at=x=>prod.indexOf(x);ok('production runs the cleanup before identity, sign-in and the mirror client',at('<script id="sk-legacy-demo">')>0&&at('<script id="sk-legacy-demo">')<at('window.SK_IDENTITY = window.SK_IDENTITY ||')&&at('<script id="sk-legacy-demo">')<at('function skBoot(){')&&at('<script id="sk-legacy-demo">')<at('<script id="sk-mirror">'),JSON.stringify({c:at('<script id="sk-legacy-demo">'),i:at('window.SK_IDENTITY = window.SK_IDENTITY ||'),m:at('<script id="sk-mirror">')}));}
