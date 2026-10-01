@@ -177,6 +177,23 @@ try {
       assert.equal(await page.locator(`#main [data-wo-card="${id}"] .fr-wo-card-warning`).innerText(), 'Superseded revision');
       await page.evaluate(() => { MES.revisionLabel = window.__revisionLabel; render(); });
     });
+    await check(`${at} orders: Kitting and Quality cards name their stage gate, Building cards their next operation`, async () => {
+      for (const route of ['home', 'orders']) {
+        await show(page, route);
+        const cards = await page.evaluate(() => [...document.querySelectorAll('#main .fr-wo-card:not(.is-held)')].map(card => {
+          const order = MES.getOrder(state, card.dataset.woCard);
+          return { id: order.id, status: order.status, gate: MES.canAdvance(order), pedigree: !!order.pedigreeChange,
+            op: ((order.operations || []).find(o => !o.done) || {}).title, next: card.querySelector('.fr-wo-card-next dd').textContent.trim() };
+        }));
+        const kitting = cards.filter(c => c.status === 'Kitting' && !c.gate.allowed);
+        assert.ok(kitting.length, `${route}: the sample has a Kitting order that cannot start the build`);
+        for (const c of kitting) assert.equal(c.next, c.gate.reason, `${route} ${c.id}: a Kitting card names what blocks the build, not an operation`);
+        for (const c of cards.filter(c => c.status === 'Quality')) assert.equal(c.next, 'Complete the quality review to close.', `${route} ${c.id}`);
+        const building = cards.filter(c => c.status === 'Building' && !c.pedigree && c.op);
+        assert.ok(building.length, `${route}: the sample has a Building order`);
+        for (const c of building) assert.equal(c.next, c.op, `${route} ${c.id}: a Building card shows its next open operation`);
+      }
+    });
     await check(`${at} orders: Compact changes the cards`, async () => {
       await show(page, 'orders');
       const padding = () => page.locator('#main .fr-wo-card').first().evaluate(el => parseFloat(getComputedStyle(el).paddingTop));

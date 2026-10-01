@@ -66,13 +66,17 @@ const cardGateOf = (order, MES) => {
     overdue: false
   };
 };
-// What the card asks for next follows the workflow gates before the operation list: holds first, then release.
-const cardNextStepOf = (order, gate) => {
+// What the card asks for next follows the workflow gates before the operation list: holds first, then release, then
+// whatever MES.canAdvance says blocks the stage (a pending pedigree change, kitting materials or kit list, the quality
+// review). A Building order without a pending pedigree change shows its next open operation instead.
+const cardNextStepOf = (order, gate, MES) => {
   if (gate.held) {
     const why = [gate.engineering && 'engineering change', gate.openTickets && `${gate.openTickets} open NC`].filter(Boolean);
     return `Resolve holds before continuing${why.length ? `: ${why.join(', ')}` : ''}`;
   }
   if (gate.qaPending) return 'QA approval of the release is pending';
+  const advance = MES && MES.canAdvance ? MES.canAdvance(order) : null;
+  if (advance && !advance.allowed && order.status !== 'Closed' && !(order.status === 'Building' && !order.pedigreeChange)) return advance.reason;
   if (order.status === 'Draft') return 'Release the work order';
   return nextStepOf(order);
 };
@@ -88,7 +92,7 @@ function WorkOrderCards({ orders, onOpen, meta, MES, compact, priority }) {
       <p className="fr-wo-card-part">{order.partNumber || 'Part not assigned'}{order.revision ? ` / Rev ${order.revision}` : ''}</p>
       {gate.superseded && <p className="fr-wo-card-warning">Superseded revision</p>}
       <dl className="fr-wo-card-fields">
-        <div className="fr-wo-card-next"><dt>Next step</dt><dd>{cardNextStepOf(order, gate)}</dd></div>
+        <div className="fr-wo-card-next"><dt>Next step</dt><dd>{cardNextStepOf(order, gate, MES)}</dd></div>
         <div><dt>Owner</dt><dd>{ownerOf(order)}</dd></div>
         <div><dt>Due</dt><dd className={gate.overdue ? 'is-overdue' : ''}><time dateTime={dueOf(order)}>{displayFlightDate(dueOf(order))}</time></dd></div>
       </dl>
