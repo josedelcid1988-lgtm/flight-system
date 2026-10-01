@@ -140,6 +140,16 @@ try {
         await page.getByRole('button', { name: 'Close record details' }).click();
       });
     }
+    await check(`${at} orders: a priority change on a card keeps focus on that card`, async () => {
+      await show(page, 'orders');
+      const select = page.locator('#main .fr-wo-card select[data-priority-order]:not([disabled])').first();
+      const id = await select.getAttribute('data-priority-order');
+      const next = await select.evaluate(el => [...el.options].map(o => o.value).find(v => v !== el.value && v !== 'AOG'));
+      await select.selectOption(next);
+      await page.waitForFunction(([orderId, value]) => MES.getOrder(state, orderId)?.priority === value, [id, next]);
+      assert.equal(await page.evaluate(orderId => document.activeElement?.closest('.fr-wo-card')?.dataset.woCard, id), id, 'focus returns to the visible card control');
+      assert.equal(await page.evaluate(() => MES.validate(state)), true);
+    });
     await check(`${at} activity: a table that stays a table scrolls inside its own box`, async () => {
       await show(page, 'activity');
       const box = await page.locator('#main .fr-table-scroll').first().evaluate(el => ({ overflow: getComputedStyle(el).overflowX, inner: el.scrollWidth, outer: el.clientWidth, cue: getComputedStyle(el).backgroundImage }));
@@ -184,6 +194,15 @@ try {
         assert.equal(await list.locator('.fr-wo-cards').evaluate(el => getComputedStyle(el).display), 'none', 'cards are hidden at tablet and desktop widths');
       });
     }
+    await check(`${at} orders: a priority change in the table keeps focus in the table`, async () => {
+      await show(page, 'orders');
+      const select = page.locator('#main table select[data-priority-order]:not([disabled])').first();
+      const id = await select.getAttribute('data-priority-order');
+      const next = await select.evaluate(el => [...el.options].map(o => o.value).find(v => v !== el.value && v !== 'AOG'));
+      await select.selectOption(next);
+      await page.waitForFunction(([orderId, value]) => MES.getOrder(state, orderId)?.priority === value, [id, next]);
+      assert.equal(await page.evaluate(orderId => document.activeElement?.closest('tr')?.dataset.orderRow, id), id, 'focus returns to the table control');
+    });
     await context.close();
   }
 } finally {
