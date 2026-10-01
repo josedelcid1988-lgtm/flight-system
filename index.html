@@ -3128,9 +3128,9 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // so an auditor can tell which signed calibration entry was checked; a seed tool cites the snapshot.
   // The tools list is part of the signed buy-off subject. Read-only: no server-mutator prefix.
   function toolUseRecords(checks, torque) {
-    const tools = (Array.isArray(checks) ? checks : []).map(({ tool }) => ({ tag: tool.tag, description: tool.description, serial: tool.serial, expires: tool.expires, ...(tool.calibrationEntry ? { source: 'Calibration log', calibrationEntry: tool.calibrationEntry } : { source: `Calibrated Tool Log snapshot ${CAL_SNAPSHOT}` }), ...(isTorqueTool(tool) ? { torque: { value: Number(torque[tool.tag].value), unit: torque[tool.tag].unit } } : {}) }));
+    const tools = (Array.isArray(checks) ? checks : []).map(({ tool }) => ({ tag: tool.tag, description: tool.description, serial: tool.serial, expires: tool.expires, ...(tool.calibrationEntry ? { source: 'Calibration log', calibrationEntry: tool.calibrationEntry } : { source: CAL_SNAPSHOT ? `Calibrated Tool Log snapshot ${CAL_SNAPSHOT}` : 'Calibrated Tool Log' }), ...(isTorqueTool(tool) ? { torque: { value: Number(torque[tool.tag].value), unit: torque[tool.tag].unit } } : {}) }));
     const logged = tools.filter(tool => tool.calibrationEntry).length;
-    const toolLog = !logged ? (CAL_SNAPSHOT || 'Calibration log') : logged === tools.length ? 'Calibration log' : `Calibration log and snapshot ${CAL_SNAPSHOT}`;
+    const toolLog = !logged ? (CAL_SNAPSHOT || 'Calibration log') : logged === tools.length ? 'Calibration log' : CAL_SNAPSHOT ? `Calibration log and snapshot ${CAL_SNAPSHOT}` : 'Calibration log';
     return { tools, toolLog };
   }
   const TORQUE_UNITS = Object.freeze(['in-lb', 'ft-lb', 'N·m']);
@@ -5036,6 +5036,40 @@ const OP_BOM_MAX = 12;
     });
     divide(order.materials, child.materials);
     order.operations.forEach(op => divide(op.materials, child.operations.find(item => item.id === op.id)?.materials));
+  }
+  // What an order has drawn from one lot on the inventory ledger: its issues less its returns.
+  function issuedToOrder(state, orderId, partNumber, lot) {
+    return -ensureInventoryLedger(state).transactions.filter(row => row.orderId === orderId && row.partNumber === partNumber && row.lot === lot && ['Issue', 'Return'].includes(row.type)).reduce((sum, row) => sum + row.quantity, 0);
+  }
+  // A kit line already issued from stock moves with the units: the new order takes its share of what was issued, and the
+  // ledger records it as a return from this order and an issue to the new one, so each order holds exactly what it was
+  // issued. Worked out before anything changes; a split that can't divide an issued line is refused with the reason.
+  function planIssuedKitSplit(state, order, keep, moved) {
+    const total = keep + moved, moves = [];
+    for (const [index, line] of (Array.isArray(order.materials) ? order.materials : []).entries()) {
+      if (!line || !line.ready || !line.lot || line.source) continue;
+      const issued = issuedToOrder(state, order.id, line.partNumber, line.lot);
+      if (issued <= 0) continue;
+      const childQty = Math.floor(issued * moved / total);
+      if (childQty < 1) return { error: `${line.name} (${line.partNumber}) has ${issued} issued from lot ${line.lot} for ${total} units, too few to give the new order its share. ${order.status === 'Kitting' ? 'Mark it missing on the Kitting tab so its lot goes back to stock, then split.' : 'Close the split request as Not required and raise the shortage with Manufacturing Engineering.'}` };
+      const record = inventoryLotRecords(state, line.partNumber).find(item => item.lot === line.lot);
+      if (!record || record.conformityStatus !== 'Accepted') return { error: `Lot ${line.lot} of ${line.partNumber} is ${record ? record.conformityStatus : 'not on the inventory ledger'} for conformity, so its issued parts can't move to the new order. Resolve the lot's conformity, then split.` };
+      moves.push({ index, issued, childQty, partNumber: line.partNumber, lot: line.lot, name: line.name });
+    }
+    if (moves.length && ensureInventoryLedger(state).transactions.length + moves.length * 2 > 20000) return { error: 'The inventory ledger has no room to move the issued kit to the new order.' };
+    return { moves };
+  }
+  function applyIssuedKitSplit(state, order, child, moves) {
+    for (const move of moves) {
+      order.materials[move.index].required = move.issued - move.childQty;
+      child.materials[move.index].required = move.childQty;
+      const note = `Split: ${move.name} issued share moved from ${order.id} to ${child.id}.`;
+      const back = postInventoryTransaction(state, { type: 'Return', partNumber: move.partNumber, lot: move.lot, quantity: move.childQty, orderId: order.id, location: order.site || null, note });
+      if (!back.ok) return back;
+      const out = postInventoryTransaction(state, { type: 'Issue', partNumber: move.partNumber, lot: move.lot, quantity: -move.childQty, orderId: child.id, location: child.site || null, note });
+      if (!out.ok) return out;
+    }
+    return { ok: true };
   }
 
     // ---- Standard Rework operations (draft library, not approved) ----
@@ -7401,6 +7435,8 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     let seq = 1; while (used.has(seq)) seq++;
     if (seq > 99) return fail(`${base} has already been split 99 times.`);
     const id = `${base}-Split-${seq}`;
+    const issuedPlan = planIssuedKitSplit(state, order, order.quantity - qty, qty);
+    if (issuedPlan.error) return fail(issuedPlan.error);
     const child = JSON.parse(JSON.stringify(order));
     let backToDraftNote = '';
     Object.assign(child, { id, quantity: qty, serial: `${order.serial.replace(/-Split-\d+$/, '')}-Split-${seq}`, history: [], tickets: [], reports: [], releaseApproval: null, splitFrom: order.id, splitAt: new Date().toISOString() });
@@ -7415,6 +7451,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     [order, child].forEach(o => { if (o.status !== 'Draft' && requiresReleaseQA(o) && !releaseApproval(o)) { o.status = 'Draft'; backToDraft.push(o.id); } });
     order.splitInto = [...(Array.isArray(order.splitInto) ? order.splitInto : []), id];
     state.orders.splice(state.orders.indexOf(order) + 1, 0, child);
+    { const moved = applyIssuedKitSplit(state, order, child, issuedPlan.moves); if (!moved.ok) return moved; }
     ensureInventory(state);
     const moving = orderSerials(state, order).slice(-qty);
     moving.forEach((entry, n) => { entry.orderId = id; entry.unit = n + 1; });
@@ -7444,6 +7481,8 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     let seq = 1; while (used.has(seq)) seq++;
     if (seq > 99) return fail(`${base} has already been split 99 times.`);
     const id = `${base}-Split-${seq}`;
+    const issuedPlan = planIssuedKitSplit(state, order, order.quantity - qty, qty);
+    if (issuedPlan.error) return fail(issuedPlan.error);
     const child = JSON.parse(JSON.stringify(order));
     const ticket = order.tickets.find(item => item.id === sr.ticketId) || null;
     Object.assign(child, { id, quantity: qty, serial: `${order.serial.replace(/-Split-\d+$/, '')}-Split-${seq}`, history: [], reports: [], tickets: [], splitFrom: order.id, splitAt: new Date().toISOString() });
@@ -7474,6 +7513,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     order.quantity -= qty;
     order.splitInto = [...(Array.isArray(order.splitInto) ? order.splitInto : []), id];
     state.orders.splice(state.orders.indexOf(order) + 1, 0, child);
+    { const moved = applyIssuedKitSplit(state, order, child, issuedPlan.moves); if (!moved.ok) return moved; }
     ensureInventory(state);
     const named = Array.isArray(sr.serials) ? sr.serials : [];
     const all = orderSerials(state, order);

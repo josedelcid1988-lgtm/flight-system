@@ -114,6 +114,40 @@ const prod = createHost(here('../index.html'));
     const refused = issued ? changeQty(issued, 10) : { message: 'order not created' };
     check('an engineering quantity change that would rescale an issued kit line is refused at QA re-release, nothing changed', !refused.ok && /already issued to this order for 5 units/.test(refused.message) && JSON.stringify({ materials: issued.materials, ops: issued.operations.map(op => op.materials || null), quantity: issued.quantity }) === issuedBefore, refused.message);
   }
+  {
+    // A split moves the issued share of a kit line on the inventory ledger too (Codex review on #331): a return from
+    // the parent and an issue to the new order, so each order holds what it was issued and marking a line missing
+    // later returns only that order's share.
+    const ledState = load(prod, MES.seed());
+    ledState.masterWIs = JSON.parse(JSON.stringify(qtyState.masterWIs));
+    const toKitting = o => prod.withAccount(admin, () => { if (MES.requiresReleaseQA(o)) o.release = { status: 'Approved', name: 'QA Peer', role: 'Quality Engineer', credentialId: 'ACCT-qapeer', at: new Date().toISOString(), note: 'test' }; return MES.advance(ledState, o.id); }, ledState);
+    const receive = (part, lot, qty) => prod.withAccount(admin, () => MES.postInventoryTransaction(ledState, { type: 'Receive', partNumber: part, lot, quantity: qty, buildClass: 'Production', conformityStatus: 'Accepted', conformityRef: `NS-${lot}`, note: 'Receipt for the split test' }), ledState);
+    const kitLine = (o, part, lot) => prod.withAccount(admin, () => { const m = o.materials.find(x => x.partNumber === part); const a = MES.setMaterialLot(ledState, o.id, m.id, lot); return a.ok ? MES.setMaterial(ledState, o.id, m.id, true) : a; }, ledState);
+    const net = (orderId, part, lot) => -(ledState.inventoryLedger.transactions.filter(t => t.orderId === orderId && t.partNumber === part && t.lot === lot && ['Issue', 'Return'].includes(t.type)).reduce((n, t) => n + t.quantity, 0));
+    const onHand = (part, lot) => (MES.inventoryLots(ledState, part).find(x => x.lot === lot) || {}).onHand;
+    const r1 = prod.withAccount(admin, () => MES.addOrder(ledState, { masterWI: `${qtyWi.id}|${qtyWi.revision}`, pedigree: 'Production', subcategory: 'Mfg.', quantity: 5, aircraft: MES.AIRCRAFT[0], site: MES.SITES[0] }), ledState);
+    const o1 = r1.ok ? MES.getOrder(ledState, r1.id) : null;
+    const setup = o1 && toKitting(o1).ok && receive('BOM-001', 'LOT-SPLIT-1', 40).ok && kitLine(o1, 'BOM-001', 'LOT-SPLIT-1');
+    check('setup: a quantity-5 order in Kitting has 15 of BOM-001 issued from a received lot', !!setup && setup.ok && net(o1.id, 'BOM-001', 'LOT-SPLIT-1') === 15 && onHand('BOM-001', 'LOT-SPLIT-1') === 25, setup && setup.message);
+    const sp = o1 ? prod.withAccount(admin, () => MES.splitOrder(ledState, o1.id, 2), ledState) : { message: 'order not created' };
+    const c1 = sp.ok ? MES.getOrder(ledState, sp.id) : null, line = (o, part) => o.materials.find(m => m.partNumber === part);
+    check('splitting an issued kit line moves the new order\'s share on the ledger: 9 stay issued, 6 are issued to the new order, stock unchanged', !!c1 && net(o1.id, 'BOM-001', 'LOT-SPLIT-1') === 9 && net(c1.id, 'BOM-001', 'LOT-SPLIT-1') === 6 && line(o1, 'BOM-001').required === 9 && line(c1, 'BOM-001').required === 6 && line(c1, 'BOM-001').ready === true && onHand('BOM-001', 'LOT-SPLIT-1') === 25 && MES.validate(ledState) === true, sp.message);
+    const missing = o1 ? prod.withAccount(admin, () => MES.setMaterial(ledState, o1.id, line(o1, 'BOM-001').id, false), ledState) : { message: 'order not created' };
+    check('marking the parent line missing afterwards returns only the parent\'s 9, not the full 15', missing.ok && net(o1.id, 'BOM-001', 'LOT-SPLIT-1') === 0 && net(c1.id, 'BOM-001', 'LOT-SPLIT-1') === 6 && onHand('BOM-001', 'LOT-SPLIT-1') === 34, missing.message);
+    // Refusals, with nothing changed: a lot no longer Accepted can't be issued to the new order.
+    const r2 = prod.withAccount(admin, () => MES.addOrder(ledState, { masterWI: `${qtyWi.id}|${qtyWi.revision}`, pedigree: 'Production', subcategory: 'Mfg.', quantity: 5, aircraft: MES.AIRCRAFT[0], site: MES.SITES[0] }), ledState);
+    const o2 = r2.ok ? MES.getOrder(ledState, r2.id) : null;
+    const ok2 = o2 && toKitting(o2).ok && receive('BOM-002', 'LOT-HOLD-1', 20).ok && kitLine(o2, 'BOM-002', 'LOT-HOLD-1').ok;
+    const hold = ok2 && prod.withAccount(admin, () => MES.postInventoryTransaction(ledState, { type: 'Conformity', partNumber: 'BOM-002', lot: 'LOT-HOLD-1', quantity: 0, conformityStatus: 'Hold', conformityRef: 'NS-HOLD', note: 'Supplier escape under review' }), ledState);
+    const holdBefore = JSON.stringify(ledState);
+    const held = o2 ? prod.withAccount(admin, () => MES.splitOrder(ledState, o2.id, 2), ledState) : { message: 'order not created' };
+    check('a split over an issued line whose lot is now on Hold is refused with the reason, nothing changed', !!hold && hold.ok && !held.ok && /LOT-HOLD-1 of BOM-002 is Hold for conformity/.test(held.message) && JSON.stringify(ledState) === holdBefore, held.message);
+    // Too little issued to give each order a share: refused, nothing changed.
+    if (o2) { const m = line(o2, 'BOM-002'); const back = prod.withAccount(admin, () => MES.postInventoryTransaction(ledState, { type: 'Conformity', partNumber: 'BOM-002', lot: 'LOT-HOLD-1', quantity: 0, conformityStatus: 'Accepted', conformityRef: 'NS-HOLD-OK', note: 'Released after review' }), ledState); if (back.ok) { prod.withAccount(admin, () => MES.setMaterial(ledState, o2.id, m.id, false), ledState); m.required = 1; prod.withAccount(admin, () => MES.setMaterial(ledState, o2.id, m.id, true), ledState); } }
+    const fewBefore = JSON.stringify(ledState);
+    const few = o2 ? prod.withAccount(admin, () => MES.splitOrder(ledState, o2.id, 2), ledState) : { message: 'order not created' };
+    check('a split that would leave the new order no share of an issued line is refused with the next step, nothing changed', !few.ok && /has 1 issued from lot LOT-HOLD-1 for 5 units/.test(few.message) && /Mark it missing on the Kitting tab/.test(few.message) && JSON.stringify(ledState) === fewBefore, few.message);
+  }
   const before = JSON.stringify(qtyState);
   const tooMany = mk(qtyState, 400);
   check('an order that would need more than 999 of one part is refused before anything is created', !tooMany.ok && /a kit line holds up to 999/.test(tooMany.message) && JSON.stringify(qtyState) === before, tooMany.message);
@@ -168,6 +202,8 @@ const prod = createHost(here('../index.html'));
   }
   const bundle = read('../assets/flight-ui.js'), fallback = 'The log is the calibration record that a QA Manager keeps or imports.';
   check('the tooling help names the calibration log, not a blank snapshot time, in both renderers', html.includes(fallback) && bundle.includes(fallback) && !html.includes('can be added. Log read ${esc(MES.CAL_SNAPSHOT)} PT.') && !read('../src/react/flight-ui.jsx').includes('can be added. Log read {asText(MES.CAL_SNAPSHOT)} PT.'));
+  // #438: the tool source strings on a signed buy-off never end in a blank snapshot time either.
+  { const bare = html.split('\n').filter(l => l.includes('${CAL_SNAPSHOT}') && !l.includes('CAL_SNAPSHOT ?')); check('every snapshot time in a buy-off tool source is guarded, so production records "Calibrated Tool Log" or "Calibration log" and never a blank time', bare.length === 0, bare.map(l => l.trim().slice(0, 120)).join(' | ')); }
   check('the production fixture is a copy of index.html', read('fixtures/publish.html') === html.replace(/((?:src|href)=")assets\//g, '$1../../assets/'));
 }
 
