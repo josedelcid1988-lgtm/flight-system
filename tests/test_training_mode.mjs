@@ -396,6 +396,7 @@ try {
       ['dlFile json', () => dlFile('register.json', '{"tools":[]}', 'application/json')],
       ['json claiming not training', () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['{"training":false,"trainingNote":"production","y":2}'], { type: 'application/json' })); a.download = 'claim.json'; a.click(); }],
       ['already marked json', () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['{"manifest":{"hash":"h"},"training":"TRAINING, NOT THE RECORD","z":3}'], { type: 'application/json' })); a.download = 'governance.json'; a.click(); }],
+      ['controlled json document', () => { const b = document.createElement('button'); b.dataset.controlledDocDownload = 'CD-X'; document.body.appendChild(b); b.addEventListener('click', () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['{"approved":true}'], { type: 'application/json' })); a.download = 'spec.json'; a.click(); }); b.click(); b.remove(); }],
       ['json array', () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['[1,2]'], { type: 'application/json' })); a.download = 'list.json'; a.click(); }],
     ]) {
       const [download] = await Promise.all([jsonPage.waitForEvent('download', { timeout: 10000 }), jsonPage.evaluate(script)]);
@@ -410,6 +411,7 @@ try {
       ok('every saved JSON object carries the training mark inside it, first, whatever the file is renamed to', marked.every(({ json }) => !!json && Object.keys(json)[0] === 'training' && json.training === TRAINING_MARK && json.trainingNote === 'Saved by a Flight System training server. Not a quality record.'), JSON.stringify(marked));
       ok('a saved JSON file keeps its own content beside the mark', jsonOf('anchor').x === 1 && jsonOf('record export').workOrder.id === 'WO-1' && jsonOf('record export').internal === true && Array.isArray(jsonOf('dlFile json').tools) && jsonOf('json claiming not training').y === 2);
       ok('a JSON file that already carries the mark (the governance export) is saved byte for byte, so its manifest still verifies', downloads.find(d => d.label === 'already marked json').text === '{"manifest":{"hash":"h"},"training":"TRAINING, NOT THE RECORD","z":3}');
+      ok('a JSON controlled document is saved byte for byte, so it still matches its released SHA-256, under a TRAINING- name', downloads.find(d => d.label === 'controlled json document').text === '{"approved":true}' && downloads.find(d => d.label === 'controlled json document').name === 'TRAINING-spec.json', JSON.stringify(downloads.find(d => d.label === 'controlled json document')));
       ok('JSON that is not an object is saved unchanged, under a TRAINING- name', downloads.find(d => d.label === 'json array').text === '[1,2]');
       ok('text that only names the mark class does not count as marked', /Report naming training-print-mark/.test(downloads.find(d => d.label === 'dlFile').text) && count(downloads.find(d => d.label === 'dlFile').text, TRAINING_MARK) === 1);
       const doc = downloads.find(d => d.label === 'controlled document').text;
@@ -441,7 +443,7 @@ try {
       ok('the file saveFile hands to the downloads service still carries the mark once', count(slowSaved, TRAINING_MARK) === 1, slowSaved.slice(0, 160));
       await slow.close();
     } else {
-      ok('production saves files under their own names with no training mark', downloads.map(d => d.name).join() === 'report.html,atp-report.html,export.json,record.html,procedure.html,hostile.html,WO-1-record.json,register.json,claim.json,governance.json,list.json' && downloads.filter(d => d.label !== 'already marked json').every(d => !d.text.includes(TRAINING_MARK)) && downloads.find(d => d.label === 'anchor').text === '{"x":1}' && downloads.find(d => d.label === 'dlFile json').text === '{"tools":[]}', downloads.map(d => d.name).join(', '));
+      ok('production saves files under their own names with no training mark', downloads.map(d => d.name).join() === 'report.html,atp-report.html,export.json,record.html,procedure.html,hostile.html,WO-1-record.json,register.json,claim.json,governance.json,spec.json,list.json' && downloads.filter(d => d.label !== 'already marked json').every(d => !d.text.includes(TRAINING_MARK)) && downloads.find(d => d.label === 'anchor').text === '{"x":1}' && downloads.find(d => d.label === 'dlFile json').text === '{"tools":[]}', downloads.map(d => d.name).join(', '));
     }
     if (training) {
       ok('signed in, every page keeps the strip', !!marks.banner && marks.banner.text === TRAINING_MARK && marks.banner.visible, JSON.stringify(marks.banner));

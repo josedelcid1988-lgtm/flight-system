@@ -216,11 +216,14 @@ const TRAINING_TAIL = `<script id="flight-training">(function(){var MARK=${JSON.
   + 'if(typeof window.printRecord==="function")window.printRecord=trusting(window.printRecord);'
   + 'if(typeof window.deliverTraveler==="function")window.deliverTraveler=trusting(window.deliverTraveler);'
   + 'var sf=window.saveFile;if(typeof sf==="function")window.saveFile=async function(blob,name){var n=/^TRAINING-/.test(String(name))?name:"TRAINING-"+name;if(blob&&/html/i.test(blob.type||"")){try{blob=new Blob([mark(await blob.text())],{type:blob.type});}catch(e){}}else if(blob&&isJson(blob.type,name)){try{var j=markJson(await blob.text());if(j!==null)blob=new Blob([j],{type:blob.type||"application/json"});}catch(e){}}if(blob instanceof Blob)saved.add(blob);return sf(blob,n);};'
+  // A controlled document is saved as the approved file, byte for byte, so it still matches its released SHA-256:
+  // a JSON file saved from a controlled-document download keeps its bytes (and its TRAINING- name).
+  + 'var verbatim=0;document.addEventListener("click",function(e){var t=e.target;if(t&&t.closest&&t.closest("[data-controlled-doc-download]")){verbatim++;setTimeout(function(){verbatim--;},0);}},true);'
   + 'var click=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){'
   + 'if(this.hasAttribute("download")){if(this.download&&!/^TRAINING-/.test(this.download))this.download="TRAINING-"+this.download;'
   // Any other HTML file is saved as a wrapper page: the mark, then the original document escaped into a sandboxed
   // frame with no permissions, so its own CSS or script cannot hide or remove the mark.
-  + 'var jb=blobs.get(this.href);if(jb&&!trusted.has(this.href)&&isJson(jb.type,this.download)){var jname=this.download;'
+  + 'var jb=blobs.get(this.href);if(jb&&!verbatim&&!trusted.has(this.href)&&isJson(jb.type,this.download)){var jname=this.download;'
   + 'jb.text().then(function(t){var j=markJson(t);var a=document.createElement("a");trust++;try{a.href=URL.createObjectURL(j===null?jb:new Blob([j],{type:jb.type||"application/json"}));}finally{trust--;}a.download=jname;click.call(a);var u=a.href;setTimeout(function(){URL.revokeObjectURL(u);},60000);});return;}'
   + 'var b=blobs.get(this.href);if(b&&!trusted.has(this.href)&&(/html/i.test(b.type||"")||/\\.html?$/i.test(this.download))){var name=this.download;'
   + 'b.text().then(function(t){var src=t.replace(/&/g,"&amp;").replace(/"/g,"&quot;");'
