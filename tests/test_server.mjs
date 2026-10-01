@@ -244,6 +244,18 @@ try {
     const search = await api('GET', `/archive?q=${encodeURIComponent(expected[0])}`, { token });
     assert.equal(search.status, 200);
     assert.ok(search.json.orders.some(order => order.orderId === expected[0] && order.source === 'archive'));
+    // #202: the list limit reaches the database only as 1 to 1,000. SQLite reads LIMIT -1 as unlimited and
+    // PostgreSQL refuses it, so a missing, zero, negative or fractional limit reads the default 200.
+    {
+      const archiveSearch = server.store.archiveSearch, limits = [];
+      server.store.archiveSearch = (q, limit) => { limits.push(limit); return archiveSearch.call(server.store, q, limit); };
+      try {
+        const asked = ['-1', '0', '1.5', 'abc', '', '5000', '1'];
+        for (const limit of asked) assert.equal((await api('GET', `/archive?limit=${limit}`, { token })).status, 200, `limit=${limit}`);
+        assert.deepEqual(limits, [200, 200, 200, 200, 200, 1000, 1], 'each list limit is clamped before the store call');
+        assert.equal((await api('GET', '/archive?limit=1', { token })).json.orders.length, 1);
+      } finally { server.store.archiveSearch = archiveSearch; }
+    }
     const archived = await api('GET', `/archive/${expected[0]}`, { token });
     assert.equal(archived.status, 200);
     assert.equal(archived.json.order.status, 'Closed');
