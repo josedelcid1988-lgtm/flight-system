@@ -122,7 +122,7 @@ try {
           title: card.querySelector('.fr-wo-card-title')?.textContent.trim(),
           part: card.querySelector('.fr-wo-card-part')?.textContent.trim(),
           fields: [...card.querySelectorAll('.fr-wo-card-fields dt')].map(dt => [dt.textContent.trim(), dt.nextElementSibling?.textContent.trim()]),
-          open: card.querySelector('.fr-wo-card-open')?.getBoundingClientRect().height,
+          open: card.querySelector('.fr-wo-card-open')?.offsetHeight,
           right: card.getBoundingClientRect().right
         })));
         for (const card of sample) {
@@ -130,7 +130,7 @@ try {
           assert.ok(card.status && card.title && card.part, `${card.id} shows status, title and part number`);
           assert.deepEqual(card.fields.map(([label]) => label), ['Next step', 'Owner', 'Due'], `${card.id} shows next step, owner and due date`);
           assert.ok(card.fields.every(([, value]) => value), `${card.id} fills every field`);
-          assert.ok(card.open >= 44, `${card.id} open button is at least 44px tall`);
+          assert.ok(card.open >= 44, `${card.id} open button is at least 44px tall (measured ${card.open})`);
           assert.ok(card.right <= size.width, `${card.id} card fits the screen`);
         }
         if (route === 'orders') assert.match(await cards.first().locator('.fr-wo-card-part').innerText(), / \/ Rev /, 'All work orders cards show part number and revision');
@@ -148,9 +148,9 @@ try {
       await show(page, 'orders');
       const header = page.locator('#main .fr-order-table thead');
       assert.equal(await header.isVisible(), true, 'the column controls are shown');
-      const sorts = await header.locator('[data-tbl-sort]').evaluateAll(els => els.map(el => ({ label: el.getAttribute('aria-label'), height: el.getBoundingClientRect().height, right: el.getBoundingClientRect().right })));
+      const sorts = await header.locator('[data-tbl-sort]').evaluateAll(els => els.map(el => ({ label: el.getAttribute('aria-label'), height: el.offsetHeight, right: el.getBoundingClientRect().right })));
       assert.ok(sorts.length >= 6, 'every sortable column has a control');
-      for (const sort of sorts) { assert.ok(sort.height >= 44, `${sort.label} is at least 44px tall`); assert.ok(sort.right <= size.width, `${sort.label} fits the screen`); }
+      for (const sort of sorts) { assert.ok(sort.height >= 44, `${sort.label} is at least 44px tall (measured ${sort.height})`); assert.ok(sort.right <= size.width, `${sort.label} fits the screen`); }
       await header.getByRole('button', { name: 'Sort by Due' }).click();
       await header.getByRole('button', { name: 'Sort by Due' }).click();
       assert.equal(await page.locator('#main .fr-order-table [data-col="Due"] .log-arrow').innerText(), '▼', 'Due is sorted descending');
@@ -209,7 +209,7 @@ try {
       assert.equal(await page.locator('.sidebar').isVisible(), false, 'the sidebar is closed on a phone');
       const toggle = page.locator('.fs-menu-toggle');
       assert.equal(await toggle.isVisible(), true, 'a menu button is shown');
-      const tap = await toggle.evaluate(el => el.getBoundingClientRect());
+      const tap = await toggle.evaluate(el => ({ width: el.offsetWidth, height: el.offsetHeight }));
       assert.ok(tap.width >= 44 && tap.height >= 44, 'the menu button is at least 44px');
       await toggle.click();
       assert.equal(await page.locator('.sidebar').isVisible(), true, 'the menu button opens the drawer');
