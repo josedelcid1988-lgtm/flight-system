@@ -24,7 +24,7 @@ try {
   const stageCounts = await page.locator('.fr-plan-lane .fr-count').allTextContents();
   const expectedCounts = await page.evaluate(() => {
     const all = FlightPlan.list(state), covered = item => !item.netsuite || item.netsuite.onHand >= item.quantity;
-    return [all.filter(item => item.status === 'Planned'), all.filter(item => item.status === 'Firm' && !covered(item)), all.filter(item => item.status === 'Firm' && covered(item)), all.filter(item => item.status === 'Converted')].map(rows => String(rows.length).padStart(2, '0'));
+    return [all.filter(item => item.status === 'Planned'), all.filter(item => item.status === 'Firm' && !covered(item)), all.filter(item => item.status === 'Firm' && covered(item)), all.filter(item => item.status === 'Converted')].map(rows => String(rows.length)); // count pills show plain numbers (no leading zero) everywhere
   });
   assert.deepEqual(stageCounts, expectedCounts, 'Kanban lane counts are derived from the current FlightPlan records');
   assert.equal(await page.locator('.fr-plan-card').count(), expectedCounts.reduce((sum, count) => sum + Number(count), 0));
