@@ -39,6 +39,15 @@ around them. The production build must keep every one; only the demo build relax
 relaxation is listed in `docs/DEMO_DEVIATIONS.md`. `tests/test_frozen_contract.mjs` fails if any of the
 separation-of-duties rules is removed or reworded.
 
+Demo builds made before the demo had its own storage keys (D-38 to D-41) shared the account list,
+session, security log, drafts and mirror queue with production in the same browser. On first open,
+production removes what such a demo left (its accounts and every account they created, its queued
+records, its security events, and the drafts and mirror sent index it could have touched) and shows a
+notice. An account a person created while signed in to such a demo cannot be told apart from a
+production account. On any machine that ran an older demo, a QA Manager reviews the account list, or
+the browser's site data is cleared, before production use. Every account creation is now written to
+the security log (`account-create`), so this cannot recur unnoticed.
+
 | Rule | What the engine does | Why |
 | --- | --- | --- |
 | The author of a WI cannot peer-review or release it | Anyone who edited a draft revision (created it, changed its title, operations, pictures, drawing status or critical safety flag) is refused at peer review, QA release, release against the drawing ECO, and release by the Safety Team buy-off. | Documents are approved by someone other than their author: AS9100D 7.5.2, 14 CFR 21.137(b). |
