@@ -56,9 +56,11 @@ async function serverCase(training) {
   const exported = await fetch(`${base}/api/archive/${closed.id}/export`, auth);
   const exportJson = await exported.json();
   const detail = await (await fetch(`${base}/api/archive/${closed.id}`, auth)).json();
+  const views = {};
+  for (const route of ['/api/archive?q=', '/api/calibration-archive', `/api/trace?q=${encodeURIComponent(closed.partNumber)}`, '/api/audit']) views[route] = await (await fetch(`${base}${route}`, auth)).json();
   const signedInPage = await (await fetch(`${base}/`, auth)).text();
   await server.closeAsync();
-  return { html, signedInPage, created: created.status, print: print.status, printed, exportStatus: exported.status, disposition: exported.headers.get('content-disposition') || '', exportJson, detail };
+  return { html, signedInPage, created: created.status, print: print.status, printed, exportStatus: exported.status, disposition: exported.headers.get('content-disposition') || '', exportJson, detail, views };
 }
 {
   const on = await serverCase(true);
@@ -75,8 +77,11 @@ async function serverCase(training) {
   }
   ok('with training on, the raw archived record carries the training mark first, with the record unchanged beside it', Object.keys(on.detail)[0] === 'training' && on.detail.training === TRAINING_MARK && on.detail.trainingNote === 'Saved by a Flight System training server. Not a quality record.' && on.detail.order?.id === closed.id && on.detail.readOnly === true, JSON.stringify(Object.keys(on.detail)));
   const off = await serverCase(false);
+  ok('with training on, every JSON record view the API sends (archive listing, calibration archive, trace, audit) carries the training mark first', Object.entries(on.views).every(([, v]) => v && Object.keys(v)[0] === 'training' && v.training === TRAINING_MARK && typeof v.trainingNote === 'string'), JSON.stringify(Object.fromEntries(Object.entries(on.views).map(([k, v]) => [k, Object.keys(v || {}).slice(0, 3)]))));
+  ok('with training on, a response that already carries the mark keeps it once: the archive export and its extract hash are unchanged in shape', on.exportJson.training === TRAINING_MARK && !Object.hasOwn(on.exportJson, 'trainingNote'), JSON.stringify(Object.keys(on.exportJson).slice(0, 4)));
   ok('with training off, the raw archived record carries no training mark', !Object.hasOwn(off.detail, 'training') && !Object.hasOwn(off.detail, 'trainingNote') && off.detail.order?.id === closed.id, JSON.stringify(Object.keys(off.detail)));
   ok('with training off, no page carries the mark', !off.html.includes(TRAINING_MARK) && !off.signedInPage.includes(TRAINING_MARK) && !off.html.includes('training-banner') && !/"training":true/.test(off.html));
+  ok('with training off, no API record view carries a training mark', Object.values(off.views).every(v => v && !Object.hasOwn(v, 'training') && !Object.hasOwn(v, 'trainingNote')), JSON.stringify(Object.fromEntries(Object.entries(off.views).map(([k, v]) => [k, Object.keys(v || {}).slice(0, 3)]))));
   ok('with training off, the archive print and export carry no mark', off.print === 200 && !off.printed.includes(TRAINING_MARK) && off.exportStatus === 200 && !/TRAINING-/.test(off.disposition) && off.exportJson.training === undefined);
   const withoutContext = html => html.replace(/<script id="flight-server">[^<]*<\/script>/, '');
   ok('training changes only the mark: the off page plus the injected parts is the on page', trainingPage(withoutContext(off.html)) === withoutContext(on.html));
@@ -409,6 +414,8 @@ try {
       ['csv saveFile with BOM', () => saveFile(new Blob(['\ufeffmetric,value\r\nescapes,0\r\n'], { type: 'text/csv' }), 'mes-metrics.csv')],
       ['csv already marked', () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['"TRAINING, NOT THE RECORD","Saved by a Flight System training server. Not a quality record."\nname,buyoffType,expires\n'], { type: 'text/csv' })); a.download = 'stamp-register.csv'; a.click(); }],
       ['controlled csv document', () => { const b = document.createElement('button'); b.dataset.controlledDocDownload = 'CD-Y'; document.body.appendChild(b); b.addEventListener('click', () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['a,b\n1,2\n'], { type: 'text/csv' })); a.download = 'plan.csv'; a.click(); }); b.click(); b.remove(); }],
+      ['ics anchor', () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:B1@flight-system\r\nSUMMARY:Torque check\r\nDESCRIPTION:Flight Plan · B1\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n'], { type: 'text/calendar;charset=utf-8' })); a.download = 'flight-plan.ics'; a.click(); }],
+      ['svg document', () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['<svg xmlns="http://www.w3.org/2000/svg"><script>window.parent.__svgRan=1</script><text y="20">Drawing</text></svg>'], { type: 'image/svg+xml' })); a.download = 'drawing.svg'; a.click(); }],
       ['json array', () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['[1,2]'], { type: 'application/json' })); a.download = 'list.json'; a.click(); }],
     ]) {
       if (onPage === 8) { await jsonPage.close(); jsonPage = await openDataPage(); onPage = 0; }
@@ -438,6 +445,9 @@ try {
         const marked = `${CSV_MARK}\n${register}`, refused = mes.importStamps(structuredClone(seed), marked), accepted = mes.importStamps(structuredClone(seed), register);
         ok('a marked stamp register is refused by the stamp import, nothing imported, while the same register without the mark imports', refused.ok === false && /header row needs the columns/.test(refused.message || '') && accepted.ok === true, JSON.stringify({ refused, accepted: accepted.ok }));
       }
+      ok('a saved iCalendar file names the calendar and every event summary and description TRAINING, NOT THE RECORD', textOf('ics anchor') === 'BEGIN:VCALENDAR\r\nX-WR-CALNAME:TRAINING\\, NOT THE RECORD\r\nX-FLIGHT-TRAINING:TRUE\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:B1@flight-system\r\nSUMMARY:TRAINING\\, NOT THE RECORD: Torque check\r\nDESCRIPTION:TRAINING\\, NOT THE RECORD. Flight Plan · B1\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n', JSON.stringify(textOf('ics anchor')));
+      const svg = textOf('svg document');
+      ok('an SVG document is saved as a wrapper page: the mark, then the SVG escaped into a sandboxed frame', /^<!doctype html>/.test(svg) && svg.indexOf('class="training-print-mark"') >= 0 && svg.indexOf('class="training-print-mark"') < svg.indexOf('<iframe sandbox ') && svg.includes('srcdoc="&lt;svg') === false && svg.includes('srcdoc="<svg xmlns=') && downloads.find(d => d.label === 'svg document').name === 'TRAINING-drawing.svg', svg.slice(0, 240));
       ok('JSON that is not an object is saved unchanged, under a TRAINING- name', downloads.find(d => d.label === 'json array').text === '[1,2]');
       ok('text that only names the mark class does not count as marked', /Report naming training-print-mark/.test(downloads.find(d => d.label === 'dlFile').text) && count(downloads.find(d => d.label === 'dlFile').text, TRAINING_MARK) === 1);
       const doc = downloads.find(d => d.label === 'controlled document').text;
@@ -469,7 +479,7 @@ try {
       ok('the file saveFile hands to the downloads service still carries the mark once', count(slowSaved, TRAINING_MARK) === 1, slowSaved.slice(0, 160));
       await slow.close();
     } else {
-      ok('production saves files under their own names with no training mark', downloads.map(d => d.name).join() === 'report.html,atp-report.html,export.json,record.html,procedure.html,hostile.html,WO-1-record.json,register.json,claim.json,governance.json,spec.json,trace-SN-1.csv,PN-1-AsBuilt-BOM.csv,mes-metrics.csv,stamp-register.csv,plan.csv,list.json' && downloads.filter(d => !['already marked json', 'csv already marked'].includes(d.label)).every(d => !d.text.includes(TRAINING_MARK)) && downloads.find(d => d.label === 'csv anchor').text === 'serial,part\nSN-1,PN-1\n' && downloads.find(d => d.label === 'anchor').text === '{"x":1}' && downloads.find(d => d.label === 'dlFile json').text === '{"tools":[]}', downloads.map(d => d.name).join(', '));
+      ok('production saves files under their own names with no training mark', downloads.map(d => d.name).join() === 'report.html,atp-report.html,export.json,record.html,procedure.html,hostile.html,WO-1-record.json,register.json,claim.json,governance.json,spec.json,trace-SN-1.csv,PN-1-AsBuilt-BOM.csv,mes-metrics.csv,stamp-register.csv,plan.csv,flight-plan.ics,drawing.svg,list.json' && downloads.filter(d => !['already marked json', 'csv already marked'].includes(d.label)).every(d => !d.text.includes(TRAINING_MARK)) && downloads.find(d => d.label === 'csv anchor').text === 'serial,part\nSN-1,PN-1\n' && downloads.find(d => d.label === 'anchor').text === '{"x":1}' && downloads.find(d => d.label === 'dlFile json').text === '{"tools":[]}', downloads.map(d => d.name).join(', '));
     }
     if (training) {
       ok('signed in, every page keeps the strip', !!marks.banner && marks.banner.text === TRAINING_MARK && marks.banner.visible, JSON.stringify(marks.banner));

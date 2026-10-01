@@ -211,7 +211,14 @@ const TRAINING_TAIL = `<script id="flight-training">(function(){var MARK=${JSON.
   + 'var CSVROW="\\""+TEXT+"\\",\\""+NOTE+"\\"";'
   + 'function markCsv(text){var t=String(text),bom=t.charAt(0)==="\\ufeff"?"\\ufeff":"",body=bom?t.slice(1):t;if(body.indexOf(CSVROW)===0)return t;return bom+CSVROW+(/\\r\\n/.test(body)?"\\r\\n":"\\n")+body;}'
   + 'function readText(b){return b.arrayBuffer().then(function(x){return new TextDecoder("utf-8",{ignoreBOM:true}).decode(x);});}'
-  + 'function markData(text,type,name){return isJson(type,name)?markJson(text):isCsv(type,name)?markCsv(text):null;}'
+  // An iCalendar file names the calendar TRAINING, NOT THE RECORD and puts the mark at the start of every event's
+  // summary and description, so events imported into another calendar still show it.
+  + 'var isIcs=function(type,name){return /calendar/i.test(String(type||""))||/\\.ics$/i.test(String(name||""));};'
+  + 'var ICSTEXT="TRAINING\\\\, NOT THE RECORD";'
+  + 'function markIcs(text){var t=String(text);if(/^X-FLIGHT-TRAINING:/m.test(t))return t;var nl=/\\r\\n/.test(t)?"\\r\\n":"\\n";'
+  + 'return t.replace(/^BEGIN:VCALENDAR(?=\\r?$)/m,function(l){return l+nl+"X-WR-CALNAME:"+ICSTEXT+nl+"X-FLIGHT-TRAINING:TRUE";})'
+  + '.replace(/^SUMMARY:/mg,"SUMMARY:"+ICSTEXT+": ").replace(/^DESCRIPTION:/mg,"DESCRIPTION:"+ICSTEXT+". ");}'
+  + 'function markData(text,type,name){return isJson(type,name)?markJson(text):isCsv(type,name)?markCsv(text):isIcs(type,name)?markIcs(text):null;}'
   // Object URLs made while the page synchronously builds an already marked file, and the URL of the exact blob saveFile
   // marked, are trusted; any other HTML file is marked on download. saveFile can wait on a downloads service, so it
   // trusts its own blob only, never every blob made while it waits.
@@ -223,17 +230,18 @@ const TRAINING_TAIL = `<script id="flight-training">(function(){var MARK=${JSON.
   + 'var df=window.dlFile;if(typeof df==="function")window.dlFile=trusting(function(name,text,type){var d=markData(text,type,name);return df(name,d!==null?d:isHtml(type)?mark(text):text,type);});'
   + 'if(typeof window.printRecord==="function")window.printRecord=trusting(window.printRecord);'
   + 'if(typeof window.deliverTraveler==="function")window.deliverTraveler=trusting(window.deliverTraveler);'
-  + 'var sf=window.saveFile;if(typeof sf==="function")window.saveFile=async function(blob,name){var n=/^TRAINING-/.test(String(name))?name:"TRAINING-"+name;if(blob&&/html/i.test(blob.type||"")){try{blob=new Blob([mark(await blob.text())],{type:blob.type});}catch(e){}}else if(blob&&(isJson(blob.type,name)||isCsv(blob.type,name))){try{var j=markData(await readText(blob),blob.type,name);if(j!==null)blob=new Blob([j],{type:blob.type||(isCsv(blob.type,name)?"text/csv":"application/json")});}catch(e){}}if(blob instanceof Blob)saved.add(blob);return sf(blob,n);};'
+  + 'var sf=window.saveFile;if(typeof sf==="function")window.saveFile=async function(blob,name){var n=/^TRAINING-/.test(String(name))?name:"TRAINING-"+name;if(blob&&/html/i.test(blob.type||"")){try{blob=new Blob([mark(await blob.text())],{type:blob.type});}catch(e){}}else if(blob&&(isJson(blob.type,name)||isCsv(blob.type,name)||isIcs(blob.type,name))){try{var j=markData(await readText(blob),blob.type,name);if(j!==null)blob=new Blob([j],{type:blob.type||(isCsv(blob.type,name)?"text/csv":isIcs(blob.type,name)?"text/calendar":"application/json")});}catch(e){}}if(blob instanceof Blob)saved.add(blob);return sf(blob,n);};'
   // A controlled document is saved as the approved file, byte for byte, so it still matches its released SHA-256:
   // a JSON or CSV file saved from a controlled-document download keeps its bytes (and its TRAINING- name).
   + 'var verbatim=0;document.addEventListener("click",function(e){var t=e.target;if(t&&t.closest&&t.closest("[data-controlled-doc-download]")){verbatim++;setTimeout(function(){verbatim--;},0);}},true);'
   + 'var click=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){'
   + 'if(this.hasAttribute("download")){if(this.download&&!/^TRAINING-/.test(this.download))this.download="TRAINING-"+this.download;'
-  // Any other HTML file is saved as a wrapper page: the mark, then the original document escaped into a sandboxed
+  // Any other HTML file, or other active markup (SVG, XHTML, XML), is saved as a wrapper page: the mark, then the
+  // original document escaped into a sandboxed
   // frame with no permissions, so its own CSS or script cannot hide or remove the mark.
-  + 'var jb=blobs.get(this.href);if(jb&&!verbatim&&!trusted.has(this.href)&&(isJson(jb.type,this.download)||isCsv(jb.type,this.download))){var jname=this.download;'
-  + 'readText(jb).then(function(t){var j=markData(t,jb.type,jname);var a=document.createElement("a");trust++;try{a.href=URL.createObjectURL(j===null?jb:new Blob([j],{type:jb.type||(isCsv(jb.type,jname)?"text/csv":"application/json")}));}finally{trust--;}a.download=jname;click.call(a);var u=a.href;setTimeout(function(){URL.revokeObjectURL(u);},60000);});return;}'
-  + 'var b=blobs.get(this.href);if(b&&!trusted.has(this.href)&&(/html/i.test(b.type||"")||/\\.html?$/i.test(this.download))){var name=this.download;'
+  + 'var jb=blobs.get(this.href);if(jb&&!verbatim&&!trusted.has(this.href)&&(isJson(jb.type,this.download)||isCsv(jb.type,this.download)||isIcs(jb.type,this.download))){var jname=this.download;'
+  + 'readText(jb).then(function(t){var j=markData(t,jb.type,jname);var a=document.createElement("a");trust++;try{a.href=URL.createObjectURL(j===null?jb:new Blob([j],{type:jb.type||(isCsv(jb.type,jname)?"text/csv":isIcs(jb.type,jname)?"text/calendar":"application/json")}));}finally{trust--;}a.download=jname;click.call(a);var u=a.href;setTimeout(function(){URL.revokeObjectURL(u);},60000);});return;}'
+  + 'var b=blobs.get(this.href);if(b&&!trusted.has(this.href)&&(/html|svg|xml/i.test(b.type||"")||/\\.(html?|xhtml|svg|xml)$/i.test(this.download))){var name=this.download;'
   + 'b.text().then(function(t){var src=t.replace(/&/g,"&amp;").replace(/"/g,"&quot;");'
   + 'var page="<!doctype html><html><head><meta charset=\\"utf-8\\"><title>TRAINING, NOT THE RECORD</title><style>html,body{margin:0;height:100%}iframe{display:block;border:0;width:100%;height:calc(100vh - 120px)}</style></head><body>"+MARK+"<iframe sandbox title=\\"Downloaded document\\" srcdoc=\\""+src+"\\"></iframe></body></html>";'
   + 'var a=document.createElement("a");trust++;try{a.href=URL.createObjectURL(new Blob([page],{type:"text/html"}));}finally{trust--;}a.download=name;click.call(a);var u=a.href;setTimeout(function(){URL.revokeObjectURL(u);},60000);});return;}}'
@@ -342,7 +350,11 @@ export function createServer(options = {}) {
   wrapped.catch(() => {});
 
   // ---- helpers ----
-  const send = (res, status, body, headers = {}) => { const json = body === undefined ? '' : JSON.stringify(body); res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers }); res.end(json); };
+  // On a training server every JSON object the API sends carries the training mark first (a record view, a listing,
+  // an archive or calibration entry, a report), so a saved or renamed response is still marked. A body that already
+  // carries the mark (the governance export, whose manifest covers it; an archive extract) is sent as it is.
+  const trainingBody = body => training && body && typeof body === 'object' && !Array.isArray(body) && !Object.hasOwn(body, 'training') ? { training: TRAINING_MARK, trainingNote: TRAINING_PROVENANCE.note, ...body } : body;
+  const send = (res, status, body, headers = {}) => { const json = body === undefined ? '' : JSON.stringify(trainingBody(body)); res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers }); res.end(json); };
   // An unexpected failure is logged here with its detail and a reference. The caller gets the reference and a
   // plain next step, never the error text: it can name files, SQL, or engine internals.
   const internalError = (res, req, error, what = 'The server could not complete this request.') => {
@@ -1214,8 +1226,7 @@ export function createServer(options = {}) {
       if (arc && m === 'GET') {
         const a = await store.archived(arc[1]);
         if (!a) { send(res, 404, { error: `${arc[1]} is not in the archive. Search by serial, lot or part to find it.` }); return; }
-        // On a training server the record itself carries the mark first, so a saved or renamed response is still marked.
-        if (!arc[2]) { send(res, 200, { ...(training ? { training: TRAINING_MARK, trainingNote: TRAINING_PROVENANCE.note } : {}), ...a.entry, ...(training ? { training: TRAINING_MARK } : {}), sha256: a.sha256, schema: a.schema, archivedAt: a.archivedAt, archivedBy: a.archivedBy, readOnly: true, extractHistory: await store.extractHistory('work-order', a.id) }); return; }
+        if (!arc[2]) { send(res, 200, { ...a.entry, sha256: a.sha256, schema: a.schema, archivedAt: a.archivedAt, archivedBy: a.archivedBy, readOnly: true, extractHistory: await store.extractHistory('work-order', a.id) }); return; }
         if (arc[2] === '/print') {
           const mode = url.searchParams.get('mode') === 'external' ? 'external' : 'internal';
           let html; try { html = host.MESPrint.document(a.entry.order, mode); } catch (e) { internalError(res, req, e, 'The record could not be printed.'); return; }
