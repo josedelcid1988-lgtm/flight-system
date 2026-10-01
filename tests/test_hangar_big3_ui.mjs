@@ -51,6 +51,10 @@ try {
     const before = await page.evaluate(() => JSON.stringify(state));
     await showHangar(page);
     check(await page.evaluate(prior => JSON.stringify(state) === prior, before), `${role}: opening the Hangar leaves the workspace unchanged`);
+    // Codex review on #360: a Hangar render copies only the planner and blockers, never the whole workspace.
+    // Validation (maneuverValid) clones once on any page, so compare against Flight Plan, whose panel reads the live state.
+    const wholeClones = await page.evaluate(() => { const original = window.structuredClone, count = target => { let whole = 0; window.structuredClone = (value, options) => { if (value === state) whole++; return original(value, options); }; try { view = target; render(); } finally { window.structuredClone = original; } return whole; }; const plan = count('plan'), home = count('home'); return { plan, home }; });
+    check(wholeClones.home === wholeClones.plan, `${role}: rendering the Hangar clones the whole workspace no more often than Flight Plan (${JSON.stringify(wholeClones)})`);
     const total = await page.evaluate(() => MES.plannerStatus(structuredClone(state), new Date().toISOString().slice(0, 10)).total);
     capable[role] = total > 0;
     if (total > 0) check(await big3.locator('[data-action="big3-create"]').count() === 1, `${role}: a role with open tasks can set today's Big Three from the Hangar`);
@@ -136,8 +140,13 @@ try {
   const resolvedRef = await quality.evaluate(date => { const slot = state.planner.days.quality[date].big3[2], prior = slot.ref.id; slot.ref.id = 'BLK-99999'; view = 'home'; render(); return prior; }, today());
   const resolvedSlot = panel(quality).locator('.big3-slot').nth(2);
   check(/Resolved in the record/.test(await resolvedSlot.innerText()) && await resolvedSlot.locator('[data-action]').count() === 0, 'a task resolved in its record shows as resolved with no Accept, Decline or scheduling');
-  const resolvedAccept = await quality.evaluate(date => { const before = state.planner.days.quality[date].big3[2].status, result = MES.decideBigThree(state, date, 2, 'accept'); return { result, before, status: state.planner.days.quality[date].big3[2].status }; }, today());
-  check(resolvedAccept.result.ok === false && /resolved in the record/.test(resolvedAccept.result.message) && resolvedAccept.status === resolvedAccept.before, 'the engine refuses to accept a task resolved in its record and leaves the slot as it was');
+  // Codex review on #360: the refusal also puts back what reconciling touched (the slot's done flag and note, and the
+  // blocker rows with their actor and time), so a later unrelated save cannot keep them.
+  const resolvedAccept = await quality.evaluate(date => { const snapshot = () => JSON.stringify({ planner: state.planner, blockers: state.blockers }), before = snapshot(), result = MES.decideBigThree(state, date, 2, 'accept'); return { result, unchanged: snapshot() === before, done: state.planner.days.quality[date].big3[2].done }; }, today());
+  check(resolvedAccept.result.ok === false && /resolved in the record/.test(resolvedAccept.result.message), 'the engine refuses to accept a task resolved in its record');
+  check(resolvedAccept.unchanged && resolvedAccept.done === false, 'the refused accept leaves the planner day and the blockers exactly as they were');
+  const resolvedDecline = await quality.evaluate(date => { const snapshot = () => JSON.stringify({ planner: state.planner, blockers: state.blockers }), before = snapshot(), result = MES.decideBigThree(state, date, 2, 'decline', 'No longer needed'); return { result, unchanged: snapshot() === before }; }, today());
+  check(resolvedDecline.result.ok === false && /resolved in the record\. There is nothing to decline\./.test(resolvedDecline.result.message) && resolvedDecline.unchanged, 'a stale Decline on a task resolved in its record is refused, records no signal and changes nothing');
   const legacy = await quality.evaluate(() => { const box = document.createElement('div'); box.innerHTML = renderPlannerBigThree(); const slot = box.querySelectorAll('.big3-slot')[2]; return { dates: [...box.querySelectorAll('[data-action^="big3-"]')].map(button => button.dataset.date), actions: slot?.querySelectorAll('[data-action]').length, text: slot?.textContent || '' }; });
   check(legacy.dates.length > 0 && legacy.dates.every(value => value === today()), `every Big Three button in the page template carries the day it was drawn for (${legacy.dates.join(',')})`);
   check(legacy.actions === 0 && /Resolved in the record/.test(legacy.text), 'the page template also shows a task resolved in its record with no actions');

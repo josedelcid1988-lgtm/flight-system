@@ -8190,9 +8190,13 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   function createBigThreePlan(state,date=plannerToday()) { const view=plannerView(state,date); if (!view) return fail('Enter the day as a calendar date.'); return {ok:true,message:`${view.top.length} priority task${view.top.length===1?'':'s'} planned for ${view.username}.`,...view}; }
   function decideBigThree(state,date,index,decision,reason='') {
     if (!dateOnly(date)||!Number.isInteger(index)||index<0||index>2||!['accept','decline'].includes(decision)) return fail('Choose a valid day, task and decision.');
-    const view=plannerView(state,date), slot=view.day.big3[index]; if (!slot?.t) return fail('That priority slot is empty.');
-    if (decision==='decline'&&String(reason).trim().length<3) return fail('Give a short reason for declining this task.');
-    if (decision==='accept') { if (slot.done) return fail('This task was resolved in the record. There is nothing to accept.'); if (slot.status==='accepted') return fail('This task is already accepted.'); slot.status='accepted'; }
+    // plannerView reconciles the day and the blockers in place; a refusal puts both back so nothing it touched is kept.
+    const hadPlanner=Object.hasOwn(state,'planner'),hadBlockers=Object.hasOwn(state,'blockers'),prior=JSON.parse(JSON.stringify({planner:state.planner??null,blockers:state.blockers??null}));
+    const refuse=message=>{ if(hadPlanner)state.planner=prior.planner;else delete state.planner; if(hadBlockers)state.blockers=prior.blockers;else delete state.blockers; return fail(message); };
+    const view=plannerView(state,date), slot=view.day.big3[index]; if (!slot?.t) return refuse('That priority slot is empty.');
+    if (slot.done) return refuse(`This task was resolved in the record. There is nothing to ${decision}.`);
+    if (decision==='decline'&&String(reason).trim().length<3) return refuse('Give a short reason for declining this task.');
+    if (decision==='accept') { if (slot.status==='accepted') return refuse('This task is already accepted.'); slot.status='accepted'; }
     else { state.planner.signals.push({username:view.username,date,index,decision,ref:slot.ref,reason:String(reason).trim().slice(0,300),at:new Date().toISOString()}); if(state.planner.signals.length>5000)state.planner.signals.splice(0,state.planner.signals.length-5000); state.planner.days[view.username][date].big3[index]={t:'',done:false,why:'',ref:null,goal:'',src:'',status:''}; }
     return {ok:true,message:decision==='accept'?'Priority task accepted.':'Task declined with a reason.',...plannerView(state,date)};
   }

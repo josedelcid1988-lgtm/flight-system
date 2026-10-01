@@ -172,7 +172,10 @@ const writeBig3Collapsed = (username, collapsed) => { try { localStorage.setItem
 // The Hangar reads the planner from a copy: plannerStatus brings the derived blocker list up to date as it reads, and the
 // landing page must not change the workspace just by being opened. Every Big Three action still runs on the real
 // workspace through the same engine commands (and, with a server, the same server actions) as Flight Plan.
-const plannerReadCopy = state => { try { return structuredClone(state); } catch { return JSON.parse(JSON.stringify(state)); } };
+// The planner read path writes only state.planner (ensurePlanner) and state.blockers (syncPlanningBlockers), so the
+// Hangar copies just those two and shares the rest read-only, instead of cloning the whole workspace on every render.
+const cloneValue = value => { if (value === undefined) return value; try { return structuredClone(value); } catch { return JSON.parse(JSON.stringify(value)); } };
+const plannerReadCopy = state => ({ ...state, planner: cloneValue(state.planner), blockers: cloneValue(state.blockers) });
 
 function BigThreeAccept({ item, index, date }) {
   return item.status === 'accepted' ? <span className="pill accepted">Accepted</span> : <button className="btn quiet" data-action="big3-decide" data-index={index} data-date={date} data-decision="accept">Accept</button>;
