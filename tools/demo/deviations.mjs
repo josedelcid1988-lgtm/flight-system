@@ -169,6 +169,10 @@ const LIST = [
         .replace(/^const CAL_SNAPSHOT = '[^']*';/, () => `/* DEMO ${id} */ const DEMO_CAL = (${ctx.calRebase})(${snapshot}, (typeof window !== 'undefined' && window.__DEMO_SEED) || null, ${firstLoad});\n  const CAL_SNAPSHOT = DEMO_CAL.snapshot;`)
         .replace(/Object\.freeze\(\{ tag, description, serial, expires, status, location \}\)\)\);$/, () => 'Object.freeze({ tag, description, serial, expires: DEMO_CAL.expires(expires), status, location })));');
     } },
+  { area: 'Separation of duties', title: 'An 8130-9 completed and AQI-signed by one person needs no self-signature record',
+    why: 'The demo lifts the 8130-9 preparer and AQI comparison (D-20), so a demo AQI signature by the person who completed the form records no self-signature. Verification does not flag that pairing in the demo. Production records and checks it.',
+    find: '  const aqiSelfSignMismatch = p => ', count: 1,
+    replace: (ctx, m, id) => `  const aqiSelfSignMismatch = p => false /* DEMO ${id} */ && ` },
 ];
 
 export const DEVIATIONS = LIST.map((d, i) => Object.freeze({ ...d, id: `D-${i + 1}` }));

@@ -23,6 +23,7 @@ let r=await run(()=>{const v=MES.verifyManifests(state);return {ok:v.ok,failures
 ok('the curated demo workspace verifies',r.ok===true,JSON.stringify(r.failures));
 const conf=await run(()=>{const o=state.orders.find(o=>(o.conformity||[]).some(p=>p.form&&p.aqi&&p.darApproval));return o?{id:o.id,serial:o.conformity.find(p=>p.form&&p.aqi&&p.darApproval).serial}:null;});
 ok('fixture: a conformed package with a signed 8130-9, AQI signature and DAR acceptance',!!conf,JSON.stringify(conf));
+const confJson=await run(()=>JSON.stringify(state));
 const pkg=`const p=s.orders.find(o=>o.id==='${conf.id}').conformity.find(p=>p.serial==='${conf.serial}');`;
 await expectFail('editing the 8130-9 certification basis after signing fails',pkg+"p.form.basis='Edited after signing';",'8130-9');
 await expectFail('editing the 8130-9 deviations after signing fails',pkg+"p.form.deviations='None, edited';",'8130-9');
@@ -32,6 +33,8 @@ await expectFail('editing the DAR date after signing fails',pkg+"p.darApproval.d
 await expectFail('removing the 8130-9 signature manifest fails',pkg+"delete p.form.prepared.manifest;",'8130-9');
 await expectFail('removing the AQI signature manifest fails',pkg+"delete p.aqi.manifest;",'8130-9 AQI signature');
 await expectFail('removing the DAR acceptance manifest fails',pkg+"delete p.darApproval.manifest;",'DAR acceptance');
+await expectFail('changing the recorded 8130-9 preparer away from the form signer fails',pkg+"p.form.prepared.by={...p.form.prepared.by,credentialId:'ACCT-other'};",'8130-9');
+await expectFail('changing the recorded AQI signer away from the AQI signature fails',pkg+"p.aqi.by={...p.aqi.by,credentialId:'ACCT-other'};",'8130-9 AQI signature');
 await expectFail('removing the completed 8130-9 from a conformed package fails rather than skipping its AQI and DAR checks',pkg+"p.form=null;",'8130-9');
 
 const mrb=await run(()=>{const m=(state.maneuver.mrb||[]).find(m=>m.decision&&m.decision.manifest);return m&&m.id;});
@@ -53,6 +56,8 @@ await expectFail('changing the approval note after approval fails',stock+"t.reso
 await expectFail('removing the stock NC approval manifest fails',stock+"delete t.resolution.manifest;",`${nc} disposition approval`);
 r=await run(()=>{const s=structuredClone(state),t=(s.maneuver.ncs||[]).find(t=>t.resolution&&t.resolution.manifest);if(!t)return {none:true};delete t.affected;const v=MES.verifyManifests(s);return {id:t.id,ok:v.ok,where:v.failures.map(f=>f.where)};});
 ok('removing the affected record from an approved stock NC fails rather than skipping the check',r.ok===false&&r.where.some(w=>w.includes(`${r.id} disposition approval`)),JSON.stringify(r));
+r=await run(([nc])=>{const s=structuredClone(state),t=s.maneuver.ncs.find(t=>t.id===nc);delete t.resolution.manifest;t.history=[...(t.history||[]),{at:new Date().toISOString(),action:'Migrated from escape ESC-0001.',actor:'Flight System'}];const v=MES.verifyManifests(s);return {ok:v.ok,where:v.failures.map(f=>f.where)};},[nc]);
+ok('a stock NC migrated from a closed escape keeps its unsigned closure without a verification failure',!r.where.some(w=>w.includes(`${nc} disposition approval`)),JSON.stringify(r));
 
 // ---- box 22 is signed, validated and bound into the Skyryse QA approval ----
 const fair=await run(()=>{const o=state.orders.find(o=>o.fair&&o.fair.status==='Approved');if(!o)return null;const s=structuredClone(state),x=s.orders.find(y=>y.id===o.id);x.fair.status='Open';x.fair.verified=null;x.fair.approved=null;delete x.fair.reviewed;
@@ -70,6 +75,8 @@ await expectFail('replacing the box 22 reviewer after the approval fails',F+"f.r
 await expectFail('re-signing box 22 as someone else after the approval fails',F+"f.reviewed={...f.reviewed,by:{...f.reviewed.by,credentialId:'ACCT-other'},manifest:MES.signManifest(s,'AS9102 FAIR reviewed and approved (blocks 22 and 23)',{fair:f.reviewed.manifest.subject.fair,verified:f.verified.manifest.hash,reviewer:'ACCT-other',reviewedAt:f.reviewed.at},f.reviewed.at)};",'FAIR approval');
 await expectFail('changing the FAI reasons after verification fails',F+"f.reasons=[f.reasons[0]==='Mfg. process change'?'New part (first production)':'Mfg. process change'];",'FAIR verification');
 await expectFail('removing box 22 after the approval fails',F+"delete f.reviewed;",'FAIR approval');
+r=await run(([id])=>{const mk=at=>{const s=structuredClone(state),f=s.orders.find(o=>o.id===id).fair;const sub={fair:f.approved.manifest.subject.fair,verified:f.verified.manifest.hash};f.approved={...f.approved,at,manifest:MES.signManifest(s,'AS9102 FAIR Skyryse QA approval',sub,at)};f.reviewed=null;const v=MES.verifyManifests(s);return v.failures.filter(x=>/FAIR approval/.test(x.where)).length;};return {before:mk('2026-09-20T10:00:00.000Z'),after:mk('2026-09-28T10:00:00.000Z')};},[fair.id]);
+ok('an approval from before box 22 was mandatory may lack box 22; one recorded after cannot',r.before===0&&r.after>0,JSON.stringify(r));
 await expectFail('removing the FAIR verification manifest fails',F+"delete f.verified.manifest;",'FAIR verification');
 await expectFail('removing the Skyryse QA approval manifest fails',F+"delete f.approved.manifest;",'FAIR approval');
 await expectFail('removing the box 22 manifest fails',F+"delete f.reviewed.manifest;",'FAIR box 22');
@@ -119,6 +126,10 @@ await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(1200);
 r=await run(([json,id])=>{const base=JSON.parse(json),f=base.orders.find(o=>o.id===id).fair;const other={...f.reviewed.by,credentialId:'ACCT-second',name:'Second Reviewer'};const mk=by=>{const s=structuredClone(base),g=s.orders.find(o=>o.id===id).fair;g.reviewed={...g.reviewed,by,manifest:{...g.reviewed.manifest,signer:{...g.reviewed.manifest.signer,credentialId:by.credentialId}}};return s;};const self=mk({...f.verified.by});const second=mk(other);const fv=s=>MES.validate(s);const moved=mk({...f.verified.by});moved.orders.find(o=>o.id===id).fair.verified.by={...f.verified.by,credentialId:'ACCT-moved'};return {sameCred:f.verified.by.credentialId,second:fv(second),self:fv(self),moved:fv(moved)};},[fairJson,fair.id]);
 ok('in production, validation accepts a box 22 signed by a second person and refuses one signed by the verifier',r.second===true&&r.self===false,JSON.stringify(r));
 ok('in production, validation refuses a box 22 signed by the verification signer even when the recorded verifier was changed',r.moved===false,JSON.stringify(r));
+// ---- production: the AQI self-signature flag must match who completed the 8130-9 (the demo lifts this, see DEMO_DEVIATIONS) ----
+await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(1200);
+r=await run(([json,c])=>{const base=JSON.parse(json);const mk=f=>{const s=structuredClone(base),p=s.orders.find(o=>o.id===c.id).conformity.find(x=>x.serial===c.serial);f(p);const v=MES.verifyManifests(s);return v.failures.filter(x=>/AQI signature/.test(x.where)).map(x=>x.reason);};return {clean:mk(()=>{}),samePerson:mk(p=>{p.form.prepared.by={...p.aqi.by};p.form.prepared.manifest={...p.form.prepared.manifest,signer:{...p.form.prepared.manifest.signer,credentialId:p.aqi.by.credentialId}};})};},[confJson,conf]);
+ok('in production, an 8130-9 completed and AQI-signed by the same person without the self-signature record fails verification',r.clean.length===0&&r.samePerson.some(x=>/self-signature/.test(x)),JSON.stringify(r));
 ok('no page errors',errs.length===0,errs.join(' | '));
 console.log('errors',errs,'FAILS',JSON.stringify(fails));await b.close();
 process.exit(fails.length?1:0);
