@@ -24,11 +24,13 @@ const check = (name, result) => { checks += 1; assert.ok(result, name); console.
 const curated = () => JSON.parse(fs.readFileSync(new URL('./fixtures/demo_publish.html', import.meta.url), 'utf8').match(/window\.__DEMO_SEED=(\{[\s\S]*?\});/)[1]);
 const photo = { name: 'torque-setup.png', type: 'image/png', size: 10, dataUrl: 'data:image/png;base64,iVBORw0KGgo=' };
 const REASON = 'Attached to the wrong operation.';
+// An open operation whose removals are allowed now: one that existed before any sequence change still waiting for QA.
+const removableOp = (order) => order.operations.find(item => !item.done && (!MES.pendingSequenceChange(order) || (order.sequenceBaseline || []).some(b => b.id === item.id)));
 
 // One holder per surface: how to add a file, how to remove it, and where its live and quarantined files live.
 function surfaces(state) {
   const order = state.orders.find(o => o.status === 'Building' && o.operations.some(op => !op.done) && o.tickets.some(t => t.status === 'Open'));
-  const op = order.operations.find(item => !item.done);
+  const op = removableOp(order);
   const ticket = order.tickets.find(t => t.status === 'Open');
   const kitOrder = state.orders.find(o => ['Kitting', 'Building'].includes(o.status));
   FlightManeuver.ensure(state);
@@ -110,6 +112,63 @@ function surfaces(state) {
     dst.quarantinedAttachments = [...(dst.quarantinedAttachments || []), src.quarantinedAttachments.shift()];
     check('a quality record quarantine entry moved to another record fails validation and manifest verification', !MES.validate(recMoved) && !MES.verifyManifests(recMoved).ok);
   }
+  // A file is live or quarantined on its record, never both: copying a removed file back into the live list is caught.
+  {
+    const revived = structuredClone(state), rOp = revived.orders.flatMap(o => o.operations).find(x => (x.quarantinedAttachments || []).length);
+    const { removedAt, removedBy, removeReason, manifest, ...asLive } = rOp.quarantinedAttachments[0];
+    rOp.attachments = [...(rOp.attachments || []), asLive];
+    const verify = MES.verifyManifests(revived);
+    check('a quarantined file copied back into the live list fails validation and manifest verification', !MES.validate(revived) && verify.failures.some(f => /also listed as live/.test(f.reason)));
+    const revivedRec = structuredClone(state), rNc = revivedRec.maneuver.ncs.find(t => (t.quarantinedAttachments || []).length);
+    rNc.attachments = [...(rNc.attachments || []), structuredClone(rNc.quarantinedAttachments[0])];
+    check('a quarantined quality record file copied back into the live list fails validation', !MES.validate(revivedRec) && !MES.verifyManifests(revivedRec).ok);
+  }
+  // The original attachment's provenance (who added it, when, its type) is signed with the removal.
+  for (const [field, change] of [['addedAt', f => { f.addedAt = '2020-01-01T00:00:00.000Z'; }], ['addedBy', f => { f.addedBy = { ...f.addedBy, name: 'Someone Else' }; }], ['type', f => { f.type = 'application/x-msdownload'; }]]) {
+    const forged = structuredClone(state), entry = forged.orders.flatMap(o => o.operations).find(x => (x.quarantinedAttachments || []).length).quarantinedAttachments[0];
+    change(entry);
+    check(`a quarantined file whose original ${field} was changed fails validation and manifest verification`, !MES.validate(forged) && !MES.verifyManifests(forged).ok);
+  }
+  // A pending sequence change can be rejected, which restores the operations captured before it: a removal made
+  // meanwhile stays quarantined after the restore, and an operation the pending change added keeps its files until
+  // QA decides. An operation that holds files cannot be removed at all.
+  {
+    const seq = structuredClone(state), qmUser = { username: 'quar-qm', displayName: 'Quincy Manager', role: 'qm' };
+    const sOrder = seq.orders.find(o => o.status === 'Building' && !MES.pendingSequenceChange(o) && o.operations.some(x => !x.done) && !MES.blockingTickets(o).length);
+    const sOp = sOrder.operations.filter(x => !x.done).at(-1);
+    host.withAccount(technician, () => MES.addAttachment(seq, sOrder.id, sOp.id, photo), seq);
+    const fileId = sOp.attachments.at(-1).id;
+    const added = host.withAccount(me, () => MES.addOrderOperation(seq, sOrder.id, { title: 'Install placard', description: 'Install the data placard.', steps: 'Clean surface\nInstall placard', position: sOrder.operations.length, buyoffType: 'Technician', classification: 'Manufacturing', callouts: [] }), seq);
+    check('a sequence change is pending for the sequence check', added.ok && !!MES.pendingSequenceChange(sOrder));
+    const liveOp = () => sOrder.operations.find(x => x.id === sOp.id);
+    const removed = host.withAccount(technician, () => MES.removeAttachment(seq, sOrder.id, sOp.id, fileId, REASON), seq);
+    check('an operation file is removed while a sequence change waits for QA', removed.ok && liveOp().quarantinedAttachments.some(f => f.id === fileId));
+    const newOp = sOrder.operations.find(x => !seq.orders.find(o => o.id === sOrder.id).sequenceBaseline.some(b => b.id === x.id));
+    const onNew = host.withAccount(technician, () => MES.addAttachment(seq, sOrder.id, newOp.id, photo), seq);
+    const newRefused = onNew.ok && host.withAccount(technician, () => MES.removeAttachment(seq, sOrder.id, newOp.id, newOp.attachments.at(-1).id, REASON), seq);
+    check('a file on an operation the pending change added is not removed until QA decides, with what to do', newRefused && newRefused.ok === false && /added by a sequence change that is waiting for QA/.test(newRefused.message));
+    const rejected = host.withAccount(qmUser, () => MES.rejectSequenceChange(seq, sOrder.id, 'Not needed on this build.'), seq);
+    check('after the sequence change is rejected the removed file is still quarantined, not live again, and the workspace verifies', rejected.ok && !MES.pendingSequenceChange(sOrder) && !liveOp().attachments.some(f => f.id === fileId) && liveOp().quarantinedAttachments.some(f => f.id === fileId) && MES.validate(seq) && MES.verifyManifests(seq).ok);
+    const holder = structuredClone(state), hOrder = holder.orders.find(o => o.operations.some(x => (x.quarantinedAttachments || []).length) && ['Draft', 'Kitting', 'Building'].includes(o.status));
+    const hOp = hOrder.operations.find(x => (x.quarantinedAttachments || []).length);
+    const removeOp = host.withAccount(me, () => MES.removeOrderOperation(holder, hOrder.id, hOp.id, 'Not needed on this build.'), holder);
+    check('an operation holding quarantined files cannot be removed, and its files stay', removeOp.ok === false && hOrder.operations.some(x => x.id === hOp.id && x.quarantinedAttachments.length));
+  }
+  // Fulfilling a split request does not copy removal records onto the new order either.
+  {
+    const sr = structuredClone(state), admin = { username: 'quar-admin', displayName: 'Flight Master', role: 'admin' };
+    const parent = sr.orders.find(o => ['Kitting', 'Building'].includes(o.status) && !MES.pendingSequenceChange(o) && !MES.engineeringChange(o) && o.operations.some(x => !x.done));
+    const pOp = parent.operations.find(x => !x.done);
+    const prepared = host.withAccount(admin, () => [MES.addAttachment(sr, parent.id, pOp.id, photo), MES.addKitFile(sr, parent.id, photo)], sr);
+    const prepRemoved = prepared.every(r => r.ok) && host.withAccount(admin, () => [MES.removeAttachment(sr, parent.id, pOp.id, pOp.attachments.at(-1).id, REASON), MES.removeKitFile(sr, parent.id, parent.kitFiles.at(-1).id, REASON)], sr);
+    check('the split request parent holds quarantined operation and kit files', !!prepRemoved && prepRemoved.every(r => r.ok));
+    Object.assign(parent, { quantity: 3 });
+    parent.splitRequests = [{ id: 'SPR-QUAR-1', ticketId: null, quantity: 1, of: 3, serials: [], reason: 'Split one unit out for the quarantine check', status: 'Open', requestedBy: { name: 'Flight Master', role: 'Master Access', credentialId: 'MA-1' }, requestedAt: new Date().toISOString() }];
+    const kept = parent.operations.reduce((n, x) => n + (x.quarantinedAttachments || []).length, 0);
+    const result = host.withAccount(admin, () => MES.splitRequestOrder(sr, parent.id, 'SPR-QUAR-1'), sr);
+    const child = result.ok && sr.orders.find(o => o.id === result.id);
+    check('a split request leaves removal records on the parent and the workspace stays valid', result.ok && (parent.quarantinedKitFiles || []).length > 0 && !!child && child.quarantinedKitFiles === undefined && child.operations.every(x => x.quarantinedAttachments === undefined) && parent.operations.reduce((n, x) => n + (x.quarantinedAttachments || []).length, 0) === kept && MES.validate(sr) && MES.verifyManifests(sr).ok);
+  }
   // Live files count toward the workspace limit too, so large quality record files cannot pass it.
   {
     const live = structuredClone(state);
@@ -141,6 +200,9 @@ function surfaces(state) {
     const rec = host.withAccount(technician, () => FlightManeuver.addRecordFile(heavy, 'ncs', hNc.id, big), heavy);
     check('a kit list is refused when quarantined files fill the workspace limit, with what to do', kit.ok === false && /near its attachment limit, and removed files stay in quarantine/.test(kit.message));
     check('a quality record file is refused when quarantined files fill the workspace limit, with what to do', rec.ok === false && /near its attachment limit/.test(rec.message));
+    const tOrder = heavy.orders.find(o => o.tickets.some(t => t.status === 'Open')), tTicket = tOrder.tickets.find(t => t.status === 'Open');
+    const tk = host.withAccount(technician, () => MES.addTicketAttachment(heavy, tOrder.id, tTicket.id, big), heavy);
+    check('an NC ticket file is refused at the limit with a remedy that works (removal does not free room)', tk.ok === false && /removed files stay in quarantine\. Log this file by name only/.test(tk.message));
     check('a file logged by name only is still accepted at the limit', host.withAccount(operator, () => MES.addKitFile(heavy, kitOrder.id, { name: 'kit-by-name.pdf', type: 'application/pdf', size: 10 }), heavy).ok);
   }
   // Quarantine is capped per record, with a plain refusal once full.
@@ -195,7 +257,7 @@ function surfaces(state) {
     for (const [username, role] of [['srv-tech', 'technician'], ['srv-gen', 'general'], ['srv-me', 'me']]) await server.store.upsertAccount({ username, displayName: `Server ${role}`, salt: '', hash: await makeHash(`${username}-pass-1`), role, roles: [role] });
     const state = curated();
     const order = state.orders.find(o => o.status === 'Building' && o.operations.some(op => !op.done) && o.tickets.some(t => t.status === 'Open'));
-    const op = order.operations.find(item => !item.done), ticket = order.tickets.find(t => t.status === 'Open');
+    const op = removableOp(order), ticket = order.tickets.find(t => t.status === 'Open');
     host.withAccount(technician, () => { MES.addAttachment(state, order.id, op.id, photo); MES.addTicketAttachment(state, order.id, ticket.id, photo); }, state);
     const opFile = op.attachments.at(-1).id, ticketFile = ticket.attachments.at(-1).id;
     await server.store.putDoc('default', JSON.stringify(state), null, 'attachment-quarantine');
@@ -253,7 +315,7 @@ function surfaces(state) {
     const { page, errors, context } = await openAs('admin');
     // An operation attachment on a Building order, shown on its operation.
     const target = await page.evaluate(photo => {
-      const o = state.orders.find(o => o.status === 'Building' && !MES.blockingTickets(o).length && o.operations.some(op => !op.done));
+      const o = state.orders.find(o => o.status === 'Building' && !MES.blockingTickets(o).length && !MES.pendingSequenceChange(o) && o.operations.some(op => !op.done));
       const op = o.operations.find(x => !x.done);
       const added = MES.addAttachment(state, o.id, op.id, photo);
       if (!added.ok || !save()) return { error: added.message };
@@ -301,7 +363,7 @@ function surfaces(state) {
     // except on its pilot seats, so the General User signs in on the engineering pilot seat, which keeps its role.
     const gale = await openAs('engineering');
     const galeHas = await gale.page.evaluate(photo => {
-      const o = state.orders.find(o => o.status === 'Building' && !MES.blockingTickets(o).length && o.operations.some(op => !op.done)), op = o.operations.find(x => !x.done), id = `ATT-${op.id}-99`;
+      const o = state.orders.find(o => o.status === 'Building' && !MES.blockingTickets(o).length && !MES.pendingSequenceChange(o) && o.operations.some(op => !op.done)), op = o.operations.find(x => !x.done), id = `ATT-${op.id}-99`;
       op.attachments = [...(op.attachments || []), { id, ...photo, storage: 'inline', addedAt: new Date().toISOString(), addedBy: { name: 'Flight Master', role: 'Master Access', credentialId: 'ACCT-admin' } }];
       view = 'order'; selectedId = o.id; selectedOp = op.id; tab = 'operations'; render();
       return id;
