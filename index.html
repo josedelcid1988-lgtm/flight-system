@@ -1975,7 +1975,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
  <div class="sidebar-bottom"><button data-action="workspace-toggle" id="workspace-toggle">Open Flight Plan</button><button data-action="workspace-maneuver" id="workspace-toggle-mnv">Open Flight Maneuver</button><button data-action="reset">Reset workspace</button></div>
 </aside>
 <div class="app">
- <header class="topbar"><div class="breadcrumbs"><button class="icon-btn back-btn" data-action="nav" data-view="orders" aria-label="Back to all work orders" title="All work orders"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg></button><select class="product-name workspace-select" id="workspace-select" aria-label="Switch workspace"><option value="control">Flight Control</option><option value="plan">Flight Plan</option><option value="maneuver">Flight Maneuver</option></select><span data-icon="chevron"></span><strong id="breadcrumb">Work order</strong></div><div class="global-search" role="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="m20 20-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><input id="global-search" type="search" autocomplete="off" spellcheck="false" placeholder="Search" aria-label="Search work order, part number or serial number" aria-controls="global-results" aria-expanded="false"><kbd aria-hidden="true">/</kbd><div id="global-results" class="global-results" role="listbox" hidden></div></div><div class="top-tools"><button class="icon-btn floor-wakelock" type="button" data-wakelock aria-pressed="false" title="Keep screen awake during floor work">⏻</button><button class="icon-btn" data-action="help" aria-label="Help"><span data-icon="help"></span></button><button class="avatar" id="profile-button" data-action="profile" aria-label="Your credentials">JD</button></div></header>
+ <header class="topbar"><div class="breadcrumbs"><button class="icon-btn back-btn" data-action="nav" data-view="orders" aria-label="Back to all work orders" title="All work orders"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg></button><select class="product-name workspace-select" id="workspace-select" aria-label="Switch workspace"><option value="control">Flight Control</option><option value="plan">Flight Plan</option><option value="maneuver">Flight Maneuver</option></select><span data-icon="chevron"></span><strong id="breadcrumb">Work order</strong></div><div class="global-search" role="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="m20 20-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><input id="global-search" type="search" autocomplete="off" spellcheck="false" placeholder="Search" aria-label="Search work order, part number or serial number" aria-controls="global-results" aria-expanded="false"><kbd aria-hidden="true">/</kbd><div id="global-results" class="global-results" role="listbox" hidden></div></div><div class="top-tools"><button class="icon-btn floor-wakelock" type="button" data-wakelock aria-pressed="false" aria-label="Keep screen awake" title="Keep screen awake during floor work"><span aria-hidden="true">⏻</span><span class="wakelock-label">Stay awake</span></button><button class="icon-btn" data-action="help" aria-label="Help"><span data-icon="help"></span></button><button class="avatar" id="profile-button" data-action="profile" aria-label="Your credentials">JD</button></div></header>
  <style>.storage-alert{display:block;padding:8px 16px;background:var(--warn-soft);color:var(--warn-ink);border-bottom:1px solid var(--line)}.storage-alert .storage-actions{display:inline-flex;gap:8px;margin-left:8px}.storage-alert .btn{min-height:32px;padding:4px 8px;background:var(--white);border:1px solid var(--line-2);color:var(--ink)}</style>
 <style>
 .wiz-slide-head{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:16px}
@@ -5903,6 +5903,7 @@ const OP_BOM_MAX = 12;
   // The package can run inside the work order as its Part Conformity operation: every other operation bought off, nothing open.
   const confInProcess = order => ['Building', 'Quality'].includes(order.status) && order.operations.some(isPartsConformityOperation) && order.operations.every(op => op.done || isPartsConformityOperation(op)) && !order.tickets.some(t => t.status === 'Open');
   const CONF_TEXT = Object.freeze(['jira', 'rfc', 'pdmPath', 'mdlRev', 'mdlReceived', 'staging', 'nc', 'finalIdr', 'darName', 'darDesignation', 'darDate']);
+  const CONF_LABELS = Object.freeze({ jira: 'Jira ticket', rfc: 'RFC', pdmPath: 'PDM path', mdlRev: 'MDL revision', mdlReceived: 'MDL received', staging: 'Staging', nc: 'Deviation to conformance', finalIdr: 'Final IDR', darName: 'DAR name', darDesignation: 'DAR designation no.', darDate: 'DAR signed' });
   const confValid = list => list === undefined || (Array.isArray(list) && list.length <= 50 && unique(list.map(p => p && p.serial)) && list.every(p => plain(p) && str(p.serial, 60) && CONF_STATUS.includes(p.status)
     && CONF_TEXT.every(k => typeof p[k] === 'string' && p[k].length <= 200) && ['', 'Yes', 'No'].includes(p.nc)
     && plain(p.checks) && Object.entries(p.checks).every(([k, v]) => Object.hasOwn(CONF_CHECKS, k) && plain(v) && snapshotValid(v.by) && timestamp(v.at) && (v.value === undefined || CONF_VALUES.includes(v.value)) && typeof (v.note ?? '') === 'string' && String(v.note ?? '').length <= 300)
@@ -6009,7 +6010,7 @@ const OP_BOM_MAX = 12;
     if (next.mdlRev !== undefined || next.pdmPath !== undefined) ['1.3', '1.4'].forEach(k => { delete p.checks[k]; });
     Object.assign(p, next);
     if (next.nc === 'No') { p.finalIdr = ''; delete p.checks['5.2']; }
-    if (Object.keys(next).length) record(state, order, `Conformity package ${p.serial}: ${Object.keys(next).map(k => `${k} ${next[k] || '(cleared)'}`).join('; ')}.`);
+    if (Object.keys(next).length) record(state, order, `Conformity package ${p.serial}: ${Object.keys(next).map(k => `${CONF_LABELS[k] || k} ${next[k] || '(cleared)'}`).join('; ')}.`);
     return { ok: true, message: Object.keys(next).length ? 'Package details saved.' : 'No changes.' };
   }
   function checkConformity(state, id, serial, key, input) {
@@ -7170,7 +7171,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (isInspectionOp(operation)) operation.buyoff.standardInspection = true;
     if (stamp.override && stamp.override.kind === 'Support Access override') logSupport(state, stamp.override, 'Operation buy-off', `${order.id} ${operation.id}`);
     operation.buyoff.manifest = signManifest(state, `${buyoffType} buy-off`, buyoffSubject(order, operation, note.trim()), at);
-    record(state, order, ` operation recorded: ${operation.title}.${operation.atpLinkDeferred ? ' ATP software NOT linked (temporary override).' : ''}${operation.atp ? ` ATP software ${operation.atp.baseline.version} · ${operation.atp.baseline.sha.slice(0, 7)}.` : ''}${operation.fodLevel === 'critical' ? ' FOD checklist complete (FOD Critical Area).' : ''} Buy-off by ${operation.buyoff.name} (${stamp.override ? (stamp.override.kind === 'Support Access override' ? supportText(stamp.override) + '; ' + buyoffType : 'Master Access override: ' + stamp.override.account + '; ' + buyoffType + '; bypassed ' + stamp.override.bypassed.join(', ')) : stamp.holder.type + ' stamp ' + stamp.holder.number}); tools: ${toolChecks.length ? toolChecks.map(check => isTorqueTool(check.tool) ? `${check.tool.tag} @ ${execution.torque[check.tool.tag].value} ${execution.torque[check.tool.tag].unit}` : check.tool.tag).join(', ') : 'none logged'}. Not an authenticated signature.`);
+    record(state, order, `Completed operation recorded: ${operation.title}.${operation.atpLinkDeferred ? ' ATP software NOT linked (temporary override).' : ''}${operation.atp ? ` ATP software ${operation.atp.baseline.version} · ${operation.atp.baseline.sha.slice(0, 7)}.` : ''}${operation.fodLevel === 'critical' ? ' FOD checklist complete (FOD Critical Area).' : ''} Buy-off by ${operation.buyoff.name} (${stamp.override ? (stamp.override.kind === 'Support Access override' ? supportText(stamp.override) + '; ' + buyoffType : 'Master Access override: ' + stamp.override.account + '; ' + buyoffType + '; bypassed ' + stamp.override.bypassed.join(', ')) : stamp.holder.type + ' stamp ' + stamp.holder.number}); tools: ${toolChecks.length ? toolChecks.map(check => isTorqueTool(check.tool) ? `${check.tool.tag} @ ${execution.torque[check.tool.tag].value} ${execution.torque[check.tool.tag].unit}` : check.tool.tag).join(', ') : 'none logged'}. Not an authenticated signature.`);
     if (OWN_WORK_EXEMPT_PEDIGREES.includes(order.pedigree)) { const own = ownWorkHit(state, order, operation); if (own) record(state, order, `${operation.title}: inspected by the person who performed Op ${opNumber(order, own.id)} ${own.title}. Allowed on a Development NFF order (own-work exception).`); }
     return { ok: true, message: 'Operation recorded.' };
   }
@@ -15887,12 +15888,29 @@ body[data-view^="mnv-"] .page-heading:not(.fs-landing) .hero-eyebrow{display:blo
 /* Operation sequence: a locked operation says why once, so more of the sequence fits on a tablet. */
 .sequence-list .operation-btn .op-locked+.op-sub{display:none}
 @media(max-width:1199px) and (min-width:901px){body[data-view="order"] .execution-layout{grid-template-columns:280px minmax(0,1fr)!important;gap:16px!important}}
+.topbar .floor-wakelock{width:auto!important;min-width:44px;padding:0 10px!important;gap:6px;display:inline-flex;align-items:center}.floor-wakelock .wakelock-label{font-size:12px;font-weight:600;white-space:nowrap}
+@media(max-width:700px){#sk-boot .sk-login input{background:rgba(8,12,18,.9)!important;backdrop-filter:none}#sk-boot .sk-eyebrow{display:inline-flex;align-items:center;gap:8px;background:rgba(6,9,14,.88);padding:4px 8px;border-radius:4px}}
+/* Keyboard focus is always visible: a blue ring on light surfaces, a white ring on the dark sidebar. */
+:is(a,button,input,select,textarea,summary,[tabindex]:not([tabindex="-1"])):focus-visible{outline:3px solid #075ec9!important;outline-offset:2px!important}
+:is(.sidebar,.fs-utilities,#sk-boot) :is(a,button,input,select,textarea,summary,[tabindex]:not([tabindex="-1"])):focus-visible{outline-color:#fff!important}
+/* A table wider than its panel shows an edge shadow on the side that has more columns. */
+[data-scroll-x]{scrollbar-width:thin}
+[data-scroll-x="start"]{box-shadow:inset -22px 0 16px -16px rgba(23,36,58,.38)}
+[data-scroll-x="end"]{box-shadow:inset 22px 0 16px -16px rgba(23,36,58,.38)}
+[data-scroll-x="middle"]{box-shadow:inset -22px 0 16px -16px rgba(23,36,58,.38),inset 22px 0 16px -16px rgba(23,36,58,.38)}
 </style>
 <script id="flight-ui-polish-js">
 (()=>{
   // Keep the selected operation visible inside the operation sequence list without moving the page.
   const showCurrentOperation=()=>{const list=document.querySelector('.sequence-panel .sequence-list');const current=list&&list.querySelector('.operation-btn[aria-pressed="true"]');if(!current||list.scrollHeight<=list.clientHeight)return;const top=current.getBoundingClientRect().top-list.getBoundingClientRect().top+list.scrollTop,bottom=top+current.offsetHeight;if(top<list.scrollTop||bottom>list.scrollTop+list.clientHeight)list.scrollTop=Math.max(0,top-8);};
   const original=render;render=function(){const result=original.apply(this,arguments);if(view==='order')showCurrentOperation();return result;};
+  // Mark tables that scroll sideways so the edge shadow shows there are more columns (M8).
+  const SCROLLERS='.fr-table-scroll,.table-wrap,.fr-dispatch-table';
+  const markScroll=el=>{const max=el.scrollWidth-el.clientWidth;if(max<=1){el.removeAttribute('data-scroll-x');return;}el.dataset.scrollX=el.scrollLeft<=1?'start':el.scrollLeft>=max-1?'end':'middle';};
+  let queued=false;const markAll=()=>{if(queued)return;queued=true;requestAnimationFrame(()=>{queued=false;document.querySelectorAll('#main '+SCROLLERS.split(',').join(',#main ')).forEach(markScroll);});};
+  document.addEventListener('scroll',event=>{const el=event.target;if(el instanceof Element&&el.matches(SCROLLERS))markScroll(el);},true);
+  window.addEventListener('resize',markAll);
+  const main=document.getElementById('main');if(main)new MutationObserver(markAll).observe(main,{childList:true,subtree:true});
 })();
 </script>
 </body></html>
