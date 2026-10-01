@@ -24,6 +24,11 @@ export function openDb(path) {
     CREATE TABLE IF NOT EXISTS evidence (id TEXT PRIMARY KEY, sha256 TEXT NOT NULL, size INTEGER NOT NULL, mime TEXT NOT NULL, file_name TEXT, uploaded_by TEXT NOT NULL, uploaded_at TEXT NOT NULL, bytes BLOB NOT NULL, superseded_by TEXT, superseded_at TEXT, superseded_reason TEXT);
     -- Closed work orders moved out of the live document. Same file, same backup. Rows are never deleted.
     CREATE TABLE IF NOT EXISTS archive (order_id TEXT PRIMARY KEY, json TEXT NOT NULL, sha256 TEXT NOT NULL, schema INTEGER NOT NULL, part_number TEXT, serials TEXT NOT NULL, lots TEXT NOT NULL, parts TEXT NOT NULL, title TEXT, closed_at TEXT, archived_at TEXT NOT NULL, archived_by TEXT);
+    -- Superseded calibration entries moved out of the live log (#130), each exactly as it was signed. Never changed or deleted.
+    CREATE TABLE IF NOT EXISTS calibration_archive (entry_id TEXT PRIMARY KEY, tag TEXT NOT NULL, record_id TEXT NOT NULL, json TEXT NOT NULL, sha256 TEXT NOT NULL, archived_at TEXT NOT NULL, archived_by TEXT);
+    CREATE INDEX IF NOT EXISTS calibration_archive_tag ON calibration_archive (tag, entry_id);
+    CREATE TRIGGER IF NOT EXISTS calibration_archive_no_update BEFORE UPDATE ON calibration_archive BEGIN SELECT RAISE(ABORT, 'archived calibration entries are append-only'); END;
+    CREATE TRIGGER IF NOT EXISTS calibration_archive_no_delete BEFORE DELETE ON calibration_archive BEGIN SELECT RAISE(ABORT, 'archived calibration entries are append-only'); END;
     CREATE TABLE IF NOT EXISTS record_extracts (export_id TEXT PRIMARY KEY, sequence INTEGER NOT NULL DEFAULT 0, record_type TEXT NOT NULL, record_id TEXT NOT NULL, kind TEXT NOT NULL, exported_at TEXT NOT NULL, exported_by TEXT NOT NULL, sha256 TEXT NOT NULL, summary TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS record_extracts_record ON record_extracts (record_type, record_id, exported_at);
     CREATE TRIGGER IF NOT EXISTS record_extracts_no_update BEFORE UPDATE ON record_extracts BEGIN SELECT RAISE(ABORT, 'record extracts are append-only'); END;
@@ -113,6 +118,8 @@ export function openDb(path) {
     // Runs fn inside one transaction; rolls back if it throws or returns false.
     async transaction(fn) { db.exec('BEGIN IMMEDIATE'); try { const r = await fn(this); if (r === false) { db.exec('ROLLBACK'); return r; } db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; } },
     async lockAuthority() {},
+    // A write already holds the database lock (BEGIN IMMEDIATE), so the workspace lock is a no-op here.
+    async lockDoc() {},
     putDoc(tenant, json, expectedEtag, by) {
       const cur = this.getDoc(tenant);
       if (cur && expectedEtag === null) return null; // null: the document must not exist yet (first initialization)
@@ -180,6 +187,17 @@ export function openDb(path) {
         : db.prepare('SELECT order_id, part_number, serials, lots, parts, title, closed_at, archived_at FROM archive ORDER BY archived_at DESC LIMIT ?').all(limit);
       return rows.map(r => ({ orderId: r.order_id, partNumber: r.part_number, serials: JSON.parse(r.serials), lots: JSON.parse(r.lots), parts: JSON.parse(r.parts), title: r.title, closedAt: r.closed_at, archivedAt: r.archived_at, status: 'Closed', source: 'archive' }));
     },
+    // ---- archived calibration entries (#130) ----
+    calibrationArchived(id) { const r = db.prepare('SELECT entry_id, tag, record_id, json, sha256, archived_at, archived_by FROM calibration_archive WHERE entry_id = ?').get(id); return r ? { id: r.entry_id, tag: r.tag, recordId: r.record_id, entry: JSON.parse(r.json), sha256: r.sha256, archivedAt: r.archived_at, archivedBy: r.archived_by } : null; },
+    // Full rows in entry id order after the given entry id, one page at a time, for the startup and initialization check.
+    calibrationArchiveRows(after = '', limit = 1000) { return db.prepare('SELECT entry_id, tag, record_id, json, sha256 FROM calibration_archive WHERE entry_id > ? ORDER BY entry_id LIMIT ?').all(String(after || ''), limit).map(r => ({ id: r.entry_id, tag: r.tag, recordId: r.record_id, entry: JSON.parse(r.json), sha256: r.sha256 })); },
+    putCalibrationArchived(e) { db.prepare('INSERT INTO calibration_archive (entry_id, tag, record_id, json, sha256, archived_at, archived_by) VALUES (?, ?, ?, ?, ?, ?, ?)').run(e.id, e.tag, e.recordId, e.json, e.sha256, now(), e.by || null); },
+    // The archived entries for one tool, or all of them, in entry id order after the given entry id (a page cursor).
+    calibrationArchiveList(tag, limit = 500, after = '') {
+      const t = String(tag || '').trim().toUpperCase(), a = String(after || '');
+      const rows = t ? db.prepare('SELECT entry_id, tag, record_id, json, archived_at FROM calibration_archive WHERE tag = ? AND entry_id > ? ORDER BY entry_id LIMIT ?').all(t, a, limit) : db.prepare('SELECT entry_id, tag, record_id, json, archived_at FROM calibration_archive WHERE entry_id > ? ORDER BY entry_id LIMIT ?').all(a, limit);
+      return rows.map(r => { const e = JSON.parse(r.json); return { id: r.entry_id, tag: r.tag, recordId: r.record_id, status: e.status, calibratedAt: e.calibratedAt, expires: e.expires, recordedAt: e.recordedAt, recordedBy: e.recordedBy, archivedAt: r.archived_at }; });
+    },
     // Stamped downloads and prints are separate append-only history rows so an archived order stays immutable.
     recordExtract(e) {
       const sequence = db.prepare('SELECT COALESCE(MAX(sequence), 0) + 1 AS n FROM record_extracts').get().n;
@@ -241,12 +259,13 @@ export function openDb(path) {
 // Read-only access for one-off operator scans (tools/scan-archive-proto.mjs). It runs no schema step, cannot write,
 // and never creates the file. With no -wal file beside the database nothing is pending, so it opens immutable and
 // leaves no -wal or -shm behind; with one (a running server, or one that stopped uncleanly) it opens read-only so
-// the pending pages are read too.
-export function openDbReadOnly(path) {
+// the pending pages are read too. { live: true } (the server's startup check, while its own connection writes) never
+// opens immutable.
+export function openDbReadOnly(path, { live = false } = {}) {
   const file = resolvePath(path);
   const url = pathToFileURL(file);
   url.searchParams.set('mode', 'ro');
-  if (!existsSync(`${file}-wal`)) url.searchParams.set('immutable', '1');
+  if (!live && !existsSync(`${file}-wal`)) url.searchParams.set('immutable', '1');
   const db = new DatabaseSync(url, { readOnly: true });
   return {
     // Every archive row in order_id order, read in pages inside one read transaction so the scan sees one snapshot.

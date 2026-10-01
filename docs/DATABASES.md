@@ -65,6 +65,12 @@ FLIGHT_DATABASE_URL='postgresql://flight:password@db.internal:5432/flight_system
 
 It prints the rows scanned, the rows flagged, and one `FLAGGED <work order> own "__proto__" key at <path>` line per flagged row. The path names the object that holds the key. Exit status: `0` nothing flagged, `1` one or more rows flagged, `2` the scan could not finish (for example the store could not be opened or a row's JSON does not parse). The server can keep running during the scan. If it is stopped, keep it stopped until the scan finishes: a SQLite file with no `-wal` beside it is opened immutable, which leaves no files behind but assumes nothing writes to it meanwhile. Send the output to the QA Manager; the scan changes nothing, so any follow-up is a separate, recorded decision.
 
+The server also runs this scan once each time it starts, against the store it was started with (SQLite or PostgreSQL). The check starts after the server is listening and does not hold up sign-in or any request. It reads through its own read-only connection, writes nothing, and never prints the connection string. It logs one line:
+
+- `archive __proto__ check: 1200 rows scanned, 0 flagged`: nothing to do.
+- `WARNING archive __proto__ check: 1200 rows scanned, 1 flagged: WO-... own "__proto__" key at <path>`: each flagged work order and path is named on that line. Send the line to the QA Manager, as for the manual scan.
+- `WARNING archive __proto__ check could not finish: <reason>`: the server keeps running. Run the manual scan above to check the archive.
+
 ## Demo build
 
 `demo.html` relaxes separation of duties, PIN entry and the stamp gate, so the production server does
