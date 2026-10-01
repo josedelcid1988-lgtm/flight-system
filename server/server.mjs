@@ -1220,7 +1220,12 @@ export function createServer(options = {}) {
       if (calArc && m === 'GET') {
         const a = await store.calibrationArchived(calArc[1]);
         if (!a) { send(res, 404, { error: `${calArc[1]} is not in the calibration archive. An entry that was never archived is in the live calibration log under System QMS records.` }); return; }
-        send(res, 200, { entry: a.entry, sha256: a.sha256, recordId: a.recordId, archivedAt: a.archivedAt, archivedBy: a.archivedBy, readOnly: true }); return;
+        const body = { entry: a.entry, sha256: a.sha256, recordId: a.recordId, archivedAt: a.archivedAt, archivedBy: a.archivedBy, readOnly: true };
+        // On a training server the response also carries an extract hash over the entry, its archive hash and the training
+        // mark, so removing the mark breaks that hash; the entry and its own signature are unchanged.
+        if (!training) { send(res, 200, body); return; }
+        const covered = { entry: a.entry, sha256: a.sha256, training: TRAINING_MARK };
+        send(res, 200, { training: TRAINING_MARK, trainingNote: TRAINING_PROVENANCE.note, ...body, extractSha256: createHash('sha256').update(JSON.stringify(covered)).digest('hex'), extractHashCovers: 'entry, sha256, training' }); return;
       }
       const arc = /^\/archive\/(WO-[A-Za-z0-9-]+)(\/print|\/export)?$/.exec(route);
       if (arc && m === 'GET') {

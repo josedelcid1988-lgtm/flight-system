@@ -51,6 +51,9 @@ async function serverCase(training) {
   const json = JSON.stringify({ order: closed, activity: [] });
   await server.store.putArchived({ id: closed.id, json, sha256: createHash('sha256').update(json).digest('hex'), schema: 1, keys: { partNumber: closed.partNumber, serials: [], lots: [], parts: [closed.partNumber], title: closed.title || 'Closed order', closedAt: null }, by: 'test' });
   const auth = { headers: { Authorization: `Bearer ${session.token}` } };
+  const calEntryJson = JSON.stringify({ id: 'CALLOG-00001', tag: 'TRN-TQ-01', status: 'Calibrated', calibratedAt: '2036-01-01', expiresAt: '2036-12-31' });
+  await server.store.putCalibrationArchived({ id: 'CALLOG-00001', tag: 'TRN-TQ-01', recordId: 'CAL-TRN-TQ-01', json: calEntryJson, sha256: createHash('sha256').update(calEntryJson).digest('hex'), by: 'test' });
+  const calibration = await (await fetch(`${base}/api/calibration-archive/CALLOG-00001`, auth)).json();
   const print = await fetch(`${base}/api/archive/${closed.id}/print`, auth);
   const printed = await print.text();
   const exported = await fetch(`${base}/api/archive/${closed.id}/export`, auth);
@@ -60,7 +63,7 @@ async function serverCase(training) {
   for (const route of ['/api/archive?q=', '/api/calibration-archive', `/api/trace?q=${encodeURIComponent(closed.partNumber)}`, '/api/audit']) views[route] = await (await fetch(`${base}${route}`, auth)).json();
   const signedInPage = await (await fetch(`${base}/`, auth)).text();
   await server.closeAsync();
-  return { html, signedInPage, created: created.status, print: print.status, printed, exportStatus: exported.status, disposition: exported.headers.get('content-disposition') || '', exportJson, detail, views };
+  return { html, signedInPage, created: created.status, print: print.status, printed, exportStatus: exported.status, disposition: exported.headers.get('content-disposition') || '', exportJson, detail, views, calibration };
 }
 {
   const on = await serverCase(true);
@@ -81,6 +84,11 @@ async function serverCase(training) {
   ok('with training on, a response that already carries the mark keeps it once: the archive export and its extract hash are unchanged in shape', on.exportJson.training === TRAINING_MARK && !Object.hasOwn(on.exportJson, 'trainingNote'), JSON.stringify(Object.keys(on.exportJson).slice(0, 4)));
   ok('with training off, the raw archived record carries no training mark', !Object.hasOwn(off.detail, 'training') && !Object.hasOwn(off.detail, 'trainingNote') && off.detail.order?.id === closed.id, JSON.stringify(Object.keys(off.detail)));
   ok('with training off, no page carries the mark', !off.html.includes(TRAINING_MARK) && !off.signedInPage.includes(TRAINING_MARK) && !off.html.includes('training-banner') && !/"training":true/.test(off.html));
+  {
+    const c = on.calibration, hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+    ok('with training on, an archived calibration entry carries the mark first and an extract hash over the entry, its hash and the mark; removing the mark breaks it; the entry is unchanged', Object.keys(c)[0] === 'training' && c.training === TRAINING_MARK && c.entry?.tag === 'TRN-TQ-01' && c.sha256 === createHash('sha256').update(JSON.stringify(c.entry)).digest('hex') && c.extractSha256 === hash({ entry: c.entry, sha256: c.sha256, training: c.training }) && c.extractSha256 !== hash({ entry: c.entry, sha256: c.sha256 }) && c.extractHashCovers === 'entry, sha256, training', JSON.stringify(c).slice(0, 300));
+  }
+  ok('with training off, an archived calibration entry carries no mark and no extract hash', !Object.hasOwn(off.calibration, 'training') && !Object.hasOwn(off.calibration, 'extractSha256') && off.calibration.entry?.tag === 'TRN-TQ-01', JSON.stringify(Object.keys(off.calibration)));
   ok('with training off, no API record view carries a training mark', Object.values(off.views).every(v => v && !Object.hasOwn(v, 'training') && !Object.hasOwn(v, 'trainingNote')), JSON.stringify(Object.fromEntries(Object.entries(off.views).map(([k, v]) => [k, Object.keys(v || {}).slice(0, 3)]))));
   ok('with training off, the archive print and export carry no mark', off.print === 200 && !off.printed.includes(TRAINING_MARK) && off.exportStatus === 200 && !/TRAINING-/.test(off.disposition) && off.exportJson.training === undefined);
   const withoutContext = html => html.replace(/<script id="flight-server">[^<]*<\/script>/, '');
