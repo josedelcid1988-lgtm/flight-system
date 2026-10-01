@@ -155,10 +155,10 @@ export function openDb(path) {
     // ---- archived calibration entries (#130) ----
     calibrationArchived(id) { const r = db.prepare('SELECT entry_id, tag, record_id, json, sha256, archived_at, archived_by FROM calibration_archive WHERE entry_id = ?').get(id); return r ? { id: r.entry_id, tag: r.tag, recordId: r.record_id, entry: JSON.parse(r.json), sha256: r.sha256, archivedAt: r.archived_at, archivedBy: r.archived_by } : null; },
     putCalibrationArchived(e) { db.prepare('INSERT INTO calibration_archive (entry_id, tag, record_id, json, sha256, archived_at, archived_by) VALUES (?, ?, ?, ?, ?, ?, ?)').run(e.id, e.tag, e.recordId, e.json, e.sha256, now(), e.by || null); },
-    // The archived entries for one tool, or the latest archived when no tool is named.
-    calibrationArchiveList(tag, limit = 500) {
-      const t = String(tag || '').trim().toUpperCase();
-      const rows = t ? db.prepare('SELECT entry_id, tag, record_id, json, archived_at FROM calibration_archive WHERE tag = ? ORDER BY entry_id LIMIT ?').all(t, limit) : db.prepare('SELECT entry_id, tag, record_id, json, archived_at FROM calibration_archive ORDER BY archived_at DESC, entry_id DESC LIMIT ?').all(limit);
+    // The archived entries for one tool, or all of them, in entry id order after the given entry id (a page cursor).
+    calibrationArchiveList(tag, limit = 500, after = '') {
+      const t = String(tag || '').trim().toUpperCase(), a = String(after || '');
+      const rows = t ? db.prepare('SELECT entry_id, tag, record_id, json, archived_at FROM calibration_archive WHERE tag = ? AND entry_id > ? ORDER BY entry_id LIMIT ?').all(t, a, limit) : db.prepare('SELECT entry_id, tag, record_id, json, archived_at FROM calibration_archive WHERE entry_id > ? ORDER BY entry_id LIMIT ?').all(a, limit);
       return rows.map(r => { const e = JSON.parse(r.json); return { id: r.entry_id, tag: r.tag, recordId: r.record_id, status: e.status, calibratedAt: e.calibratedAt, expires: e.expires, recordedAt: e.recordedAt, recordedBy: e.recordedBy, archivedAt: r.archived_at }; });
     },
     // Stamped downloads and prints are separate append-only history rows so an archived order stays immutable.

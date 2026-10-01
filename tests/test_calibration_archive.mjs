@@ -7,7 +7,9 @@
 // limit the calibration log says what to do next. Every rule is checked with the change it refuses.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Readable, Writable } from 'node:stream';
 import { createHost } from '../server/mes-host.mjs';
@@ -175,6 +177,12 @@ const full = structuredClone(before);
 while (full.calibrationLog.length < 5000) full.calibrationLog.push({ id: `FILLER-${full.calibrationLog.length}` });
 const fullRefusal = as(qa, full, () => MES.recordCalibration(full, { ...tool, tag: 'FULL-001' }));
 check('the full-log refusal now tells a QA Manager to archive superseded entries', !fullRefusal.ok && /5,000/.test(fullRefusal.message) && /archive superseded entries/i.test(fullRefusal.message) && !/cannot be removed or archived/.test(fullRefusal.message), fullRefusal.message);
+// Codex review on #194: when nothing in a full log can be archived, the refusal must not promise that archiving helps.
+const stuck = MES.seed();
+as(qa, stuck, () => MES.recordCalibration(stuck, { ...tool, tag: 'STUCK-001' }));
+while (stuck.calibrationLog.length < 5000) stuck.calibrationLog.push({ id: `FILLER-${stuck.calibrationLog.length}` });
+const stuckRefusal = as(qa, stuck, () => MES.recordCalibration(stuck, { ...tool, tag: 'STUCK-002' }));
+check('a full log with nothing archivable says so and names the administrator, not the archive', MES.calibrationArchivable(stuck).length === 0 && !stuckRefusal.ok && /5,000/.test(stuckRefusal.message) && /No entry can be archived/.test(stuckRefusal.message) && /administrator/.test(stuckRefusal.message) && !/\u2014/.test(stuckRefusal.message), stuckRefusal.message);
 
 // The exported helpers are read-only, and the archive action is a reviewed server command.
 for (const name of ['calibrationArchivable', 'calibrationArchiveSummary', 'calibrationArchivedEntries', 'calibrationCapacity']) check(`MES.${name} is exported and not remotely callable`, typeof MES[name] === 'function' && host.resolveAction(`MES.${name}`) === null);
@@ -256,11 +264,62 @@ const setUpAccounts = async call => {
     const missing = await call('GET', '/api/calibration-archive/CALLOG-00002', { token: techToken });
     check('an entry still in the live log is not in the archive, and the answer says where to look', missing.status === 404 && /live calibration log/.test(missing.json?.error || ''), JSON.stringify(missing.json));
     const audit = server.store.db.prepare("SELECT action, detail FROM audit WHERE action = 'calibration-archive'").all();
-    check('the archive writes an audit row naming the record', audit.length === 1 && /CALARC-0001/.test(audit[0].detail), JSON.stringify(audit));
+    const auditDetail = (() => { try { return JSON.parse(audit[0]?.detail || ''); } catch { return null; } })();
+    check('the archive writes one audit row with a bounded summary: record id, count, signed digest and an id sample', audit.length === 1 && auditDetail && auditDetail.recordId === 'CALARC-0001' && auditDetail.count === 5 && /^[0-9a-f]{64}$/.test(auditDetail.digest) && auditDetail.digest === stored.calibrationLogHead.archived[0].manifest.subject.digest && Array.isArray(auditDetail.entries) && auditDetail.entries.length <= 20 && auditDetail.entries[0] === 'CALLOG-00001' && auditDetail.sha256 === undefined, JSON.stringify(audit));
+    // Codex review on #194: the listing pages by entry id with an after cursor, so an archive larger than one page can be read in full.
+    const page1 = await call('GET', '/api/calibration-archive?limit=2', { token: techToken });
+    const page2 = await call('GET', `/api/calibration-archive?limit=2&after=${page1.json?.next}`, { token: techToken });
+    const page3 = await call('GET', `/api/calibration-archive?limit=2&after=${page2.json?.next}`, { token: techToken });
+    check('the archive listing pages in entry id order with a next cursor until the end', page1.status === 200 && JSON.stringify(page1.json.entries.map(e => e.id)) === JSON.stringify(['CALLOG-00001', 'CALLOG-00003']) && page1.json.next === 'CALLOG-00003' && JSON.stringify(page2.json.entries.map(e => e.id)) === JSON.stringify(['CALLOG-00004', 'CALLOG-00006']) && JSON.stringify(page3.json.entries.map(e => e.id)) === JSON.stringify(['CALLOG-00008']) && page3.json.next === null, JSON.stringify([page1.json, page2.json, page3.json]));
+    const badCursor = await call('GET', '/api/calibration-archive?after=WO-1', { token: techToken });
+    check('a malformed cursor is refused with a plain reason', badCursor.status === 400 && /CALLOG-/.test(badCursor.json?.error || ''), JSON.stringify(badCursor.json));
     let threw = false;
     try { server.store.putCalibrationArchived({ id: 'CALLOG-00001', tag: 'ARC-A', recordId: 'CALARC-0009', json: '{}', sha256: 'x', by: 'someone' }); } catch { threw = true; }
     check('an archived calibration entry cannot be written twice', threw);
   } finally { server.store.close(); }
+}
+{
+  // Codex review on #194: after a restart or a partial restore the stored workspace is already there, so the server
+  // checks its calibration archive against the signed archive records at startup and refuses to start on a mismatch.
+  const dir = mkdtempSync(path.join(realpathSync(os.tmpdir()), 'fs-cal-archive-'));
+  const dbPath = path.join(dir, 'flight.db');
+  try {
+    const open = () => { const server = createServer({ dbPath, quiet: true, indexPath, setupCode: 'archive-setup' }); const handler = server.listeners('request')[0]; return { server, handler }; };
+    const first = open();
+    const fileCall = handler => async (method, url, { token, body, etag } = {}) => {
+      const incoming = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]);
+      incoming.method = method; incoming.url = url;
+      incoming.headers = { ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...(token ? { authorization: `Bearer ${token}` } : {}), ...(etag ? { 'if-match': etag } : {}) };
+      const chunks = [], outgoing = new Writable({ write(chunk, encoding, callback) { chunks.push(Buffer.from(chunk)); callback(); } });
+      outgoing.writeHead = (status, headers = {}) => { outgoing.statusCode = status; outgoing.etag = headers.ETag || headers.etag || null; return outgoing; };
+      const finished = new Promise((resolve, reject) => { outgoing.once('finish', resolve); outgoing.once('error', reject); });
+      handler(incoming, outgoing);
+      await finished;
+      const text = Buffer.concat(chunks).toString('utf8');
+      let json = null; try { json = text ? JSON.parse(text) : null; } catch { json = text; }
+      return { status: outgoing.statusCode, json, etag: outgoing.etag };
+    };
+    await first.server.ready;
+    const c1 = fileCall(first.handler);
+    await setUpAccounts(c1);
+    const token = await signIn(c1, 'arc-admin');
+    const init = await c1('PUT', '/api/workspace', { token, body: before });
+    const archivedNow = await c1('POST', '/api/workspace/actions/MES.recordCalibrationArchive', { token, etag: init.etag, body: { args: [] } });
+    check('a file-backed server archives the superseded entries', init.status === 204 && archivedNow.status === 200, JSON.stringify(archivedNow.json));
+    first.server.store.close();
+    const clean = open();
+    let cleanStarted = true; try { await clean.server.ready; } catch { cleanStarted = false; }
+    check('a restart with an intact calibration archive starts', cleanStarted);
+    // A partial restore brings back other history under the same entry id, with a self-consistent row hash.
+    const other = { ...before.calibrationLog[0], note: 'Other history' }, json = JSON.stringify(other);
+    clean.server.store.db.exec('DROP TRIGGER calibration_archive_no_update');
+    clean.server.store.db.prepare('UPDATE calibration_archive SET json = ?, sha256 = ? WHERE entry_id = ?').run(json, sha256(json), 'CALLOG-00001');
+    clean.server.store.close();
+    const tampered = open();
+    let refusal = null; try { await tampered.server.ready; } catch (e) { refusal = e; }
+    check('a restart whose calibration archive does not match the signed archive records refuses to start, naming the entries', refusal && /CALARC-0001/.test(refusal.message) && /CALLOG-00001/.test(refusal.message) && /does not match|do not match/.test(refusal.message), refusal?.message);
+    try { tampered.server.store.close(); } catch {}
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 {
   // A workspace that names archived entries the server does not hold is refused at initialization.

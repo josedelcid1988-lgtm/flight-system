@@ -2849,6 +2849,10 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // superseded entries (#130); archiving does not free entry numbers, so the last number still needs the administrator.
   const calibrationIdsUsed = 'The calibration log has used its last entry number, CALLOG-99999, so this entry was not recorded. Archiving entries does not free entry numbers. Ask your Flight System administrator how to continue.';
   const calibrationLogFull = 'The calibration log is full (5,000 entries), so this entry was not recorded. A QA Manager can archive superseded entries on the shared Flight System server (System QMS records, Calibration log) to make room, then record this entry again.';
+  // A full log where nothing can move (every entry the latest for its tool, cited by a buy-off, or recorded before the
+  // chain) cannot make room by archiving, so the refusal says so and names the administrator instead.
+  const calibrationLogFullStuck = 'The calibration log is full (5,000 entries), so this entry was not recorded. No entry can be archived to make room: each one is the latest entry for its tool, is cited by a work order buy-off, or was recorded before the hash chain. Ask your Flight System administrator how to continue.';
+  const calibrationLogFullFor = state => calibrationArchivable(state).length ? calibrationLogFull : calibrationLogFullStuck;
   // The torque answer from a form or API call: true, false, or undefined when not given.
   const torqueAnswer = v => v === true || v === 'yes' || v === 'true' ? true : v === false || v === 'no' || v === 'false' ? false : undefined;
   const seedTorqueTool = tag => CAL_TOOLS.some(t => t.tag.toUpperCase() === tag && /TORQUE/i.test(t.description));
@@ -2879,7 +2883,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (torque.error) return fail(torque.error);
     if (calibrationUndated(fields)) { const where = calibrationDatesOnRecord([...calibrationArchivedSummaries(state), ...state.calibrationLog], fields.tag); if (where) return fail(calibrationDatesKept(fields.tag, where)); }
     if (retired && retired.status === 'Retired') return fail(`${fields.tag} is retired (${retired.id}) and cannot be recorded again. If it was retired by mistake, a QA Manager corrects ${retired.id} and enters the reason in the note.`);
-    if (state.calibrationLog.length >= CALIBRATION_LOG_LIMIT) return fail(calibrationLogFull);
+    if (state.calibrationLog.length >= CALIBRATION_LOG_LIMIT) return fail(calibrationLogFullFor(state));
     if (!nextCalibrationId(state.calibrationLog)) return fail(calibrationIdsUsed);
     const entry = { id: nextCalibrationId(state.calibrationLog), ...fields, ...(torque.torque !== undefined ? { torque: torque.torque } : {}), recordedAt, recordedBy: `${who.name} \u00b7 ${who.credentialId}`, signerRole: who.role };
     entry.calibrationSignature = { manifest: signManifest(state, 'Calibration recorded', calibrationSubject(entry), entry.recordedAt) };
@@ -2893,7 +2897,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (!prior) return fail('That calibration entry was not found.');
     const current = calibrationStatus(state, prior.tag);
     if (!current || current.id !== prior.id) return fail(`${prior.id} is not the current entry for ${prior.tag}. Correct the current entry, ${current ? current.id : 'the latest one'}, instead.`);
-    if (log.length >= CALIBRATION_LOG_LIMIT) return fail(calibrationLogFull);
+    if (log.length >= CALIBRATION_LOG_LIMIT) return fail(calibrationLogFullFor(state));
     if (!nextCalibrationId(log)) return fail(calibrationIdsUsed);
     const fields = { tag: prior.tag, description: patch?.description === undefined ? prior.description : String(patch.description).trim(), serial: patch?.serial === undefined ? prior.serial : String(patch.serial).trim(), calibratedAt: patch?.calibratedAt === undefined ? prior.calibratedAt : String(patch.calibratedAt).trim(), expires: patch?.expires === undefined ? prior.expires : String(patch.expires).trim(), status: patch?.status === undefined ? prior.status : String(patch.status).trim(), location: patch?.location === undefined ? prior.location : String(patch.location).trim(), note: patch?.note === undefined ? prior.note : String(patch.note).trim() };
     const recordedAt = new Date().toISOString();

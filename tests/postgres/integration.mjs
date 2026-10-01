@@ -115,6 +115,7 @@ try {
   assert.equal(JSON.stringify(calRow.entry), calJson, 'an archived calibration entry reads back unchanged');
   assert.equal(calRow.recordId, 'CALARC-0001');
   assert.deepEqual((await server.store.calibrationArchiveList('pg-cal')).map(row => row.id), ['CALLOG-00001'], 'archived calibration entries list by tool');
+  assert.deepEqual(await server.store.calibrationArchiveList('pg-cal', 500, 'CALLOG-00001'), [], 'the listing pages after an entry id cursor');
   await assert.rejects(server.store.putCalibrationArchived({ id: calEntry.id, tag: calEntry.tag, recordId: 'CALARC-0002', json: calJson, sha256: 'x', by: 'pg-admin' }), 'an archived calibration entry is stored once');
   await assert.rejects(server.store._query("UPDATE calibration_archive SET record_id='CALARC-0009' WHERE entry_id='CALLOG-00001'"), /append-only/, 'an archived calibration entry cannot be changed');
   await assert.rejects(server.store._query("DELETE FROM calibration_archive WHERE entry_id='CALLOG-00001'"), /append-only/, 'an archived calibration entry cannot be deleted');

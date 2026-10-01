@@ -203,9 +203,9 @@ function makeStore(pool, query, inTransaction, connectionString) {
     async putArchived(e) { await query('INSERT INTO archive (order_id,json,sha256,schema,part_number,serials,lots,parts,title,closed_at,archived_at,archived_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)', [e.id,e.json,e.sha256,e.schema,e.keys.partNumber||null,json(e.keys.serials),json(e.keys.lots),json(e.keys.parts),e.keys.title||null,e.keys.closedAt||null,now(),e.by||null]); },
     async calibrationArchived(id) { const r = (await query('SELECT entry_id,tag,record_id,json,sha256,archived_at,archived_by FROM calibration_archive WHERE entry_id=$1', [id])).rows[0]; return r ? { id: r.entry_id, tag: r.tag, recordId: r.record_id, entry: parsed(r.json), sha256: r.sha256, archivedAt: r.archived_at, archivedBy: r.archived_by } : null; },
     async putCalibrationArchived(e) { await query('INSERT INTO calibration_archive (entry_id,tag,record_id,json,sha256,archived_at,archived_by) VALUES ($1,$2,$3,$4,$5,$6,$7)', [e.id, e.tag, e.recordId, e.json, e.sha256, now(), e.by || null]); },
-    async calibrationArchiveList(tag, limit = 500) {
-      const t = String(tag || '').trim().toUpperCase();
-      const rows = t ? (await query('SELECT entry_id,tag,record_id,json,archived_at FROM calibration_archive WHERE tag=$1 ORDER BY entry_id LIMIT $2', [t, limit])).rows : (await query('SELECT entry_id,tag,record_id,json,archived_at FROM calibration_archive ORDER BY archived_at DESC, entry_id DESC LIMIT $1', [limit])).rows;
+    async calibrationArchiveList(tag, limit = 500, after = '') {
+      const t = String(tag || '').trim().toUpperCase(), a = String(after || '');
+      const rows = t ? (await query('SELECT entry_id,tag,record_id,json,archived_at FROM calibration_archive WHERE tag=$1 AND entry_id>$2 ORDER BY entry_id LIMIT $3', [t, a, limit])).rows : (await query('SELECT entry_id,tag,record_id,json,archived_at FROM calibration_archive WHERE entry_id>$1 ORDER BY entry_id LIMIT $2', [a, limit])).rows;
       return rows.map(r => { const e = parsed(r.json); return { id: r.entry_id, tag: r.tag, recordId: r.record_id, status: e.status, calibratedAt: e.calibratedAt, expires: e.expires, recordedAt: e.recordedAt, recordedBy: e.recordedBy, archivedAt: r.archived_at }; });
     },
     async archiveNamesEvidence(id) { return (await query('SELECT 1 AS found FROM archive WHERE position($1 in json) > 0 LIMIT 1', [JSON.stringify(String(id))])).rows.length > 0; },

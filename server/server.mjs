@@ -296,6 +296,31 @@ export function createServer(options = {}) {
     send(res, 403, { error: `${row.id} is not attached to a record yet. Until it is saved on an operation, only the account that uploaded it, a QA Manager, or a Master Access account can open it. Ask the uploader to save it on its operation, or ask a QA Manager or Master Access account to open it.` });
   };
 
+  // Whether the calibration archive table holds exactly the entries the workspace's signed archive records name (#130):
+  // each stored row matches the SHA-256 it was stored with, and MES.calibrationArchiveHeldProblem checks its record id,
+  // summary and the record digest. Run when a workspace initializes the server and when the server starts on a stored
+  // workspace, so history left from another workspace or brought back by a partial restore is refused, not served.
+  // Returns a plain refusal or null.
+  const calibrationArchiveProblem = async state => {
+    const named = (state && state.calibrationLogHead && Array.isArray(state.calibrationLogHead.archived) ? state.calibrationLogHead.archived : []).flatMap(record => (record && record.manifest && record.manifest.subject && Array.isArray(record.manifest.subject.entries) ? record.manifest.subject.entries : []).map(summary => summary && summary.id));
+    const held = [];
+    for (const id of named) {
+      const row = await store.calibrationArchived(id);
+      if (!row) continue;
+      if (sha256hex(JSON.stringify(row.entry)) !== row.sha256) return `Archived calibration entry ${id} on this server no longer matches the SHA-256 it was stored with. Restore the server database from a good backup. Nothing was saved.`;
+      held.push({ id, recordId: row.recordId, entry: row.entry });
+    }
+    return host.MES.calibrationArchiveHeldProblem(state, held);
+  };
+  // At startup: a stored workspace that names archived calibration entries must find them intact, or the server refuses
+  // to start, as it does for a tampered audit chain.
+  const verifyStoredCalibrationArchive = async () => {
+    const row = await store.getDoc(TENANT);
+    if (!row) return;
+    let doc = null; try { doc = JSON.parse(row.json); } catch { return; }
+    const problem = await calibrationArchiveProblem(doc);
+    if (problem) { log('calibration archive check failed:', problem); throw new Error(`The calibration archive does not match the stored workspace, so the server did not start. ${problem}`); }
+  };
   // Stores a validated state. Closed work orders nothing live points at move to the archive table in the
   // same transaction as the document write, each validated like a live order first. Archiving happens on
   // close: the write that closes an order (or the next write after it) moves it. Returns { etag, archived }
@@ -316,20 +341,8 @@ export function createServer(options = {}) {
     // Superseded calibration entries an archive record in this write moved out of the live log (#130) go to the
     // calibration archive exactly as the stored log held them, in the same transaction as the document write.
     const calibrationRows = host.MES.calibrationArchivedEntries(beforeState, state).map(({ entry, recordId }) => { const json = JSON.stringify(entry); return { id: entry.id, tag: entry.tag, recordId, json, sha256: sha256hex(json), by: username }; });
-    // A workspace that already names archived entries can only start on a server that holds exactly those entries:
-    // each stored row must be the entry its archive record signed (row SHA-256, record id, summary, record digest).
-    if (!beforeState) {
-      const named = (state.calibrationLogHead && Array.isArray(state.calibrationLogHead.archived) ? state.calibrationLogHead.archived : []).flatMap(record => record.manifest.subject.entries.map(summary => summary.id));
-      const held = [];
-      for (const id of named) {
-        const row = await store.calibrationArchived(id);
-        if (!row) continue;
-        if (sha256hex(JSON.stringify(row.entry)) !== row.sha256) return { problem: `Archived calibration entry ${id} on this server no longer matches the SHA-256 it was stored with. Restore the server database from a good backup. Nothing was saved.` };
-        held.push({ id, recordId: row.recordId, entry: row.entry });
-      }
-      const heldProblem = host.MES.calibrationArchiveHeldProblem(state, held);
-      if (heldProblem) return { problem: heldProblem };
-    }
+    // A workspace that already names archived entries can only start on a server that holds exactly those entries.
+    if (!beforeState) { const held = await calibrationArchiveProblem(state); if (held) return { problem: held }; }
     const rows = r.archived.map(e => { const json = JSON.stringify({ order: e.order, activity: e.activity }); return { id: e.order.id, json, sha256: sha256hex(json), schema: state.version, keys: e.keys, by: username }; });
     let etag = null, clash = null, queuedExports = [];
     await store.transaction(async tx => {
@@ -340,7 +353,8 @@ export function createServer(options = {}) {
       if (!etag) return false;
       queuedExports = await queueNewFinalRecords(beforeState, exportState, username, tx);
       for (const row of rows) await tx.audit(username, 'archive', { orderId: row.id, sha256: row.sha256 });
-      for (const recordId of new Set(calibrationRows.map(row => row.recordId))) { const moved = calibrationRows.filter(row => row.recordId === recordId); await tx.audit(username, 'calibration-archive', { recordId, entries: moved.map(row => row.id), sha256: moved.map(row => row.sha256) }); }
+      // One bounded row per archive record: the audit detail is capped at 4,000 characters, so it carries the record id, the count, the signed digest and a sample of entry ids, not every entry.
+      for (const recordId of new Set(calibrationRows.map(row => row.recordId))) { const moved = calibrationRows.filter(row => row.recordId === recordId), record = state.calibrationLogHead.archived.find(x => x.id === recordId); await tx.audit(username, 'calibration-archive', { recordId, count: moved.length, digest: record.manifest.subject.digest, entries: moved.slice(0, 20).map(row => row.id), ...(moved.length > 20 ? { lastEntry: moved[moved.length - 1].id } : {}) }); }
       for (const entry of audits) await tx.audit(username, entry.action, typeof entry.detail === 'function' ? entry.detail(etag) : entry.detail);
       return true;
     });
@@ -937,7 +951,15 @@ export function createServer(options = {}) {
       // -- calibration archive: superseded calibration entries out of the live log, read-only (#130) --
       // A page of 1 to 1,000 entries; anything else (missing, zero, negative, not a whole number) reads the default 500.
       const calibrationArchiveLimit = raw => { const n = Number(raw); return Number.isInteger(n) && n >= 1 ? Math.min(1000, n) : 500; };
-      if (route === '/calibration-archive' && m === 'GET') { send(res, 200, { entries: await store.calibrationArchiveList(url.searchParams.get('tag') || '', calibrationArchiveLimit(url.searchParams.get('limit'))), readOnly: true }); return; }
+      // Pages in entry id order: after names the last entry id of the previous page, and next is the cursor for the
+      // following page, or null at the end.
+      if (route === '/calibration-archive' && m === 'GET') {
+        const after = url.searchParams.get('after') || '';
+        if (after && !/^CALLOG-\d{5}$/.test(after)) { send(res, 400, { error: 'The after cursor is a calibration entry id such as CALLOG-00042, from the next value of the previous page.' }); return; }
+        const limit = calibrationArchiveLimit(url.searchParams.get('limit'));
+        const entries = await store.calibrationArchiveList(url.searchParams.get('tag') || '', limit, after);
+        send(res, 200, { entries, next: entries.length === limit ? entries[entries.length - 1].id : null, readOnly: true }); return;
+      }
       const calArc = /^\/calibration-archive\/(CALLOG-\d{5})$/.exec(route);
       if (calArc && m === 'GET') {
         const a = await store.calibrationArchived(calArc[1]);
@@ -1041,7 +1063,7 @@ export function createServer(options = {}) {
   }
 
   server = http.createServer((req, res) => { handle(req, res); });
-  server.store = store; server.host = host; server.validState = validState; server.ready = storeReady.then(async () => { await wrapped; void drainExports(); });
+  server.store = store; server.host = host; server.validState = validState; server.ready = storeReady.then(async () => { await wrapped; await verifyStoredCalibrationArchive(); void drainExports(); });
   // Bind address: 127.0.0.1 unless options.host, FLIGHT_HOST or --host names another.
   server.listenAsync = async (port, host = options.host || process.env.FLIGHT_HOST || DEFAULT_HOST) => { await server.ready; return new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, () => { server.off('error', reject); resolve(server.address().port); }); }); };
   // The code to show in the server console, or null once the first account exists.
