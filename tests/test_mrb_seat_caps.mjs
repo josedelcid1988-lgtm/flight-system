@@ -1,6 +1,7 @@
 // MRB seats follow role capabilities; optional disposition training tiers are off by default.
 // The QA Manager holds safety-buyoff and the PFMEA Safety Team buy-off checks it.
 import {chromium} from 'playwright';
+import {loadSampleInPage} from './lib/production-sample.mjs';
 const TESTS=decodeURI(new URL('.',import.meta.url).pathname);
 const FIXTURES=process.env.FS_FIXTURES_DIR?process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):TESTS+'fixtures/';
 const PROD='file://'+FIXTURES+'publish.html';
@@ -40,6 +41,8 @@ ok('MRB training tiers are off by default',await run(()=>Object.keys(MES.mrbTrai
 
 // A Production Mfg. order convenes a four-seat board (Certification sits on it).
 await as('jdoe');
+// Production ships no WIs or tools (issue #247): load the sample WIs and test tools as this suite's data.
+await loadSampleInPage(p,{tools:true});
 const board=await run(()=>{const wi=state.masterWIs.find(x=>x.status==='Released');const r=MES.addOrder(state,{masterWI:wi.id+'|'+wi.revision,pedigree:'Production',subcategory:'Mfg.',quantity:1,aircraft:MES.AIRCRAFT[0],site:MES.SITES[0]});const o=MES.getOrder(state,r.id);MES.advance(state,r.id);o.materials.forEach(m=>{const l=MES.availableLots(m.partNumber)[0];MES.setMaterialLot(state,r.id,m.id,l?l.lot:'L1');MES.setMaterial(state,r.id,m.id,true);});MES.addKitFile(state,r.id,{name:'kit.pdf',type:'application/pdf',size:10,dataUrl:null});MES.advance(state,r.id);
   const op=o.operations[0];MES.createTicket(state,r.id,op.id,{type:'NC',title:'Cosmetic scratch on bracket face',description:'Light surface scratch, no structural effect.',hold:true});const tid=MES.getOrder(state,r.id).tickets.slice(-1)[0].id;MES.dispositionTicket(state,r.id,tid,{decision:'Use as is',note:'Cosmetic only.'});const m=FlightManeuver.openMRB(state,r.id,tid,'Cosmetic scratch, justification attached.');save();return m.ok?{id:m.id,seats:FlightManeuver.get(state,'mrb',m.id).seats}:m.message;});
 ok('the board has four seats',board&&board.seats&&board.seats.length===4,JSON.stringify(board));

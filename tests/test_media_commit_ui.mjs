@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+import { loadSampleInPage } from './lib/production-sample.mjs';
 
 // mediaCommit is the atomic commit used by evidence, discussion and profile changes. Like save(), it must refuse an
 // invalid workspace before anything reaches browser storage, the shared server or the mirror.
@@ -17,6 +18,8 @@ try {
   await page.locator('#sk-confirm').fill('qa-admin-pass');
   await page.locator('#sk-login-submit').click();
   await page.locator('#sk-boot').waitFor({ state: 'hidden', timeout: 15000 });
+  // Production ships no WIs (issue #247): load the sample WIs as this suite's data.
+  await loadSampleInPage(page);
 
   const refused = await page.evaluate(key => {
     const stored = localStorage.getItem(key), live = JSON.stringify(state);

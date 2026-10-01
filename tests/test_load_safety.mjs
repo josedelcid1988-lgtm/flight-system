@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { createHost } from '../server/mes-host.mjs';
+import { loadSample } from './lib/production-sample.mjs';
 
 const host = createHost(fileURLToPath(new URL('../index.html', import.meta.url)));
 const { MES, FlightManeuver: FM } = host;
 
-const state = MES.ensureMasterWIs(MES.seed());
+// Production ships no WIs (issue #247): load the sample WIs as this suite's data.
+const state = loadSample(host, MES.seed());
 FM.ensure(state);
 assert.equal(state.maneuver.cars.length, 0, 'production first run has no sample CAR records');
 assert.equal(state.maneuver.mrb.length, 0, 'production first run has no sample MRB records');

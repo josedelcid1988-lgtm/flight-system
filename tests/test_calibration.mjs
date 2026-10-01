@@ -110,14 +110,15 @@ check('the server gate still rejects a tampered calibration manifest', typeof sr
 // P1: a calibration-log entry whose description omits TORQUE must not declassify a seeded
 // torque wrench. Torque classification is authoritative from the seed record (tool identity),
 // never from a log entry's free-text description.
-const tqSeed = MES.CAL_TOOLS.find(t => t.tag === 'NONE-174');
-check('the seed classifies NONE-174 as a torque wrench', !!tqSeed && MES.isTorqueTool(tqSeed) === true);
+// Production ships no snapshot (issue #247); NONE-174 and NONE-175 are torque wrenches of the retired 2026-09-15
+// snapshot, which production keeps by tag only, so they stay torque tools once the log records them.
+check('production ships no snapshot record for NONE-174, and it cannot be used before the log records it', !MES.CAL_TOOLS.some(t => t.tag === 'NONE-174') && !MES.toolCheck('NONE-174', now, state).ok);
 const tqRec = run(qa, () => MES.recordCalibration(state, { tag: 'NONE-174', description: 'CLICK WRENCH', serial: 'A75179030', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: 'Production Floor', note: '' }));
 const tqCheck = MES.toolCheck('NONE-174', now, state);
 check('a log entry without TORQUE in its description does not declassify a seeded torque wrench', tqRec.ok && tqCheck.ok && MES.isTorqueTool(tqCheck.tool) === true);
 check('the torque-evidence requirement survives declassification (completeOperation missingTorque gate)', tqCheck.ok && MES.isTorqueTool(tqCheck.tool) === true);
 const seedOnly = MES.toolCheck('NONE-175', now, state);
-check('a seeded torque wrench with no log entry still classifies as a torque tool', seedOnly.ok && MES.isTorqueTool(seedOnly.tool) === true);
+check('a torque wrench of the retired snapshot with no log entry cannot be used', !seedOnly.ok && /no entry in the calibration log/.test(seedOnly.message), seedOnly.message);
 const ntRec = run(qa, () => MES.recordCalibration(state, { tag: 'NT-TOOL', description: 'CLICK WRENCH', torque: false, serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: '' }));
 const ntCheck = MES.toolCheck('NT-TOOL', now, state);
 check('a log-only tool without TORQUE in its description is not a torque tool', ntRec.ok && ntCheck.ok && MES.isTorqueTool(ntCheck.tool) === false);
@@ -166,10 +167,10 @@ const suggestionTags = suggestions.map(c => c.tool && c.tool.tag);
 check('the tool list has one result per tag', sugRec.ok && sugFix.ok && new Set(suggestionTags).size === suggestionTags.length);
 const sug = suggestions.find(c => c.tool && c.tool.tag === 'SUG-001');
 check('a log-only tool is offered with its corrected description and due date', !!sug && sug.ok && sug.tool.description === 'THREAD GAGE' && sug.tool.expires === '2027-06-30');
-check('a seed tool with no log entry is still offered', suggestions.some(c => c.ok && c.tool.tag === 'NONE-175'));
+check('a tool of the retired snapshot with no log entry is not offered', !suggestions.some(c => c.tool && c.tool.tag === 'NONE-175'));
 check('a tool quarantined through the log is listed but not usable', suggestions.some(c => c.tool && c.tool.tag === 'CAL-022' && !c.ok));
 const torqueOffer = suggestions.filter(c => c.ok && MES.isTorqueTool(c.tool)).map(c => c.tool.tag);
-check('the torque list keeps seeded torque wrenches and leaves out non-torque log tools', torqueOffer.includes('NONE-174') && torqueOffer.includes('NONE-175') && !torqueOffer.includes('NT-TOOL'));
+check('the torque list keeps a logged torque wrench of the retired snapshot and leaves out non-torque log tools', torqueOffer.includes('NONE-174') && !torqueOffer.includes('NONE-175') && !torqueOffer.includes('NT-TOOL'));
 check('each list entry matches the single-tool point-of-use check', suggestions.every(c => { const one = MES.toolCheck(c.tool.tag, now, state); return one.ok === c.ok && one.tool.expires === c.tool.expires; }));
 // The log is read once for the whole list, not once per tag: count element reads on a large log.
 const bigLog = structuredClone(state.calibrationLog);
@@ -202,19 +203,24 @@ check('an unknown tag is not treated as a tool', MES.traceSearch(traceState, 'NO
 // #56: a buy-off and an ATP asset list record which calibration entry was checked and where the tool
 // record came from, instead of citing the shipped snapshot for a live-log tool.
 check('toolUseRecords is exported and not remotely callable', typeof MES.toolUseRecords === 'function' && host.resolveAction('MES.toolUseRecords') === null);
-const liveCheck = MES.toolCheck('B2-TOOL', now, state), seedCheck = MES.toolCheck('NONE-175', now, state);
+// Production ships no snapshot (issue #247), so the snapshot-source labels are checked on the demo engine, which
+// loads the sample snapshot (no seed loaded here, so its tools keep their sample expiries; read on the snapshot day).
+const SNAP = createHost(fileURLToPath(new URL('./fixtures/demo_publish.html', import.meta.url))).MES;
+const liveCheck = MES.toolCheck('B2-TOOL', now, state), seedCheck = SNAP.toolCheck('NONE-175', '2026-09-16T19:00:00.000Z');
 const liveEntryId = MES.calibrationStatus(state, 'B2-TOOL').id;
-const mixed = MES.toolUseRecords([liveCheck, seedCheck], { 'NONE-175': { value: '25', unit: 'in-lb' } });
+const mixed = SNAP.toolUseRecords([liveCheck, seedCheck], { 'NONE-175': { value: '25', unit: 'in-lb' } });
 const liveUse = mixed.tools.find(t => t.tag === 'B2-TOOL'), seedUse = mixed.tools.find(t => t.tag === 'NONE-175');
 check('a live-log tool on a buy-off carries its CALLOG entry id and the calibration log as source', liveCheck.ok && liveUse.calibrationEntry === liveEntryId && liveUse.source === 'Calibration log');
-check('a seed tool on a buy-off cites the shipped snapshot and no entry id', seedUse.calibrationEntry === undefined && seedUse.source.includes(MES.CAL_SNAPSHOT) && seedUse.torque.value === 25 && seedUse.torque.unit === 'in-lb');
-check('the buy-off tool log label names both sources when both were used', /Calibration log/.test(mixed.toolLog) && mixed.toolLog.includes(MES.CAL_SNAPSHOT));
-check('a seed-only buy-off keeps the snapshot label', MES.toolUseRecords([seedCheck], { 'NONE-175': { value: '25', unit: 'in-lb' } }).toolLog === MES.CAL_SNAPSHOT);
+check('a seed tool on a buy-off cites the shipped snapshot and no entry id', seedUse.calibrationEntry === undefined && seedCheck.ok && seedUse.source.includes(SNAP.CAL_SNAPSHOT) && seedUse.torque.value === 25 && seedUse.torque.unit === 'in-lb');
+check('the buy-off tool log label names both sources when both were used', /Calibration log/.test(mixed.toolLog) && mixed.toolLog.includes(SNAP.CAL_SNAPSHOT));
+check('a seed-only buy-off keeps the snapshot label', SNAP.toolUseRecords([seedCheck], { 'NONE-175': { value: '25', unit: 'in-lb' } }).toolLog === SNAP.CAL_SNAPSHOT);
 check('a log-only buy-off is labeled the calibration log', MES.toolUseRecords([liveCheck], {}).toolLog === 'Calibration log');
 const pageSource = pageSources[0][1];
 check('completeOperation records its tools through toolUseRecords', /const toolUse = toolUseRecords\(toolChecks, execution\.torque\)/.test(pageSource) && /tools: toolUse\.tools, toolLog: toolUse\.toolLog/.test(pageSource));
-const atpLive = MES.atpAssets([{ asset: 'B2-TOOL' }, { asset: 'NONE-175' }], now, state);
-check('an ATP asset from the calibration log carries its CALLOG entry id', atpLive.ok && atpLive.list[0].calibrationEntry === liveEntryId && atpLive.list[1].calibrationEntry === undefined);
+const atpLive = MES.atpAssets([{ asset: 'B2-TOOL' }], now, state), atpSeed = SNAP.atpAssets([{ asset: 'NONE-175' }], '2026-09-16T19:00:00.000Z');
+check('an ATP asset from the calibration log carries its CALLOG entry id', atpLive.ok && atpLive.list[0].calibrationEntry === liveEntryId && atpSeed.ok && atpSeed.list[0].calibrationEntry === undefined);
+const atpRetired = MES.atpAssets([{ asset: 'B2-TOOL' }, { asset: 'NONE-175' }], now, state);
+check('an ATP buy-off refuses a tool of the retired snapshot that the log has not recorded', !atpRetired.ok && /NONE-175/.test(atpRetired.message), atpRetired.message);
 // #57: the maintenance register and work-unit links accept a tool recorded only in the calibration log.
 const admin = { username: 'admin-ada', displayName: 'Ada Admin', role: 'admin' };
 const mntState = structuredClone(state);
@@ -485,7 +491,7 @@ check('the log views take the current entries from the engine, not an inline sup
 const noFlag = structuredClone(state), cwRow = MES.calibrationStatus(noFlag, 'NT-TOOL');
 appendImported(noFlag, host.withAccount(qa, () => { const e = { ...cwRow, id: 'CALLOG-09994', tag: 'CW-IMPORT', description: 'CLICK WRENCH', note: '', recordedAt: new Date().toISOString() }; delete e.supersedes; delete e.torque; delete e.calibrationSignature; e.calibrationSignature = { manifest: MES.signManifest(noFlag, 'Calibration recorded', calSubject(e), e.recordedAt) }; return e; }, noFlag));
 check('an imported log-only entry without a torque answer fails validation and diagnose names it', !MES.validate(noFlag) && MES.diagnose(noFlag)?.where === 'CALLOG-09994' && /torque/.test(MES.diagnose(noFlag)?.detail || ''));
-check('seeded tags recorded without a torque answer still validate', state.calibrationLog.some(e => MES.CAL_TOOLS.some(t => t.tag === e.tag) && e.torque === undefined) && MES.validate(state));
+check('seeded tags recorded without a torque answer still validate', state.calibrationLog.some(e => ['CAL-022', 'NONE-174'].includes(e.tag) && e.torque === undefined) && MES.validate(state));
 
 // #35 review (Codex 4134256621): every calibration entry a buy-off cites must resolve to a log row for the same
 // tool, so calibration evidence cannot drop out of the log while the acceptance records that cite it stay valid.
@@ -705,7 +711,7 @@ const datedRetire = host.withAccount(qa, () => MES.updateCalibration(undated, ME
 // log or in the shipped snapshot keeps them on its Retired entry, at write time and when the workspace loads.
 check('a correction to Retired cannot clear the dates of a tool with calibration dates in the log', !datedRetire.ok && /calibration dates on record/.test(datedRetire.message) && MES.calibrationStatus(undated, 'TEST-001').expires !== '');
 const seedDatedRetire = host.withAccount(qa, () => MES.recordCalibration(undated, { tag: 'NONE-175', description: 'TORQUE WRENCH', serial: '', calibratedAt: '', expires: '', status: 'Retired', location: '', note: 'Scrapped' }), undated);
-check('a tool with a due date in the shipped snapshot cannot be retired without dates', !seedDatedRetire.ok && /shipped tool snapshot/.test(seedDatedRetire.message));
+check('a tool with a due date in the retired 2026-09-15 snapshot cannot be retired without dates', !seedDatedRetire.ok && /tool snapshot of 2026-09-15/.test(seedDatedRetire.message), seedDatedRetire.message);
 const datedRetireOk = host.withAccount(qa, () => MES.updateCalibration(undated, MES.calibrationStatus(undated, 'TEST-001').id, { status: 'Retired', note: 'Worn out; retired with its last calibration dates' }), undated);
 check('a tool with calibration history is retired with its dates', datedRetireOk.ok && MES.calibrationStatus(undated, 'TEST-001').status === 'Retired' && MES.calibrationStatus(undated, 'TEST-001').expires !== '' && MES.validate(undated));
 const forgedStrip = structuredClone(undated);

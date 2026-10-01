@@ -8,7 +8,9 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import { Readable, Writable } from 'node:stream';
+import { fileURLToPath } from 'node:url';
 import { createServer } from '../server/server.mjs';
+import { createHost } from '../server/mes-host.mjs';
 
 let checks = 0;
 const check = async (name, fn) => { await fn(); checks += 1; console.log(`ok ${name}`); };
@@ -41,9 +43,10 @@ try {
   assert.ok(fixture, 'the curated fixture has a workspace');
   const base = MES.upgrade(JSON.parse(fixture[1]));
   MES.ensureMasterWIs(base);
-  // The fixture ships an empty planned-order list; let the engine seed one so there are orders to lose.
+  // The fixture ships an empty planned-order list. Production seeds none (issue #247), so the demo engine seeds its
+  // sample planned orders (D-39) as this suite's data, so there are orders to lose.
   delete base.plannedOrders;
-  FlightPlan.ensure(base);
+  createHost(fileURLToPath(new URL('../demo.html', import.meta.url))).FlightPlan.ensure(base);
   // Move closed orders out now, as the first commit would, so the base can be stored again between checks.
   assert.ok(MES.archiveOrders(base).ok, 'the base workspace archives its closed orders');
   assert.ok(MES.validate(base) && base.plannedOrders.length > 2 && base.stamps.length > 2, 'the base workspace has planned orders and a stamp register');
@@ -84,13 +87,13 @@ try {
     assert.ok(s.stamps.some(stamp => stamp.account === 'inspector-a'), 'the stamp assignments are left as they were');
   });
 
-  await check('a workspace with no planned orders or stamp register yet is still seeded and accepted', async () => {
+  await check('a workspace with no planned orders or stamp register yet gets empty ones (no sample, issue #247) and is accepted', async () => {
     const s = structuredClone(base);
     delete s.plannedOrders;
     delete s.stamps;
     assert.equal(server.validState(s), null);
-    assert.ok(Array.isArray(s.plannedOrders) && s.plannedOrders.length > 0, 'planned orders seeded on first use');
-    assert.ok(Array.isArray(s.stamps) && s.stamps.length > 0, 'stamp register seeded on first use');
+    assert.ok(Array.isArray(s.plannedOrders) && s.plannedOrders.length === 0, 'planned orders created empty on first use');
+    assert.ok(Array.isArray(s.stamps) && s.stamps.length === 0, 'stamp register created empty on first use');
   });
 
   await check('an intact workspace passes the write gate unchanged', async () => {

@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { fileURLToPath } from 'node:url';
 import { createHost } from '../server/mes-host.mjs';
+import { loadSample } from './lib/production-sample.mjs';
 
 const host = createHost(fileURLToPath(new URL('../index.html', import.meta.url)));
-const state = host.MES.ensureMasterWIs(host.MES.seed());
+// Production ships no WIs (issue #247): load the sample WIs as this suite's data.
+const state = loadSample(host, host.MES.seed());
 host.FlightManeuver.ensure(state);
 const wi = state.masterWIs.find(item => item.revision === 'A');
 wi.operations[0].steps[0].title = '';

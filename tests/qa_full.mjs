@@ -7,7 +7,8 @@ const FIXTURES = process.env.FS_FIXTURES_DIR
   : fileURLToPath(new URL('./fixtures/', import.meta.url));
 __mkdirTests(path.join(TESTS, 'shots'), { recursive: true }); // Outputs stay beside this harness; fixtures resolve beside it unless the mirror runner supplies another folder.
 // Full multi-point QA of Flight Control MES v72: demo build and production build.
-import {chromium} from 'playwright'; import fs from 'fs';
+import {chromium} from 'playwright';
+import {loadSampleInPage} from './lib/production-sample.mjs'; import fs from 'fs';
 const results=[]; const add=(build,area,check,ok,detail='')=>results.push({build,area,check,result:ok===true?'Pass':ok==='Skip'?'Skip':'Fail',detail:String(detail??'').slice(0,400)});
 const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{});
 const FILES={demo:pathToFileURL(path.join(FIXTURES,'demo_qa150_publish.html')).href,prod:pathToFileURL(path.join(FIXTURES,'publish.html')).href};
@@ -261,6 +262,9 @@ await signIn(p,'prod','mlee','demo1234','Morgan L');
 const who=await run(p,()=>({user:skAuth.user()&&skAuth.user().username,role:skAuth.role(),valid:MES.validate(state),orders:state.orders.length,users:skAuth.users().length}));
 add(P,'Load','First account becomes an access administrator (QA Manager) and the workspace validates',who.user==='mlee'&&['qm','admin'].includes(who.role)&&who.valid,JSON.stringify(who));
 add(P,'Load','No page or console errors at load',errs.length===0,errs.join(' | '));
+add(P,'Load','A new production workspace starts with no sample WIs, stamps or tools (issue #247)',await run(p,()=>state.masterWIs.length===0&&state.stamps.length===0&&MES.calibratedToolChecks(state).length===0),'');
+// Production ships no WIs or tools (issue #247): load the sample WIs and test tools as this suite's data.
+await loadSampleInPage(p,{tools:true});
 const seeded=await run(p,()=>{const wi=state.masterWIs.find(x=>x.status==='Released');const r=MES.addOrder(state,{masterWI:wi.id+'|'+wi.revision,pedigree:'Production',subcategory:'Mfg.',quantity:2,aircraft:MES.AIRCRAFT[0],site:MES.SITES[0]});if(!r.ok)return r.message;const o=MES.getOrder(state,r.id);if(MES.requiresReleaseQA(o))o.release={status:'Approved',name:'QA Peer',role:'Quality Engineer',credentialId:'ACCT-qapeer',at:new Date().toISOString(),note:'QA harness'};let a=MES.advance(state,r.id);if(!a.ok)return 'kitting: '+a.message;o.materials.forEach(m=>{const l=MES.availableLots(m.partNumber)[0];MES.setMaterialLot(state,r.id,m.id,l?l.lot:'L1');MES.setMaterial(state,r.id,m.id,true);});MES.addKitFile(state,r.id,{name:'kit.pdf',type:'application/pdf',size:10,dataUrl:null});a=MES.advance(state,r.id);if(!a.ok)return 'building: '+a.message;save();return MES.validate(state)?true:'invalid';});
 add(P,'Load','A production work order can be created, released by another credential, kitted with a kit list and moved to Building',seeded===true,String(seeded));
 // A second QA Manager account, a closed order and an MRB board, so the production views and the

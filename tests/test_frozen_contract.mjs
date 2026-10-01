@@ -8,6 +8,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {chromium} from 'playwright';
+import {loadSampleInPage} from './lib/production-sample.mjs';
 const TESTS=decodeURI(new URL('.',import.meta.url).pathname);
 const ROOT=path.resolve(TESTS,'..');
 const FIXTURES=process.env.FS_FIXTURES_DIR?process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):TESTS+'fixtures/';
@@ -99,6 +100,8 @@ ok('Support Access lifts stamp binding only; MRB seats and separation of duties 
 
 // Master Access writes a revision; a second Master Access account peer-reviews it.
 await as('jdoe');
+// Production ships no WIs (issue #247): load the sample WIs as this suite's data.
+await loadSampleInPage(p);
 const wi=await run(()=>{const w=state.masterWIs.find(x=>x.status==='Released'&&x.criticalSafety!==true&&!state.masterWIs.some(y=>y.id===x.id&&y.status==='Draft'));const r=MES.reviseMasterWI(state,w.id,w.revision);if(!r.ok)return {error:r.message};const u=MES.updateMasterWI(state,r.id,r.revision,{title:w.title+' (rev)'});return {id:r.id,revision:r.revision,edited:u.ok,authors:MES.findWI(state,r.id,r.revision).authors};});
 ok('editing a WI revision records its author',wi.edited&&Array.isArray(wi.authors)&&wi.authors.length===1,JSON.stringify(wi));
 const selfPeer=await run(w=>MES.peerReviewMasterWI(structuredClone(state),w.id,w.revision),wi);

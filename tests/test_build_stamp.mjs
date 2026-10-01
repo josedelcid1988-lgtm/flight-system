@@ -9,6 +9,7 @@ import crypto from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
 import {chromium} from 'playwright';
+import {loadSampleInPage} from './lib/production-sample.mjs';
 const TESTS=decodeURI(new URL('.',import.meta.url).pathname);
 const ROOT=path.resolve(TESTS,'..');
 const FIXTURES=process.env.FS_FIXTURES_DIR?process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):TESTS+'fixtures/';
@@ -260,6 +261,8 @@ const bs=await run(()=>MES.buildStamp());
 ok('the running app reports the build and the SHA-256',bs.version===build&&bs.sha256===v.stamped,JSON.stringify(bs));
 ok('the export and integration build id follows the stamp',await run(()=>window.SK_BUILD)===build);
 
+// Production ships no WIs (issue #247): load the sample WIs as this suite's data.
+await loadSampleInPage(p);
 const rec=await run(()=>{const wi=state.masterWIs.find(x=>x.status==='Released');const r=MES.addOrder(state,{masterWI:wi.id+'|'+wi.revision,pedigree:'Production',subcategory:'Mfg.',quantity:1,aircraft:MES.AIRCRAFT[0],site:MES.SITES[0]});const o=MES.getOrder(state,r.id);return {id:r.id,events:o.history.map(e=>e.build)};});
 ok('every history event on a new order carries the build stamp',rec.events.length>0&&rec.events.every(x=>x&&x.version===bs.version&&x.sha256===bs.sha256),JSON.stringify(rec.events));
 

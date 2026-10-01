@@ -1,6 +1,7 @@
 // Item 3: no username bypass in production; Support Access granted only through Master Access,
 // every override needs a reason and is logged; separation of duties is never overridable.
 import {chromium} from 'playwright';
+import {loadSampleInPage} from './lib/production-sample.mjs';
 import fs from 'fs';
 const TESTS=decodeURI(new URL('.',import.meta.url).pathname);
 const FIXTURES=process.env.FS_FIXTURES_DIR?process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):TESTS+'fixtures/';
@@ -36,6 +37,8 @@ ok('production source compares no username to demo outside the one-time notice',
 
 // Seed two Building orders as the QA Manager.
 await as('jdoe');
+// Production ships no WIs or tools (issue #247): load the sample WIs and test tools as this suite's data.
+await loadSampleInPage(p,{tools:true});
 const [W1,W2]=await run(()=>{const wi=state.masterWIs.find(x=>x.status==='Released');const mk=()=>{const r=MES.addOrder(state,{masterWI:wi.id+'|'+wi.revision,pedigree:'Production',subcategory:'Mfg.',quantity:1,aircraft:MES.AIRCRAFT[0],site:MES.SITES[0]});if(!r.ok)throw new Error(r.message);const o=MES.getOrder(state,r.id);let a=MES.advance(state,r.id);if(!a.ok)throw new Error(a.message);o.materials.forEach(m=>{const l=MES.availableLots(m.partNumber)[0];MES.setMaterialLot(state,r.id,m.id,l?l.lot:'L1');MES.setMaterial(state,r.id,m.id,true);});MES.addKitFile(state,r.id,{name:'kit.pdf',type:'application/pdf',size:10,dataUrl:null});a=MES.advance(state,r.id);if(!a.ok)throw new Error(a.message);return r.id;};const ids=[mk(),mk()];save();return ids;});
 
 // ---- 2. The demo account is an ordinary account now ----
