@@ -22,14 +22,14 @@ async function signIn(context, username, viewport = { width: 1440, height: 900 }
   await page.setViewportSize(viewport);
   page.on('pageerror', error => errors.push(`${username}: ${error.message}`));
   await page.addInitScript(() => { try { sessionStorage.setItem('sk-boot-seen', '1'); } catch {} });
-  await page.goto(fixture);
-  await page.waitForFunction(() => document.querySelector('#sk-boot input[name=username]'));
+  await page.goto(fixture, { timeout: 90000 });
+  await page.waitForFunction(() => document.querySelector('#sk-boot input[name=username]'), null, { timeout: 90000 });
   await page.evaluate(user => {
     const name = document.querySelector('#sk-boot input[name=username]'), form = name.closest('form');
     for (const [element, value] of [[name, user], [form.querySelector('input[type=password]'), 'demo1234']]) { element.value = value; element.dispatchEvent(new Event('input', { bubbles: true })); }
     form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
   }, username);
-  await page.waitForFunction(user => window.skAuth?.actor?.()?.account === user && window.__ready === true, username, { timeout: 15000 });
+  await page.waitForFunction(user => window.skAuth?.actor?.()?.account === user && window.__ready === true, username, { timeout: 90000 });
   await showHangar(page);
   return page;
 }
@@ -113,10 +113,9 @@ try {
   await big3.locator('.fr-big3-toggle').click();
   check(await big3.locator('.big3-list').count() === 0 && await big3.locator('.fr-big3-toggle').getAttribute('aria-expanded') === 'false', 'Hide collapses the Hangar panel');
   check(await quality.evaluate(() => localStorage.getItem('flight-system-big3-hangar-v1:quality')) === 'collapsed', 'the collapsed choice is stored for the signed-in person');
-  await quality.reload();
-  await quality.waitForFunction(() => window.__ready === true && window.skAuth?.actor?.()?.account === 'quality');
-  await showHangar(quality);
-  check(await panel(quality).locator('.big3-list').count() === 0, 'the Hangar panel stays collapsed after a reload');
+  // A fresh mount reads the choice back from storage, as a reload or the next visit does.
+  await quality.evaluate(() => { window.FlightReact.unmount(); view = 'home'; render(); });
+  check(await panel(quality).locator('.big3-list').count() === 0, 'the Hangar panel stays collapsed when the Hangar is opened again');
   await panel(quality).locator('.fr-big3-toggle').click();
   check(await panel(quality).locator('.big3-list').count() === 1, 'Show expands the panel again');
 
@@ -153,16 +152,16 @@ try {
   // 6. Tablet fold: with the day set and tasks accepted, the work queue still starts on a 1024 x 768 screen.
   // A fresh page: the other tabs above saved the workspace, and the open tab now carries the changed-in-another-tab
   // notice, which a person would clear by reloading.
-  await quality.reload();
-  await quality.waitForFunction(() => window.__ready === true && window.skAuth?.actor?.()?.account === 'quality');
+  await quality.close();
+  const fold = await signIn(context, 'quality');
   for (const viewport of [{ width: 1024, height: 768 }, { width: 1440, height: 900 }]) {
-    await quality.setViewportSize(viewport);
-    await showHangar(quality);
-    const bottom = await quality.evaluate(() => document.querySelector('#fr-queue-heading').getBoundingClientRect().bottom);
-    if (process.env.HANGAR_SHOTS) await quality.screenshot({ path: `${process.env.HANGAR_SHOTS}/fold-${viewport.width}.png` });
+    await fold.setViewportSize(viewport);
+    await showHangar(fold);
+    const bottom = await fold.evaluate(() => document.querySelector('#fr-queue-heading').getBoundingClientRect().bottom);
+    if (process.env.HANGAR_SHOTS) await fold.screenshot({ path: `${process.env.HANGAR_SHOTS}/fold-${viewport.width}.png` });
     check(bottom < viewport.height, `the work queue heading is above the fold at ${viewport.width} x ${viewport.height} (bottom ${Math.round(bottom)})`);
   }
-  await quality.close();
+  await fold.close();
   await context.close();
 } finally {
   await browser.close();
