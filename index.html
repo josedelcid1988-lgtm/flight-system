@@ -3002,8 +3002,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // have a valid shape (meaning, time, named signer with a credential, SHA-256 hash). Buy-offs, NC/IDR
   // approvals, order closures, the 8130-9 completion, AQI signature and DAR acceptance, the MRB board decision,
   // the CAR closure and the stock NC disposition approval are recomputed from the stored record, whatever subject
-  // the manifest stored; the FAIR verification content is bound to what was signed; box 22 and the approval chain link by link. Any edit to a signed field after
-  // signing shows up as a failure.
+  // the manifest stored. The FAIR's own content is compared with what the verifier signed, box 22 must chain to the
+  // verified FAIR, and the Skyryse QA approval must chain to box 22. Any edit to a signed field after signing fails.
   function verifyManifests(state) {
     const failures = []; let checked = 0, recomputed = 0, legacy = 0; const manifestSubjects = [];
     const shapeOk = m => plain(m) && typeof m.meaning === 'string' && !!m.meaning && typeof m.at === 'string' && !Number.isNaN(Date.parse(m.at)) && plain(m.signer) && typeof m.signer.name === 'string' && !!m.signer.name.trim() && typeof m.signer.credentialId === 'string' && !!m.signer.credentialId.trim() && m.algorithm === 'SHA-256' && /^[0-9a-f]{64}$/.test(m.hash);
