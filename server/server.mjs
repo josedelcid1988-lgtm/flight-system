@@ -14,6 +14,7 @@ import { openDb, openDbReadOnly } from './db.mjs';
 import { openPostgres, openPostgresReadOnly } from './db-postgres.mjs';
 import { scanArchiveProto } from './archive-proto-scan.mjs';
 import { createHost } from './mes-host.mjs';
+import { evidenceIdsInWorkspace } from './evidence-refs.mjs';
 import { stamp, verify } from '../tools/stamp-build.mjs';
 
 process.on('warning', w => { if (w.name === 'ExperimentalWarning' && /SQLite/.test(w.message)) return; console.warn(w); });
@@ -263,9 +264,25 @@ export function createServer(options = {}) {
   // without a stored copy and hash and refuses edits to signed evidence (MES.evidenceChanges); the
   // server adds what only it can know: that a server receipt matches bytes it holds, and that a
   // newly signed buy-off names recordings the server stored, not ones kept on one device.
-  const evidenceProblem = async (prev, next) => {
+  // A reference is also authority: once a record names a recording, every signed-in account may read it. So a write
+  // that adds a new reference (id or copyOf) to a recording the server holds must come from the account that uploaded
+  // it, or from a QA Manager or Master Access account. A recording the workspace already names stays usable as before.
+  const evidenceProblem = async (prev, next, session) => {
     const changed = host.MES.evidenceChanges ? host.MES.evidenceChanges(prev, next) : null;
     if (changed) return changed;
+    if (session && !manages(session.account)) {
+      const named = evidenceIdsInWorkspace(prev);
+      for (const key of evidenceIdsInWorkspace(next)) {
+        if (named.has(key)) continue;
+        const row = await store.evidenceMeta(key);
+        // The browser uploads a recording before it saves the reference, so an initialized workspace never needs to name
+        // one the server does not hold yet. Refusing it closes the window where a reference saved ahead of someone
+        // else's in-flight upload would authorize everyone once that upload lands. The first workspace save (prev null)
+        // may carry device-only recordings from a browser workspace being imported, so it keeps the stored-row rule.
+        if (!row && prev) return `${key} is not on the server yet. Upload the recording from the device that captured it, then attach it.`;
+        if (row && row.uploadedBy !== session.username) return `${key} was uploaded by another account. Only the account that uploaded a recording, a QA Manager, or a Master Access account can attach it to a record. Ask the uploader to attach it.`;
+      }
+    }
     const before = new Set(evidenceRefs(prev).filter(r => r.done).map(r => `${r.orderId}/${r.opId}`));
     for (const r of evidenceRefs(next)) {
       const e = r.e, key = e.copyOf || e.id;
@@ -287,11 +304,7 @@ export function createServer(options = {}) {
   // A cached set is reused only when the stored row has the same ETag and byte-identical JSON text, so a write by
   // any path (a record action, a snapshot, another server process on the same database) forces a rebuild before
   // the next read decision. The string comparison costs far less than JSON.parse; if in doubt, the set is rebuilt.
-  const evidenceIdsIn = doc => {
-    const ids = new Set();
-    for (const o of Array.isArray(doc?.orders) ? doc.orders : []) for (const op of Array.isArray(o?.operations) ? o.operations : []) for (const e of [...(Array.isArray(op?.evidence) ? op.evidence : []), ...(Array.isArray(op?.quarantinedEvidence) ? op.quarantinedEvidence : [])]) if (e) { ids.add(e.id); ids.add(e.copyOf); }
-    return ids;
-  };
+  const evidenceIdsIn = evidenceIdsInWorkspace;
   let namedEvidenceCache = null;
   const liveEvidenceIds = async () => {
     const doc = await store.getDoc(TENANT);
@@ -882,7 +895,7 @@ export function createServer(options = {}) {
         // Archive counters only move forward: a device that has not seen the latest archiving cannot lower them.
         if (cur && state.archive) { const was = JSON.parse(cur.json).archive; if (was) { for (const k of ['orders', 'lastOrderNumber', 'lastTicketNumber']) state.archive[k] = Math.max(Number(state.archive[k]) || 0, Number(was[k]) || 0); if (was.lastArchivedAt && (!state.archive.lastArchivedAt || was.lastArchivedAt > state.archive.lastArchivedAt)) state.archive.lastArchivedAt = was.lastArchivedAt; } }
         const problem = validState(state); if (problem) { send(res, 422, { error: problem }); return; }
-        { const bad = await evidenceProblem(cur ? JSON.parse(cur.json) : null, state); if (bad) { await store.audit(session.username, 'evidence-refused', { message: bad }); send(res, 422, { error: bad }); return; } }
+        { const bad = await evidenceProblem(cur ? JSON.parse(cur.json) : null, state, session); if (bad) { await store.audit(session.username, 'evidence-refused', { message: bad }); send(res, 422, { error: bad }); return; } }
         if (cur && ifMatch && cur.etag !== ifMatch) { res.writeHead(409, { 'Content-Type': MIME['.json'], ETag: cur.etag }); res.end(JSON.stringify({ error: 'The workspace changed on another device. Reload to continue.', etag: cur.etag, current: JSON.parse(cur.json) })); return; }
         const done = await commitState(state, cur ? cur.etag : null, session.username, [{ action: 'workspace-initialize', detail: etag => ({ etag }) }]);
         if (done.problem) { send(res, 422, { error: done.problem }); return; }
@@ -912,7 +925,7 @@ export function createServer(options = {}) {
         try { result = host.withAccount(session.account, () => fn(state, ...args), state); } catch (e) { internalError(res, req, e, 'The action could not run. Nothing was saved.'); return; }
         if (!result || result.ok === false) { await store.audit(session.username, 'action-refused', { action: action[1], message: result && result.message }); send(res, 403, { error: result ? result.message : 'Refused.', result }); return; }
         const invalid = validState(state); if (invalid) { send(res, 422, { error: `The action would leave the workspace invalid: ${invalid}` }); return; }
-        { const bad = await evidenceProblem(raw, state); if (bad) { await store.audit(session.username, 'evidence-refused', { action: action[1], message: bad }); send(res, 422, { error: bad }); return; } }
+        { const bad = await evidenceProblem(raw, state, session); if (bad) { await store.audit(session.username, 'evidence-refused', { action: action[1], message: bad }); send(res, 422, { error: bad }); return; } }
         const done = await commitState(state, etag, session.username, [{ action: 'action', detail: { action: action[1], message: result.message } }]);
         if (done.problem) { send(res, 422, { error: `The action would leave the workspace invalid: ${done.problem}` }); return; }
         if (done.conflict) { send(res, 409, { error: 'The workspace changed while the action ran. Try again.' }); return; }
@@ -982,8 +995,11 @@ export function createServer(options = {}) {
         send(res, 200, { recorded: ids.length }); return;
       }
 
+      // A list limit reaches the database only as a whole number from 1 to 1,000: SQLite reads a negative LIMIT as
+      // unlimited and PostgreSQL refuses one, so anything else (missing, zero, negative, fractional) reads the fallback.
+      const pageLimit = (raw, fallback) => { const n = Number(raw); return Number.isInteger(n) && n >= 1 ? Math.min(1000, n) : fallback; };
       // -- archive: closed work orders out of the live document, read-only --
-      if (route === '/archive' && m === 'GET') { const orders = await store.archiveSearch(url.searchParams.get('q') || '', Math.min(1000, Number(url.searchParams.get('limit')) || 200)), total = await store.archiveCount(); send(res, 200, { orders, total }); return; }
+      if (route === '/archive' && m === 'GET') { const orders = await store.archiveSearch(url.searchParams.get('q') || '', pageLimit(url.searchParams.get('limit'), 200)), total = await store.archiveCount(); send(res, 200, { orders, total }); return; }
       if (route === '/trace' && m === 'GET') {
         const q = String(url.searchParams.get('q') || '').trim();
         if (!q) { send(res, 400, { error: 'Give a serial number, lot or part number to trace.' }); return; }
@@ -994,14 +1010,13 @@ export function createServer(options = {}) {
         send(res, 200, { query: q, results: [...live, ...await store.archiveSearch(q, 1000)] }); return;
       }
       // -- calibration archive: superseded calibration entries out of the live log, read-only (#130) --
-      // A page of 1 to 1,000 entries; anything else (missing, zero, negative, not a whole number) reads the default 500.
-      const calibrationArchiveLimit = raw => { const n = Number(raw); return Number.isInteger(n) && n >= 1 ? Math.min(1000, n) : 500; };
+      // A page of 1 to 1,000 entries; anything else reads the default 500 (pageLimit, above).
       // Pages in entry id order: after names the last entry id of the previous page, and next is the cursor for the
       // following page, or null at the end.
       if (route === '/calibration-archive' && m === 'GET') {
         const after = url.searchParams.get('after') || '';
         if (after && !/^CALLOG-\d{5}$/.test(after)) { send(res, 400, { error: 'The after cursor is a calibration entry id such as CALLOG-00042, from the next value of the previous page.' }); return; }
-        const limit = calibrationArchiveLimit(url.searchParams.get('limit'));
+        const limit = pageLimit(url.searchParams.get('limit'), 500);
         const entries = await store.calibrationArchiveList(url.searchParams.get('tag') || '', limit, after);
         send(res, 200, { entries, next: entries.length === limit ? entries[entries.length - 1].id : null, readOnly: true }); return;
       }
