@@ -234,15 +234,21 @@ export function createServer(options = {}) {
   // without ever queuing them as commands (planning blockers, assignment auto-close, master WI /
   // plan / maneuver defaults). The server runs them here, inside every commit path, before
   // validation, so the shared record always leaves with the same derived state any device would
-  // compute, and a convergence defect fails the write instead of persisting.
+  // compute, and a convergence defect fails the write instead of persisting. A stamp register or planned
+  // order list that exists but is damaged is refused before its initializer runs: the initializer would replace
+  // the whole list with seed records, and MES.validate covers neither, so the loss would commit (Codex #17).
+  // Returns a problem, or null.
   const convergeDerivedState = state => {
+    const stamps = host.MES.stampRegisterProblem?.(state); if (stamps) return stamps;
     host.MES.ensureMasterWIs?.(state);
+    const plan = host.FlightPlan.plannedOrdersProblem?.(state); if (plan) return plan;
     host.FlightPlan.ensure?.(state);
     host.FlightManeuver.ensure?.(state);
     host.MES.syncAssignments?.(state);
     host.MES.syncBlockers?.(state);
+    return null;
   };
-  const validState = state => { convergeDerivedState(state); if (Array.isArray(state.orders) && state.orders.filter(order => order.status !== 'Closed').length > 1000) return 'The workspace exceeds the 1,000 open work order limit. Close or archive work before adding more orders.'; if (!host.MES.validate(state)) return (host.MES.diagnose(state) || {}).detail || 'The workspace is invalid.'; const manifested = host.MES.verifyManifests(state); if (!manifested.ok) { const f = manifested.failures[0] || {}; return `A signed record failed verification at ${f.where || 'an unknown record'}: ${f.reason || 'invalid manifest'}.`; } return null; };
+  const validState = state => { const unconverged = convergeDerivedState(state); if (unconverged) return unconverged; if (Array.isArray(state.orders) && state.orders.filter(order => order.status !== 'Closed').length > 1000) return 'The workspace exceeds the 1,000 open work order limit. Close or archive work before adding more orders.'; if (!host.MES.validate(state)) return (host.MES.diagnose(state) || {}).detail || 'The workspace is invalid.'; const manifested = host.MES.verifyManifests(state); if (!manifested.ok) { const f = manifested.failures[0] || {}; return `A signed record failed verification at ${f.where || 'an unknown record'}: ${f.reason || 'invalid manifest'}.`; } return null; };
 
   // Evidence integrity on every write, beside the engine's validation. The engine refuses a buy-off
   // without a stored copy and hash and refuses edits to signed evidence (MES.evidenceChanges); the
@@ -797,7 +803,7 @@ export function createServer(options = {}) {
         { const stale = await dropArchived(doc); if (stale) { send(res, 409, { error: stale, code: 'ARCHIVED' }); return; } }
         const state = host.MES.upgrade(structuredClone(doc));
         if (!state) { send(res, 422, { error: (host.MES.diagnose(doc) || {}).detail || 'The document does not match the current record format.' }); return; }
-        convergeDerivedState(state);
+        { const unconverged = convergeDerivedState(state); if (unconverged) { send(res, 422, { error: unconverged }); return; } }
         const accountProfile = host.withAccount(session.account, () => host.MES.profileOptions(state)?.[0], state);
         if (accountProfile) state.profile = { name: accountProfile.name, role: accountProfile.role, credentialId: accountProfile.credentialId };
         const cur = await store.getDoc(TENANT);
