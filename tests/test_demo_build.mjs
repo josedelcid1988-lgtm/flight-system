@@ -81,7 +81,7 @@ for(const [file,demo] of [['demo.html',true],['tests/fixtures/publish.html',fals
     return {banner:e?{text:e.textContent,visibility:getComputedStyle(e).visibility,x:bx.x,y:bx.y,r:bx.right,b:bx.bottom,h:bx.height,vw:innerWidth,vh:innerHeight}:null,hint:hint?{text:hint.textContent,visible:getComputedStyle(hint).visibility==='visible'&&hint.getBoundingClientRect().height>0}:null,bootText:document.getElementById('sk-boot').textContent};});
   if(demo){const x=r.banner;
     ok('demo sign-in shows DEMO, NOT FOR ACCEPTANCE on screen',!!x&&x.text==='DEMO, NOT FOR ACCEPTANCE'&&x.visibility==='visible'&&x.h>0&&x.x>=0&&x.y>=0&&x.r<=x.vw&&x.b<=x.vh,JSON.stringify(x));
-    ok('demo sign-in tells the reader the demo accounts and the password',!!r.hint&&r.hint.visible&&/demo1234/.test(r.hint.text)&&['demo','tech','quality','mfgeng','operations','engineering'].every(u=>r.hint.text.includes(u))&&!/—/.test(r.hint.text),JSON.stringify(r.hint));}
+    ok('demo sign-in tells the reader the demo accounts and the password',!!r.hint&&r.hint.visible&&/demo1234/.test(r.hint.text)&&['demo','tech','quality','mfgeng','operations','engineering'].every(u=>r.hint.text.includes(u))&&!/\u2014/.test(r.hint.text),JSON.stringify(r.hint));}
   else ok('production sign-in shows neither the demo mark nor the demo password',!r.banner&&!r.hint&&!/demo1234|NOT FOR ACCEPTANCE/.test(r.bootText),JSON.stringify({banner:r.banner,hint:r.hint}));
   await ctx.close();}
 const measure=()=>{const box=e=>{if(!e)return null;const r=e.getBoundingClientRect();return {x:r.x,y:r.y,r:r.right,b:r.bottom,h:r.height};};const bar=document.querySelector('.next-action:not([hidden])');
