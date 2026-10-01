@@ -29,6 +29,9 @@ await expectFail('editing the 8130-9 deviations after signing fails',pkg+"p.form
 await expectFail('marking the AQI signature self-signed after signing fails',pkg+"p.aqi.selfSigned=true;",'8130-9 AQI signature');
 await expectFail('editing the DAR designation after signing fails',pkg+"p.darApproval.designation='DAR-0000';",'DAR acceptance');
 await expectFail('editing the DAR date after signing fails',pkg+"p.darApproval.date='2020-01-01';",'DAR acceptance');
+await expectFail('removing the 8130-9 signature manifest fails',pkg+"delete p.form.prepared.manifest;",'8130-9');
+await expectFail('removing the AQI signature manifest fails',pkg+"delete p.aqi.manifest;",'8130-9 AQI signature');
+await expectFail('removing the DAR acceptance manifest fails',pkg+"delete p.darApproval.manifest;",'DAR acceptance');
 
 const mrb=await run(()=>{const m=(state.maneuver.mrb||[]).find(m=>m.decision&&m.decision.manifest);return m&&m.id;});
 ok('fixture: a decided MRB board',!!mrb,String(mrb));
@@ -37,6 +40,7 @@ await expectFail('editing the MRB decision rationale after signing fails',board+
 await expectFail('changing a recorded MRB vote after the decision fails',board+"m.votes[0].vote=m.votes[0].vote==='Approve'?'Reject':'Approve';",`${mrb} board decision`);
 await expectFail('changing who voted a seat after the decision fails',board+"m.votes[0].by={...m.votes[0].by,credentialId:'ACCT-someone'};",`${mrb} board decision`);
 await expectFail('changing the MRB serials after the decision fails',board+"m.serials=[...(m.serials||[]),'SN-EXTRA'];",`${mrb} board decision`);
+await expectFail('removing the MRB decision manifest fails',board+"delete m.decision.manifest;",`${mrb} board decision`);
 
 const nc=await run(()=>{const t=(state.maneuver.ncs||[]).find(t=>t.resolution&&t.resolution.manifest);return t&&t.id;});
 ok('fixture: a stock NC with an approved disposition',!!nc,String(nc));
@@ -45,6 +49,7 @@ await expectFail('changing the stock NC disposition after approval fails',stock+
 await expectFail('changing the affected quantity after approval fails',stock+"t.affected.quantity=t.affected.quantity+1;",`${nc} disposition approval`);
 await expectFail('changing the defect code after approval fails',stock+"t.affected.defectCode='ZZ';",`${nc} disposition approval`);
 await expectFail('changing the approval note after approval fails',stock+"t.resolution.note='Edited.';",`${nc} disposition approval`);
+await expectFail('removing the stock NC approval manifest fails',stock+"delete t.resolution.manifest;",`${nc} disposition approval`);
 r=await run(()=>{const s=structuredClone(state),t=(s.maneuver.ncs||[]).find(t=>t.resolution&&t.resolution.manifest);if(!t)return {none:true};delete t.affected;const v=MES.verifyManifests(s);return {id:t.id,ok:v.ok,where:v.failures.map(f=>f.where)};});
 ok('removing the affected record from an approved stock NC fails rather than skipping the check',r.ok===false&&r.where.some(w=>w.includes(`${r.id} disposition approval`)),JSON.stringify(r));
 
@@ -66,15 +71,19 @@ await expectFail('changing the FAI reasons after verification fails',F+"f.reason
 await expectFail('removing box 22 after the approval fails',F+"delete f.reviewed;",'FAIR approval');
 await expectFail('replacing the box 22 signature after the approval fails',F+"f.reviewed.manifest={...f.reviewed.manifest,hash:'0'.repeat(64)};",'FAIR');
 await expectFail('a box 22 that does not chain to the verified FAIR fails',F+"f.reviewed.manifest=MES.signManifest(s,'AS9102 FAIR reviewed and approved (blocks 22 and 23)',{fair:'FAIR-OTHER',verified:f.verified.manifest.hash},f.reviewed.at);",'FAIR box 22');
-r=await run(([id])=>{const bad=edit=>{const s=structuredClone(state),f=s.orders.find(o=>o.id===id).fair;edit(f);return MES.validate(s);};return {emptyManifest:bad(f=>{f.reviewed.manifest={};}),noManifest:bad(f=>{delete f.reviewed.manifest;}),noSigner:bad(f=>{f.reviewed.by=null;}),badTime:bad(f=>{f.reviewed.at='yesterday';}),onOpen:bad(f=>{f.status='Open';f.verified=null;f.approved=null;}),ok:MES.validate(state)};},[fair.id]);
+r=await run(([id])=>{const bad=edit=>{const s=structuredClone(state),f=s.orders.find(o=>o.id===id).fair;edit(f);return MES.validate(s);};return {emptySigner:bad(f=>{f.reviewed.manifest={...f.reviewed.manifest,signer:{}};}),otherSigner:bad(f=>{f.reviewed.manifest={...f.reviewed.manifest,signer:{...f.reviewed.manifest.signer,credentialId:'ACCT-other'}};}),otherTime:bad(f=>{f.reviewed.manifest={...f.reviewed.manifest,at:'2020-01-01T00:00:00.000Z'};}),emptyManifest:bad(f=>{f.reviewed.manifest={};}),noManifest:bad(f=>{delete f.reviewed.manifest;}),noSigner:bad(f=>{f.reviewed.by=null;}),badTime:bad(f=>{f.reviewed.at='yesterday';}),onOpen:bad(f=>{f.status='Open';f.verified=null;f.approved=null;}),ok:MES.validate(state)};},[fair.id]);
 ok('box 22 without its signature manifest is refused by validation',r.noManifest===false,JSON.stringify(r));
 ok('box 22 with an empty or malformed manifest is refused by validation',r.emptyManifest===false,JSON.stringify(r));
+ok('box 22 whose manifest signer is empty or another person, or whose manifest time differs, is refused by validation',r.emptySigner===false&&r.otherSigner===false&&r.otherTime===false,JSON.stringify(r));
 ok('box 22 without a named signer is refused by validation',r.noSigner===false,JSON.stringify(r));
 ok('box 22 without a valid time is refused by validation',r.badTime===false,JSON.stringify(r));
 ok('box 22 on a FAIR that is not verified is refused by validation',r.onOpen===false,JSON.stringify(r));
 ok('the signed workspace itself validates',r.ok===true,JSON.stringify(r));
+r=await run(([id])=>{const s=structuredClone(state),o=s.orders.find(o=>o.id===id),f=o.fair;f.fai=undefined;o.fai={...(o.fai||{}),required:true,reason:'First work order from MWI-0001 Rev A.',wi:(o.fai&&o.fai.wi)||'MWI-0001|A',at:(o.fai&&o.fai.at)||new Date().toISOString(),by:(o.fai&&o.fai.by)||f.verified.by};f.reasons=['Mfg. process change'];const sub={...f.verified.manifest.subject,form1:{...f.verified.manifest.subject.form1,reasons:['Mfg. process change']}};f.verified={...f.verified,manifest:MES.signManifest(s,f.verified.manifest.meaning,sub,f.verified.at)};f.status='Verified';f.reviewed=null;f.approved=null;const v=MES.verifyManifests(s);return {ok:v.ok,failures:v.failures.filter(x=>/FAIR/.test(x.where))};},[fair.id]);
+ok('a FAIR verified before reason normalization (raw reasons signed) still verifies',r.ok===true||r.failures.length===0,JSON.stringify(r));
 r=await run(([id])=>{const s=structuredClone(state),f=s.orders.find(o=>o.id===id).fair;f.reviewed=null;return {valid:MES.validate(s)};},[fair.id]);
 ok('a FAIR with box 22 cleared (null) still validates as a record',r.valid===true,JSON.stringify(r));
+const fairJson=await run(()=>JSON.stringify(state));
 
 // ---- the CAR closure, from the 150-order regression set ----
 await open('demo_qa150_publish.html','master');
@@ -91,12 +100,17 @@ await expectFail('editing the CAR root cause after closure fails',C+"c.rootCause
 await expectFail('editing a CAR action after closure fails',C+"c.actions[0].description='Edited after closure.';",`${car} closure`);
 await expectFail('editing the CAR effectiveness result after closure fails',C+"c.effectiveness.result='Not effective';",`${car} closure`);
 await expectFail('editing the CAR closure statement after closure fails',C+"c.closure.note='Edited.';",`${car} closure`);
+await expectFail('removing the CAR closure manifest fails',C+"delete c.closure.manifest;",`${car} closure`);
 
 // ---- verification fails closed: a manifest whose stored subject was signed by this build is recomputed even when
 // the live record adds or drops a key ----
 r=await run(([car])=>{const s=structuredClone(state),c=s.maneuver.cars.find(c=>c.id===car);const subject={id:c.id,title:c.title,severity:c.severity,rootCause:c.rootCause.statement,actions:c.actions.map(a=>({id:a.id,description:a.description,completedAt:a.completedAt})),verification:c.verification.at,effectiveness:c.effectiveness.result,note:c.closure.note};c.closure.manifest=MES.signManifest(s,'Corrective action closure',subject,c.closure.at);const ok0=MES.verifyManifests(s).ok;c.rootCause=null;const v=MES.verifyManifests(s);return {before:ok0,ok:v.ok,where:v.failures.map(f=>f.where)};},[car]);
 ok('a freshly signed CAR closure verifies, and removing its root cause afterwards fails',r.before===true&&r.ok===false&&r.where.some(w=>w.includes(`${car} closure`)),JSON.stringify(r));
 
+// ---- production validation refuses a box 22 signed by the verifier (the demo lifts this rule, D-33) ----
+await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(1200);
+r=await run(([json,id])=>{const base=JSON.parse(json),f=base.orders.find(o=>o.id===id).fair;const other={...f.reviewed.by,credentialId:'ACCT-second',name:'Second Reviewer'};const mk=by=>{const s=structuredClone(base),g=s.orders.find(o=>o.id===id).fair;g.reviewed={...g.reviewed,by,manifest:{...g.reviewed.manifest,signer:{...g.reviewed.manifest.signer,credentialId:by.credentialId}}};return s;};const self=mk({...f.verified.by});const second=mk(other);const fv=s=>MES.validate(s);return {sameCred:f.verified.by.credentialId,second:fv(second),self:fv(self)};},[fairJson,fair.id]);
+ok('in production, validation accepts a box 22 signed by a second person and refuses one signed by the verifier',r.second===true&&r.self===false,JSON.stringify(r));
 ok('no page errors',errs.length===0,errs.join(' | '));
 console.log('errors',errs,'FAILS',JSON.stringify(fails));await b.close();
 process.exit(fails.length?1:0);

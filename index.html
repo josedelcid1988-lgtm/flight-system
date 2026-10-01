@@ -3052,7 +3052,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       if (plain(fair) && plain(fair.verified) && plain(fair.verified.manifest) && plain(fair.verified.manifest.subject) && plain(fair.verified.manifest.subject.form1)) {
         const vs = fair.verified.manifest.subject, same = (a, b) => canonical(a === undefined ? null : a) === canonical(b === undefined ? null : b); recomputed++;
         const drift = ['form2', 'tests', 'chars'].filter(k => !same(vs[k], fair[k])).concat(['index', 'additionalChanges', 'supplierCode', 'po', 'type', 'baselinePart', 'baselineFair', 'reason', 'comments', 'sampleSize'].filter(k => !same(vs.form1[k], fair[k])));
-        if (!same(vs.form1.reasons, fairSnapshot(state, order).form1.reasons)) drift.push('reasons');
+        // A FAIR signed before the reason normalization signed the raw reasons; either form matches.
+        if (!same(vs.form1.reasons, fairSnapshot(state, order).form1.reasons) && !same(vs.form1.reasons, fair.reasons)) drift.push('reasons');
         if (drift.length) failures.push({ where: `${order.id} FAIR verification`, reason: `FAIR content changed after verification: ${drift.join(', ')}` });
       }
       // 8130-9: the completed form, the AQI signature and the DAR acceptance are recomputed from the package,
@@ -3060,6 +3061,9 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       (Array.isArray(order.conformity) ? order.conformity : []).forEach(p => {
         if (!plain(p) || !plain(p.form)) return;
         const pm = plain(p.form.prepared) ? p.form.prepared.manifest : null;
+        if (!plain(pm)) failures.push({ where: `${order.id} ${p.serial} 8130-9`, reason: 'the completed 8130-9 has no signature manifest' });
+        if (plain(p.aqi) && !plain(p.aqi.manifest)) failures.push({ where: `${order.id} ${p.serial} 8130-9 AQI signature`, reason: 'the AQI signature has no signature manifest' });
+        if (plain(p.darApproval) && !plain(p.darApproval.manifest)) failures.push({ where: `${order.id} ${p.serial} DAR acceptance`, reason: 'the DAR acceptance has no signature manifest' });
         if (plain(pm)) recheck(`${order.id} ${p.serial} 8130-9`, pm, { order: order.id, ...p.form, prepared: undefined, ...(pm.override ? { override: pm.override } : {}) });
         const am = plain(p.aqi) ? p.aqi.manifest : null;
         if (plain(am)) recheck(`${order.id} ${p.serial} 8130-9 AQI signature`, am, { order: order.id, serial: p.serial, form: plain(pm) ? pm.hash : null, ...(p.aqi.selfSigned ? { selfSigned: true } : {}), ...(am.override ? { override: am.override } : {}) });
@@ -3070,9 +3074,9 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     // Flight Maneuver signatures: the MRB board decision, the CAR closure and the stock NC disposition approval are
     // recomputed from the stored record, the same way the work order signatures are.
     const fm = kind => plain(state.maneuver) && Array.isArray(state.maneuver[kind]) ? state.maneuver[kind].filter(plain) : [];
-    fm('mrb').forEach(m => { const d = m.decision; if (!plain(d) || !plain(d.manifest)) return; recheck(`${m.id} board decision`, d.manifest, { id: m.id, orderId: m.orderId, ticketId: m.ticketId, partNumber: m.partNumber, serials: m.serials, proposed: m.proposed, votes: (Array.isArray(m.votes) ? m.votes : []).map(v => ({ seat: v.seat, vote: v.vote, by: plain(v.by) ? v.by.credentialId : undefined, at: v.at })), status: d.status, note: d.note }); });
-    fm('cars').forEach(car => { const c = car.closure; if (!plain(c) || !plain(c.manifest)) return; recheck(`${car.id} closure`, c.manifest, { id: car.id, title: car.title, severity: car.severity, rootCause: plain(car.rootCause) ? car.rootCause.statement : undefined, actions: (Array.isArray(car.actions) ? car.actions : []).map(a => ({ id: a.id, description: a.description, completedAt: a.completedAt })), verification: plain(car.verification) ? car.verification.at : undefined, effectiveness: plain(car.effectiveness) ? car.effectiveness.result : undefined, note: c.note }); });
-    fm('ncs').forEach(t => { const r = t.resolution; if (!plain(r) || !plain(r.manifest)) return; const a = plain(t.affected) ? t.affected : {}; recheck(`${t.id} disposition approval`, r.manifest, { id: t.id, partNumber: t.partNumber, serial: t.serial, lot: t.lot, disposition: plain(t.dispo) ? t.dispo.decision : undefined, defect: { defectCode: a.defectCode, defectName: a.defectName, subCode: a.subCode, subName: a.subName }, quantity: a.quantity, mrbId: t.mrbId, note: r.note }); });
+    fm('mrb').forEach(m => { const d = m.decision; if (!plain(d)) return; if (!plain(d.manifest)) { failures.push({ where: `${m.id} board decision`, reason: 'the board decision has no signature manifest' }); return; } recheck(`${m.id} board decision`, d.manifest, { id: m.id, orderId: m.orderId, ticketId: m.ticketId, partNumber: m.partNumber, serials: m.serials, proposed: m.proposed, votes: (Array.isArray(m.votes) ? m.votes : []).map(v => ({ seat: v.seat, vote: v.vote, by: plain(v.by) ? v.by.credentialId : undefined, at: v.at })), status: d.status, note: d.note }); });
+    fm('cars').forEach(car => { const c = car.closure; if (!plain(c)) return; if (!plain(c.manifest)) { failures.push({ where: `${car.id} closure`, reason: 'the closure has no signature manifest' }); return; } recheck(`${car.id} closure`, c.manifest, { id: car.id, title: car.title, severity: car.severity, rootCause: plain(car.rootCause) ? car.rootCause.statement : undefined, actions: (Array.isArray(car.actions) ? car.actions : []).map(a => ({ id: a.id, description: a.description, completedAt: a.completedAt })), verification: plain(car.verification) ? car.verification.at : undefined, effectiveness: plain(car.effectiveness) ? car.effectiveness.result : undefined, note: c.note }); });
+    fm('ncs').forEach(t => { const r = t.resolution; if (!plain(r)) { if (t.status === 'Resolved') failures.push({ where: `${t.id} disposition approval`, reason: 'the resolved NC has no approval record' }); return; } if (!plain(r.manifest)) { failures.push({ where: `${t.id} disposition approval`, reason: 'the disposition approval has no signature manifest' }); return; } const a = plain(t.affected) ? t.affected : {}; recheck(`${t.id} disposition approval`, r.manifest, { id: t.id, partNumber: t.partNumber, serial: t.serial, lot: t.lot, disposition: plain(t.dispo) ? t.dispo.decision : undefined, defect: { defectCode: a.defectCode, defectName: a.defectName, subCode: a.subCode, subName: a.subName }, quantity: a.quantity, mrbId: t.mrbId, note: r.note }); });
     return { ok: failures.length === 0, complete: legacy === 0, legacy, checked, recomputed, failures };
   }
   const actor = state => { const acct = accountActor(); return acct ? { name: acct.name, role: acct.role, credentialId: acct.credentialId } : profileSnapshot(state.profile); };
@@ -5371,7 +5375,7 @@ const OP_BOM_MAX = 12;
     && (f.sampleSize === null || (Number.isInteger(f.sampleSize) && f.sampleSize >= 1)) && ['Open', 'Verified', 'Approved'].includes(f.status)
     && (f.verified === null || (plain(f.verified) && snapshotValid(f.verified.by) && timestamp(f.verified.at))) && (f.approved === null || (plain(f.approved) && snapshotValid(f.approved.by) && timestamp(f.approved.at)))
     // Box 22 is signed only on a verified FAIR, by a named signer, at a time, with its signature manifest.
-    && (f.reviewed === undefined || f.reviewed === null || (plain(f.reviewed) && plain(f.verified) && ['Verified', 'Approved'].includes(f.status) && snapshotValid(f.reviewed.by) && timestamp(f.reviewed.at) && plain(f.reviewed.manifest) && typeof f.reviewed.manifest.meaning === 'string' && !!f.reviewed.manifest.meaning && timestamp(f.reviewed.manifest.at) && plain(f.reviewed.manifest.signer) && f.reviewed.manifest.algorithm === 'SHA-256' && /^[0-9a-f]{64}$/.test(String(f.reviewed.manifest.hash)))));
+    && (f.reviewed === undefined || f.reviewed === null || (plain(f.reviewed) && plain(f.verified) && ['Verified', 'Approved'].includes(f.status) && snapshotValid(f.reviewed.by) && timestamp(f.reviewed.at) && plain(f.reviewed.manifest) && typeof f.reviewed.manifest.meaning === 'string' && !!f.reviewed.manifest.meaning && f.reviewed.manifest.at === f.reviewed.at && plain(f.reviewed.manifest.signer) && typeof f.reviewed.manifest.signer.credentialId === 'string' && f.reviewed.manifest.signer.credentialId === f.reviewed.by.credentialId && f.reviewed.manifest.algorithm === 'SHA-256' && /^[0-9a-f]{64}$/.test(String(f.reviewed.manifest.hash)) && !fairSelfReview(f, f.reviewed.by))));
   // Prefill from the work order: the index from the kit (sub-assemblies carry their own FAIR or lot), tests from ATP operations.
   const fairSeedReason = order => { const reason = String(order.fai?.reason || ''); return reason.startsWith('First work order from ') ? 'First production from approved Master WI' : reason.includes('revised') ? 'Mfg. process change' : 'New part (first production)'; };
   function fairSeed(state, order) {
@@ -5519,6 +5523,9 @@ const OP_BOM_MAX = 12;
   // keep the verifier in boxes 22 and 23, which is what the verifier signed then. Reopening the FAIR clears it.
   // Box 22 signs the reviewer and the time with the verified FAIR, so replacing the reviewer changes the hash the
   // Skyryse QA approval signed. Box 22 records signed before this carry no reviewer key and keep their form.
+  // The person who verified a FAIR (boxes 20 and 21) does not sign box 22. The engine refuses it and validation refuses a
+  // saved or imported FAIR that records it.
+  const fairSelfReview = (fair, by) => !!(fair && plain(fair.verified) && plain(fair.verified.by) && plain(by) && by.credentialId === fair.verified.by.credentialId);
   const fairReviewSubject = (order, fair, by, at, override) => ({ fair: fairId(order), verified: fair.verified.manifest.hash, reviewer: plain(by) ? by.credentialId : null, reviewedAt: at, ...(override ? { override } : {}) });
   function reviewFair(state, id, execution) {
     { const d = denied('approve-wo', 'review the FAIR (box 22)'); if (d) return d; }
@@ -5527,7 +5534,7 @@ const OP_BOM_MAX = 12;
     if (plain(fair.reviewed)) return fail('Box 22 is already signed.');
     const v = inspectorSign(state, INSPECTION_BUYOFF_TYPES, execution); if (!v.ok) return v;
     const by = signerOf(state, v);
-    if (fair.verified && fair.verified.by && by.credentialId === fair.verified.by.credentialId) return fail('The FAI reviewer in box 22 is a second person. You verified this FAIR in boxes 20 and 21.');
+    if (fairSelfReview(fair, by)) return fail('The FAI reviewer in box 22 is a second person. You verified this FAIR in boxes 20 and 21.');
     const at = new Date().toISOString();
     fair.reviewed = { by, at, manifest: signManifest(state, 'AS9102 FAIR reviewed and approved (blocks 22 and 23)', fairReviewSubject(order, fair, by, at, v.override), at) };
     record(state, order, `AS9102 FAIR ${fairId(order)} reviewed and approved in box 22 by ${by.name}.`);
