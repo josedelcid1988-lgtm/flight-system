@@ -95,6 +95,31 @@ function surfaces(state) {
     const verify = MES.verifyManifests(forged);
     check(`a quarantine entry whose ${field} was changed after signing fails validation and manifest verification`, !MES.validate(forged) && !verify.ok && verify.failures.some(f => /signed removal record/.test(f.reason)));
   }
+  // A removal record belongs to the record it was made on: moving or copying it to another holder is caught.
+  {
+    const moved = structuredClone(state), mOrder = moved.orders.find(o => o.operations.some(x => (x.quarantinedAttachments || []).length));
+    const from = mOrder.operations.find(x => (x.quarantinedAttachments || []).length), to = mOrder.operations.find(x => x !== from);
+    to.quarantinedAttachments = [...(to.quarantinedAttachments || []), from.quarantinedAttachments.shift()];
+    const verify = MES.verifyManifests(moved);
+    check('a quarantine entry moved to another operation fails validation and manifest verification', !MES.validate(moved) && verify.failures.some(f => /signed for a different record/.test(f.reason)));
+    const copied = structuredClone(state), cOrder = copied.orders.find(o => o.tickets.some(t => (t.quarantinedAttachments || []).length));
+    const ticketEntry = cOrder.tickets.find(t => (t.quarantinedAttachments || []).length).quarantinedAttachments[0];
+    cOrder.operations[0].quarantinedAttachments = [...(cOrder.operations[0].quarantinedAttachments || []), structuredClone(ticketEntry)];
+    check('a ticket quarantine entry copied onto an operation fails validation and manifest verification', !MES.validate(copied) && !MES.verifyManifests(copied).ok);
+    const recMoved = structuredClone(state), ncs = recMoved.maneuver.ncs, src = ncs.find(t => (t.quarantinedAttachments || []).length), dst = ncs.find(t => t !== src);
+    dst.quarantinedAttachments = [...(dst.quarantinedAttachments || []), src.quarantinedAttachments.shift()];
+    check('a quality record quarantine entry moved to another record fails validation and manifest verification', !MES.validate(recMoved) && !MES.verifyManifests(recMoved).ok);
+  }
+  // Live files count toward the workspace limit too, so large quality record files cannot pass it.
+  {
+    const live = structuredClone(state);
+    live.orders.forEach(o => { o.operations.forEach(x => { x.attachments = []; delete x.quarantinedAttachments; }); o.kitFiles = []; delete o.quarantinedKitFiles; o.tickets.forEach(t => { t.attachments = []; delete t.quarantinedAttachments; }); });
+    Object.values(live.maneuver).forEach(list => Array.isArray(list) && list.forEach(r => { if (r) { r.attachments = []; delete r.quarantinedAttachments; } }));
+    const open = live.maneuver.ncs.find(t => t.status === 'Open');
+    const big = i => ({ name: `scan-${i}.png`, type: 'image/png', size: 600000, dataUrl: `data:image/png;base64,${String(i).repeat(800000)}` });
+    const results = [0, 1, 2, 3].map(i => host.withAccount(technician, () => FlightManeuver.addRecordFile(live, 'ncs', open.id, big(i)), live));
+    check('three large live record files fit, a fourth that would pass the workspace limit is refused with what to do', results.slice(0, 3).every(r => r.ok) && results[3].ok === false && /near its attachment limit/.test(results[3].message) && open.attachments.length === 3);
+  }
   // A quality record file may be larger than an operation file; it keeps its size in quarantine.
   {
     const big = structuredClone(state), bigNc = FlightManeuver.get(big, 'ncs', big.maneuver.ncs.find(t => t.status === 'Open').id);
