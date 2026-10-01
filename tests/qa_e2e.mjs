@@ -35,3 +35,5 @@ const flows={};T.trace.forEach(s=>{const f=flows[s.flow]=flows[s.flow]||{actions
 Object.entries(flows).forEach(([k,v])=>console.log((v.fails.length?'FAIL ':'ok   ')+k.padEnd(52),'actions',v.actions,'fields',v.fields,'handoffs',v.roles.length-1,'gates',v.gates,v.end?'| '+v.end:'',v.fails.length?'\n      '+v.fails.join('\n      '):''));
 console.log('flows',Object.keys(flows).length,'failed',Object.values(flows).filter(v=>v.fails.length).length,'valid',T.valid,T.diag?JSON.stringify(T.diag):'','errors',errs.slice(0,3));
 await b.close();
+// A run whose final workspace fails MES.validate is a failed run, whatever the flows reported.
+if(!T.valid)process.exitCode=1;
