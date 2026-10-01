@@ -7980,7 +7980,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (!unique(p.projects.map(row => row && row.id)) || !p.projects.every(row => plain(row) && /^PRJ-\d{4,8}$/.test(row.id) && str(row.name, 100) && PROJECT_LIFECYCLES.includes(row.lifecycle) && PROJECT_SENSITIVITY.includes(row.sensitivity) && (row.parentId === null || p.projects.some(parent => parent.id === row.parentId)) && dateOnly(row.startDate) && dateOnly(row.dueDate) && row.dueDate >= row.startDate && Array.isArray(row.partNumbers) && row.partNumbers.length <= 100 && row.partNumbers.every(part => str(part, 50)) && (row.sensitivityHistory === undefined || (Array.isArray(row.sensitivityHistory) && row.sensitivityHistory.length <= 100 && row.sensitivityHistory.every(change => plain(change) && PROJECT_SENSITIVITY.includes(change.from) && PROJECT_SENSITIVITY.includes(change.to) && str(change.reason, 300) && change.reason.trim().length >= 3 && snapshotValid(change.by) && timestamp(change.at)))))) return false;
     if (!unique(p.objectives.map(row => row && row.id)) || !p.objectives.every(row => plain(row) && /^OBJ-\d{4,8}$/.test(row.id) && str(row.title, 120) && OBJECTIVE_STATUSES.includes(row.status) && dateOnly(row.dueDate) && snapshotValid(row.by) && timestamp(row.at))) return false;
     if (!unique(p.milestones.map(row => row && row.id)) || !p.milestones.every(row => plain(row) && /^MIL-\d{4,8}$/.test(row.id) && str(row.title, 120) && (row.projectId === null || p.projects.some(project => project.id === row.projectId)) && (row.objectiveId === null || p.objectives.some(objective => objective.id === row.objectiveId)) && dateOnly(row.dueDate) && ['Open', 'Done', 'Cancelled'].includes(row.status) && typeof row.mustStart === 'boolean' && (row.workOrderId === null || /^WO-\d{5,8}(?:-Split-\d{1,2})?$/.test(row.workOrderId)) && snapshotValid(row.by) && timestamp(row.at))) return false;
-    if (!unique(p.sprints.map(row => row && row.id)) || !p.sprints.every(row => plain(row) && /^SPT-\d{4,8}$/.test(row.id) && str(row.name, 100) && workCenterValid(row.workCenterId) && dateOnly(row.startDate) && dateOnly(row.endDate) && row.endDate >= row.startDate && Number.isFinite(row.capacityHours) && row.capacityHours >= 0 && row.capacityHours <= 10000 && Array.isArray(row.backlog) && row.backlog.length <= 500 && row.backlog.every(ref => plain(ref) && /^WO-\d{5,8}(?:-Split-\d{1,2})?$/.test(ref.workOrderId) && str(ref.operationId, 40)) && snapshotValid(row.by) && timestamp(row.at))) return false;
+    if (!unique(p.sprints.map(row => row && row.id)) || !p.sprints.every(row => plain(row) && /^SPT-\d{4,8}$/.test(row.id) && str(row.name, 100) && workCenterValid(row.workCenterId) && !sprintRangeProblem(row.startDate, row.endDate) && Number.isFinite(row.capacityHours) && row.capacityHours >= 0 && row.capacityHours <= 10000 && Array.isArray(row.backlog) && row.backlog.length <= 500 && row.backlog.every(ref => plain(ref) && /^WO-\d{5,8}(?:-Split-\d{1,2})?$/.test(ref.workOrderId) && str(ref.operationId, 40)) && snapshotValid(row.by) && timestamp(row.at))) return false;
     return true;
   };
   const nextPlanId = (rows, prefix) => `${prefix}-${String(Math.max(0, ...rows.map(row => Number(String(row.id).match(/(\d+)$/)?.[1]) || 0)) + 1).padStart(4, '0')}`;
@@ -8037,8 +8037,19 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const orders = (state.orders || []).filter(order => order.projectId === projectId), entries = orders.flatMap(order => order.operations.flatMap(operation => operation.timeEntries || []));
     return { projectId, workOrders: orders.length, minutes: entries.reduce((sum, entry) => sum + entry.minutes, 0), hours: Math.round(entries.reduce((sum, entry) => sum + entry.minutes, 0) / 60 * 100) / 100 };
   }
+  // A work-center sprint is a short planning window, at most one calendar quarter. The bound keeps capacity and
+  // burndown work proportional to a real sprint; a stored sprint outside it fails validation.
+  const SPRINT_MAX_DAYS = 92, SPRINT_EARLIEST = '2000-01-01', SPRINT_LATEST = '2099-12-31';
+  function sprintRangeProblem(startDate, endDate) {
+    if (!dateOnly(startDate) || !dateOnly(endDate)) return 'Enter the sprint start and end as real calendar dates.';
+    if (startDate < SPRINT_EARLIEST || endDate > SPRINT_LATEST) return `Sprint dates must fall between ${SPRINT_EARLIEST} and ${SPRINT_LATEST}.`;
+    if (endDate < startDate) return 'The sprint end date is before its start date. Choose an end date on or after the start.';
+    const days = Math.round((Date.parse(`${endDate}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`)) / 86400000) + 1;
+    if (days > SPRINT_MAX_DAYS) return `A sprint covers at most ${SPRINT_MAX_DAYS} days; this one covers ${days}. Split it into shorter sprints.`;
+    return '';
+  }
   function sprintCapacity(state, workCenterId, startDate, endDate) {
-    const center = WORK_CENTERS.find(row => row.id === workCenterId); if (!center || !dateOnly(startDate) || !dateOnly(endDate) || endDate < startDate) return null;
+    const center = WORK_CENTERS.find(row => row.id === workCenterId); if (!center || sprintRangeProblem(startDate, endDate)) return null;
     let workdays = 0; for (let day = new Date(`${startDate}T00:00:00Z`), end = new Date(`${endDate}T00:00:00Z`); day <= end; day.setUTCDate(day.getUTCDate() + 1)) if (day.getUTCDay() !== 0 && day.getUTCDay() !== 6) workdays++;
     const units = equipmentUnitsFor(state).filter(unit => unit.workCenterId === workCenterId && unit.active !== false), down = units.filter(unit => openMaintenanceFor(state, unit.tag)).length;
     return { workCenterId, startDate, endDate, workdays, units: units.length, unitsDown: down, capacityHours: center.hoursPerDay * workdays * Math.max(0, units.length - down) };
@@ -8047,6 +8058,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const d = denied('plan-order', 'create a work-center sprint'); if (d) return d;
     const p = ensureProjects(state), name = String(input?.name || '').trim(), workCenterId = input?.workCenterId, startDate = String(input?.startDate || ''), endDate = String(input?.endDate || '');
     if (!str(name, 100)) return fail('Enter a sprint name.');
+    const rangeProblem = sprintRangeProblem(startDate, endDate); if (rangeProblem) return fail(rangeProblem);
     const capacity = sprintCapacity(state, workCenterId, startDate, endDate); if (!capacity) return fail('Choose a registered work center and valid sprint dates.');
     const backlog = Array.isArray(input.backlog) ? input.backlog.map(row => ({ workOrderId: String(row.workOrderId || ''), operationId: String(row.operationId || '') })) : [];
     for (const ref of backlog) { const order = MES.getOrder(state, ref.workOrderId), op = order?.operations.find(item => item.id === ref.operationId); if (!op || op.done || op.workCenterId !== workCenterId) return fail('Every sprint backlog operation must be open and assigned to this work center.'); }
@@ -8063,12 +8075,19 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const byDay = new Map();
     for (const ref of sprint.backlog) { const op = MES.getOrder(state, ref.workOrderId)?.operations.find(item => item.id === ref.operationId); for (const entry of op?.timeEntries || []) { const day = entry.endedAt.slice(0, 10); byDay.set(day, (byDay.get(day) || 0) + entry.minutes / 60); } }
     const burndown = []; let remaining = totalHours;
-    for (let day = new Date(`${sprint.startDate}T00:00:00Z`), end = new Date(`${sprint.endDate}T00:00:00Z`); day <= end; day.setUTCDate(day.getUTCDate() + 1)) { const key = day.toISOString().slice(0, 10); if (day.getUTCDay() !== 0 && day.getUTCDay() !== 6) { remaining = Math.max(0, remaining - Math.min(remaining, byDay.get(key) || 0)); burndown.push({ date: key, remainingHours: Math.round(remaining * 100) / 100, actualHours: Math.round((byDay.get(key) || 0) * 100) / 100 }); } }
+    // Defensive bound: a stored sprint longer than SPRINT_MAX_DAYS fails validation, and the burndown never walks past it.
+    for (let day = new Date(`${sprint.startDate}T00:00:00Z`), end = new Date(`${sprint.endDate}T00:00:00Z`), steps = 0; day <= end && steps < SPRINT_MAX_DAYS; day.setUTCDate(day.getUTCDate() + 1), steps++) { const key = day.toISOString().slice(0, 10); if (day.getUTCDay() !== 0 && day.getUTCDay() !== 6) { remaining = Math.max(0, remaining - Math.min(remaining, byDay.get(key) || 0)); burndown.push({ date: key, remainingHours: Math.round(remaining * 100) / 100, actualHours: Math.round((byDay.get(key) || 0) * 100) / 100 }); } }
     const throughputByDay = new Map();
     for (const order of state.orders || []) for (const op of order.operations || []) if (op.workCenterId === sprint.workCenterId && op.done && op.buyoff?.at && op.buyoff.at.slice(0, 10) >= new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10)) { const day = op.buyoff.at.slice(0, 10); throughputByDay.set(day, (throughputByDay.get(day) || 0) + (Number.isFinite(op.standardHours) ? op.standardHours * order.quantity : 0)); }
     const measuredDays = [...throughputByDay.values()], measuredThroughputHoursPerDay = measuredDays.length ? Math.round(measuredDays.reduce((sum, hours) => sum + hours, 0) / measuredDays.length * 100) / 100 : null;
     let latestStartDate = null;
-    if (measuredThroughputHoursPerDay > 0) { let count = Math.ceil(Math.max(0, totalHours - completedHours) / measuredThroughputHoursPerDay), day = new Date(`${sprint.endDate}T00:00:00Z`); while (count > 0) { day.setUTCDate(day.getUTCDate() - 1); if (![0, 6].includes(day.getUTCDay())) count--; } latestStartDate = day.toISOString().slice(0, 10); }
+    if (measuredThroughputHoursPerDay > 0 && dateOnly(sprint.endDate)) {
+      // Whole weeks step back seven days at once, so the walk is at most a few days however much work remains.
+      let count = Math.ceil(Math.max(0, totalHours - completedHours) / measuredThroughputHoursPerDay); const day = new Date(`${sprint.endDate}T00:00:00Z`);
+      if (count > 5) { const weeks = Math.floor((count - 1) / 5); day.setUTCDate(day.getUTCDate() - weeks * 7); count -= weeks * 5; }
+      while (count > 0 && Number.isFinite(day.getTime())) { day.setUTCDate(day.getUTCDate() - 1); if (![0, 6].includes(day.getUTCDay())) count--; }
+      if (Number.isFinite(day.getTime()) && day.getUTCFullYear() >= 1 && day.getUTCFullYear() <= 9999) latestStartDate = day.toISOString().slice(0, 10);
+    }
     return { sprintId, backlog: sprint.backlog.length, totalHours, completedHours, remainingHours: Math.max(0, totalHours - completedHours), actualHours, capacityHours: sprint.capacityHours, overCapacity: totalHours > sprint.capacityHours, burndown, measuredThroughputHoursPerDay, latestStartDate };
   }
   function ensureInventoryLedger(state) {
@@ -8165,6 +8184,13 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   Object.assign(MES,{plannerStatus, WORK_CENTERS, EQUIPMENT_UNITS, equipmentUnitsFor, addEquipmentArea, addEquipmentUnit, MAINTENANCE_TYPES, PROJECT_LIFECYCLES, PROJECT_SENSITIVITY, OBJECTIVE_STATUSES, ensureProjects, createProject, addProjectObjective, addProjectMilestone, milestoneRisks, setProjectSensitivity, linkWorkOrderProject, projectLaborRollup, sprintCapacity, createSprint, sprintReport, recordMaintenance, closeMaintenance, recordExternalReceipt, equipmentValid, openMaintenanceFor, workCenterQueue, workCenterCapacity, clockOnOperation, clockOffOperation, laborMinutes, INVENTORY_TRANSACTION_TYPES, BUILD_CLASSES, LOT_CONFORMITY_STATUSES, ensureInventoryLedger, inventoryLedgerValid, inventoryLots, availableLotsFromLedger, postInventoryTransaction});
   const validateWithPlanner = MES.validate;
   MES.validate = state => validateWithPlanner(state) && plannerValid(state) && inventoryLedgerValid(state) && equipmentValid(state) && projectPlanValid(state);
+  const diagnoseWithPlanner = MES.diagnose;
+  MES.diagnose = state => {
+    const base = diagnoseWithPlanner(state); if (base) return base;
+    const sprints = plain(state?.projectPlan) && Array.isArray(state.projectPlan.sprints) ? state.projectPlan.sprints : [];
+    for (const row of sprints) { const problem = plain(row) ? sprintRangeProblem(row.startDate, row.endDate) : ''; if (problem) return { where: String(row.id), detail: `Sprint ${row.id} runs ${row.startDate} to ${row.endDate}. ${problem}`, fix: null }; }
+    return null;
+  };
   const seedWithPlanner = MES.seed;
   MES.seed = () => { const state = ensurePlanner(seedWithPlanner()); ['audits','certifications','supplierApprovals','qualityValues','qualityVerdicts','controlledDocuments','modelAdapterHistory','aiActionLog','aiSkillDrafts','aiSkillTriggers','aiSkillTriggerHistory','calibrationLog'].forEach(key=>{if(!Array.isArray(state[key]))state[key]=[];}); if(!plain(state.modelAdapter))state.modelAdapter=emptyModelAdapter(); ensureInventoryLedger(state); ensureResources(state); ensureProjects(state); syncPlanningBlockers(state); return state; };
   const upgradeWithPlanner = MES.upgrade;
