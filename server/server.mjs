@@ -308,6 +308,8 @@ export function createServer(options = {}) {
       const row = await store.calibrationArchived(id);
       if (!row) continue;
       if (sha256hex(JSON.stringify(row.entry)) !== row.sha256) return `Archived calibration entry ${id} on this server no longer matches the SHA-256 it was stored with. Restore the server database from a good backup. Nothing was saved.`;
+      // The indexed tool column is what the listing filters on, so it must be the signed entry's tool.
+      if (row.tag !== (row.entry && row.entry.tag)) return `Archived calibration entry ${id} on this server is filed under tool ${row.tag}, but the signed entry is for ${row.entry && row.entry.tag}. Restore the server database from a good backup. Nothing was saved.`;
       held.push({ id, recordId: row.recordId, entry: row.entry });
     }
     const heldProblem = host.MES.calibrationArchiveHeldProblem(state, held);

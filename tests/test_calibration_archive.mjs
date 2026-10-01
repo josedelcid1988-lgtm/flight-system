@@ -209,6 +209,22 @@ check('MES.recordCalibrationArchive is a reviewed server command', typeof host.r
   as(qa, latestGone, () => MES.recordCalibrationArchive(latestGone));
   check('the crafted write archives CALLOG-00002, the latest stored entry for ARC-B', !latestGone.calibrationLog.some(e => e.id === 'CALLOG-00002') && MES.validate(latestGone));
   check('the server write gate refuses to archive an entry the stored log does not allow to move', /CALLOG-00002/.test(MES.calibrationLogChanges(before, latestGone) || '') && /cannot be archived|may not be archived/.test(MES.calibrationLogChanges(before, latestGone) || ''), MES.calibrationLogChanges(before, latestGone));
+  // Codex review on #194: each signed gap must describe the archived run it covers. A record whose gap digest, first
+  // hash or count split was changed and re-signed is refused by the server, which holds the entries.
+  const resign = r => { r.manifest.hash = MES.sha256(MES.canonical(r.manifest.subject)); };
+  const gapForged = structuredClone(s);
+  gapForged.calibrationLogHead.archived[0].manifest.subject.gaps[1].digest = 'a'.repeat(64);
+  resign(gapForged.calibrationLogHead.archived[0]);
+  check('a re-signed record with a changed gap digest still validates in the engine, which does not hold the entries', MES.validate(gapForged));
+  check('the server write gate refuses a record whose gap does not describe the entries it archives', /gap/i.test(MES.calibrationLogChanges(before, gapForged) || ''), MES.calibrationLogChanges(before, gapForged));
+  const heldRows = ['CALLOG-00001', 'CALLOG-00003', 'CALLOG-00004', 'CALLOG-00006', 'CALLOG-00008'].map(id => ({ id, recordId: 'CALARC-0001', entry: before.calibrationLog.find(e => e.id === id) }));
+  check('the held-archive check refuses a record whose gap does not describe the stored entries', /gap/i.test(MES.calibrationArchiveHeldProblem(gapForged, heldRows) || ''), MES.calibrationArchiveHeldProblem(gapForged, heldRows));
+  const splitForged = structuredClone(s);
+  const gaps = splitForged.calibrationLogHead.archived[0].manifest.subject.gaps;
+  gaps[0].count += 1; gaps[1].count -= 1;
+  resign(splitForged.calibrationLogHead.archived[0]);
+  check('the held-archive check refuses a record whose gap counts split the entries differently', /gap/i.test(MES.calibrationArchiveHeldProblem(splitForged, heldRows) || ''), MES.calibrationArchiveHeldProblem(splitForged, heldRows));
+  check('the held-archive check accepts the record as signed', MES.calibrationArchiveHeldProblem(s, heldRows) === null, MES.calibrationArchiveHeldProblem(s, heldRows));
 }
 
 // Server: the archive runs as a server action, the archived entries are stored unchanged and can be read back.
@@ -356,6 +372,23 @@ const setUpAccounts = async call => {
       const refusedInit = await stray.call('PUT', '/api/workspace', { token: strayToken, body: before });
       check('the server refuses to initialize when its calibration archive holds entries no archive record in the workspace names', refusedInit.status === 422 && /CALLOG-00001/.test(refusedInit.json?.error || '') && /no archive record/.test(refusedInit.json?.error || '') && !stray.server.store.getDoc('default'), JSON.stringify(refusedInit.json));
     } finally { stray.server.store.close(); }
+  }
+  {
+    // Codex review on #194: the indexed tag column must match the signed entry, or the entry is listed under the wrong tool.
+    const tagged = makeServer();
+    await tagged.server.ready;
+    try {
+      await setUpAccounts(tagged.call);
+      const taggedToken = await signIn(tagged.call, 'arc-admin');
+      const moved = structuredClone(before);
+      as(qa, moved, () => MES.recordCalibrationArchive(moved));
+      for (const id of ['CALLOG-00001', 'CALLOG-00003', 'CALLOG-00004', 'CALLOG-00006', 'CALLOG-00008']) {
+        const e = before.calibrationLog.find(x => x.id === id), json = JSON.stringify(e);
+        tagged.server.store.putCalibrationArchived({ id, tag: id === 'CALLOG-00004' ? 'ARC-Z' : e.tag, recordId: 'CALARC-0001', json, sha256: sha256(json), by: 'restore' });
+      }
+      const refusedTag = await tagged.call('PUT', '/api/workspace', { token: taggedToken, body: moved });
+      check('the server refuses to initialize when a stored row files an archived entry under another tool', refusedTag.status === 422 && /CALLOG-00004/.test(refusedTag.json?.error || '') && /tool|tag/.test(refusedTag.json?.error || '') && !tagged.server.store.getDoc('default'), JSON.stringify(refusedTag.json));
+    } finally { tagged.server.store.close(); }
   }
   // A workspace that names archived entries the server does not hold is refused at initialization.
   const { server, call } = makeServer();

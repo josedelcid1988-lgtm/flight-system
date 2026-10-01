@@ -2829,6 +2829,22 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   };
   // The server write gate: a write keeps every entry the stored log holds, unchanged and in place, and may only
   // append. Returns a plain refusal or null. prev is the stored workspace (null before the first save).
+  // Whether a record's signed gaps describe the archived entries it covers (#130). entries are that record's archived
+  // entries in log order; each gap covers the next gap.count of them, and its from, first, to and digest must be what
+  // those entries give. The engine alone holds only the gaps, so the server runs this where it holds the entries: in the
+  // write gate on the stored copy, and against its calibration archive. Returns a plain refusal or null.
+  function calibrationGapsProblem(record, entries) {
+    const gaps = Array.isArray(calibrationArchiveSubject(record).gaps) ? calibrationArchiveSubject(record).gaps : [];
+    let next = 0;
+    for (let i = 0; i < gaps.length; i += 1) {
+      const g = gaps[i], run = entries.slice(next, next + (plain(g) && Number.isInteger(g.count) ? g.count : 0));
+      next += run.length;
+      const ok = plain(g) && run.length === g.count && run.length > 0 && g.from === (Object.hasOwn(run[0], 'previousHash') ? run[0].previousHash : undefined) && g.first === calibrationEntryHash(run[0]) && g.to === calibrationEntryHash(run[run.length - 1]) && g.digest === sha256(canonicalPayload(run));
+      if (!ok) return `Gap ${i + 1} of calibration archive record ${record.id} does not describe the archived entries it covers${run.length ? ` (${run[0].id} to ${run[run.length - 1].id})` : ''}. The record does not match the entries. Nothing was saved or archived. Restore the workspace and the server database from the last good copy.`;
+    }
+    if (next !== entries.length) return `The gaps of calibration archive record ${record.id} cover ${next} entries but the record archives ${entries.length}. Nothing was saved or archived. Restore the workspace and the server database from the last good copy.`;
+    return null;
+  }
   // What an archive in this write moves (#130): the stored entries missing from the new log, each with the archive
   // record that claims it. A record is new when the stored head does not hold it yet.
   function calibrationArchiveMoves(prev, next) {
@@ -2863,6 +2879,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     for (const r of added) {
       const moved = removed.filter(e => claims.get(e.id).record === r);
       if (sha256(canonicalPayload(moved)) !== calibrationArchiveSubject(r).digest) return `Calibration archive record ${r.id} does not match the calibration entries it archives as the shared log holds them. Nothing was saved or archived. Reload the workspace and archive again.`;
+      { const gapProblem = calibrationGapsProblem(r, moved); if (gapProblem) return gapProblem; }
     }
     const kept = before.filter(e => !removed.includes(e));
     for (let i = 0; i < kept.length; i += 1) {
@@ -2889,6 +2906,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       }
       entries.sort((a, b) => Number(String(a.id).slice(7)) - Number(String(b.id).slice(7)));
       if (sha256(canonicalPayload(entries)) !== s.digest) return `The archived calibration entries of ${r.id} on this server (${entries.slice(0, 5).map(e => e.id).join(', ')}${entries.length > 5 ? ` and ${entries.length - 5} more` : ''}) do not match the SHA-256 the archive record signed: one of them does not match. The server archive belongs to other history. Restore the server database that holds this workspace's calibration archive. Nothing was saved.`;
+      { const gapProblem = calibrationGapsProblem(r, entries); if (gapProblem) return gapProblem; }
     }
     return null;
   }
