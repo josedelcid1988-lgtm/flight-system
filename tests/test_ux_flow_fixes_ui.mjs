@@ -144,12 +144,25 @@ try {
     const before = await page.evaluate(() => JSON.stringify(state).length);
     await page.locator('#mnv-nc-form button[type=submit]').click(); await page.waitForTimeout(300);
     const e = await page.evaluate(() => ({ text: document.getElementById('mnv-nc-error').textContent.trim(), open: document.getElementById('dialog').open, invalid: [...document.querySelectorAll('#mnv-nc-form [aria-invalid=true]')].map(x => x.id), focus: document.activeElement?.id }));
-    ok('empty NC submit shows the app error naming the fields', e.open && e.text === 'Fill in the required fields: Title, Part number, Observation / discrepancy.', JSON.stringify(e));
-    ok('empty NC submit marks the empty fields invalid and focuses the error', e.invalid.join() === 'mnv-nc-title,mnv-nc-part,mnv-nc-desc' && e.focus === 'mnv-nc-error', JSON.stringify(e));
+    ok('empty NC submit shows the app error naming the fields', e.open && e.text === 'Fill in the required fields: Title, Part number, Observation / discrepancy, PO number, Line.', JSON.stringify(e));
+    ok('empty NC submit marks the empty fields invalid and focuses the error', e.invalid.join() === 'mnv-nc-title,mnv-nc-part,mnv-nc-po,mnv-nc-line,mnv-nc-desc' && e.focus === 'mnv-nc-error', JSON.stringify(e));
     ok('empty NC submit changes nothing in the workspace', await page.evaluate(n => JSON.stringify(state).length === n, before));
     await page.evaluate(() => document.getElementById('mnv-nc-error').scrollIntoView({ block: 'center' }));
     await shot(page, 'm10_nc_empty_submit');
-    await page.fill('#mnv-nc-title', 'Scratched housing'); await page.fill('#mnv-nc-part', 'SR-IN-030'); await page.fill('#mnv-nc-desc', 'Scratch on the housing at receiving.'); await page.fill('#mnv-nc-po', 'PO12345'); await page.fill('#mnv-nc-line', '1');
+    // The source-dependent fields carry the required mark for the source chosen, and are checked before the engine is asked.
+    const marks = () => page.evaluate(() => [...document.querySelectorAll('#mnv-nc-form [data-src-req]')].filter(m => !m.hidden).map(m => m.closest('.field').querySelector('input').id));
+    ok('the default PO source marks PO number and Line as required', JSON.stringify(await marks()) === JSON.stringify(['mnv-nc-po', 'mnv-nc-line']), JSON.stringify(await marks()));
+    await page.fill('#mnv-nc-title', 'Scratched housing'); await page.fill('#mnv-nc-part', 'SR-IN-030'); await page.fill('#mnv-nc-desc', 'Scratch on the housing at receiving.');
+    for (const [src, id, label] of [['Lot', 'mnv-nc-lot', 'Lot number'], ['Serial number', 'mnv-nc-serial', 'Serial number'], ['Work order', 'mnv-nc-wo', 'Work order number']]) {
+      await page.check(`#mnv-nc-form input[name=sourceType][value="${src}"]`);
+      ok(`choosing ${src} marks only its field as required`, JSON.stringify(await marks()) === JSON.stringify([id]), JSON.stringify(await marks()));
+      await page.locator('#mnv-nc-form button[type=submit]').click(); await page.waitForTimeout(200);
+      const r = await page.evaluate(() => ({ text: document.getElementById('mnv-nc-error').textContent.trim(), invalid: [...document.querySelectorAll('#mnv-nc-form [aria-invalid=true]')].map(x => x.id), open: document.getElementById('dialog').open }));
+      ok(`${src} source with its field empty is refused naming that field`, r.open && r.text === `Fill in the required field: ${label}.` && r.invalid.join() === id, JSON.stringify(r));
+    }
+    ok('a refused source field changes nothing in the workspace', await page.evaluate(n => JSON.stringify(state).length === n, before));
+    await page.check('#mnv-nc-form input[name=sourceType][value="PO line"]');
+    await page.fill('#mnv-nc-po', 'PO12345'); await page.fill('#mnv-nc-line', '1');
     await page.locator('#mnv-nc-form button[type=submit]').click(); await page.waitForTimeout(400);
     const raised = await page.evaluate(() => ({ open: document.getElementById('dialog').open, toast: document.querySelector('#toast p').textContent, err: document.getElementById('mnv-nc-error')?.textContent }));
     ok('a complete NC form still raises the NC', !raised.open && /raised\./.test(raised.toast), JSON.stringify(raised));
@@ -299,6 +312,44 @@ try {
     ok('adding a PO to a non-external operation is still refused', po.refused === 'This is not an external operation.', JSON.stringify(po));
     const stepGo = await page.evaluate(() => { const o = state.orders.find(x => x.id === 'WO-10006'), op = structuredClone(o.operations.find(x => !x.done)); op.requiresTooling = false; op.steps = [{ id: 's1', title: 'A', instruction: 'A' }, { id: 's2', title: 'B', instruction: 'B' }]; op.stepChecks = { s2: { torque: { tool: 'NOT-IN-LOG-2', value: '5', unit: 'in-lb' } } }; return buyoffPrereqs(o, op).find(x => /NOT-IN-LOG-2/.test(x.text)); });
     ok('a lapsed step tool points at its own step, not the tool field', !!stepGo && stepGo.target === '.step-dots [data-step="1"]' && stepGo.go === 'Go to step B' && /captured on step B: uncheck that step/.test(stepGo.text), JSON.stringify(stepGo));
+    // An offsite work center on an operation that is not classified as external: receiving cannot be recorded for it, so the
+    // dialog says so and names who corrects it, with no Go to that leads nowhere.
+    const mis = await page.evaluate(() => {
+      const o = state.orders.find(x => x.id === 'WO-10006'), op = structuredClone(o.operations.find(x => !x.done)), center = MES.WORK_CENTERS.find(c => c.external);
+      op.classification = 'Manufacturing'; op.workCenterId = center.id; op.externalReceipt = null;
+      const item = buyoffPrereqs(o, op).find(x => /offsite work center/.test(x.text));
+      const html = item ? buyoffPrereqBlock(o, op, [item]) : '';
+      const c = structuredClone(state), live = c.orders.find(x => x.id === o.id).operations.find(x => x.id === op.id); live.classification = 'Manufacturing'; live.workCenterId = center.id;
+      const receive = MES.recordExternalReceipt(c, o.id, op.id, { erpReceipt: 'R1', supplierInspectionLot: 'L1', level: 'Full' });
+      return { item, hold: buyoffHold(op), goto: /buyoff-goto/.test(html), receive: !receive.ok };
+    });
+    ok('an offsite work center on a non-external operation is explained, with no Go to', !!mis.item && mis.item.target === '' && /not classified as External Sub-Processing or External Testing/.test(mis.item.text) && /Manufacturing Engineering/.test(mis.item.text) && !mis.goto, JSON.stringify(mis));
+    ok('the no-step hold gives the same explanation', mis.hold?.text === mis.item?.text && mis.hold?.target === '', JSON.stringify(mis.hold));
+    ok('the engine refuses receiving on such an operation, so the explanation is accurate', mis.receive, JSON.stringify(mis));
+    // Own-work and training refusals are known before the PIN is asked, so they are listed (the engine still refuses them).
+    const sod = await page.evaluate(() => {
+      const o = state.orders.find(x => x.id === 'WO-10006'), op = structuredClone(o.operations.find(x => !x.done));
+      const realOwn = MES.ownWorkRefusal, realTraining = MES.trainingCheck;
+      try {
+        MES.ownWorkRefusal = () => ({ ok: false, message: 'Nobody inspects their own work. A different inspector must check off and buy off this inspection.' });
+        MES.trainingCheck = () => ({ ok: false, message: 'Torque training for the holder is expired. This operation requires it. Record the training in the stamp register before buy-off.' });
+        return buyoffPrereqs(o, op).filter(x => /own work|training/i.test(x.text));
+      } finally { MES.ownWorkRefusal = realOwn; MES.trainingCheck = realTraining; }
+    });
+    ok('an own-work inspection is listed before the PIN is asked, with no Go to', sod.some(x => /^Nobody inspects their own work\./.test(x.text) && x.target === ''), JSON.stringify(sod));
+    ok('lapsed training is listed before the PIN is asked, naming who records it', sod.some(x => /training .* expired/.test(x.text) && /A QA Manager records training; nobody records their own\./.test(x.text) && x.target === ''), JSON.stringify(sod));
+    // A recording-required operation on an order that is not an Installation order still gets the recording controls.
+    const rec = await page.evaluate(() => {
+      const o = structuredClone(state.orders.find(x => x.id === 'WO-10006')), op = o.operations.find(x => !x.done); o.subcategory = 'Assembly'; op.evidence = [];
+      op.requiresRecording = false; const without = renderMediaEvidence(o, op);
+      op.requiresRecording = true; const withRec = renderMediaEvidence(o, op);
+      return { without, with: /class="installation-evidence"/.test(withRec) && /Recording required/.test(withRec) };
+    });
+    ok('a recording-required operation shows the recording section on any order type', rec.with && rec.without === '', JSON.stringify(rec));
+    await page.evaluate(() => { const o = state.orders.find(x => x.id === 'WO-10006'), op = o.operations.find(x => !x.done); window.__realSub = o.subcategory; window.__realRec = op.requiresRecording; o.subcategory = 'Assembly'; op.requiresRecording = true; openOrder(o.id); });
+    await page.waitForTimeout(400);
+    ok('the Hangar view shows the recording section for it too', await page.evaluate(() => !!document.querySelector('.installation-evidence')));
+    await page.evaluate(() => { const o = state.orders.find(x => x.id === 'WO-10006'), op = o.operations.find(x => !x.done); o.subcategory = window.__realSub; op.requiresRecording = window.__realRec; });
     const eng = await page.evaluate(() => { const s = structuredClone(state), o = s.orders.find(x => x.id === 'WO-10006'), op = o.operations.find(x => !x.done); return MES.completeOperation(s, o.id, op.id, '', { stampNumber: MES.buyoffCredential(s.profile, op.buyoffType).holder?.number }); });
     ok('the engine still refuses a buy-off with the standard inspection unconfirmed', !eng.ok && /standard inspection|Check off/.test(eng.message), JSON.stringify(eng));
     // An operation with no steps held by an external PO: Complete operation is disabled and says why next to the button.
