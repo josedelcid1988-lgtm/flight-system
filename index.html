@@ -5322,6 +5322,11 @@ const OP_BOM_MAX = 12;
     if (calloutList(input.callouts).includes('MSDS') && msdsLinksFor(input.msdsLinks).error) return fail(msdsLinksFor(input.msdsLinks).error);
     const bom = readBOM(input.bom);
     if (bom.error) return fail(bom.error);
+    // BOM lines are per unit built. On the order they are stored and kitted for the order quantity, as an operation
+    // cloned from the WI is.
+    { const qty = count(order.quantity) ? order.quantity : 1, over = bom.lines.find(line => line.required * qty > KIT_LINE_MAX);
+      if (over) return fail(`At a quantity of ${qty}, ${over.partNumber} would need ${over.required * qty}, and a BOM line holds up to ${KIT_LINE_MAX}. Build the extra units on a separate work order.`);
+      bom.lines = bom.lines.map(line => ({ ...line, required: line.required * qty })); }
     { // The kit limits apply to the BOM lines this operation adds, before anything changes.
       const kit = Array.isArray(order.materials) ? order.materials : [], parts = new Set(kit.map(m => m.partNumber));
       const fresh = bom.lines.filter(line => !parts.has(line.partNumber));
@@ -5348,7 +5353,7 @@ const OP_BOM_MAX = 12;
       } }
     if (reworkLink && !op.ticketId) { op.ticketId = reworkLink; record(state, order, `${classification} operation ${op.title} linked to ${reworkLink}.`); }
     const number = opNumber(order, op.id);
-    if (bom.lines.length) record(state, order, `Op ${number} adds ${bom.lines.length} BOM line${bom.lines.length === 1 ? '' : 's'} to the kit: ${bom.lines.map(l => `${l.partNumber} x${l.required}`).join(', ')}.`);
+    if (bom.lines.length) record(state, order, `Op ${number} adds ${bom.lines.length} BOM line${bom.lines.length === 1 ? '' : 's'} to the kit for ${order.quantity} unit${order.quantity === 1 ? '' : 's'}: ${bom.lines.map(l => `${l.partNumber} x${l.required}`).join(', ')}.`);
     { const std = input?.standardRework && ['Rework', 'Repair'].includes(classification) ? reworkLibrary(state).find(t => t.id === input.standardRework) : null;
       if (std) { op.fromStandardRework = std.id; } }
     queueSequenceChange(state, order, { type: 'add', opId: op.id, title, classification, position: number });
