@@ -11,7 +11,7 @@ const TESTS=decodeURI(new URL('.',import.meta.url).pathname);
 // never the copies run-suites --mirror makes with SK_MIRROR already set.
 const FIXTURES=TESTS+'fixtures/';
 const ROOT=path.resolve(TESTS,'..');
-const {createMirror,settings,sha256,verifyChain,pruneBackups}=await import(path.join(ROOT,'server/mirror/server.mjs'));
+const {createMirror,settings,sha256,verifyChain,pruneBackups,readAnchor,startRefusal,ackCheck}=await import(path.join(ROOT,'server/mirror/server.mjs'));
 const PROD='file://'+FIXTURES+'publish.html';
 const STAMP=(h=>({build:h.match(/<meta name="fs-build" content="([^"]*)">/)[1],sha256:h.match(/<meta name="fs-build-sha256" content="([^"]*)">/)[1]}))(fs.readFileSync(FIXTURES+'publish.html','utf8'));
 const fails=[];const ok=(w,c,m='')=>{console.log((c?'  ok   ':'  FAIL ')+w+(c?'':' -> '+m));if(!c)fails.push(w);};
@@ -19,8 +19,9 @@ const tmp=fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()),'fs-mirror-test-
 const dbPath=path.join(tmp,'mirror.sqlite'),backupDir=path.join(tmp,'backups');
 
 // ================= server =================
-// The mirror refuses to start without a token; the suite runs it the way IT does, with a token and the app's origin.
-const TOKEN='mirror-suite-token',AUTH={authorization:'Bearer '+TOKEN},SECURE={token:TOKEN,allowOrigin:'*'};
+// The mirror refuses to start without its tokens; the suite runs it the way IT does: an operator token that stays
+// with the operator, a separate write token the page carries, and the app's origin.
+const TOKEN='mirror-suite-operator-token',WTOKEN='mirror-suite-write-token',AUTH={authorization:'Bearer '+TOKEN},WAUTH={authorization:'Bearer '+WTOKEN},SECURE={token:TOKEN,writeToken:WTOKEN,allowOrigin:'*'};
 const get=(u,o={})=>fetch(u,{...o,headers:{...AUTH,...(o.headers||{})}});
 let m=createMirror({dbPath,backupDir,port:0,backupEveryMinutes:0,...SECURE});
 const addr=await m.listen();const PORT=addr.port;const API=`http://127.0.0.1:${PORT}/api/v1`;
@@ -57,7 +58,7 @@ ok('WAL mode is on',m.db.prepare('PRAGMA journal_mode').get().journal_mode==='wa
 const bk=m.backup();
 const rt=spawnSync(process.execPath,[path.join(ROOT,'server/mirror/restore-test.mjs'),bk,'--against',dbPath],{encoding:'utf8'});
 ok('the restore test passes on a fresh backup and matches the live rows',rt.status===0&&/chain intact/.test(rt.stdout)&&/matches the first 4 of 4/.test(rt.stdout),rt.stdout+rt.stderr);
-{const restored=path.join(tmp,'restored.sqlite');fs.copyFileSync(bk,restored);const m2=createMirror({dbPath:restored,backupDir:path.join(tmp,'b2'),port:0,backupEveryMinutes:0,...SECURE});const a2=await m2.listen();
+{const restored=path.join(tmp,'restored.sqlite');fs.copyFileSync(bk,restored);fs.copyFileSync(bk+'.anchor.json',restored+'.anchor.json');const m2=createMirror({dbPath:restored,backupDir:path.join(tmp,'b2'),port:0,backupEveryMinutes:0,...SECURE});const a2=await m2.listen();
  const v2=await (await get(`http://127.0.0.1:${a2.port}/api/v1/verify`)).json();
  ok('a server started on the restored file reproduces the chain tip',v2.chainIntact&&v2.tip===v.tip&&v2.records===4,JSON.stringify({v2,tip:v.tip}));
  const more=await (await get(`http://127.0.0.1:${a2.port}/api/v1/writes`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({clientId:'srv',records:[rec(7)]})})).json();
@@ -73,20 +74,95 @@ ok('the restore test passes on a fresh backup and matches the live rows',rt.stat
  const tv2=verifyChain(db);ok('verify detects an edited column by the break in the next row',!tv2.ok&&tv2.firstBreak.id===3&&/previous row/.test(tv2.firstBreak.reason),JSON.stringify(tv2));db.close();
  const rt2=spawnSync(process.execPath,[path.join(ROOT,'server/mirror/restore-test.mjs'),t],{encoding:'utf8'});ok('the restore test fails on a tampered backup',rt2.status===1&&/BROKEN/.test(rt2.stdout),rt2.stdout);}
 await m.close();
-// Token: when set, every endpoint but health needs it.
-{const mt=createMirror({dbPath:path.join(tmp,'tok.sqlite'),backupDir:path.join(tmp,'b3'),port:0,backupEveryMinutes:0,token:'s3cret'});const at=await mt.listen();const u=`http://127.0.0.1:${at.port}/api/v1`;
- const no=await fetch(u+'/verify');const yes=await fetch(u+'/verify',{headers:{authorization:'Bearer s3cret'}});const h=await fetch(u+'/health');
- ok('with a token set, requests without it are refused and health stays open',no.status===401&&yes.status===200&&h.status===200);await mt.close();}
+// Token: every endpoint but health needs the operator token; the write token (the one in the page) only appends.
+{const mt=createMirror({dbPath:path.join(tmp,'tok.sqlite'),backupDir:path.join(tmp,'b3'),port:0,backupEveryMinutes:0,token:TOKEN,writeToken:WTOKEN});const at=await mt.listen();const u=`http://127.0.0.1:${at.port}/api/v1`;
+ const no=await fetch(u+'/verify');const yes=await fetch(u+'/verify',{headers:AUTH});const h=await fetch(u+'/health');
+ ok('with a token set, requests without it are refused and health stays open',no.status===401&&yes.status===200&&h.status===200);
+ const wpost=await fetch(u+'/writes',{method:'POST',headers:{'content-type':'application/json',...WAUTH},body:JSON.stringify({clientId:'w',records:[rec(40)]})});
+ ok('the write token appends records',wpost.status===200&&(await wpost.json()).results[0].status==='stored');
+ const nopost=await fetch(u+'/writes',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({clientId:'w',records:[rec(41)]})});
+ ok('a write with no token is refused',nopost.status===401);
+ const wread=await Promise.all(['/verify','/export?format=json','/export?format=csv','/records?entity=order&id=WO-40'].map(x=>fetch(u+x,{headers:WAUTH})));
+ const wbody=await wread[0].json();
+ ok('the write token cannot verify, export or read records back',wread.every(r=>r.status===401)&&/operator token/.test(wbody.error.message),JSON.stringify(wread.map(r=>r.status)));
+ const wh=await (await fetch(u+'/health',{headers:WAUTH})).json();
+ ok('health with the write token says only that the mirror is up',JSON.stringify(Object.keys(wh).sort())==='["api","ok"]',JSON.stringify(wh));
+ await mt.close();}
+// Start refusals: the page token must be a separate append-only token, and plain HTTP stays on loopback.
+{const base={dbPath:path.join(tmp,'refuse.sqlite'),backupDir:path.join(tmp,'b8'),port:0,backupEveryMinutes:0};
+ const refusal=o=>{try{const x=createMirror({...base,...o});x.db.close();return '';}catch(e){return e.message;}};
+ ok('the mirror refuses to start with an operator token and no write token',/FS_MIRROR_WRITE_TOKEN/.test(refusal({token:TOKEN})),refusal({token:TOKEN}));
+ ok('the mirror refuses a write token equal to the operator token',/must differ/.test(refusal({token:TOKEN,writeToken:TOKEN})));
+ ok('the mirror refuses short tokens',/at least 16 characters/.test(refusal({token:'s3cret',writeToken:'w3cret'})));
+ ok('the mirror refuses to listen beyond loopback in plain HTTP',/TLS-terminating reverse proxy/.test(refusal({...SECURE,host:'0.0.0.0'})),refusal({...SECURE,host:'0.0.0.0'}));
+ ok('beyond loopback is allowed once a TLS proxy is stated',refusal({...SECURE,host:'0.0.0.0',behindTlsProxy:true})==='');
+ ok('running with no token is refused beyond loopback, even behind a proxy',/only on loopback/.test(refusal({allowNoToken:true,host:'0.0.0.0',behindTlsProxy:true})));
+ ok('loopback names are recognised',[ '127.0.0.1','127.0.0.2','localhost','::1'].every(h=>startRefusal({...SECURE,host:h})===null)&&startRefusal({...SECURE,host:'10.0.0.5'})!==null);
+ ok('the environment names the write token, the proxy statement and the anchor',(()=>{const e=settings([],{FS_MIRROR_WRITE_TOKEN:'w',FS_MIRROR_BEHIND_TLS_PROXY:'1',FS_MIRROR_ANCHOR:'/x/a.json'});return e.writeToken==='w'&&e.behindTlsProxy===true&&e.anchorPath==='/x/a.json';})());}
+
+// Chain anchor and signature manifests in the chain. Each case is a copy of a backup with its anchor.
+{const {DatabaseSync}=await import('node:sqlite');
+ const fresh=path.join(tmp,'anchor.sqlite');const ma=createMirror({dbPath:fresh,backupDir:path.join(tmp,'b9'),port:0,backupEveryMinutes:0,...SECURE});const aa=await ma.listen();const ua=`http://127.0.0.1:${aa.port}/api/v1`;
+ const pa=b=>fetch(ua+'/writes',{method:'POST',headers:{'content-type':'application/json',...WAUTH},body:JSON.stringify(b)}).then(r=>r.json());
+ const first=await pa({clientId:'anc',records:[rec(50),rec(51),rec(52)]});
+ ok('an anchor is written next to the database and follows every stored batch',readAnchor(fresh+'.anchor.json')?.records===3&&readAnchor(fresh+'.anchor.json').tip===ma.verify().tip&&ma.verify().ok,JSON.stringify(readAnchor(fresh+'.anchor.json')));
+ // lastAck: the newest confirmed row is still there, or it is not (a restored server).
+ const top=first.results[2];
+ const kept=await pa({clientId:'anc',lastAck:{id:top.id,clientWriteId:'srv-52'},records:[rec(53)]});
+ ok('a post naming a confirmed row the server holds is answered ackCheck ok',kept.ackCheck==='ok',JSON.stringify(kept));
+ const lost=await pa({clientId:'anc',lastAck:{id:99,clientWriteId:'srv-99'},records:[rec(54)]});
+ ok('a post naming a confirmed row the server no longer holds is answered ackCheck missing',lost.ackCheck==='missing'&&lost.results[0].status==='stored',JSON.stringify(lost));
+ ok('a row id holding a different write is missing too',ackCheck(ma.db,{id:top.id,clientWriteId:'someone-else'})==='missing'&&ackCheck(ma.db,undefined)===undefined);
+ const bka=ma.backup();await ma.close();
+ const copy=(n,keepTriggers)=>{const f=path.join(tmp,n+'.sqlite');fs.copyFileSync(bka,f);fs.copyFileSync(bka+'.anchor.json',f+'.anchor.json');if(keepTriggers)return {f};const db=new DatabaseSync(f);['records_no_update','records_no_delete','manifests_no_update','manifests_no_delete'].forEach(t=>db.exec('DROP TRIGGER '+t));return {f,db,anchor:readAnchor(f+'.anchor.json')};};
+ {const {db,anchor}=copy('intact');const r=verifyChain(db,{anchor});ok('an intact copy verifies against its anchor',r.ok&&r.records===5,JSON.stringify(r));db.close();}
+ {const {f,db,anchor}=copy('trunc');db.exec('DELETE FROM signature_manifests WHERE record_id=(SELECT MAX(id) FROM records)');db.exec('DELETE FROM records WHERE id=(SELECT MAX(id) FROM records)');
+  const self=verifyChain(db);const r=verifyChain(db,{anchor});
+  ok('without the anchor a truncated chain still looks intact (the refusal case is real)',self.ok,JSON.stringify(self));
+  ok('with the anchor, rows removed from the end are found',!r.ok&&/removed from the end/.test(r.firstBreak.reason),JSON.stringify(r));db.close();
+  const rt3=spawnSync(process.execPath,[path.join(ROOT,'server/mirror/restore-test.mjs'),f],{encoding:'utf8'});
+  ok('the restore test fails on a backup missing rows from its end',rt3.status===1&&/removed from the end/.test(rt3.stdout),rt3.stdout+rt3.stderr);}
+ {const {db,anchor}=copy('lastrow');db.exec("UPDATE records SET actor='Someone else' WHERE id=(SELECT MAX(id) FROM records)");
+  const r=verifyChain(db,{anchor});ok('a change to the last row is found by the anchored tip',!r.ok&&/anchored chain tip/.test(r.firstBreak.reason),JSON.stringify(r));db.close();}
+ {const {db,anchor}=copy('lastpayload');const p2=JSON.stringify({id:'WO-54',value:'forged'});db.exec(`UPDATE records SET payload_json='${p2}', payload_sha256='${sha256(p2)}' WHERE id=(SELECT MAX(id) FROM records)`);
+  const r=verifyChain(db,{anchor});ok('a last payload changed together with its hash is found',!r.ok&&/anchored chain tip/.test(r.firstBreak.reason),JSON.stringify(r));db.close();}
+ {const {db,anchor}=copy('manifest');db.exec("UPDATE signature_manifests SET signer_credential='ACCT-forged' WHERE record_id=1");
+  const r=verifyChain(db,{anchor});ok('a changed signature manifest breaks the chain at its record',!r.ok&&r.firstBreak.id===1&&/signature manifests/.test(r.firstBreak.reason),JSON.stringify(r));db.close();}
+ {const {db,anchor}=copy('manifestadd');db.exec("INSERT INTO signature_manifests (record_id,path,meaning,signer_name,signer_credential,signed_at,algorithm,hash) VALUES (2,'x','Approval','Forger','ACCT-x','2026-01-01T00:00:00Z','SHA-256','"+'a'.repeat(64)+"')");
+  const r=verifyChain(db,{anchor});ok('a signature manifest added to a record breaks the chain',!r.ok&&r.firstBreak.id===2,JSON.stringify(r));db.close();}
+ {const {f}=copy('noanchor',true);fs.rmSync(f+'.anchor.json');
+  const rt4=spawnSync(process.execPath,[path.join(ROOT,'server/mirror/restore-test.mjs'),f],{encoding:'utf8'});
+  ok('the restore test refuses a backup with no anchor',rt4.status===1&&/no anchor next to the backup/.test(rt4.stderr),rt4.stdout+rt4.stderr);
+  const rt5=spawnSync(process.execPath,[path.join(ROOT,'server/mirror/restore-test.mjs'),f,'--no-anchor'],{encoding:'utf8'});
+  ok('--no-anchor checks an older backup and says truncation cannot be ruled out',rt5.status===0&&/cannot be ruled out/.test(rt5.stdout),rt5.stdout+rt5.stderr);
+  let msg='';try{createMirror({dbPath:f,backupDir:path.join(tmp,'b10'),port:0,backupEveryMinutes:0,...SECURE});}catch(e){msg=e.message;}
+  ok('the server refuses to start on a database with records and no anchor, and names --reanchor',/--reanchor/.test(msg),msg);
+  const ra=spawnSync(process.execPath,[path.join(ROOT,'server/mirror/server.mjs'),'--reanchor','--db',f],{encoding:'utf8'});
+  ok('--reanchor checks the chain and writes the anchor',ra.status===0&&readAnchor(f+'.anchor.json')?.records===5,ra.stdout+ra.stderr);}
+ {const {f,db}=copy('brokenreanchor');fs.rmSync(f+'.anchor.json');db.exec("UPDATE records SET payload_json='{}' WHERE id=2");db.close();
+  const ra=spawnSync(process.execPath,[path.join(ROOT,'server/mirror/server.mjs'),'--reanchor','--db',f],{encoding:'utf8'});
+  ok('--reanchor refuses a broken chain',ra.status===1&&!fs.existsSync(f+'.anchor.json')&&/chain is broken/.test(ra.stderr),ra.stdout+ra.stderr);}
+ // A database written before manifests joined the chain still verifies: its rows keep their original link.
+ {const old=path.join(tmp,'legacy.sqlite');const db=new DatabaseSync(old);db.exec(fs.readFileSync(path.join(ROOT,'server/mirror/schema.sql'),'utf8').replace(',\n  -- SHA-256 of this record','\n  -- SHA-256 of this record').replace(/\n  manifests_sha256 TEXT/,''));
+  const legacyLink=r=>sha256(JSON.stringify([r.id,r.client_write_id,r.store_key,r.entity_type,r.entity_id,r.operation,r.payload_sha256,r.prev_sha256,r.actor,r.credential,r.client_ts,r.server_ts,r.build_version,r.build_sha256,r.client_id]));
+  let prev='0'.repeat(64);for(const i of [1,2]){const x=rec(60+i);db.prepare('INSERT INTO records (client_write_id,store_key,entity_type,entity_id,operation,payload_json,payload_sha256,prev_sha256,actor,credential,client_ts,server_ts,build_version,build_sha256,client_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(x.clientWriteId,x.storeKey,x.entityType,x.entityId,x.operation,x.payloadJson,x.payloadSha256,prev,x.actor,x.credential,x.clientTs,'2026-01-01T00:00:00Z',x.buildVersion,x.buildSha256,'old');prev=legacyLink(db.prepare('SELECT * FROM records ORDER BY id DESC LIMIT 1').get());}
+  db.close();
+  const ra=spawnSync(process.execPath,[path.join(ROOT,'server/mirror/server.mjs'),'--reanchor','--db',old],{encoding:'utf8'});
+  const ml=createMirror({dbPath:old,backupDir:path.join(tmp,'b11'),port:0,backupEveryMinutes:0,...SECURE});const al=await ml.listen();
+  const more=await fetch(`http://127.0.0.1:${al.port}/api/v1/writes`,{method:'POST',headers:{'content-type':'application/json',...WAUTH},body:JSON.stringify({clientId:'new',records:[rec(63)]})}).then(r=>r.json());
+  const vl=ml.verify();
+  ok('a database from before this change gains the column, keeps its links and keeps writing',ra.status===0&&more.results[0].status==='stored'&&vl.ok&&vl.records===3&&vl.legacyRows===2,JSON.stringify({vl,ra:ra.stderr}));await ml.close();}
+}
 
 // Fail closed (issue 76): no token configured refuses to start, no origin configured sends no CORS header, and
 // health tells a caller without the token only that the mirror is up.
 {let refusedStart='';try{createMirror({dbPath:path.join(tmp,'none.sqlite'),backupDir:path.join(tmp,'b5'),port:0,backupEveryMinutes:0});}catch(e){refusedStart=e.message;}
  ok('the mirror refuses to start without a token and says how to set one',/FS_MIRROR_TOKEN/.test(refusedStart),refusedStart);
- const d=settings([],{});ok('the shipped defaults name no token and no CORS origin',d.token===''&&d.allowOrigin===''&&d.allowNoToken===false,JSON.stringify(d));
- const mc=createMirror({dbPath:path.join(tmp,'cors.sqlite'),backupDir:path.join(tmp,'b6'),port:0,backupEveryMinutes:0,token:'s3cret'});const ac=await mc.listen();const cu=`http://127.0.0.1:${ac.port}/api/v1`;
- const r1=await fetch(cu+'/verify',{headers:{authorization:'Bearer s3cret',origin:'https://elsewhere.example'}});
+ const d=settings([],{});ok('the shipped defaults name no token and no CORS origin, listen on loopback and state no proxy',d.token===''&&d.writeToken===''&&d.allowOrigin===''&&d.allowNoToken===false&&d.host==='127.0.0.1'&&d.behindTlsProxy===false,JSON.stringify(d));
+ const mc=createMirror({dbPath:path.join(tmp,'cors.sqlite'),backupDir:path.join(tmp,'b6'),port:0,backupEveryMinutes:0,token:TOKEN,writeToken:WTOKEN});const ac=await mc.listen();const cu=`http://127.0.0.1:${ac.port}/api/v1`;
+ const r1=await fetch(cu+'/verify',{headers:{...AUTH,origin:'https://elsewhere.example'}});
  ok('with no allowed origin configured no CORS header is sent',r1.status===200&&r1.headers.get('access-control-allow-origin')===null,String(r1.headers.get('access-control-allow-origin')));
- const hn=await (await fetch(cu+'/health')).json();const hy=await (await fetch(cu+'/health',{headers:{authorization:'Bearer s3cret'}})).json();
+ const hn=await (await fetch(cu+'/health')).json();const hy=await (await fetch(cu+'/health',{headers:AUTH})).json();
  ok('health without the token says only that the mirror is up; with it, the counts and backup settings',JSON.stringify(Object.keys(hn).sort())==='["api","ok"]'&&!!hy.backup&&typeof hy.records==='number',JSON.stringify({hn,hy}));
  await mc.close();
  const mi=createMirror({dbPath:path.join(tmp,'insecure.sqlite'),backupDir:path.join(tmp,'b7'),port:0,backupEveryMinutes:0,allowNoToken:true});const ai=await mi.listen();
@@ -105,9 +181,20 @@ const mkOrder=p=>p.evaluate(()=>{const wi=state.masterWIs.find(x=>x.status==='Re
  ok('with the mirror off a write saves and no network request is made',w.ok&&w.saved&&net.length===0,JSON.stringify({w,net}));
  ok('no page errors with the mirror off',errs.length===0,errs.join(' | '));await ctx.close();}
 
+// A mirror address in plain HTTP to another machine is refused: records and the token never cross the network unencrypted.
+{const ctx=await b.newContext();await ctx.addInitScript(()=>{window.SK_MIRROR={url:'http://mes-mirror.example:8787',token:'mirror-suite-write-token',batchSize:25};});
+ const p=await ctx.newPage();const errs=[];p.on('pageerror',e=>errs.push(e.message));const net=[];p.on('request',q=>{if(/mes-mirror\.example/.test(q.url()))net.push(q.url());});
+ await signUp(p);const w=await mkOrder(p);
+ const s=await p.evaluate(()=>({enabled:window.skMirror.enabled,refused:window.skMirror.refused||'',queue:localStorage.getItem('skyryse-mes-sync-queue-v1')}));
+ ok('an http mirror address on another machine is refused with the next step, and the write still saves',w.ok&&w.saved&&s.enabled===false&&/not an https address/.test(s.refused)&&s.queue===null&&net.length===0,JSON.stringify({s,net}));
+ const loop=await p.evaluate(()=>['http://127.0.0.1:8787','http://localhost:8787','https://mes-mirror.example'].map(u=>{try{const x=new URL(u);return x.protocol==='https:'||/^(localhost|127\.\d+\.\d+\.\d+|\[::1\])$/.test(x.hostname);}catch(e){return false;}}));
+ ok('loopback http and any https address are accepted',loop.every(Boolean),JSON.stringify(loop));
+ ok('no page errors with a refused mirror address',errs.length===0,errs.join(' | '));await ctx.close();}
+
 // Mirror on.
 m=createMirror({dbPath:path.join(tmp,'live.sqlite'),backupDir:path.join(tmp,'b4'),port:PORT,backupEveryMinutes:0,...SECURE});await m.listen();
-const ctx=await b.newContext();await ctx.addInitScript(([url,token])=>{window.SK_MIRROR={url,token,batchSize:25};},[`http://127.0.0.1:${PORT}`,TOKEN]);
+// The page carries the write token only, as IT deploys it.
+const ctx=await b.newContext();await ctx.addInitScript(([url,token])=>{window.SK_MIRROR={url,token,batchSize:25};},[`http://127.0.0.1:${PORT}`,WTOKEN]);
 const p=await ctx.newPage();const errs=[];p.on('pageerror',e=>errs.push(e.message));
 await signUp(p);
 await p.evaluate(async()=>{const a=JSON.parse(localStorage.getItem('skyryse-mes-auth-v1'));const salt='5a17c0ffee5a17c0ffee5a17c0ffee00';const hex=b=>[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');a.users.push({username:'rpark',displayName:'Riley Park',salt,hash:hex(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(salt+':demo1234'))),role:'qm',createdAt:new Date().toISOString(),createdBy:'jdoe'});localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify(a));window.dispatchEvent(new CustomEvent('sk-auth-saved'));});
@@ -124,7 +211,7 @@ st=await drain();
 ok('a signature manifest reaches the signature_manifests table',closed.ok&&!!m.db.prepare("SELECT 1 FROM signature_manifests s JOIN records r ON r.id=s.record_id WHERE r.entity_id=? AND s.meaning LIKE 'Closure approval%' AND s.signer_credential='ACCT-rpark'").get(closed.id),JSON.stringify(closed));
 
 // Offline: the server goes down; writes are never blocked, records queue and are flagged, then recover.
-await m.close();const beforeRows=Number(new (await import('node:sqlite')).DatabaseSync(path.join(tmp,'live.sqlite'),{readOnly:true}).prepare('SELECT COUNT(*) n FROM records').get().n);
+await m.close();const SQLite=await import('node:sqlite');const beforeRows=(()=>{const ro=new SQLite.DatabaseSync(path.join(tmp,'live.sqlite'),{readOnly:true});try{return Number(ro.prepare('SELECT COUNT(*) n FROM records').get().n);}finally{ro.close();}})();
 const off=await p.evaluate(async()=>{const out=[];for(let i=0;i<3;i++){const wi=state.masterWIs.find(x=>x.status==='Released');const r=MES.addOrder(state,{masterWI:wi.id+'|'+wi.revision,pedigree:'Production',subcategory:'Mfg.',quantity:1,aircraft:MES.AIRCRAFT[0],site:MES.SITES[0]});out.push(r.ok&&save());}await window.skMirror.flush();await new Promise(r=>setTimeout(r,300));const q=JSON.parse(localStorage.getItem('skyryse-mes-sync-queue-v1')||'[]');return {saved:out,status:window.skMirror.status(),indicator:document.getElementById('sync-indicator').textContent,queued:q.length,flagged:q.every(x=>x.synced===false)};});
 ok('with the server down every write still saves',off.saved.every(Boolean),JSON.stringify(off.saved));
 ok('records queue on the device, flagged unsynced, and the header counts them',off.queued>=3&&off.flagged&&off.status.unsynced===off.queued&&off.indicator===`${off.queued} unsynced`&&/unreachable/.test(off.status.lastError),JSON.stringify(off));
@@ -133,7 +220,8 @@ st=await p.evaluate(async()=>{for(let i=0;i<150&&window.skMirror.status().unsync
 ok('when the server returns the queue drains on its own (retry with backoff)',st.unsynced===0&&count()===beforeRows+off.queued,JSON.stringify({st,beforeRows,after:count(),queued:off.queued}));
 ok('the header is back to Synced and the local queue is empty',await p.evaluate(()=>document.getElementById('sync-indicator').textContent==='Synced'&&JSON.parse(localStorage.getItem('skyryse-mes-sync-queue-v1')).length===0));
 // The same records sent again (a retry the client never heard back from) change nothing.
-const again=await p.evaluate(async([url,token])=>{const auth={authorization:'Bearer '+token};const rows=await (await fetch(url+'/api/v1/export?format=json',{headers:auth})).json();const last=rows.records.slice(-2).map(r=>({clientWriteId:r.client_write_id,storeKey:r.store_key,entityType:r.entity_type,entityId:r.entity_id,operation:r.operation,payloadJson:r.payload_json,payloadSha256:r.payload_sha256,actor:r.actor,credential:r.credential,clientTs:r.client_ts,buildVersion:r.build_version,buildSha256:r.build_sha256}));const res=await (await fetch(url+'/api/v1/writes',{method:'POST',headers:{'content-type':'application/json',...auth},body:JSON.stringify({clientId:rows.records.slice(-1)[0].client_id,records:last})})).json();return res.results.map(x=>x.status);},[`http://127.0.0.1:${PORT}`,TOKEN]);
+const exported=await (await get(API+'/export?format=json')).json();
+const again=await p.evaluate(async([url,token,rows])=>{const auth={authorization:'Bearer '+token};const last=rows.records.slice(-2).map(r=>({clientWriteId:r.client_write_id,storeKey:r.store_key,entityType:r.entity_type,entityId:r.entity_id,operation:r.operation,payloadJson:r.payload_json,payloadSha256:r.payload_sha256,actor:r.actor,credential:r.credential,clientTs:r.client_ts,buildVersion:r.build_version,buildSha256:r.build_sha256}));const res=await (await fetch(url+'/api/v1/writes',{method:'POST',headers:{'content-type':'application/json',...auth},body:JSON.stringify({clientId:rows.records.slice(-1)[0].client_id,records:last})})).json();return res.results.map(x=>x.status);},[`http://127.0.0.1:${PORT}`,WTOKEN,exported]);
 ok('an idempotent retry from the app stores nothing twice',JSON.stringify(again)==='["duplicate","duplicate"]',JSON.stringify(again));
 // Nothing secret left the device.
 {const secrets=await p.evaluate(()=>JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.flatMap(u=>[u.hash,u.salt]).filter(Boolean));
@@ -142,6 +230,21 @@ ok('an idempotent retry from the app stores nothing twice',JSON.stringify(again)
  ok('no stamp PIN is on the server',!/"pin"\s*:/.test(all));}
 v=await (await get(API+'/verify')).json();
 ok('the live chain is intact after the outage and recovery',v.chainIntact===true,JSON.stringify(v));
+// Restore: the server goes back to a backup taken before rows it had confirmed. The next post names the newest
+// confirmed row, the server no longer has it, and the app sends every record again, so nothing is lost.
+{const bk2=m.backup();
+ const after=[];for(let i=0;i<2;i++)after.push((await mkOrder(p)).id);st=await drain();
+ const has=id=>!!m.db.prepare("SELECT 1 FROM records WHERE entity_type='order' AND entity_id=?").get(id);
+ ok('orders written after the backup reached the server before the restore',after.every(has)&&st.unsynced===0,JSON.stringify({after,st}));
+ await m.close();
+ const live=path.join(tmp,'live.sqlite');for(const x of ['-wal','-shm'])fs.rmSync(live+x,{force:true});fs.copyFileSync(bk2,live);fs.copyFileSync(bk2+'.anchor.json',live+'.anchor.json');
+ m=createMirror({dbPath:live,backupDir:path.join(tmp,'b4'),port:PORT,backupEveryMinutes:0,...SECURE});await m.listen();
+ ok('the restored server lacks the orders confirmed after its backup (the refusal case is real)',!after.some(has));
+ const w3=await mkOrder(p);st=await drain();
+ ok('after a restore the app sends every record again: the orders confirmed after the backup are back',w3.ok&&after.every(has)&&has(w3.id)&&st.unsynced===0&&!!st.resentAt,JSON.stringify({st,after,w3}));
+ ok('the restored and refilled chain is intact against its anchor',m.verify().ok,JSON.stringify(m.verify()));
+ const w4=await mkOrder(p);const before=count();st=await drain();
+ ok('once caught up, the next write sends only what changed',st.resentAt&&count()-before<=3,JSON.stringify({added:count()-before}));}
 ok('state valid in the app at the end',await p.evaluate(()=>MES.validate(state)));
 ok('no page errors with the mirror on, including the outage',errs.length===0,errs.join(' | '));
 await ctx.close();await b.close();await m.close();

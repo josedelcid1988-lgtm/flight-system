@@ -13797,10 +13797,13 @@ function holdActionButtons(o,h){const me=skActorId();const out=[];
    skyryse-mes-sync-queue-v1, and posts the queue to the mirror server (server/, POST /api/v1/writes).
    Nothing in the engine waits on the server: a failed post leaves the records queued and flagged, and
    they are retried with backoff until the server confirms them. Passwords, stamp PINs and their hashes
-   and salts are never queued or sent; accounts are mirrored as name, role and Support Access only. */
+   and salts are never queued or sent; accounts are mirrored as name, role and Support Access only.
+   The url must be https unless it is this machine (localhost or 127.0.0.1): records and the token never
+   cross the network in plain HTTP. Each post names the newest row the server confirmed; if the server no
+   longer has it (it was restored from a backup), every record on this device is sent again. */
 window.SK_MIRROR = window.SK_MIRROR || {
-  url: '',        // e.g. https://mes-mirror.internal:8787  (IT). Empty: the mirror is off.
-  token: '',      // sent as Authorization: Bearer <token> when the server requires one
+  url: '',        // e.g. https://mes-mirror.internal  (IT). Empty: the mirror is off.
+  token: '',      // the mirror's write token (FS_MIRROR_WRITE_TOKEN), never the operator token: anyone who can open this page can read it
   batchSize: 50   // records per POST
 };
 (function () {
@@ -13810,6 +13813,13 @@ window.SK_MIRROR = window.SK_MIRROR || {
   var QUEUE_KEY = 'skyryse-mes-sync-queue-v1', SENT_KEY = 'skyryse-mes-sync-sent-v1', CLIENT_KEY = 'skyryse-mes-sync-client-v1', AUTH_KEY = 'skyryse-mes-auth-v1';
   var off = { enabled: false, commit: function () {}, status: function () { return { enabled: false, unsynced: 0, rejected: 0 }; }, flush: function () { return Promise.resolve(); } };
   if (!base) { window.skMirror = off; return; }
+  var plainRemote = (function () { try { var u = new URL(base); return u.protocol !== 'https:' && !(u.protocol === 'http:' && /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])$/.test(u.hostname)); } catch (e) { return true; } })();
+  if (plainRemote) {
+    var why = 'Mirror off: ' + base + ' is not an https address. Records and the mirror token are sent only over https, or plain http to this machine. Ask IT for the https address of the mirror.';
+    window.skMirror = { enabled: false, refused: why, commit: function () {}, status: function () { return { enabled: false, unsynced: 0, rejected: 0, lastError: why }; }, flush: function () { return Promise.resolve(); } };
+    try { console.warn(why); } catch (e) { /* no console */ }
+    return;
+  }
 
   var read = function (key, fallback) { try { var v = JSON.parse(localStorage.getItem(key) || 'null'); return v === null ? fallback : v; } catch (e) { return fallback; } };
   var client = read(CLIENT_KEY, null);
@@ -13817,7 +13827,7 @@ window.SK_MIRROR = window.SK_MIRROR || {
   var queue = read(QUEUE_KEY, []); if (!Array.isArray(queue)) queue = [];
   var sent = read(SENT_KEY, {}); if (!sent || typeof sent !== 'object') sent = {};
   var lastJson = {};          // entity key -> JSON last queued in this page (fast path; sent holds the hashes across reloads)
-  var inflight = null, retryTimer = null, attempt = 0, lastError = '', lastSyncAt = null, memoryOnly = false;
+  var inflight = null, retryTimer = null, attempt = 0, lastError = '', lastSyncAt = null, memoryOnly = false, resentAt = null, lastWs = null;
   var persist = function () {
     try { localStorage.setItem(QUEUE_KEY, JSON.stringify(queue)); localStorage.setItem(SENT_KEY, JSON.stringify(sent)); localStorage.setItem(CLIENT_KEY, JSON.stringify(client)); memoryOnly = false; }
     catch (e) { memoryOnly = true; }
@@ -13907,6 +13917,7 @@ window.SK_MIRROR = window.SK_MIRROR || {
   function commit(ws) {
     try {
       var storeKey = typeof KEY !== 'undefined' ? KEY : 'skyryse-mes-work-order-v1';
+      lastWs = ws;
       enqueue(entities(ws, storeKey), ['*']);
       enqueue(accountEntities(), ['account']);
       paint(); schedule(0);
@@ -13919,13 +13930,17 @@ window.SK_MIRROR = window.SK_MIRROR || {
     var batch = pending().slice(0, Math.max(1, Math.min(500, Number(cfg.batchSize) || 50)));
     if (!batch.length) { paint(); return Promise.resolve(); }
     var headers = { 'content-type': 'application/json' }; if (cfg.token) headers.authorization = 'Bearer ' + cfg.token;
-    var body = JSON.stringify({ clientId: client.id, records: batch.map(function (r) { var c = {}; Object.keys(r).forEach(function (k) { if (k !== 'synced' && k !== 'rejected') c[k] = r[k]; }); return c; }) });
+    var body = JSON.stringify({ clientId: client.id, lastAck: client.ack || undefined, records: batch.map(function (r) { var c = {}; Object.keys(r).forEach(function (k) { if (k !== 'synced' && k !== 'rejected') c[k] = r[k]; }); return c; }) });
     inflight = fetch(base + '/api/v1/writes', { method: 'POST', headers: headers, body: body })
       .then(function (res) { return res.json().catch(function () { return {}; }).then(function (j) { if (!res.ok || !j.ok) throw new Error((j.error && j.error.message) || ('HTTP ' + res.status)); return j; }); })
       .then(function (j) {
         var done = {}, bad = {};
-        (j.results || []).forEach(function (r) { if (r.status === 'stored' || r.status === 'duplicate') done[r.clientWriteId] = 1; else if (r.status === 'rejected') bad[r.clientWriteId] = r.reason || 'rejected'; });
+        (j.results || []).forEach(function (r) {
+          if (r.status === 'stored' || r.status === 'duplicate') { done[r.clientWriteId] = 1; if (Number.isInteger(r.id) && (!client.ack || r.id > client.ack.id)) client.ack = { id: r.id, clientWriteId: r.clientWriteId }; }
+          else if (r.status === 'rejected') bad[r.clientWriteId] = r.reason || 'rejected';
+        });
         queue = queue.filter(function (r) { return !done[r.clientWriteId]; });
+        if (j.ackCheck === 'missing') resendAll();
         queue.forEach(function (r) { if (bad[r.clientWriteId]) r.rejected = bad[r.clientWriteId]; });
         persist(); attempt = 0; lastError = Object.keys(bad).length ? 'The mirror refused ' + Object.keys(bad).length + ' record(s): ' + bad[Object.keys(bad)[0]] : ''; lastSyncAt = new Date().toISOString();
         inflight = null; paint();
@@ -13938,7 +13953,19 @@ window.SK_MIRROR = window.SK_MIRROR || {
       });
     return inflight;
   }
-  function status() { return { enabled: true, unsynced: queue.length, rejected: queue.filter(function (r) { return r.rejected; }).length, lastError: lastError, lastSyncAt: lastSyncAt, clientId: client.id, memoryOnly: memoryOnly, url: base }; }
+  // The server no longer holds a row it confirmed to this device (it was restored from a backup taken before
+  // that row). Forget what was confirmed and queue every entity and account again, so nothing this device
+  // holds is missing from the restored mirror. The rows confirmed since the restore are kept by the server.
+  function resendAll() {
+    sent = {}; lastJson = {};
+    client.ack = null;
+    var ws = (typeof state !== 'undefined' && state) || lastWs;
+    if (ws) enqueue(entities(ws, typeof KEY !== 'undefined' ? KEY : 'skyryse-mes-work-order-v1'), ['*']);
+    enqueue(accountEntities(), ['account']);
+    resentAt = new Date().toISOString();
+    persist();
+  }
+  function status() { return { enabled: true, unsynced: queue.length, rejected: queue.filter(function (r) { return r.rejected; }).length, lastError: lastError, lastSyncAt: lastSyncAt, clientId: client.id, memoryOnly: memoryOnly, url: base, resentAt: resentAt }; }
   function paint() {
     try {
       var el = document.getElementById('sync-indicator');

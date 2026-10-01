@@ -1,22 +1,25 @@
 #!/usr/bin/env node
 // Restore test: proves a backup can be restored and that it carries an intact record chain.
 //
-//   node server/restore-test.mjs <backup.sqlite> [--against <live.sqlite>]
+//   node server/mirror/restore-test.mjs <backup.sqlite> [--against <live.sqlite>] [--no-anchor]
 //
 // The backup is copied to a temporary folder and opened there (the original is never touched). The
-// script walks the whole hash chain and prints the row count and the chain tip. With --against it also
+// script walks the whole hash chain against the anchor written next to the backup (<backup>.anchor.json),
+// so a backup missing rows from its end, or with a changed last row, fails. A backup taken before anchors
+// existed has none: --no-anchor checks it without one and says that truncation cannot be ruled out. With --against it also
 // checks that every row in the backup is identical to the same row in the live database, so the backup
 // is a true prefix of what the server holds now. Exit status 0 means the restore is good; 1 means it is not.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { verifyChain } from './server.mjs';
+import { verifyChain, readAnchor, defaultAnchorPath } from './server.mjs';
 
 const argv = process.argv.slice(2);
-const backup = argv.find(a => !a.startsWith('--'));
+const backup = argv.find((a, i) => !a.startsWith('--') && argv[i - 1] !== '--against');
 const againstAt = argv.indexOf('--against');
 const against = againstAt >= 0 ? argv[againstAt + 1] : null;
+const noAnchor = argv.includes('--no-anchor');
 if (!backup || !fs.existsSync(backup)) { console.error('FAIL give the backup file to test: node server/restore-test.mjs <backup.sqlite> [--against <live.sqlite>]'); process.exit(1); }
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fs-restore-'));
@@ -25,7 +28,10 @@ fs.copyFileSync(backup, copy);
 let ok = true;
 try {
   const db = new DatabaseSync(copy);
-  const v = verifyChain(db);
+  const anchorFile = defaultAnchorPath(backup), anchor = fs.existsSync(anchorFile) ? readAnchor(anchorFile) : undefined;
+  if (anchor === undefined && !noAnchor) { console.error(`FAIL no anchor next to the backup (${path.basename(anchorFile)}): rows removed from its end cannot be ruled out. Use the backup's anchor, or --no-anchor for a backup taken before anchors existed.`); ok = false; }
+  if (anchor === undefined && noAnchor) console.log('no anchor: checked without one (--no-anchor); rows removed from the end of this backup cannot be ruled out');
+  const v = verifyChain(db, anchor === undefined ? {} : { anchor });
   const manifests = Number(db.prepare('SELECT COUNT(*) n FROM signature_manifests').get().n);
   const triggers = db.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name").all().map(t => t.name);
   console.log(`restored ${path.basename(backup)}: ${v.records} records, ${manifests} signature manifests, chain ${v.ok ? 'intact' : 'BROKEN'}${v.ok ? `, tip ${v.tip}` : `: row ${v.firstBreak.id}, ${v.firstBreak.reason}`}`);
