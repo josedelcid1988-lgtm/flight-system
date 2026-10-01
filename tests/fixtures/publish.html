@@ -12376,7 +12376,9 @@ function orderTier(o){
 }
 // The day a work order was created: its first record event (or its baseline revision).
 function orderCreatedOn(o){const h=(Array.isArray(o.historyArchive)&&o.historyArchive[0])||(o.history||[])[0];const r=(o.revisions||[])[0];return String((h&&h.at)||(r&&r.at)||o.start||'').slice(0,10);}
-const orderBlocked=o=>MES.blockingTickets(o).length>0||!!MES.engineeringChange(o);
+// Blocked means work cannot continue: an open NC hold, an engineering change, an operation sequence change awaiting QA
+// release, or a source-inspection operation with no inspection record. Lists, filters, sorting and phone cards share it.
+const orderBlocked=o=>MES.blockingTickets(o).length>0||!!MES.engineeringChange(o)||!!MES.pendingSequenceChange(o)||MES.sourceInspectionHolds(state,o).length>0;
 function logSortValue(o,col){
   switch(col){
     case 'Work order': return String(o.id);
@@ -12437,7 +12439,7 @@ function renderOrders() {
 
 function reactOrderQueueProps(){
   const source=sortOrders(state.orders.filter(o=>(!flaggedOnly||flaggedOrder(o))&&skTable.match('orders','Part',o.partNumber)&&skTable.matchAny('orders','Status',[o.status,...(orderBlocked(o)?['Blocked']:[])])&&skTable.match('orders','Pedigree',o.pedigree)&&skTable.match('orders','Priority',(o.priority==='AOG'||MES.aogActive(o))?'AOG':o.priority)&&skTable.matchAny('orders','Work order',['site:'+MES.orderSite(o),'air:'+o.aircraft,...(MES.aogActive(o)||MES.blockingTickets(o).length?['flag:flagged']:[])])&&matchesWiFilter(o)));
-  const rows=source.map(o=>{const engineering=!!MES.engineeringChange(o),open= openTickets(o).length,held=MES.blockingTickets(o).length>0||engineering;return{record:o,held,engineering,openTickets:open,aog:o.priority==='AOG'||MES.aogActive(o),flagged:flaggedOrder(o),superseded:MES.revisionLabel(o)==='Superseded',qaPending:o.status==='Draft'&&MES.requiresReleaseQA(o)&&!MES.releaseApproval(o),overdue:o.status!=='Closed'&&!!o.due&&o.due<new Date().toISOString().slice(0,10),created:orderCreatedOn(o),progress:flightProgress(o,held)};});
+  const rows=source.map(o=>{const engineering=!!MES.engineeringChange(o),open= openTickets(o).length,held=orderBlocked(o);return{record:o,held,engineering,openTickets:open,sequenceChange:!!MES.pendingSequenceChange(o),sourceInspections:MES.sourceInspectionHolds(state,o),aog:o.priority==='AOG'||MES.aogActive(o),flagged:flaggedOrder(o),superseded:MES.revisionLabel(o)==='Superseded',qaPending:o.status==='Draft'&&MES.requiresReleaseQA(o)&&!MES.releaseApproval(o),overdue:o.status!=='Closed'&&!!o.due&&o.due<new Date().toISOString().slice(0,10),created:orderCreatedOn(o),progress:flightProgress(o,held)};});
   const headers=[
     tblHead('orders',{col:'Work order',label:'Work order',filter:{label:'Site, aircraft and flags',values:[...MES.SITES.map(s=>({value:'site:'+s,label:s})),...MES.AIRCRAFT.map(a=>({value:'air:'+a,label:a})),{value:'flag:flagged',label:'Flagged only'}]}}),
     tblHead('orders',{col:'Part',label:'Part number / Rev / Description',filter:{label:'Part number',values:[...new Set(state.orders.map(o=>o.partNumber))].sort()}}),

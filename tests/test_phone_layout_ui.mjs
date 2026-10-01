@@ -46,6 +46,15 @@ const signIn = async page => {
   await page.locator('#sk-boot form').evaluate(form => form.requestSubmit());
   await page.waitForFunction(() => !document.getElementById('sk-boot'));
 };
+// On All work orders, choose the Blocked status filter and return the ids of the cards left, then clear the filter.
+const blockedFilterCards = async page => {
+  await show(page, 'orders');
+  await page.locator('#main .fr-order-table thead summary[aria-label="Filter Status"]').click();
+  await page.locator('#main .fr-order-table thead .log-menu[open] [data-tbl-filter][data-value="Blocked"]').click();
+  const ids = await page.evaluate(() => [...document.querySelectorAll('#main .fr-wo-card')].map(card => card.dataset.woCard));
+  await page.evaluate(() => { skTable.reset('orders'); render(); });
+  return ids;
+};
 const show = (page, next, setup) => page.evaluate(([v, s]) => { if (s) Function(s)(); view = v; render(); scrollTo(0, 0); }, [next, setup || '']);
 
 const browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
@@ -234,6 +243,7 @@ try {
           assert.equal(await card(setup.nc).locator('.fr-wo-card-nc').innerText(), `${setup.open} open NC`, `${route}: a nonholding open NC is shown on the card`);
           assert.equal(await card(setup.fai).locator('.fr-wo-card-id .fr-fai-tag').innerText(), 'FAI', `${route}: an FAI order is marked`);
           assert.equal(await card(setup.inspect).locator('.fr-order-blocked').count(), 1, `${route}: a source-inspection hold blocks the card`);
+          if (route === 'orders') assert.ok((await blockedFilterCards(page)).includes(setup.inspect), 'the Blocked filter keeps a card blocked by a source inspection');
           assert.match(await card(setup.inspect).locator('.fr-wo-card-next dd').innerText(), new RegExp(`^Resolve holds before continuing: .*source inspection record for ${setup.holdTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), `${route}: the card names the source inspection`);
           assert.equal(await card(setup.building).locator('.fr-wo-card-next dd').innerText(), 'All operations recorded. Send to QA.', `${route}: a finished build is sent to QA`);
         }
@@ -257,6 +267,7 @@ try {
           const card = page.locator(`#main [data-wo-card="${id}"]`);
           assert.equal(await card.locator('.fr-order-blocked').count(), 1, `${route}: the card is Blocked`);
           assert.match(await card.locator('.fr-wo-card-next dd').innerText(), /^Resolve holds before continuing: .*QA release of the updated operation sequence/, `${route}: the card asks for the QA release, not the QA handoff`);
+          if (route === 'orders') assert.ok((await blockedFilterCards(page)).includes(id), 'the Blocked filter keeps a card blocked by a sequence change');
         }
       } finally {
         await page.evaluate(() => { const [order, status, change] = window.__seq; order.status = status; if (change === undefined) delete order.sequenceChange; else order.sequenceChange = change; render(); });
