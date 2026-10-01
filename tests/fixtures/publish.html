@@ -3001,8 +3001,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // Verifies every signature manifest in a workspace. Every manifest found anywhere in the state must
   // have a valid shape (meaning, time, named signer with a credential, SHA-256 hash). Buy-offs, NC/IDR
   // approvals, order closures, the 8130-9 completion, AQI signature and DAR acceptance, the MRB board decision,
-  // the CAR closure and the stock NC disposition approval are recomputed from the
-  // stored record; the FAIR box 22 review and approval chain link by link. Any edit to a signed field after
+  // the CAR closure, the stock NC disposition approval and the pre-release QA approval are recomputed from the
+  // stored record; the FAIR verification content is bound to what was signed; box 22 and the approval chain link by link. Any edit to a signed field after
   // signing shows up as a failure.
   function verifyManifests(state) {
     const failures = []; let checked = 0, recomputed = 0, legacy = 0; const manifestSubjects = [];
@@ -3051,6 +3051,15 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       // An approval signed before that carries no reviewed key and is checked as it was signed.
       if (plain(fair) && plain(fair.reviewed) && plain(fair.reviewed.manifest) && plain(fair.verified) && plain(fair.verified.manifest)) { recomputed++; const sub = { fair: fairId(order), verified: fair.verified.manifest.hash, ...(fair.reviewed.manifest.override ? { override: fair.reviewed.manifest.override } : {}) }; if (sha256(canonical(sub)) !== fair.reviewed.manifest.hash) failures.push({ where: `${order.id} FAIR box 22`, reason: 'box 22 does not chain to the verified FAIR' }); }
       if (plain(fair) && plain(fair.approved) && plain(fair.approved.manifest) && plain(fair.verified) && plain(fair.verified.manifest)) { recomputed++; const bindsReview = plain(fair.approved.manifest.subject) && Object.hasOwn(fair.approved.manifest.subject, 'reviewed'); const sub = { fair: fairId(order), verified: fair.verified.manifest.hash, ...(bindsReview ? { reviewed: plain(fair.reviewed) && plain(fair.reviewed.manifest) ? fair.reviewed.manifest.hash : null } : {}), ...(fair.approved.manifest.override ? { override: fair.approved.manifest.override } : {}) }; if (sha256(canonical(sub)) !== fair.approved.manifest.hash) failures.push({ where: `${order.id} FAIR approval`, reason: bindsReview ? 'approval does not chain to the verified FAIR and its box 22 review' : 'approval does not chain to the verified FAIR' }); }
+      // FAIR verification (blocks 20 and 21): the FAIR's own content (Forms 1 to 3 as entered on the FAIR) must still
+      // match what the verifier signed. Order-level fields in the snapshot (serials, quantity) may change later.
+      if (plain(fair) && plain(fair.verified) && plain(fair.verified.manifest) && plain(fair.verified.manifest.subject) && plain(fair.verified.manifest.subject.form1)) {
+        const vs = fair.verified.manifest.subject, same = (a, b) => canonical(a === undefined ? null : a) === canonical(b === undefined ? null : b); recomputed++;
+        const drift = ['form2', 'tests', 'chars'].filter(k => !same(vs[k], fair[k])).concat(['index', 'additionalChanges', 'supplierCode', 'po', 'type', 'baselinePart', 'baselineFair', 'reason', 'comments', 'sampleSize'].filter(k => !same(vs.form1[k], fair[k])));
+        if (drift.length) failures.push({ where: `${order.id} FAIR verification`, reason: `FAIR content changed after verification: ${drift.join(', ')}` });
+      }
+      // Pre-release QA approval: recomputed from the order as released.
+      if (plain(order.releaseApproval) && plain(order.releaseApproval.manifest)) recheckLive(`${order.id} pre-release QA approval`, order.releaseApproval.manifest, { orderId: order.id, revision: order.revision, woRev: order.woRev, configuration: order.releaseApproval.configuration, operations: (order.operations || []).map(op => ({ id: op.id, title: op.title, buyoffType: op.buyoffType, steps: (op.steps || []).map(st => st.id) })) });
       // 8130-9: the completed form, the AQI signature and the DAR acceptance are recomputed from the package,
       // so an edit to the form, the AQI record or the DAR record after signing fails here.
       (Array.isArray(order.conformity) ? order.conformity : []).forEach(p => {

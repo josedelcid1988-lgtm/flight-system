@@ -1,6 +1,6 @@
 // verifyManifests recomputes every signature kind from the stored record, not only from the subject the manifest
 // stored: the 8130-9 completion, the AQI signature and the DAR acceptance; the MRB board decision; the CAR closure;
-// the stock NC disposition approval; and the FAIR box 22 review, which the Skyryse QA approval now binds.
+// the stock NC disposition approval; the pre-release QA approval; the FAIR verification content; and the FAIR box 22 review, which the Skyryse QA approval now binds.
 // An edit to any signed field after signing fails verification. Box 22 is also validated as a record.
 import {chromium} from 'playwright';
 const TESTS=decodeURI(new URL('.',import.meta.url).pathname);
@@ -47,13 +47,15 @@ await expectFail('changing the defect code after approval fails',stock+"t.affect
 await expectFail('changing the approval note after approval fails',stock+"t.resolution.note='Edited.';",`${nc} disposition approval`);
 
 // ---- box 22 is signed, validated and bound into the Skyryse QA approval ----
-const fair=await run(()=>{const o=state.orders.find(o=>o.fair&&o.fair.status==='Approved');if(!o)return null;const s=structuredClone(state),x=s.orders.find(y=>y.id===o.id);x.fair.status='Verified';x.fair.approved=null;delete x.fair.reviewed;
-  const rv=MES.reviewFair(s,o.id,{pin:''});const ap=rv.ok?MES.approveFair(s,o.id,{pin:''}):null;if(rv.ok&&ap&&ap.ok)state=s;return {id:o.id,rv,ap,valid:MES.validate(s),subject:x.fair.approved&&x.fair.approved.manifest.subject,reviewedHash:x.fair.reviewed&&x.fair.reviewed.manifest.hash};});
+const fair=await run(()=>{const o=state.orders.find(o=>o.fair&&o.fair.status==='Approved');if(!o)return null;const s=structuredClone(state),x=s.orders.find(y=>y.id===o.id);x.fair.status='Open';x.fair.verified=null;x.fair.approved=null;delete x.fair.reviewed;
+  const vf=MES.verifyFair(s,o.id,{pin:''});if(!vf.ok)return {id:o.id,vf};const rv=MES.reviewFair(s,o.id,{pin:''});const ap=rv.ok?MES.approveFair(s,o.id,{pin:''}):null;if(rv.ok&&ap&&ap.ok)state=s;return {id:o.id,rv,ap,valid:MES.validate(s),subject:x.fair.approved&&x.fair.approved.manifest.subject,reviewedHash:x.fair.reviewed&&x.fair.reviewed.manifest.hash};});
 ok('box 22 signed and the FAIR approved',fair&&fair.rv.ok&&fair.ap&&fair.ap.ok&&fair.valid,JSON.stringify(fair));
 ok('the Skyryse QA approval signs the box 22 review hash',fair&&fair.subject&&fair.subject.reviewed===fair.reviewedHash,JSON.stringify(fair&&fair.subject));
 r=await run(()=>{const v=MES.verifyManifests(state);return {ok:v.ok,failures:v.failures};});
 ok('the approved FAIR verifies',r.ok===true,JSON.stringify(r.failures));
 const F=`const f=s.orders.find(o=>o.id==='${fair.id}').fair;`;
+await expectFail('changing a FAIR characteristic result after verification fails',F+"f.chars[0].result='Edited after verification';",'FAIR verification');
+await expectFail('adding a Form 2 line after verification fails',F+"f.form2=[...f.form2,{kind:'Material',name:'Added later',spec:'X',code:'',supplier:'Y',approval:'Yes',coc:'Z'}];",'FAIR verification');
 await expectFail('removing box 22 after the approval fails',F+"delete f.reviewed;",'FAIR approval');
 await expectFail('replacing the box 22 signature after the approval fails',F+"f.reviewed.manifest={...f.reviewed.manifest,hash:'0'.repeat(64)};",'FAIR');
 await expectFail('a box 22 that does not chain to the verified FAIR fails',F+"f.reviewed.manifest=MES.signManifest(s,'AS9102 FAIR reviewed and approved (blocks 22 and 23)',{fair:'FAIR-OTHER',verified:f.verified.manifest.hash},f.reviewed.at);",'FAIR box 22');
@@ -70,6 +72,10 @@ ok('a FAIR with box 22 cleared (null) still validates as a record',r.valid===tru
 await open('demo_qa150_publish.html','master');
 r=await run(()=>{const v=MES.verifyManifests(state);return {ok:v.ok,failures:v.failures};});
 ok('the 150-order regression workspace verifies',r.ok===true,JSON.stringify(r.failures));
+const rel=await run(()=>{const o=state.orders.find(o=>o.releaseApproval&&o.releaseApproval.manifest);return o&&o.id;});
+ok('fixture: an order with a pre-release QA approval',!!rel,String(rel));
+await expectFail('renaming an operation after the pre-release QA approval fails',`const o=s.orders.find(o=>o.id==='${rel}');o.operations[0].title='Renamed after release';`,`${rel} pre-release QA approval`);
+await expectFail('changing a buy-off type after the pre-release QA approval fails',`const o=s.orders.find(o=>o.id==='${rel}');o.operations[0].buyoffType=o.operations[0].buyoffType==='Quality'?'Technician':'Quality';`,`${rel} pre-release QA approval`);
 const car=await run(()=>{const c=(state.maneuver.cars||[]).find(c=>c.closure&&c.closure.manifest);return c&&c.id;});
 ok('fixture: a closed CAR',!!car,String(car));
 const C=`const c=s.maneuver.cars.find(c=>c.id==='${car}');`;
