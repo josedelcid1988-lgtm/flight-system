@@ -63,7 +63,7 @@ const cardGateOf = (order, MES) => {
     aog: order.priority === 'AOG' || !!(MES && MES.aogActive && MES.aogActive(order)),
     superseded: !!(MES && MES.revisionLabel && MES.revisionLabel(order) === 'Superseded'),
     qaPending: order.status === 'Draft' && !!(MES && MES.requiresReleaseQA && MES.requiresReleaseQA(order)) && !(MES.releaseApproval && MES.releaseApproval(order)),
-    overdue: false
+    overdue: order.status !== 'Closed' && !!order.due && order.due < new Date().toISOString().slice(0, 10)
   };
 };
 // What the card asks for next follows the workflow gates before the operation list: holds first, then release, then

@@ -194,6 +194,16 @@ try {
         for (const c of building) assert.equal(c.next, c.op, `${route} ${c.id}: a Building card shows its next open operation`);
       }
     });
+    await check(`${at} home and orders: an overdue open order's card marks its due date`, async () => {
+      const id = await page.evaluate(() => { const o = state.orders.find(x => x.status !== 'Closed' && !MES.blockingTickets(x).length); window.__due = o.due; o.due = '2020-01-02'; return o.id; });
+      for (const route of ['home', 'orders']) {
+        await show(page, route);
+        assert.equal(await page.locator(`#main [data-wo-card="${id}"] .fr-wo-card-fields dd.is-overdue`).count(), 1, `${route}: ${id} due date is marked overdue`);
+      }
+      await page.evaluate(orderId => { MES.getOrder(state, orderId).due = window.__due; render(); }, id);
+      await show(page, 'home');
+      assert.equal(await page.locator(`#main [data-wo-card="${id}"] dd.is-overdue`).count(), 0, 'a due date that has not passed is not marked');
+    });
     await check(`${at} orders: Compact changes the cards`, async () => {
       await show(page, 'orders');
       const padding = () => page.locator('#main .fr-wo-card').first().evaluate(el => parseFloat(getComputedStyle(el).paddingTop));
