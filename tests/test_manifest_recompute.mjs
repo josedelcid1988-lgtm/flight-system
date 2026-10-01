@@ -60,6 +60,8 @@ await expectFail('changing the MRB serials after the decision fails',board+"m.se
 await expectFail('changing who recorded the MRB decision fails',board+"m.decision.by={...m.decision.by,credentialId:'ACCT-other',name:'Someone Else'};",`${mrb} board decision`);
 await expectFail('changing the recorded name on the MRB decision fails',board+"m.decision.by={...m.decision.by,name:'Someone Else'};",`${mrb} board decision`);
 await expectFail('changing when the MRB decision was recorded fails',board+"m.decision.at='2026-01-01T00:00:00.000Z';",`${mrb} board decision`);
+await expectFail('#512 deleting the signed subject of an MRB decision signed since subjects were stored fails',board+"delete m.decision.manifest.subject;m.decision.at='2026-09-30T00:00:00.000Z';m.decision.manifest.at=m.decision.at;",`${mrb} board decision`);
+await expectFail('#512 deleting the signed subject of an MRB decision that carries a build stamp fails, even when backdated',board+"delete m.decision.manifest.subject;m.decision.manifest.build=m.decision.manifest.build||MES.buildStamp();",`${mrb} board decision`);
 await expectFail('removing the MRB decision manifest fails',board+"delete m.decision.manifest;",`${mrb} board decision`);
 
 const nc=await run(()=>{const t=(state.maneuver.ncs||[]).find(t=>t.resolution&&t.resolution.manifest);return t&&t.id;});
@@ -70,6 +72,8 @@ await expectFail('changing the affected quantity after approval fails',stock+"t.
 await expectFail('changing the defect code after approval fails',stock+"t.affected.defectCode='ZZ';",`${nc} disposition approval`);
 await expectFail('changing the approval note after approval fails',stock+"t.resolution.note='Edited.';",`${nc} disposition approval`);
 await expectFail('changing the recorded name on the stock NC approval fails',stock+"t.resolution.by={...t.resolution.by,name:'Someone Else'};",`${nc} disposition approval`);
+await expectFail('#512 deleting the signed subject of a stock NC approval signed since subjects were stored fails',stock+"delete t.resolution.manifest.subject;t.resolution.at='2026-09-30T00:00:00.000Z';t.resolution.manifest.at=t.resolution.at;",`${nc} disposition approval`);
+await expectFail('#512 deleting the signed subject of a current 8130-9, AQI signature or DAR acceptance fails',pkg.replace('const p=','const p=')+"p.darApproval.at='2026-09-30T00:00:00.000Z';p.darApproval.manifest.at=p.darApproval.at;delete p.darApproval.manifest.subject;",'DAR acceptance');
 await expectFail('removing the stock NC approval manifest fails',stock+"delete t.resolution.manifest;",`${nc} disposition approval`);
 r=await run(()=>{const s=structuredClone(state),t=(s.maneuver.ncs||[]).find(t=>t.resolution&&t.resolution.manifest);if(!t)return {none:true};delete t.affected;const v=MES.verifyManifests(s);return {id:t.id,ok:v.ok,where:v.failures.map(f=>f.where)};});
 ok('removing the affected record from an approved stock NC fails rather than skipping the check',r.ok===false&&r.where.some(w=>w.includes(`${r.id} disposition approval`)),JSON.stringify(r));
@@ -159,8 +163,11 @@ await expectFail('removing the FAIR verification manifest fails',F+"delete f.ver
 await expectFail('removing the Skyryse QA approval manifest fails',F+"delete f.approved.manifest;",'FAIR approval');
 await expectFail('removing the box 22 manifest fails',F+"delete f.reviewed.manifest;",'FAIR box 22');
 await expectFail('changing the recorded FAIR verifier away from the verification signer fails',F+"f.verified.by={...f.verified.by,credentialId:'ACCT-other'};",'FAIR verification');
-r=await run(([id])=>{const s=structuredClone(state),f=s.orders.find(o=>o.id===id).fair;const old=MES.signManifest(s,'AS9102 FAIR reviewed and approved (blocks 22 and 23)',{fair:f.reviewed.manifest.subject.fair,verified:f.verified.manifest.hash},f.reviewed.at);delete old.subject;f.reviewed={...f.reviewed,by:{...f.reviewed.by},manifest:old};delete f.reviewed.by.override;f.approved=null;f.status='Verified';const v=MES.verifyManifests(s);return {ok:v.ok,failures:v.failures.filter(x=>/FAIR/.test(x.where))};},[fair.id]);
+r=await run(([id])=>{const s=structuredClone(state),f=s.orders.find(o=>o.id===id).fair;const oldAt='2026-09-22T10:00:00.000Z';const old=MES.signManifest(s,'AS9102 FAIR reviewed and approved (blocks 22 and 23)',{fair:f.reviewed.manifest.subject.fair,verified:f.verified.manifest.hash},oldAt);delete old.subject;delete old.build;f.reviewed={...f.reviewed,at:oldAt,by:{...f.reviewed.by},manifest:old};delete f.reviewed.by.override;f.approved=null;f.status='Verified';const v=MES.verifyManifests(s);return {ok:v.ok,failures:v.failures.filter(x=>/FAIR/.test(x.where))};},[fair.id]);
 ok('a box 22 signed before manifest subjects were stored (old form, no subject) still verifies',r.failures.length===0,JSON.stringify(r));
+// #512: a signature made since manifests stored their subject must keep it, so its content cannot be checked in an older form.
+await expectFail('#512 deleting the signed subject of a current box 22 fails',F+"delete f.reviewed.manifest.subject;",'FAIR box 22');
+await expectFail('#512 deleting the signed subject of a current Skyryse QA approval fails',F+"delete f.approved.manifest.subject;",'FAIR approval');
 await expectFail('replacing the box 22 signature after the approval fails',F+"f.reviewed.manifest={...f.reviewed.manifest,hash:'0'.repeat(64)};",'FAIR');
 await expectFail('a box 22 that does not chain to the verified FAIR fails',F+"f.reviewed.manifest=MES.signManifest(s,'AS9102 FAIR reviewed and approved (blocks 22 and 23)',{fair:'FAIR-OTHER',verified:f.verified.manifest.hash},f.reviewed.at);",'FAIR box 22');
 r=await run(([id])=>{const bad=edit=>{const s=structuredClone(state),f=s.orders.find(o=>o.id===id).fair;edit(f);return MES.validate(s);};return {emptySigner:bad(f=>{f.reviewed.manifest={...f.reviewed.manifest,signer:{}};}),otherSigner:bad(f=>{f.reviewed.manifest={...f.reviewed.manifest,signer:{...f.reviewed.manifest.signer,credentialId:'ACCT-other'}};}),otherTime:bad(f=>{f.reviewed.manifest={...f.reviewed.manifest,at:'2020-01-01T00:00:00.000Z'};}),emptyManifest:bad(f=>{f.reviewed.manifest={};}),noManifest:bad(f=>{delete f.reviewed.manifest;}),noSigner:bad(f=>{f.reviewed.by=null;}),badTime:bad(f=>{f.reviewed.at='yesterday';}),onOpen:bad(f=>{f.status='Open';f.verified=null;f.approved=null;}),ok:MES.validate(state)};},[fair.id]);
@@ -215,6 +222,7 @@ await expectFail('editing the CAR effectiveness result after closure fails',C+"c
 await expectFail('editing the CAR closure statement after closure fails',C+"c.closure.note='Edited.';",`${car} closure`);
 await expectFail('changing who closed the CAR fails',C+"c.closure.by={...c.closure.by,credentialId:'ACCT-other',name:'Someone Else'};",`${car} closure`);
 await expectFail('changing when the CAR was closed fails',C+"c.closure.at='2026-01-01T00:00:00.000Z';",`${car} closure`);
+await expectFail('#512 deleting the signed subject of a CAR closure signed since subjects were stored fails',C+"delete c.closure.manifest.subject;c.closure.at='2026-09-30T00:00:00.000Z';c.closure.manifest.at=c.closure.at;",`${car} closure`);
 await expectFail('removing the CAR closure manifest fails',C+"delete c.closure.manifest;",`${car} closure`);
 
 const F0="const f=s.orders.find(o=>o.fair&&o.fair.status==='Approved'&&o.fair.approved).fair;";
