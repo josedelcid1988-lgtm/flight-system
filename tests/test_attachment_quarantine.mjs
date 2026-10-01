@@ -419,6 +419,27 @@ function surfaces(state) {
   check(`removing a recording with the longest fields and reason does not grow the counted workspace (${charged} to ${MES.workspaceFileBytes(state)})`, removed.ok && MES.workspaceFileBytes(state) <= charged);
 }
 
+// ---- engine: a kept file must keep the full shape of the attachment it was, under a re-signed manifest too ----
+{
+  const state = curated();
+  const [first] = surfaces(state);
+  host.withAccount(technician, () => first.add(), state);
+  const fileId = first.live().at(-1).id;
+  host.withAccount(technician, () => first.remove(fileId, REASON), state);
+  check('a properly removed file keeps a valid shape', MES.validate(structuredClone(state)));
+  const forged = (label, edit) => {
+    const copy = structuredClone(state), e = surfaces(copy)[0].quarantined().find(f => f.id === fileId);
+    edit(e); const subject = { ...e.manifest.subject, size: e.size, storage: e.storage, addedBy: e.addedBy ?? null };
+    e.manifest = { ...e.manifest, subject, hash: MES.sha256(MES.canonical(subject)) };
+    check(`validation refuses a kept file whose ${label}, even with the manifest re-signed`, !MES.validate(copy));
+  };
+  forged('adder has only a name', e => { e.addedBy = { name: e.addedBy.name }; });
+  forged('size is negative', e => { e.size = -5; });
+  forged('size is not a number', e => { e.size = '10'; });
+  forged('storage mode is unknown', e => { e.storage = 'cloud'; });
+  forged('content is inline but missing', e => { delete e.dataUrl; e.storage = 'inline'; });
+}
+
 // ---- engine: a removal is never recorded before the file was added ----
 {
   const state = curated();
