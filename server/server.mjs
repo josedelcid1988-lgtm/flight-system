@@ -262,6 +262,11 @@ export function createServer(options = {}) {
       for (const key of evidenceIdsInWorkspace(next)) {
         if (named.has(key)) continue;
         const row = await store.evidenceMeta(key);
+        // The browser uploads a recording before it saves the reference, so an initialized workspace never needs to name
+        // one the server does not hold yet. Refusing it closes the window where a reference saved ahead of someone
+        // else's in-flight upload would authorize everyone once that upload lands. The first workspace save (prev null)
+        // may carry device-only recordings from a browser workspace being imported, so it keeps the stored-row rule.
+        if (!row && prev) return `${key} is not on the server yet. Upload the recording from the device that captured it, then attach it.`;
         if (row && row.uploadedBy !== session.username) return `${key} was uploaded by another account. Only the account that uploaded a recording, a QA Manager, or a Master Access account can attach it to a record. Ask the uploader to attach it.`;
       }
     }

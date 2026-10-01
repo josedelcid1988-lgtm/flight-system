@@ -274,6 +274,17 @@ try {
     assert.equal((await server.store.getDoc('default')).etag, before.etag, 'the forged attach stores nothing');
     assert.ok((await server.store.auditRows(500)).some(row => row.action === 'evidence-refused' && row.username === 'sec-tech2'), 'the refusal is audited');
     assert.equal((await api('GET', `/evidence/${victim}`, { token: other })).status, 403, 'the recording stays unreadable to the other account');
+    // An ID whose upload has not reached the server yet (still in flight, or never sent) cannot be referenced either:
+    // otherwise the reference would authorize everyone the moment the owner's upload lands. The browser uploads before
+    // it saves the reference, so a real attach never names a recording the server does not hold.
+    const pending = 'EV-00000000-0000-4000-8000-0000000c0302';
+    const early = await api('POST', '/workspace/actions/MES.attachEvidence', { token: other, body: { args: [order.id, opId, input(pending)] }, headers: { 'If-Match': before.etag } });
+    assert.equal(early.status, 422, JSON.stringify(early.json));
+    assert.match(early.json.error, new RegExp(`^${pending} is not on the server yet\\. Upload the recording from the device that captured it, then attach it\\.`));
+    assert.equal((await server.store.getDoc('default')).etag, before.etag, 'the early reference stores nothing');
+    const lateBytes = Buffer.from(`evidence ${pending}`);
+    assert.equal((await api('POST', `/evidence/${pending}`, { token: uploader, raw: true, body: lateBytes, headers: { 'Content-Type': 'video/webm', 'X-Evidence-Sha256': createHash('sha256').update(lateBytes).digest('hex') } })).status, 201);
+    assert.equal((await api('GET', `/evidence/${pending}`, { token: other })).status, 403, 'once the upload lands, the refused reference authorizes nothing');
     const own = await api('POST', '/workspace/actions/MES.attachEvidence', { token: uploader, body: { args: [order.id, opId, input(victim)] }, headers: { 'If-Match': before.etag } });
     assert.equal(own.status, 200, JSON.stringify(own.json));
     assert.equal((await api('GET', `/evidence/${victim}`, { token: other })).status, 200, 'once its uploader attaches it, the record names it for everyone');

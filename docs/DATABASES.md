@@ -110,8 +110,10 @@ unreadable.
 
 A reference is also authority, so adding one is checked: a write (a record action or a workspace save) that adds a
 new reference to a recording the server holds is refused with 422 and recorded as `evidence-refused` unless the
-account uploaded that recording or is a QA Manager or Master Access account. A recording the workspace already
-names stays usable as before.
+account uploaded that recording or is a QA Manager or Master Access account. On a workspace that already exists, a
+new reference to a recording the server does not hold yet is refused too (the browser uploads before it saves the
+reference), so a reference cannot be saved ahead of someone else's upload. A recording the workspace already names
+stays usable as before.
 
 ## First-run setup code
 
