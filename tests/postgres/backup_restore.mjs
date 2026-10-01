@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { openPostgres, restorePostgres } from '../../server/db-postgres.mjs';
+import { openPostgres, restorePostgres, restoreListWithoutSessions } from '../../server/db-postgres.mjs';
 
 const skipReasons = [];
 const connectionString = process.env.FLIGHT_DATABASE_URL;
@@ -69,6 +69,17 @@ try {
   await sourceStore.close(); sourceStore = null;
   await adminPool.query(`DROP DATABASE "${scratchDatabase}"`);
   await adminPool.query(`CREATE DATABASE "${scratchDatabase}"`);
+
+  // The session rows never enter the restore: the restore list leaves out the sessions table's data and keeps
+  // everything else, so the one-transaction restore creates the table empty (Codex review of #228, r4151311015).
+  const fullList = await new Promise((resolve, reject) => { let out = ''; const c = spawn('pg_restore', ['-l', archivePath]); c.stdout.on('data', d => { out += d; }); c.once('error', reject); c.once('exit', code => code === 0 ? resolve(out) : reject(new Error(`pg_restore -l exited ${code}`))); });
+  const filtered = await restoreListWithoutSessions(archivePath);
+  const dataLine = /^\d+;.*\bTABLE DATA \S+ sessions\b/m;
+  assert.match(fullList, dataLine, 'the archive holds the sessions table data');
+  assert.doesNotMatch(filtered, dataLine, 'the restore list leaves out the sessions table data');
+  assert.match(filtered, /\bTABLE \S+ sessions\b/, 'the restore list still creates the sessions table');
+  assert.equal(filtered.split('\n').filter(line => /^\d+;/.test(line)).length, fullList.split('\n').filter(line => /^\d+;/.test(line)).length - 1, 'only the sessions data entry is left out');
+  console.log('ok the restore list leaves out session rows and keeps everything else');
 
   // Restore into the empty database with the new restorePostgres() flow, then
   // open it: openPostgres() verifies the audit chain on startup.

@@ -101,25 +101,28 @@ This command was not executed against a live PostgreSQL database. There is no `F
 3. An agreed maintenance window. Restore is offline: stop the MES server first, or restore into an empty database and point the server at it afterwards (`server/README.md`).
 4. A pre-wipe baseline to compare after the restore, taken with the server stopped (step 1 above). A row
    count alone is not enough: a restored row whose content differs keeps the same count, and
-   `verifyAudit()` hashes only the `audit` table. So record a content digest of every persisted table,
-   and recompute the stored SHA-256 of every evidence item and archived order:
+   `verifyAudit()` hashes only the `audit` table. So record a SHA-256 content digest of every persisted
+   table, and recompute the stored SHA-256 of every evidence item and archived order. The digest hashes
+   one row at a time, so its memory use stays bounded however large the evidence recordings are:
 
 ```sql
--- Count and content digest of every persisted table. Every row must match after the restore,
--- except sessions: the restore ends them all, so sessions must read 0 rows afterwards.
-SELECT 'documents' AS rel, COUNT(*) AS n, md5(COALESCE(string_agg(t::text, E'\n' ORDER BY t::text), '')) AS digest FROM documents t
-UNION ALL SELECT 'accounts', COUNT(*), md5(COALESCE(string_agg(t::text, E'\n' ORDER BY t::text), '')) FROM accounts t
-UNION ALL SELECT 'sessions', COUNT(*), md5(COALESCE(string_agg(t::text, E'\n' ORDER BY t::text), '')) FROM sessions t
-UNION ALL SELECT 'lockouts', COUNT(*), md5(COALESCE(string_agg(t::text, E'\n' ORDER BY t::text), '')) FROM lockouts t
-UNION ALL SELECT 'audit', COUNT(*), md5(COALESCE(string_agg(t::text, E'\n' ORDER BY t::text), '')) FROM audit t
-UNION ALL SELECT 'evidence', COUNT(*), md5(COALESCE(string_agg(t::text, E'\n' ORDER BY t::text), '')) FROM evidence t
-UNION ALL SELECT 'archive', COUNT(*), md5(COALESCE(string_agg(t::text, E'\n' ORDER BY t::text), '')) FROM archive t
-UNION ALL SELECT 'record_extracts', COUNT(*), md5(COALESCE(string_agg(t::text, E'\n' ORDER BY t::text), '')) FROM record_extracts t
-UNION ALL SELECT 'record_export_settings', COUNT(*), md5(COALESCE(string_agg(t::text, E'\n' ORDER BY t::text), '')) FROM record_export_settings t
-UNION ALL SELECT 'record_export_jobs', COUNT(*), md5(COALESCE(string_agg(t::text, E'\n' ORDER BY t::text), '')) FROM record_export_jobs t
-UNION ALL SELECT 'record_export_log', COUNT(*), md5(COALESCE(string_agg(t::text, E'\n' ORDER BY t::text), '')) FROM record_export_log t
-UNION ALL SELECT 'jira_issue_requests', COUNT(*), md5(COALESCE(string_agg(t::text, E'\n' ORDER BY t::text), '')) FROM jira_issue_requests t
-UNION ALL SELECT 'skill_runs', COUNT(*), md5(COALESCE(string_agg(t::text, E'\n' ORDER BY t::text), '')) FROM skill_runs t;
+-- Count and content digest of every persisted table. Each row is hashed on its own with SHA-256 (as canonical
+-- jsonb; an evidence recording's bytes are hashed separately, so no recording is ever concatenated with another),
+-- then the sorted row hashes are hashed again. Every row must match after the restore, except sessions: the
+-- restore never brings session rows back, so sessions must read 0 rows afterwards.
+SELECT 'documents' AS rel, COUNT(*) AS n, encode(sha256(convert_to(COALESCE(string_agg(h, '' ORDER BY h), ''), 'UTF8')), 'hex') AS digest FROM (SELECT encode(sha256(convert_to((to_jsonb(t))::text, 'UTF8')), 'hex') AS h FROM documents t) r
+UNION ALL SELECT 'accounts', COUNT(*), encode(sha256(convert_to(COALESCE(string_agg(h, '' ORDER BY h), ''), 'UTF8')), 'hex') FROM (SELECT encode(sha256(convert_to((to_jsonb(t))::text, 'UTF8')), 'hex') AS h FROM accounts t) r
+UNION ALL SELECT 'sessions', COUNT(*), encode(sha256(convert_to(COALESCE(string_agg(h, '' ORDER BY h), ''), 'UTF8')), 'hex') FROM (SELECT encode(sha256(convert_to((to_jsonb(t))::text, 'UTF8')), 'hex') AS h FROM sessions t) r
+UNION ALL SELECT 'lockouts', COUNT(*), encode(sha256(convert_to(COALESCE(string_agg(h, '' ORDER BY h), ''), 'UTF8')), 'hex') FROM (SELECT encode(sha256(convert_to((to_jsonb(t))::text, 'UTF8')), 'hex') AS h FROM lockouts t) r
+UNION ALL SELECT 'audit', COUNT(*), encode(sha256(convert_to(COALESCE(string_agg(h, '' ORDER BY h), ''), 'UTF8')), 'hex') FROM (SELECT encode(sha256(convert_to((to_jsonb(t))::text, 'UTF8')), 'hex') AS h FROM audit t) r
+UNION ALL SELECT 'evidence', COUNT(*), encode(sha256(convert_to(COALESCE(string_agg(h, '' ORDER BY h), ''), 'UTF8')), 'hex') FROM (SELECT encode(sha256(convert_to(((to_jsonb(t) - 'bytes') || jsonb_build_object('bytes_sha256', encode(sha256(t.bytes), 'hex')))::text, 'UTF8')), 'hex') AS h FROM evidence t) r
+UNION ALL SELECT 'archive', COUNT(*), encode(sha256(convert_to(COALESCE(string_agg(h, '' ORDER BY h), ''), 'UTF8')), 'hex') FROM (SELECT encode(sha256(convert_to((to_jsonb(t))::text, 'UTF8')), 'hex') AS h FROM archive t) r
+UNION ALL SELECT 'record_extracts', COUNT(*), encode(sha256(convert_to(COALESCE(string_agg(h, '' ORDER BY h), ''), 'UTF8')), 'hex') FROM (SELECT encode(sha256(convert_to((to_jsonb(t))::text, 'UTF8')), 'hex') AS h FROM record_extracts t) r
+UNION ALL SELECT 'record_export_settings', COUNT(*), encode(sha256(convert_to(COALESCE(string_agg(h, '' ORDER BY h), ''), 'UTF8')), 'hex') FROM (SELECT encode(sha256(convert_to((to_jsonb(t))::text, 'UTF8')), 'hex') AS h FROM record_export_settings t) r
+UNION ALL SELECT 'record_export_jobs', COUNT(*), encode(sha256(convert_to(COALESCE(string_agg(h, '' ORDER BY h), ''), 'UTF8')), 'hex') FROM (SELECT encode(sha256(convert_to((to_jsonb(t))::text, 'UTF8')), 'hex') AS h FROM record_export_jobs t) r
+UNION ALL SELECT 'record_export_log', COUNT(*), encode(sha256(convert_to(COALESCE(string_agg(h, '' ORDER BY h), ''), 'UTF8')), 'hex') FROM (SELECT encode(sha256(convert_to((to_jsonb(t))::text, 'UTF8')), 'hex') AS h FROM record_export_log t) r
+UNION ALL SELECT 'jira_issue_requests', COUNT(*), encode(sha256(convert_to(COALESCE(string_agg(h, '' ORDER BY h), ''), 'UTF8')), 'hex') FROM (SELECT encode(sha256(convert_to((to_jsonb(t))::text, 'UTF8')), 'hex') AS h FROM jira_issue_requests t) r
+UNION ALL SELECT 'skill_runs', COUNT(*), encode(sha256(convert_to(COALESCE(string_agg(h, '' ORDER BY h), ''), 'UTF8')), 'hex') FROM (SELECT encode(sha256(convert_to((to_jsonb(t))::text, 'UTF8')), 'hex') AS h FROM skill_runs t) r;
 
 -- Stored hashes recomputed from the stored content. Both queries must return no rows, before and after.
 SELECT id FROM evidence WHERE encode(sha256(bytes), 'hex') <> sha256;

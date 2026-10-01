@@ -22,9 +22,9 @@ node server/server.mjs --database-url "$FLIGHT_DATABASE_URL" --restore /backups/
 ```
 
 The restore expects an empty database by default. It runs as one transaction: if any step fails,
-the target is left exactly as it was, including with `clean: true`. Every session in the archive is
-ended when the restore finishes, so a token that was signed out after the backup cannot work again;
-everyone signs in again. Starting the server after a restore verifies the
+the target is left exactly as it was, including with `clean: true`. The session rows in the archive
+are never restored: the same transaction recreates the sessions table empty, so a token that was
+signed out after the backup cannot work again; everyone signs in again. Starting the server after a restore verifies the
 audit chain before accepting traffic; a tampered archive refuses to start, exactly as it does for
 SQLite.
 

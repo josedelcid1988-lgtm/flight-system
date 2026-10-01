@@ -2,6 +2,9 @@
 // use one checked-out client so the statements share the same database session.
 import { createHash, randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS documents (tenant TEXT PRIMARY KEY, json TEXT NOT NULL, etag TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, updated_by TEXT);
@@ -101,37 +104,47 @@ export async function openPostgresReadOnly(connectionString) {
 // object is dropped and recreated (--clean --if-exists) for a replace-in-place
 // restore. The restore runs as one transaction (--single-transaction): if any step
 // fails, nothing it dropped or wrote is kept, so a failed clean restore cannot leave
-// the database partly erased (Codex #16 r4127638807). Every session restored from the
-// archive is then ended. After a restore, open the database with openPostgres(), which
-// refuses to start when the restored audit chain does not verify.
+// the database partly erased (Codex #16 r4127638807). The session rows in the archive
+// are never restored: the restore runs from the archive's table of contents with the
+// sessions table data left out, so the same transaction creates the table empty and a
+// token signed out after the backup cannot work again (Codex #16 r4127638817; doing it
+// inside the transaction answers the review of #228). After a restore, open the database
+// with openPostgres(), which refuses to start when the restored audit chain does not verify.
 export async function restorePostgres(connectionString, archivePath, options = {}) {
   if (!connectionString) throw new Error('Set FLIGHT_DATABASE_URL to select the restore target.');
   if (!archivePath) throw new Error('A pg_dump custom-format archive path is required.');
-  const args = ['--exit-on-error', '--single-transaction', '--no-owner', '--dbname', connectionString];
-  if (options.clean) args.push('--clean', '--if-exists');
-  if (Array.isArray(options.extraArgs)) args.push(...options.extraArgs);
-  args.push(archivePath);
-  await new Promise((resolve, reject) => {
-    const child = spawn('pg_restore', args, { stdio: 'ignore' });
-    child.once('error', reject);
-    child.once('exit', (code, signal) => {
-      if (code === 0) resolve();
-      else reject(new Error(`pg_restore failed (${signal || code}). Install PostgreSQL client tools and verify database access.`));
-    });
-  });
-  await endRestoredSessions(connectionString);
+  const list = await restoreListWithoutSessions(archivePath);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flight-restore-'));
+  const listPath = path.join(dir, 'restore.list');
+  try {
+    fs.writeFileSync(listPath, list, { mode: 0o600 });
+    const args = ['--exit-on-error', '--single-transaction', '--no-owner', '--use-list', listPath, '--dbname', connectionString];
+    if (options.clean) args.push('--clean', '--if-exists');
+    if (Array.isArray(options.extraArgs)) args.push(...options.extraArgs);
+    args.push(archivePath);
+    await runPgRestore(args);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   return 0;
 }
 
-// A backup holds the session table as it stood when the backup was taken, including sessions that were
-// signed out or replaced since. None of them may work again after a restore, so every restored session is
-// ended before the restore reports success: everyone signs in again (Codex #16 r4127638817).
-async function endRestoredSessions(connectionString) {
-  const { Pool } = await import('pg');
-  const pool = new Pool({ connectionString });
-  try { await pool.query('DELETE FROM sessions'); }
-  catch (e) { if (e && e.code !== '42P01') throw Object.assign(new Error(`The restore finished, but its sessions could not be ended (${e.message}). Do not start the server on this database until the sessions table is emptied.`), { restored: true }); }
-  finally { await pool.end().catch(() => {}); }
+// The archive's table of contents (pg_restore --list) without the sessions table data entry. Every other
+// entry, including the sessions table itself, is kept.
+export async function restoreListWithoutSessions(archivePath) {
+  const list = await runPgRestore(['--list', archivePath], true);
+  return list.split('\n').filter(line => !/^\d+;.*\bTABLE DATA \S+ sessions\b/.test(line)).join('\n');
+}
+
+function runPgRestore(args, capture = false) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('pg_restore', args, { stdio: ['ignore', capture ? 'pipe' : 'ignore', 'ignore'] });
+    let out = '';
+    if (capture) child.stdout.on('data', chunk => { out += chunk; });
+    child.once('error', reject);
+    child.once('exit', (code, signal) => {
+      if (code === 0) resolve(out);
+      else reject(new Error(`pg_restore failed (${signal || code}). Install PostgreSQL client tools and verify database access.`));
+    });
+  });
 }
 
 function makeStore(pool, query, inTransaction, connectionString) {
