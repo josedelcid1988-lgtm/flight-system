@@ -184,27 +184,64 @@ export async function restoreListWithoutSessions(archivePath) {
 }
 
 // The --dbname argument without its password, and the password for the child's PGPASSWORD (#234). Anyone who can read
-// the process table sees a program's arguments while it runs, so the password goes to pg_restore and pg_dump through their own
-// environment instead. Both connection string forms are read: a postgres:// or postgresql:// URI (the password part of
-// its user info), and keyword=value pairs (password=... or password='...'). A string with no password is passed unchanged.
-export function pgRestoreTarget(connectionString) {
+// the process table sees a program's arguments while it runs, so the password goes to pg_restore and pg_dump through
+// their own environment instead. The connection string is read by libpq's own rules, without re-encoding anything else:
+// - URI form (postgresql:// or postgres://, host optional): the password in the user info, then any ?password= query
+//   parameter, the last one read winning as libpq reads it; every password parameter is removed and the other
+//   parameters are kept exactly as written.
+// - keyword=value form: every password assignment is removed and the last one is the password.
+// A string with no password, or a bare database name, is passed unchanged. A string that cannot be read is refused, never passed on as it was,
+// since it may hold the password. A password beside a connection service (service= in the string, or PGSERVICE) is
+// refused too: libpq lets a service file's password override PGPASSWORD, so moving the password out of the string
+// would change which password is used.
+export function pgRestoreTarget(connectionString, env = process.env) {
   const raw = String(connectionString);
+  const refuse = why => { throw new Error(`The PostgreSQL connection string ${why}. Nothing was run. Fix FLIGHT_DATABASE_URL and try again.`); };
+  const pct = text => { try { return decodeURIComponent(text); } catch { return refuse('has a malformed percent-encoded part'); } };
+  let dbname = raw, password = null, service = false;
+  // A bare database name (no = and not a URI) holds no password: libpq reads it as the dbname alone.
+  if (!/^postgres(ql)?:\/\//i.test(raw) && !raw.includes('=')) return { dbname: raw, env: {} };
   if (/^postgres(ql)?:\/\//i.test(raw)) {
-    let url;
-    try { url = new URL(raw); } catch { return { dbname: raw, env: {} }; }
-    // A password can also ride in the query string (?password=...).
-    const query = url.searchParams.get('password');
-    if (!url.password && query === null) return { dbname: raw, env: {} };
-    const password = url.password ? decodeURIComponent(url.password) : query;
-    url.password = '';
-    url.searchParams.delete('password');
-    return { dbname: url.href, env: { PGPASSWORD: password } };
+    const uri = raw.match(/^(postgres(?:ql)?:\/\/)([^/?#]*)([^?#]*)(?:\?([^#]*))?(#.*)?$/i);
+    if (!uri) refuse('is not a URI libpq can read');
+    const [, scheme, authority, path, query, fragment = ''] = uri;
+    const at = authority.lastIndexOf('@');
+    let userinfo = at >= 0 ? authority.slice(0, at) : null;
+    const hosts = at >= 0 ? authority.slice(at + 1) : authority;
+    if (userinfo !== null && userinfo.includes(':')) {
+      password = pct(userinfo.slice(userinfo.indexOf(':') + 1));
+      userinfo = userinfo.slice(0, userinfo.indexOf(':'));
+    }
+    const kept = [];
+    for (const part of query === undefined ? [] : query.split('&')) {
+      const eq = part.indexOf('='), key = pct(eq >= 0 ? part.slice(0, eq) : part);
+      if (key === 'password') { password = pct(eq >= 0 ? part.slice(eq + 1) : ''); continue; }
+      if (key === 'service') service = true;
+      kept.push(part);
+    }
+    if (password === null) return { dbname: raw, env: {} };
+    dbname = `${scheme}${userinfo !== null ? `${userinfo}@` : ''}${hosts}${path}${kept.length ? `?${kept.join('&')}` : ''}${fragment}`;
+  } else {
+    // keyword=value pairs: a value is single-quoted (backslash escapes a quote or a backslash) or runs to whitespace.
+    const pair = /\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*('(?:\\.|[^'\\])*'|[^\s']*)/y;
+    const kept = [];
+    let index = 0;
+    while (index < raw.length) {
+      if (/^\s*$/.test(raw.slice(index))) break;
+      pair.lastIndex = index;
+      const match = pair.exec(raw);
+      if (!match) refuse('is not a list of keyword=value settings libpq can read');
+      index = pair.lastIndex;
+      const [text, key, value] = match;
+      if (key === 'password') { password = value.startsWith("'") ? value.slice(1, -1).replace(/\\(.)/g, '$1') : value; continue; }
+      if (key === 'service') service = true;
+      kept.push(text.trim());
+    }
+    if (password === null) return { dbname: raw, env: {} };
+    dbname = kept.join(' ');
   }
-  const keyword = /(^|\s)password\s*=\s*('(?:\\.|[^'\\])*'|[^\s']\S*)/;
-  const match = raw.match(keyword);
-  if (!match) return { dbname: raw, env: {} };
-  const value = match[2].startsWith("'") ? match[2].slice(1, -1).replace(/\\(.)/g, '$1') : match[2];
-  return { dbname: raw.replace(keyword, '$1').trim(), env: { PGPASSWORD: value } };
+  if (service || (env && env.PGSERVICE)) refuse('names a password and a connection service; keep the password in the service file or in PGPASSWORD, not in the string, so backups and restores use the same password as the server');
+  return { dbname, env: { PGPASSWORD: password } };
 }
 
 function runPgRestore(args, capture = false, env = {}) {

@@ -19,14 +19,39 @@ const cases = [
   ['a postgres:// URI with a password', 'postgres://flight:pw@db/flight?sslmode=require', { dbname: 'postgres://flight@db/flight?sslmode=require', env: { PGPASSWORD: 'pw' } }],
   ['a URI with the password in its query', 'postgresql://flight@db/flight?password=pw&sslmode=require', { dbname: 'postgresql://flight@db/flight?sslmode=require', env: { PGPASSWORD: 'pw' } }],
   ['a URI with no password', 'postgresql://flight@db/flight', { dbname: 'postgresql://flight@db/flight', env: {} }],
-  ['keywords with a plain password', 'host=db user=flight password=plain dbname=flight', { dbname: 'host=db user=flight  dbname=flight', env: { PGPASSWORD: 'plain' } }],
-  ['keywords with a quoted password', "host=db password='it\\'s a pass' dbname=flight", { dbname: 'host=db  dbname=flight', env: { PGPASSWORD: "it's a pass" } }],
+  // Codex 4160965073: libpq allows a URI with no host (a local socket); the password still leaves the argument.
+  ['an empty-host socket URI', 'postgresql://flight:secret@/flight', { dbname: 'postgresql://flight@/flight', env: { PGPASSWORD: 'secret' } }],
+  // Codex 4160965098: a ?password= after the user info is the one libpq uses.
+  ['a URI whose query password overrides its user info', 'postgresql://flight:old@db/flight?password=rotated', { dbname: 'postgresql://flight@db/flight', env: { PGPASSWORD: 'rotated' } }],
+  // Codex 4160965088: the other query parameters are kept byte for byte (%20 stays %20, never +).
+  ['a URI with percent-encoded options', 'postgresql://flight@db/flight?options=-c%20synchronous_commit%3Doff&password=pw', { dbname: 'postgresql://flight@db/flight?options=-c%20synchronous_commit%3Doff', env: { PGPASSWORD: 'pw' } }],
+  ['a multi-host URI', 'postgres://flight:pw@h1:5432,h2/flight', { dbname: 'postgres://flight@h1:5432,h2/flight', env: { PGPASSWORD: 'pw' } }],
+  ['keywords with a plain password', 'host=db user=flight password=plain dbname=flight', { dbname: 'host=db user=flight dbname=flight', env: { PGPASSWORD: 'plain' } }],
+  ['keywords with a quoted password', "host=db password='it\\'s a pass' dbname=flight", { dbname: 'host=db dbname=flight', env: { PGPASSWORD: "it's a pass" } }],
+  // Codex 4160965078: every password assignment leaves the argument, and the last one is the password libpq uses.
+  ['keywords with a repeated password', 'password=old host=db password=current dbname=flight', { dbname: 'host=db dbname=flight', env: { PGPASSWORD: 'current' } }],
   ['keywords with no password', 'host=db dbname=flight', { dbname: 'host=db dbname=flight', env: {} }],
+  ['a bare database name', 'flight', { dbname: 'flight', env: {} }],
 ];
 for (const [label, input, want] of cases) {
-  const got = pgRestoreTarget(input);
+  const got = pgRestoreTarget(input, {});
   check(`${label}: the password leaves the --dbname argument for PGPASSWORD`, same(got, want), JSON.stringify(got));
 }
+// Refusals: nothing that may hold the password is ever passed on as it was. The message never repeats the secret.
+const refusals = [
+  ['a malformed URI escape', 'postgresql://flight:Hidden-1%zz@db/flight', {}, /malformed percent-encoded/],
+  ['keyword text libpq cannot read', "host=db password='Hidden-1", {}, /keyword=value settings/],
+  // Codex 4160965107: a service file's password overrides PGPASSWORD, so a password beside a service is refused.
+  ['a password beside service=', 'host=db service=prod password=Hidden-1', {}, /connection service/],
+  ['a URI password beside ?service=', 'postgresql://flight:Hidden-1@db/flight?service=prod', {}, /connection service/],
+  ['a password with PGSERVICE set', 'postgresql://flight:Hidden-1@db/flight', { PGSERVICE: 'prod' }, /connection service/],
+];
+for (const [label, input, env, pattern] of refusals) {
+  let error = null;
+  try { pgRestoreTarget(input, env); } catch (e) { error = e; }
+  check(`${label} is refused with a plain reason that does not repeat the password`, !!error && pattern.test(error.message) && !error.message.includes('Hidden-1'), error?.message);
+}
+check('a service with no password in the string is passed unchanged', same(pgRestoreTarget('service=prod', { PGSERVICE: 'prod' }), { dbname: 'service=prod', env: {} }));
 
 // ---- restorePostgres passes no password in pg_restore's arguments ---------------------------------------------
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flight-pgpass-'));
@@ -35,9 +60,10 @@ const fake = path.join(dir, 'pg_restore');
 fs.writeFileSync(fake, `#!${process.execPath}\nconst fs = require('fs');\nfs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args: process.argv.slice(2), password: process.env.PGPASSWORD ?? null }) + '\\n');\nif (process.argv.includes('--list')) process.stdout.write('1; 2 3 TABLE DATA public workspace flight\\n');\n`, { mode: 0o755 });
 const archive = path.join(dir, 'backup.dump');
 fs.writeFileSync(archive, 'stand-in archive');
-const savedPath = process.env.PATH, savedPassword = process.env.PGPASSWORD;
+const savedPath = process.env.PATH, savedPassword = process.env.PGPASSWORD, savedService = process.env.PGSERVICE;
 process.env.PATH = `${dir}${path.delimiter}${savedPath}`;
 delete process.env.PGPASSWORD;
+delete process.env.PGSERVICE;
 try {
   const secret = 'Do-not-print-9';
   assert.equal(await restorePostgres(`postgresql://flight:${secret}@db:5432/flight`, archive, { clean: true }), 0);
@@ -50,6 +76,7 @@ try {
 } finally {
   process.env.PATH = savedPath;
   if (savedPassword === undefined) delete process.env.PGPASSWORD; else process.env.PGPASSWORD = savedPassword;
+  if (savedService !== undefined) process.env.PGSERVICE = savedService;
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
