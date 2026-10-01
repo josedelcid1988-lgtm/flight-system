@@ -8432,7 +8432,10 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   const now = () => new Date().toISOString();
   const clean = v => String(v ?? '').trim();
   const can = cap => !(root && root.skAuth) || root.skAuth.can(cap);
-  const denied = (cap, what) => can(cap) ? null : fail(MES.roleDeniedMessage(what));
+  // The refusal text comes from the MES engine, looked up when the refusal happens rather than when this engine loads,
+  // so it does not depend on the order the engines load in (#189). Without the MES engine the action is still refused.
+  const roleDeniedMessage = what => { const mes = (root && root.MES) || MES; return mes && typeof mes.roleDeniedMessage === 'function' ? mes.roleDeniedMessage(what) : `Flight System could not check your role to ${what} because the MES engine is not loaded. Reload Flight System and try again.`; };
+  const denied = (cap, what) => can(cap) ? null : fail(roleDeniedMessage(what));
   const accountRole = () => { const a = root && root.skAuth && root.skAuth.actor && root.skAuth.actor(); return a ? a.accountRole : null; };
   const actor = state => { const a = root && root.skAuth && root.skAuth.actor && root.skAuth.actor(); return a ? { name: a.name, role: a.role, credentialId: a.credentialId, account: a.account } : { name: state.profile.name, role: state.profile.role, credentialId: state.profile.credentialId, account: null }; };
   const actorValid = a => plain(a) && str(a.name, 80) && str(a.role, 80) && str(a.credentialId, 40) && (a.account === null || str(a.account, 60));
