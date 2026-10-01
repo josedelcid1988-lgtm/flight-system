@@ -147,6 +147,13 @@ const prod = createHost(here('../index.html'));
     const fewBefore = JSON.stringify(ledState);
     const few = o2 ? prod.withAccount(admin, () => MES.splitOrder(ledState, o2.id, 2), ledState) : { message: 'order not created' };
     check('a split that would leave the new order no share of an issued line is refused with the next step, nothing changed', !few.ok && /has 1 issued from lot LOT-HOLD-1 for 5 units/.test(few.message) && /Mark it missing on the Kitting tab/.test(few.message) && JSON.stringify(ledState) === fewBefore, few.message);
+    // A split waits for a pending sequence change, as a split request already does (Codex review on #331).
+    const r4 = prod.withAccount(admin, () => MES.addOrder(ledState, { masterWI: `${qtyWi.id}|${qtyWi.revision}`, pedigree: 'Production', subcategory: 'Mfg.', quantity: 5, aircraft: MES.AIRCRAFT[0], site: MES.SITES[0] }), ledState);
+    const o4 = r4.ok ? MES.getOrder(ledState, r4.id) : null;
+    if (o4) o4.sequenceChange = { status: 'Awaiting QA', entries: [], requestedBy: { name: 'Robin Engineer', role: 'Manufacturing Engineer', credentialId: 'ACCT-me-lee' }, requestedAt: now };
+    const seqBefore = JSON.stringify(ledState);
+    const seqSplit = o4 ? prod.withAccount(admin, () => MES.splitOrder(ledState, o4.id, 2), ledState) : { message: 'order not created' };
+    check('a split is refused while a sequence change awaits QA, nothing changed', !seqSplit.ok && /QA must release the updated sequence/.test(seqSplit.message) && JSON.stringify(ledState) === seqBefore, seqSplit.message);
     // A sub-assembly issued from another work order (Codex review on #331): a lot quantity divides between the orders,
     // and both lines still cite the same source, so the source order's issued count is unchanged; a serialized one
     // refuses the split, because the split can't tell which units carry which serials.
@@ -174,6 +181,16 @@ const prod = createHost(here('../index.html'));
   const adhoc = prod.withAccount(admin, () => MES.addAdhocOrder(state, { pedigree: 'Production', subcategory: 'Mfg.', quantity: 1, aircraft: MES.AIRCRAFT[0], partNumber: 'GL-PART-001', title: 'First production order', revision: 'A' }), state);
   const first = adhoc.ok ? MES.getOrder(state, adhoc.id) : null;
   check('a production work order starts with an empty kit, not the sample kit lines, and validates', !!first && Array.isArray(first.materials) && first.materials.length === 0 && MES.validate(state) === true, adhoc.message);
+  if (first) {
+    // With an empty kit allowed, the only issued sub-assembly line can be returned (Codex review on #331).
+    const ret = JSON.parse(JSON.stringify(state)), wo = ret.orders.find(o => o.id === first.id);
+    wo.status = 'Kitting';
+    wo.materials = [{ id: 'sub-1', name: 'Harness', partNumber: 'SUB-001', required: 1, ready: true, lot: 'LOT-SUB-9', source: { orderId: 'WO-SUB-9', lotNumber: 'LOT-SUB-9', serials: [], revision: 'A', issuedAt: now, issuedBy: { name: 'Go Live', role: 'Administrator', credentialId: 'ACCT-go-live' } } }];
+    const back = prod.withAccount(admin, () => MES.returnIssuedOrder(ret, wo.id, 'sub-1', 'Issued to the wrong order'), ret);
+    check('the only issued sub-assembly line on a kit can be returned, leaving a valid empty kit', back.ok && wo.materials.length === 0, back.message);
+    const jsx = read('../src/react/flight-ui.jsx');
+    check('the React kit view explains an empty kit as the legacy view does', jsx.includes('No kit lines on this work order. A kit line comes from a BOM line on an operation'));
+  }
   if (first) {
     // An empty kit is valid, so diagnose names the field that is actually wrong (Codex review on #331).
     const broken = JSON.parse(JSON.stringify(state)), bad = broken.orders.find(o => o.id === first.id);
@@ -282,6 +299,15 @@ const prod = createHost(here('../index.html'));
   check('a torque tool of the old snapshot recorded with no torque answer is still a torque tool', tq.ok && tq.tool.torqueTool === true && cal.tool.torqueTool === false);
   check('its work unit and maintenance record on old snapshot tags still validate', state.resources.units.some(u => u.toolTag === 'DMM-08') && state.resources.maintenance.some(m => m.assetTag === 'PS-007'));
   check('a trace search for an old snapshot tag is still a tool search', MES.traceSearch(state, 'DMM-08').kind === 'tool');
+  {
+    // A retired snapshot tag has no current record, but the operations that used it still show (Codex review on #331).
+    const used = JSON.parse(JSON.stringify(state)), o = used.orders[0];
+    o.operations[0].buyoff = { ...(o.operations[0].buyoff || {}), tools: [{ tag: 'DMM-08', description: 'Bench meter' }] };
+    const r = MES.traceSearch(used, 'DMM-08'), hit = r.orders.find(x => x.id === o.id);
+    check('a trace of a retired snapshot tag finds the operations that used it, with no current tool record', r.kind === 'tool' && r.tool === null && !!hit && hit.ops.length >= 1, JSON.stringify({ kind: r.kind, tool: r.tool, ops: hit && hit.ops.length }));
+    const html = read('../index.html'), jsx = read('../src/react/flight-ui.jsx');
+    check('both trace renderers show the operations column for any tool search, not only one with a current record', html.includes("r.kind === 'tool' ? 'Operations with this tool'") && html.includes("r.kind === 'tool' ? o.ops.map(") && jsx.includes("result.kind === 'tool' ? 'Operations using tool'") && jsx.includes("result.kind === 'tool' ? order.ops.map("));
+  }
 }
 
 // ---- the production screens on a new workspace -----------------------------------------------------------------------
