@@ -13981,6 +13981,11 @@ window.SK_MIRROR = window.SK_MIRROR || {
     enqueue(accountEntities(), ['account']);
     var acct = window.skAuth && typeof skAuth.actor === 'function' ? skAuth.actor() : null, b = build(), now = new Date().toISOString();
     Object.keys(tombs).forEach(function (key) { if (!sent[key]) pushDelete(key, acct, b, now); });
+    // A snapshot record lists every entity this device holds now. A reader of the mirror treats anything from
+    // this device absent from it as deleted, which also covers deletions made before tombstones existed.
+    var json = JSON.stringify({ snapshot: true, clientId: client.id, takenAt: now, keys: Object.keys(sent).sort() });
+    client.seq += 1;
+    queue.push({ clientWriteId: client.id + '-' + client.seq, storeKey: typeof KEY !== 'undefined' ? KEY : 'skyryse-mes-work-order-v1', entityType: 'snapshot', entityId: client.id, operation: 'upsert', payloadJson: json, payloadSha256: hash(json), actor: acct ? acct.name + ' · ' + acct.credentialId : null, credential: acct ? acct.credentialId : null, clientTs: now, buildVersion: b.version, buildSha256: b.sha256, manifests: [], synced: false });
     resentAt = new Date().toISOString();
     persist();
   }

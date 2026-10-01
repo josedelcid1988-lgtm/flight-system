@@ -47,7 +47,7 @@ ok('records read-back without entity and id is refused with the next step',(awai
 const exp=await (await get(API+'/export?format=json')).json();
 ok('JSON export carries every record, its manifests and a verify result',exp.records.length===4&&exp.records.every(x=>x.manifests.length===1)&&exp.verify.ok,JSON.stringify(exp).slice(0,200));
 const csvRes=await get(API+'/export?format=csv');const csv=await csvRes.text();
-ok('CSV export has a header and one line per record',csv.trim().split('\r\n').length===5&&csv.startsWith('id,client_write_id')&&/attachment/.test(csvRes.headers.get('content-disposition')||''),csv.slice(0,120));
+ok('CSV export has a header and one line per record, with manifests_sha256 so the chain can be recomputed',csv.trim().split('\r\n').length===5&&csv.startsWith('id,client_write_id')&&csv.split('\r\n')[0].split(',').includes('manifests_sha256')&&/attachment/.test(csvRes.headers.get('content-disposition')||''),csv.slice(0,120));
 let refused='';try{m.db.exec("UPDATE records SET actor='x' WHERE id=1");}catch(e){refused=e.message;}
 ok('the database refuses UPDATE on records',/append-only/.test(refused),refused);
 refused='';try{m.db.exec('DELETE FROM signature_manifests WHERE id=1');}catch(e){refused=e.message;}
@@ -179,6 +179,33 @@ await m.close();
  const rt=spawnSync(process.execPath,[path.join(ROOT,'server/mirror/restore-test.mjs'),good,'--against',live],{encoding:'utf8'});
  ok('restore-test --against finds a row that differs only in manifests_sha256',rt.status===1&&/row 1 in the backup differs/.test(rt.stderr),rt.stdout+rt.stderr);}
 
+// Two-phase anchor: a commit interrupted before the final anchor is recognised and finished; a failure to write the
+// pending anchor stores nothing; a pending entry that matches nothing is still refused.
+{const {DatabaseSync}=await import('node:sqlite');const {appendRecords,chainTip,writePendingAnchor}=await import(path.join(ROOT,'server/mirror/server.mjs'));
+ const tp=path.join(tmp,'twophase.sqlite');const mt2=createMirror({dbPath:tp,backupDir:path.join(tmp,'b14'),port:0,backupEveryMinutes:0,...SECURE});
+ const before=readAnchor(tp+'.anchor.json');
+ let thrown='';try{appendRecords(mt2.db,'tp',[rec(80)],undefined,{beforeCommit:()=>{throw new Error('anchor storage unavailable');}});}catch(e){thrown=e.message;}
+ ok('when the pending anchor cannot be written nothing commits',/anchor storage unavailable/.test(thrown)&&chainTip(mt2.db).records===0);
+ // Commit a batch, then leave the anchor as a crash between COMMIT and the final anchor would: pending, not final.
+ appendRecords(mt2.db,'tp',[rec(81),rec(82)],undefined,{beforeCommit:next=>writePendingAnchor(tp+'.anchor.json',before,next)});
+ const left=readAnchor(tp+'.anchor.json');await mt2.close();
+ ok('the interrupted state is real: the anchor still names the old count with the batch pending',left.records===0&&left.pending&&left.pending.records===2,JSON.stringify(left));
+ const mt3=createMirror({dbPath:tp,backupDir:path.join(tmp,'b14'),port:0,backupEveryMinutes:0,...SECURE});
+ const settled=readAnchor(tp+'.anchor.json');
+ ok('the server recognises the interrupted commit, starts and finalises the anchor',settled.records===2&&!settled.pending&&mt3.verify().ok,JSON.stringify(settled));
+ await mt3.close();
+ // A pending entry that matches neither the database nor the committed state is still a mismatch.
+ fs.writeFileSync(tp+'.anchor.json',JSON.stringify({records:1,tip:'a'.repeat(64),pending:{records:3,tip:'b'.repeat(64)}}));
+ let refusedPending='';try{createMirror({dbPath:tp,backupDir:path.join(tmp,'b14'),port:0,backupEveryMinutes:0,...SECURE});}catch(e){refusedPending=e.message;}
+ ok('a pending anchor that matches neither state is refused',/does not match its chain anchor/.test(refusedPending),refusedPending);
+ // restore-test --against verifies the live database itself: a changed live manifest row fails it.
+ const g2=path.join(tmp,'g2.sqlite');const mg2=createMirror({dbPath:g2,backupDir:path.join(tmp,'b15'),port:0,backupEveryMinutes:0,...SECURE});const ag2=await mg2.listen();
+ await fetch(`http://127.0.0.1:${ag2.port}/api/v1/writes`,{method:'POST',headers:{'content-type':'application/json',...WAUTH},body:JSON.stringify({clientId:'g2',records:[rec(90),rec(91)]})});
+ const bk2=mg2.backup();await mg2.close();
+ {const d=new DatabaseSync(g2);d.exec('DROP TRIGGER manifests_no_update');d.exec("UPDATE signature_manifests SET signer_credential='ACCT-forged' WHERE record_id=1");d.close();}
+ const rt=spawnSync(process.execPath,[path.join(ROOT,'server/mirror/restore-test.mjs'),bk2,'--against',g2],{encoding:'utf8'});
+ ok('restore-test --against fails when a live signature manifest was changed',rt.status===1&&/live database is not intact/.test(rt.stderr)&&/signature manifests/.test(rt.stderr),rt.stdout+rt.stderr);}
+
 // Fail closed (issue 76): no token configured refuses to start, no origin configured sends no CORS header, and
 // health tells a caller without the token only that the mirror is up.
 {let refusedStart='';try{createMirror({dbPath:path.join(tmp,'none.sqlite'),backupDir:path.join(tmp,'b5'),port:0,backupEveryMinutes:0});}catch(e){refusedStart=e.message;}
@@ -275,6 +302,8 @@ await authEdit("a.users.push({username:arg,displayName:'Temp Account',salt:'00',
  const w3=await mkOrder(p);st=await drain();
  ok('after a restore the app sends every record again: the orders confirmed after the backup are back',w3.ok&&after.every(has)&&has(w3.id)&&st.unsynced===0&&!!st.resentAt,JSON.stringify({st,after,w3}));
  ok('after a restore the app also re-sends its deletions: the deleted account is gone again',lastOp('tmpacct')==='delete',String(lastOp('tmpacct')));
+ {const snap=m.db.prepare("SELECT payload_json FROM records WHERE entity_type='snapshot' ORDER BY id DESC LIMIT 1").get();const keys=snap?JSON.parse(snap.payload_json).keys:[];
+  ok('after a restore the app sends a snapshot of every entity it holds, without the deleted account',!!snap&&keys.includes('order|'+w3.id)&&keys.some(k=>k.startsWith('account|'))&&!keys.includes('account|tmpacct'),JSON.stringify(keys.slice(0,5)));}
  ok('the restored and refilled chain is intact against its anchor',m.verify().ok,JSON.stringify(m.verify()));
  const w4=await mkOrder(p);const before=count();st=await drain();
  ok('once caught up, the next write sends only what changed',st.resentAt&&count()-before<=3,JSON.stringify({added:count()-before}));}

@@ -40,6 +40,9 @@ try {
   if (want.some(t => !triggers.includes(t))) { console.error(`FAIL the restored database is missing its append-only triggers: ${want.filter(t => !triggers.includes(t)).join(', ')}`); ok = false; }
   if (against) {
     const live = new DatabaseSync(against, { readOnly: true });
+    // The live database must itself be intact (its manifest rows included), or matching its records proves nothing.
+    const liveAnchorFile = defaultAnchorPath(against), lv = verifyChain(live, fs.existsSync(liveAnchorFile) ? { anchor: readAnchor(liveAnchorFile) } : {});
+    if (!lv.ok) { console.error(`FAIL the live database is not intact: row ${lv.firstBreak.id}, ${lv.firstBreak.reason}`); ok = false; }
     // manifests_sha256 is part of each row's link; compare it whenever both databases have the column. A
     // backup with the column against a live database without it (or the reverse) is not a prefix.
     const hasM = d => d.prepare('PRAGMA table_info(records)').all().some(c => c.name === 'manifests_sha256');

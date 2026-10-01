@@ -106,20 +106,41 @@ export function readAnchor(file) {
 }
 // Whether the database's row count and tip are still the ones the anchor recorded. Checked before every write
 // and every backup, so a database changed outside the server is never re-anchored or copied as if it were good.
+// An anchor may carry `pending`: the count and tip of a batch that was about to commit. It is written before
+// COMMIT, so a crash between the commit and the final anchor leaves the database equal to `pending`, which is
+// recognised as that interrupted, legitimate commit (settleAnchor finalises it) rather than as tampering.
+const matchesPending = (now, anchor) => !!(anchor && anchor.pending && now.records === anchor.pending.records && now.tip === anchor.pending.tip);
 export function anchorMismatch(db, anchor) {
   if (!anchor) return 'the chain anchor is missing or unreadable';
   const now = chainTip(db);
+  if (matchesPending(now, anchor)) return null;
   if (now.records !== anchor.records) return `the database has ${now.records} rows but the anchor records ${anchor.records}`;
   if (now.tip !== anchor.tip) return 'the last row does not match the anchored chain tip';
   return null;
 }
 
-export function writeAnchor(file, db, when = new Date()) {
-  const a = { ...chainTip(db), anchoredAt: when.toISOString() };
+const putAnchor = (file, a) => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(a) + '\n');
   fs.renameSync(tmp, file);
+  return a;
+};
+export function writeAnchor(file, db, when = new Date()) {
+  return putAnchor(file, { ...chainTip(db), anchoredAt: when.toISOString() });
+}
+// Phase one of a write: the anchor keeps the committed count and tip and names the batch about to commit.
+export function writePendingAnchor(file, current, pending) {
+  return putAnchor(file, { records: current.records, tip: current.tip, anchoredAt: current.anchoredAt, pending: { records: pending.records, tip: pending.tip } });
+}
+// Finalises an anchor left with `pending` by a crash: if the database equals the pending batch the commit
+// happened; if it equals the committed state the batch rolled back. Anything else is left for verify to refuse.
+export function settleAnchor(file, db) {
+  const a = readAnchor(file);
+  if (!a || !a.pending) return a;
+  const now = chainTip(db);
+  if (matchesPending(now, a)) return writeAnchor(file, db);
+  if (now.records === a.records && now.tip === a.tip) return putAnchor(file, { records: a.records, tip: a.tip, anchoredAt: a.anchoredAt });
   return a;
 }
 
@@ -158,7 +179,7 @@ export function ackCheck(db, lastAck) {
   return row && row.client_write_id === lastAck.clientWriteId ? 'ok' : 'missing';
 }
 
-export function appendRecords(db, clientId, records, now = () => new Date().toISOString()) {
+export function appendRecords(db, clientId, records, now = () => new Date().toISOString(), { beforeCommit } = {}) {
   if (!str(clientId, 120)) return { ok: false, status: 400, error: { code: 'bad_request', message: 'clientId is required.' } };
   if (!Array.isArray(records) || !records.length) return { ok: false, status: 400, error: { code: 'bad_request', message: 'records must be a non-empty list.' } };
   if (records.length > MAX_BATCH) return { ok: false, status: 413, error: { code: 'too_large', message: `Send at most ${MAX_BATCH} records per request.` } };
@@ -181,6 +202,8 @@ export function appendRecords(db, clientId, records, now = () => new Date().toIS
       for (const m of r.manifests || []) manifest.run(id, m.path, m.meaning, m.signerName, m.signerCredential, m.signedAt, m.algorithm, m.hash);
       results.push({ clientWriteId: r.clientWriteId, status: 'stored', id });
     }
+    // Phase one of the anchor update runs inside the transaction: if it cannot be written, nothing commits.
+    if (beforeCommit && results.some(x => x.status === 'stored')) beforeCommit(chainTip(db));
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
   return { ok: true, results };
@@ -206,7 +229,7 @@ export function verifyChain(db, { anchor } = {}) {
   const orphan = db.prepare('SELECT m.id FROM signature_manifests m LEFT JOIN records r ON r.id = m.record_id WHERE r.id IS NULL LIMIT 1').get();
   if (orphan) return { ok: false, records: count, firstBreak: { id: null, manifestId: Number(orphan.id), reason: 'a signature manifest points at a record that does not exist' } };
   if (anchor === null) return { ok: false, records: count, firstBreak: { id: null, reason: 'the chain anchor is missing or unreadable, so rows removed from the end cannot be ruled out' }, tip, legacyRows };
-  if (anchor) {
+  if (anchor && !matchesPending({ records: count, tip }, anchor)) {
     if (count < anchor.records) return { ok: false, records: count, firstBreak: { id: count + 1, reason: `the anchor records ${anchor.records} rows but the database has ${count} (rows were removed from the end)` }, tip, legacyRows };
     if (count > anchor.records) return { ok: false, records: count, firstBreak: { id: anchor.records + 1, reason: `the database has ${count} rows but the anchor records ${anchor.records} (rows were added outside the server, or the anchor was not updated)` }, tip, legacyRows };
     if (tip !== anchor.tip) return { ok: false, records: count, firstBreak: { id: count || null, reason: 'the last row does not match the anchored chain tip (the last row was changed)' }, tip, legacyRows };
@@ -223,7 +246,8 @@ export function recordsFor(db, entity, id) {
   return db.prepare('SELECT * FROM records WHERE entity_type = ? AND entity_id = ? ORDER BY id').all(entity, id).map(withManifests(db));
 }
 
-const CSV_COLUMNS = ['id', 'client_write_id', 'store_key', 'entity_type', 'entity_id', 'operation', 'payload_sha256', 'prev_sha256', 'actor', 'credential', 'client_ts', 'server_ts', 'build_version', 'build_sha256', 'client_id', 'payload_json'];
+// manifests_sha256 is part of each row's link, so the chain can be recomputed from the CSV alone.
+const CSV_COLUMNS = ['id', 'client_write_id', 'store_key', 'entity_type', 'entity_id', 'operation', 'payload_sha256', 'prev_sha256', 'actor', 'credential', 'client_ts', 'server_ts', 'build_version', 'build_sha256', 'client_id', 'manifests_sha256', 'payload_json'];
 const csvCell = v => { const s = v === null || v === undefined ? '' : String(v); return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
 export function exportAll(db, format = 'json', anchor) {
   const rows = db.prepare('SELECT * FROM records ORDER BY id').all();
@@ -291,7 +315,7 @@ export function createMirror(options = {}) {
   } else {
     // An anchor that no longer matches means rows were removed or the last row changed while the server was
     // down. Starting would let the next write overwrite the anchor and hide that, so the server refuses.
-    const v = verifyChain(db, { anchor: readAnchor(anchorPath) });
+    const v = verifyChain(db, { anchor: settleAnchor(anchorPath, db) });
     if (!v.ok) { db.close(); throw new Error(`The mirror database does not match its chain anchor ${anchorPath}: ${v.firstBreak.reason}. The server does not start, so no write can overwrite the anchor. Compare it with the latest good backup (node server/mirror/restore-test.mjs <backup> --against ${cfg.dbPath}); only after the cause is recorded, restore a backup or run --reanchor.`); }
   }
   const bearer = req => String(req.headers.authorization || '');
@@ -319,10 +343,11 @@ export function createMirror(options = {}) {
       if (req.method === 'POST' && url.pathname === `/api/${API_VERSION}/writes`) {
         if (!writer(req)) return fail(res, 401, 'unauthorized', 'Send the write token as Authorization: Bearer <token>.');
         let body; try { body = JSON.parse(await readBody(req)); } catch (e) { return e.status === 413 ? fail(res, 413, 'too_large', `Request body over ${cfg.maxBodyBytes} bytes.`) : fail(res, 400, 'bad_request', 'Body is not valid JSON.'); }
-        const drift = anchorMismatch(db, readAnchor(anchorPath));
+        const anchorNow = settleAnchor(anchorPath, db);
+        const drift = anchorMismatch(db, anchorNow);
         if (drift) { console.error(`write refused: ${drift}`); return fail(res, 409, 'anchor_mismatch', 'The mirror database no longer matches its chain anchor, so no record is stored until the operator investigates. The app keeps the records queued.'); }
         const check = ackCheck(db, body && body.lastAck);
-        const r = appendRecords(db, body && body.clientId, body && body.records);
+        const r = appendRecords(db, body && body.clientId, body && body.records, undefined, { beforeCommit: next => writePendingAnchor(anchorPath, anchorNow, next) });
         if (r.ok && r.results.some(x => x.status === 'stored')) writeAnchor(anchorPath, db);
         return r.ok ? send(res, 200, { ok: true, results: r.results, ...(check ? { ackCheck: check } : {}) }) : send(res, r.status, { ok: false, error: r.error });
       }

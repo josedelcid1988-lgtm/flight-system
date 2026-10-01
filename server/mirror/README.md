@@ -98,7 +98,7 @@ server is back.
 
 Entity types: `order`, `master-wi`, `planned-order`, `stamp`, `serial`, `car`, `mrb`, `nc`, `spr`,
 `pfmea`, `ecr`, `wo-request`, `notice`, `assignment`, `rework-template`, `support-log`,
-`workspace-settings`, `account`.
+`workspace-settings`, `account`, and `snapshot` (sent after a restore: every entity key the device holds).
 
 ## API (JSON, versioned)
 
@@ -150,7 +150,9 @@ of that disk.
 7. Records that devices had not yet synced are still in their local queues and are re-sent on their
    own. Records the server had confirmed after the backup was taken are re-sent too: on its next post
    each device names the newest row it was told was stored, the restored server answers that it no
-   longer has it, and the device queues every entity it holds again. Intermediate versions written
+   longer has it, and the device queues every entity it holds again, a delete for every entity it
+   deleted, and one `snapshot` record listing every entity key it holds. Anything from that device
+   absent from its latest snapshot is deleted, including deletions made before this build. Intermediate versions written
    between the backup and the restore are only in the database you moved aside. Before deciding anything about them, compare:
    ```bash
    node server/mirror/restore-test.mjs <backup>.sqlite --against <the database you moved aside>
