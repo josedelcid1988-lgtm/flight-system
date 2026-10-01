@@ -3331,15 +3331,18 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // rationale, who recorded each, and the Safety Team rationale. A buy-off signed before this carries the older
   // subject (ids and RPNs, no note) and still verifies against what it stored. A buy-off signed now also binds its own
   // signer (credential, name and role) and time, so the displayed buy-off attribution cannot be edited, even together
-  // with the manifest signer, without breaking the hash. One signed before that carries no signedBy and verifies without it.
+  // with the manifest signer, without breaking the hash. That form also binds when each step was recorded (the scope, each
+  // no-risk review, each action assignment and closure), so the accepted chronology cannot be rewritten either. One signed
+  // before that carries no signedBy and verifies without either.
+  const atOf = rec => plain(rec) ? (rec.at ?? null) : null;
   const credOf = by => (plain(by) && typeof by.credentialId === 'string') ? by.credentialId : null;
   const pfmeaSafetySubject = (t, note, signed) => ({ pfmea: t.id, wi: `${t.wiId} Rev ${t.wiRevision}`, note,
     ...(signed ? { signedBy: plain(signed.by) ? { credentialId: signed.by.credentialId ?? null, name: signed.by.name ?? null, role: signed.by.role ?? null } : null, signedAt: signed.at ?? null } : {}),
-    scope: plain(t.scope) ? { team: t.scope.team, boundaries: t.scope.boundaries ?? '', by: credOf(t.scope.by) } : null,
+    scope: plain(t.scope) ? { team: t.scope.team, boundaries: t.scope.boundaries ?? '', by: credOf(t.scope.by), ...(signed ? { at: atOf(t.scope) } : {}) } : null,
     analysisDone: plain(t.analysisDone) ? { by: credOf(t.analysisDone.by), at: t.analysisDone.at } : null,
     actionsDone: plain(t.actionsDone) ? { by: credOf(t.actionsDone.by), at: t.actionsDone.at } : null,
-    rows: (Array.isArray(t.rows) ? t.rows : []).map(r => ({ id: r.id, opId: r.opId, mode: r.mode, effect: r.effect ?? '', cause: r.cause ?? '', controls: r.controls ?? '', s: r.s, o: r.o, d: r.d, rpn: r.rpn, action: r.action ?? '', owner: r.owner ?? '', due: r.due ?? null, actionBy: plain(r.actionSet) ? credOf(r.actionSet.by) : null, by: credOf(r.by), done: plain(r.done) ? { evidence: r.done.evidence, s: r.done.s, o: r.done.o, d: r.done.d, rpn: r.done.rpn, by: credOf(r.done.by) } : null, revised: plain(r.done) ? r.done.rpn : null })),
-    reviewed: Object.keys(plain(t.reviewed) ? t.reviewed : {}).sort().map(opId => ({ opId, note: t.reviewed[opId].note, by: credOf(t.reviewed[opId].by) })) });
+    rows: (Array.isArray(t.rows) ? t.rows : []).map(r => ({ id: r.id, opId: r.opId, mode: r.mode, effect: r.effect ?? '', cause: r.cause ?? '', controls: r.controls ?? '', s: r.s, o: r.o, d: r.d, rpn: r.rpn, action: r.action ?? '', owner: r.owner ?? '', due: r.due ?? null, actionBy: plain(r.actionSet) ? credOf(r.actionSet.by) : null, ...(signed ? { actionAt: atOf(r.actionSet), doneAt: atOf(r.done) } : {}), by: credOf(r.by), done: plain(r.done) ? { evidence: r.done.evidence, s: r.done.s, o: r.done.o, d: r.done.d, rpn: r.done.rpn, by: credOf(r.done.by) } : null, revised: plain(r.done) ? r.done.rpn : null })),
+    reviewed: Object.keys(plain(t.reviewed) ? t.reviewed : {}).sort().map(opId => ({ opId, note: t.reviewed[opId].note, by: credOf(t.reviewed[opId].by), ...(signed ? { at: atOf(t.reviewed[opId]) } : {}) })) });
   // The subject a buy-off signed before the analysis was bound: ids and RPNs only. Still recomputed from the rows.
   const pfmeaSafetyLegacySubject = t => ({ pfmea: t.id, wi: `${t.wiId} Rev ${t.wiRevision}`, rows: (Array.isArray(t.rows) ? t.rows : []).map(r => ({ id: r.id, opId: r.opId, rpn: r.rpn, revised: plain(r.done) ? r.done.rpn : null })) });
   // The subject a stored Safety Team buy-off must hash to, rebuilt from the live record in the form it was signed in.
