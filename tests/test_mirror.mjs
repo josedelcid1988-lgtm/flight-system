@@ -403,6 +403,17 @@ const devAck=()=>p.evaluate(()=>{const P='skyryse-mes-sync-ack-v1:',slots=[];con
  const d=await devAck(),resentAfter=await p.evaluate(()=>window.skMirror.status().resentAt);
  ok('an answer from before another tab\'s restore reset is not recorded in the new epoch',Number.isFinite(held)&&!d.slots.some(x=>x.epoch===e0+1&&x.ack&&x.ack.id===held),JSON.stringify({held,slots:d.slots.map(x=>[x.epoch,x.ack&&x.ack.id])}));
  ok('instead the tab sends everything again',!!resentAfter&&resentAfter!==resentBefore,JSON.stringify({resentBefore,resentAfter}));}
+// A tab whose workspace another tab changed meanwhile resends from the copy saved in the browser, so its snapshot
+// lists what the other tab made instead of marking it deleted.
+{const OTHER='skyryse-mes-sync-ack-v1:page-other-tab';let staged=false;const e0=(await devAck()).epoch;
+ await ctx.route(/\/api\/v1\/writes$/,async route=>{const resp=await route.fetch();if(!staged){staged=true;
+   await p.evaluate(([k,v])=>{const ws=JSON.parse(localStorage.getItem('skyryse-mes-work-order-v1'));const o=structuredClone(ws.orders[0]);o.id='WO-OTHER-TAB-1';ws.orders.push(o);localStorage.setItem('skyryse-mes-work-order-v1',JSON.stringify(ws));storageBlocked=true;localStorage.setItem(k,JSON.stringify(v));},[OTHER,{epoch:e0+1,ack:null,at:Date.now()}]);}
+  await route.fulfill({response:resp});});
+ await mkOrder(p);await drain();await ctx.unroute(/\/api\/v1\/writes$/);
+ const snap=m.db.prepare("SELECT payload_json FROM records WHERE entity_type='snapshot' ORDER BY id DESC LIMIT 1").get();const keys=snap?JSON.parse(snap.payload_json).keys:[];
+ ok('the refusal case is real: this tab\'s own state lacks the other tab\'s order',await p.evaluate(()=>!state.orders.some(o=>o.id==='WO-OTHER-TAB-1')));
+ ok('a stale tab\'s recovery snapshot lists the order another tab made',keys.includes('order|WO-OTHER-TAB-1'),JSON.stringify(keys.filter(k=>k.startsWith('order|')).slice(-3)));
+ await p.evaluate(()=>{storageBlocked=false;});}
 // A device upgraded from a build without acknowledgements: it has confirmed records but no lastAck, so its
 // first confirmed post sends everything once instead of trusting a mirror that may have been restored.
 {await p.evaluate(()=>{const c=JSON.parse(localStorage.getItem('skyryse-mes-sync-client-v1'));delete c.ack;delete c.ackEpoch;localStorage.setItem('skyryse-mes-sync-client-v1',JSON.stringify(c));Object.keys(localStorage).filter(k=>k.startsWith('skyryse-mes-sync-ack-v1:')).forEach(k=>localStorage.removeItem(k));});

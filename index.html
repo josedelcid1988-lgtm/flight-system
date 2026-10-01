@@ -14422,13 +14422,19 @@ window.SK_MIRROR = window.SK_MIRROR || {
   // that holds an entity from before its deletion is told again that it is gone.
   function resendAll() {
     sent = {}; lastJson = {};
-    var ws = (typeof state !== 'undefined' && state) || lastWs;
-    if (ws) enqueue(entities(ws, typeof KEY !== 'undefined' ? KEY : 'skyryse-mes-work-order-v1'), ['*']);
+    // A tab whose workspace another tab changed holds an old copy (storageBlocked). It resends from the copy saved
+    // in this browser instead, and when it cannot read one it sends no snapshot: an old list would mark entities
+    // the other tab made as deleted.
+    var wsKey = typeof KEY !== 'undefined' ? KEY : 'skyryse-mes-work-order-v1';
+    var stale = typeof storageBlocked !== 'undefined' && storageBlocked === true;
+    var ws = stale ? read(wsKey, null) : ((typeof state !== 'undefined' && state) || lastWs);
+    if (ws) enqueue(entities(ws, wsKey), ['*']);
     enqueue(accountEntities(), ['account']);
     var acct = window.skAuth && typeof skAuth.actor === 'function' ? skAuth.actor() : null, b = build(), now = new Date().toISOString();
     Object.keys(tombs).forEach(function (key) { if (!sent[key]) pushDelete(key, acct, b, now); });
     // A snapshot record lists every entity this device holds now. A reader of the mirror treats anything from
     // this device absent from it as deleted, which also covers deletions made before tombstones existed.
+    if (stale && !ws) { resentAt = new Date().toISOString(); persist(); return; }
     var json = JSON.stringify({ snapshot: true, clientId: client.id, takenAt: now, keys: Object.keys(sent).sort() });
     pageSeq += 1;
     queue.push({ clientWriteId: client.id + '-' + pageId + '-' + pageSeq, storeKey: typeof KEY !== 'undefined' ? KEY : 'skyryse-mes-work-order-v1', entityType: 'snapshot', entityId: client.id, operation: 'upsert', payloadJson: json, payloadSha256: hash(json), actor: acct ? acct.name + ' · ' + acct.credentialId : null, credential: acct ? acct.credentialId : null, clientTs: now, buildVersion: b.version, buildSha256: b.sha256, manifests: [], synced: false });
