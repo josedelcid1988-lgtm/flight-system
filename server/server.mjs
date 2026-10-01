@@ -231,20 +231,33 @@ export function createServer(options = {}) {
   const noteFailure = async username => { const r = await store.noteFailedSignin(username, LOCK_AFTER, Date.now() + LOCK_MS); if (r.locked) await store.audit(username, 'lockout', { minutes: LOCK_MS / 60000 }); return { n: r.fails, until: r.until }; };
 
   // The document as the engine sees it: upgraded, blockers synced, validated. Returns the state or a problem.
-  const loadState = async () => { const row = await store.getDoc(TENANT); if (!row) return { state: null, etag: null }; const parsed = JSON.parse(row.json); const state = host.MES.upgrade(structuredClone(parsed)); return { state, etag: row.etag, raw: parsed, problem: state ? null : (host.MES.diagnose(parsed) || {}).detail || 'The document does not match the current record format.' }; };
+  // registers names a stored stamp register or planned-order list that exists but is damaged. It is read from the
+  // stored copy before any engine code runs, because some actions run the initializer themselves (issueStamp calls
+  // ensureStamps; addPlannedOrder replaces a value that is not a list), and the write gate would only see the
+  // replacement (Codex review of #220). A write path refuses when it is set; reads are unaffected.
+  const registerProblem = state => host.MES.stampRegisterProblem?.(state) || host.FlightPlan.plannedOrdersProblem?.(state) || null;
+  // A damaged planned-order value can make MES.upgrade itself throw (planning blockers read it as a list); that is
+  // reported as the same plain register problem, not an unexpected failure (Codex review of #220).
+  const loadState = async () => { const row = await store.getDoc(TENANT); if (!row) return { state: null, etag: null }; const parsed = JSON.parse(row.json); let state; try { state = host.MES.upgrade(structuredClone(parsed)); } catch (e) { const damaged = registerProblem(parsed); if (damaged) return { state: null, etag: row.etag, raw: parsed, registers: damaged, problem: damaged }; throw e; } return { state, etag: row.etag, raw: parsed, registers: state ? registerProblem(state) : null, problem: state ? null : (host.MES.diagnose(parsed) || {}).detail || 'The document does not match the current record format.' }; };
   // Derived-state convergence: the browser engine recomputes these on boot, refresh and render
   // without ever queuing them as commands (planning blockers, assignment auto-close, master WI /
   // plan / maneuver defaults). The server runs them here, inside every commit path, before
   // validation, so the shared record always leaves with the same derived state any device would
-  // compute, and a convergence defect fails the write instead of persisting.
+  // compute, and a convergence defect fails the write instead of persisting. A stamp register or planned
+  // order list that exists but is damaged is refused before its initializer runs: the initializer would replace
+  // the whole list with seed records, and MES.validate covers neither, so the loss would commit (Codex #17).
+  // Returns a problem, or null.
   const convergeDerivedState = state => {
+    const stamps = host.MES.stampRegisterProblem?.(state); if (stamps) return stamps;
     host.MES.ensureMasterWIs?.(state);
+    const plan = host.FlightPlan.plannedOrdersProblem?.(state); if (plan) return plan;
     host.FlightPlan.ensure?.(state);
     host.FlightManeuver.ensure?.(state);
     host.MES.syncAssignments?.(state);
     host.MES.syncBlockers?.(state);
+    return null;
   };
-  const validState = state => { convergeDerivedState(state); if (Array.isArray(state.orders) && state.orders.filter(order => order.status !== 'Closed').length > 1000) return 'The workspace exceeds the 1,000 open work order limit. Close or archive work before adding more orders.'; if (!host.MES.validate(state)) return (host.MES.diagnose(state) || {}).detail || 'The workspace is invalid.'; const manifested = host.MES.verifyManifests(state); if (!manifested.ok) { const f = manifested.failures[0] || {}; return `A signed record failed verification at ${f.where || 'an unknown record'}: ${f.reason || 'invalid manifest'}.`; } return null; };
+  const validState = state => { const unconverged = convergeDerivedState(state); if (unconverged) return unconverged; if (Array.isArray(state.orders) && state.orders.filter(order => order.status !== 'Closed').length > 1000) return 'The workspace exceeds the 1,000 open work order limit. Close or archive work before adding more orders.'; if (!host.MES.validate(state)) return (host.MES.diagnose(state) || {}).detail || 'The workspace is invalid.'; const manifested = host.MES.verifyManifests(state); if (!manifested.ok) { const f = manifested.failures[0] || {}; return `A signed record failed verification at ${f.where || 'an unknown record'}: ${f.reason || 'invalid manifest'}.`; } return null; };
 
   // Evidence integrity on every write, beside the engine's validation. The engine refuses a buy-off
   // without a stored copy and hash and refuses edits to signed evidence (MES.evidenceChanges); the
@@ -756,8 +769,9 @@ export function createServer(options = {}) {
         const body = await readJson(req), recordType = String(body.recordType || '').toUpperCase(), recordId = String(body.recordId || '').trim();
         if (!['ECR', 'SPR', 'SCAR'].includes(recordType) || !/^[A-Z0-9-]{3,40}$/.test(recordId)) { send(res, 400, { error: 'Choose a supported Flight Jira record and its record ID.' }); return; }
         const loaded = await loadState();
-        if (!loaded.state) { send(res, 404, { error: 'The shared workspace is not initialized.' }); return; }
+        if (!loaded.state && !loaded.problem) { send(res, 404, { error: 'The shared workspace is not initialized.' }); return; }
         if (loaded.problem) { send(res, 422, { error: `The shared workspace cannot be used: ${loaded.problem}` }); return; }
+        if (loaded.registers) { send(res, 422, { error: `The shared workspace cannot be used: ${loaded.registers}` }); return; }
         const state = loaded.state;
         let record, issue, capability, linkAction;
         if (recordType === 'ECR') {
@@ -860,7 +874,7 @@ export function createServer(options = {}) {
         { const stale = await dropArchived(doc); if (stale) { send(res, 409, { error: stale, code: 'ARCHIVED' }); return; } }
         const state = host.MES.upgrade(structuredClone(doc));
         if (!state) { send(res, 422, { error: (host.MES.diagnose(doc) || {}).detail || 'The document does not match the current record format.' }); return; }
-        convergeDerivedState(state);
+        { const unconverged = convergeDerivedState(state); if (unconverged) { send(res, 422, { error: unconverged }); return; } }
         const accountProfile = host.withAccount(session.account, () => host.MES.profileOptions(state)?.[0], state);
         if (accountProfile) state.profile = { name: accountProfile.name, role: accountProfile.role, credentialId: accountProfile.credentialId };
         const cur = await store.getDoc(TENANT);
@@ -888,8 +902,9 @@ export function createServer(options = {}) {
           if (!modelAdapterSettings.includes(settingName) || !String(process.env[settingName] || '').trim()) { send(res, 422, { error: 'The named server environment setting is not configured for the model adapter. Ask the server operator to set it and list it in FLIGHT_MODEL_ADAPTER_SETTINGS. The model adapter remains off.' }); return; }
           args.push(true); // This flag is derived by the server, never accepted from the client.
         }
-        const { state, etag, problem, raw } = await loadState();
+        const { state, etag, problem, raw, registers } = await loadState();
         if (!state) { send(res, problem ? 422 : 404, { error: problem || 'No workspace yet.' }); return; }
+        if (registers) { send(res, 422, { error: registers }); return; }
         const ifMatch = req.headers['if-match'] || null;
         if (!ifMatch) { send(res, 428, { error: 'Include the current workspace ETag in If-Match before running an action.' }); return; }
         if (ifMatch && ifMatch !== etag) { send(res, 409, { error: 'The workspace changed on another device. Reload to continue.', etag }); return; }
