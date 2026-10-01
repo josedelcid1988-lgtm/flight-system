@@ -15948,7 +15948,19 @@ body:not([data-view="order"]) .page-heading:not(.fs-landing) .order-link,body:no
 body:not([data-view="order"]) .page-heading:not(.fs-landing) .order-link:hover{background:#eef5ff}
 /* Flight Maneuver records carry their id (CAR-1001, MRB-101) in the eyebrow. */
 body[data-view^="mnv-"] .page-heading:not(.fs-landing) .hero-eyebrow{display:block!important;margin:0 0 4px;font-size:12px;line-height:16px;letter-spacing:.08em;text-transform:uppercase;color:#4f5752}
+/* Tablet top bar: the current page name in the breadcrumb is never cut. The search narrows and a three-part trail drops its first crumb. */
+@media(max-width:1199px){.topbar .global-search{flex:0 1 200px!important;min-width:150px}.breadcrumbs .demo-chip{flex-shrink:0}.breadcrumbs .workspace-select{min-width:112px}#breadcrumb{flex:0 0 auto;max-width:none;overflow:visible}#breadcrumb .crumb-link[data-crumb="0"]:has(~ .crumb-link),#breadcrumb .crumb-link[data-crumb="0"]:has(~ .crumb-link)+.crumb-sep{display:none}}
+/* Operation sequence: a locked operation says why once, so more of the sequence fits on a tablet. */
+.sequence-list .operation-btn .op-locked+.op-sub{display:none}
+@media(max-width:1199px) and (min-width:901px){body[data-view="order"] .execution-layout{grid-template-columns:280px minmax(0,1fr)!important;gap:16px!important}}
 </style>
+<script id="flight-ui-polish-js">
+(()=>{
+  // Keep the selected operation visible inside the operation sequence list without moving the page.
+  const showCurrentOperation=()=>{const list=document.querySelector('.sequence-panel .sequence-list');const current=list&&list.querySelector('.operation-btn[aria-pressed="true"]');if(!current||list.scrollHeight<=list.clientHeight)return;const top=current.getBoundingClientRect().top-list.getBoundingClientRect().top+list.scrollTop,bottom=top+current.offsetHeight;if(top<list.scrollTop||bottom>list.scrollTop+list.clientHeight)list.scrollTop=Math.max(0,top-8);};
+  const original=render;render=function(){const result=original.apply(this,arguments);if(view==='order')showCurrentOperation();return result;};
+})();
+</script>
 <script>
 /* DEMO D-29: demo overlay, appended by tools/build-demo.mjs. Not part of the production build.
    Loads the sample workspace once per browser, gives the named pilot accounts working stamps,
