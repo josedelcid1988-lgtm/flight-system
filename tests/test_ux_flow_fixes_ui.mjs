@@ -374,6 +374,14 @@ try {
     await page.evaluate(() => { const o = state.orders.find(x => x.id === 'WO-10006'), op = o.operations.find(x => !x.done); o.subcategory = window.__realSub; op.requiresRecording = window.__realRec; });
     const eng = await page.evaluate(() => { const s = structuredClone(state), o = s.orders.find(x => x.id === 'WO-10006'), op = o.operations.find(x => !x.done); return MES.completeOperation(s, o.id, op.id, '', { stampNumber: MES.buyoffCredential(s.profile, op.buyoffType).holder?.number }); });
     ok('the engine still refuses a buy-off with the standard inspection unconfirmed', !eng.ok && /standard inspection|Check off/.test(eng.message), JSON.stringify(eng));
+    // The engine's own recording refusal names the order's kind too.
+    const engRec = await page.evaluate(() => [x => x.id === 'WO-10006' && x.subcategory !== 'Installation', x => x.id === 'WO-10006'].map((pick, n) => {
+      const s = structuredClone(state), o = s.orders.find(pick); if (n) { o.subcategory = 'Installation'; o.pedigree = 'Development NFF'; } if (!MES.validate(s)) return 'invalid: ' + (MES.diagnose(s) || {}).detail;
+      const op = o.operations.find(x => !x.done); op.requiresRecording = true; op.evidence = []; op.steps = []; op.stepChecks = {};
+      return MES.completeOperation(s, o.id, op.id, '', { stampNumber: MES.buyoffCredential(s.profile, op.buyoffType).holder?.number }).message || '';
+    }));
+    ok('the engine recording refusal says operation on a non-Installation order', /before this operation can be bought off/.test(engRec[0]) && !/installation/i.test(engRec[0]), engRec[0]);
+    ok('the engine recording refusal keeps installation on an Installation order', /before this installation operation can be bought off/.test(engRec[1]), engRec[1]);
     // An operation with no steps held by an external PO: Complete operation is disabled and says why next to the button.
     await page.evaluate(() => { const o = state.orders.find(x => x.id === 'WO-10006'), op = o.operations.find(x => !x.done); op.steps = []; op.stepChecks = {}; op.classification = MES.EXTERNAL_CLASS; op.externalPO = null; openOrder(o.id); });
     await page.waitForTimeout(400);

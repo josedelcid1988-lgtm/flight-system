@@ -7204,7 +7204,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const rejectedClip = operation.evidence.find(item => item.rejectedAt);
     if (rejectedClip) return fail(`${rejectedClip.id} was rejected by ${rejectedClip.rejectedBy.name}: ${rejectedClip.rejectReason}. Remove it and attach a replacement recording before buy-off.`);
     const evidenceIds = operation.evidence.filter(item => item.reviewedAt !== null).map(item => item.id);
-    if (operation.requiresRecording && !evidenceIds.length) return fail('Attach and review at least one video before this installation operation can be bought off.');
+    if (operation.requiresRecording && !evidenceIds.length) return fail(`Attach and review at least one video before this ${order.subcategory === 'Installation' ? 'installation ' : ''}operation can be bought off.`);
     const openSteps = (Array.isArray(operation.steps) ? operation.steps: []).filter(step => !(plain(operation.stepChecks) && operation.stepChecks[step.id]));
     if (openSteps.length) return fail(`Check off the remaining ${openSteps.length} operation step${openSteps.length === 1 ? '' : 's'} before buy-off.`);
     const at = new Date().toISOString();
