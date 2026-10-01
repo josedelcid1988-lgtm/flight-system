@@ -40,6 +40,9 @@ export function createHost(indexPath, html = fs.readFileSync(indexPath, 'utf8'))
   const meta = name => (html.match(new RegExp(`<meta name="${name}" content="([^"]*)">`)) || [])[1] || '';
   sandbox.document = { querySelector: selector => { const name = (String(selector).match(/^meta\[name="(fs-build|fs-build-sha256)"\]$/) || [])[1]; return name ? { getAttribute: () => meta(name) } : null; } };
   sandbox.window = sandbox;
+  // The engine archives superseded calibration entries only where an archive store exists (#130): here, the server's
+  // host. A browser page without the server refuses the archive.
+  sandbox.flightServerHost = true;
   sandbox.globalThis = sandbox;
   const context = vm.createContext(sandbox);
   for (const key of ['roles', 'mes', 'flightPlan', 'flightManeuver', 'print']) {
@@ -130,7 +133,7 @@ export function createHost(indexPath, html = fs.readFileSync(indexPath, 'utf8'))
   // tests/test_server_security.mjs fails while any command-like function is neither listed nor excluded).
   const actionAllow = new Set([
     'MES.addSavedView', 'MES.removeSavedView',
-    'MES.recordCalibration', 'MES.importCalibrations', 'MES.updateCalibration',
+    'MES.recordCalibration', 'MES.importCalibrations', 'MES.updateCalibration', 'MES.recordCalibrationArchive',
     'MES.addAttachment', 'MES.addTicketAttachment', 'MES.removeTicketAttachment', 'MES.removeAttachment',
     'MES.logAogBroadcast', 'MES.resolveAog', 'MES.setSchedule', 'MES.editOrderOperation', 'MES.setWIStepImage',
     'MES.selectProfile', 'MES.assignSerial', 'MES.voidSerial', 'MES.moveToInventory', 'MES.markNetSuitePosted',
