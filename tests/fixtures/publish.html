@@ -8996,7 +8996,9 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   const coverage = (t, wi) => { const ops = wi ? wi.operations : []; const covered = ops.filter(op => t.rows.some(r => r.opId === op.id) || t.reviewed[op.id]); return { total: ops.length, covered: covered.length, missing: ops.filter(op => !covered.includes(op)) }; };
   // Every PFMEA step records its actor in t.contributors, a credential list that is never trimmed (the display history
   // keeps only the last 200 entries). The Safety Team's returns and buy-off are not contributions to the analysis.
-  const plog = (state, t, action) => { log(state, t, action); const c = actor(state).credentialId; if (c && !(Array.isArray(t.contributors) ? t.contributors : []).includes(c)) t.contributors = [...(Array.isArray(t.contributors) ? t.contributors : []), c]; };
+  // Everyone the record already names is merged in before the history entry is written, because writing it can trim the
+  // oldest entry (and with it the only trace of a contributor on a PFMEA from before the list was kept).
+  const plog = (state, t, action) => { t.contributors = [...new Set([...(Array.isArray(t.contributors) ? t.contributors : []), ...MES.pfmeaContributors(t), actor(state).credentialId].filter(c => typeof c === 'string' && c))]; log(state, t, action); };
   function openPFMEA(state, wiId, rev) {
     if (!can('approve-wi') && !can('edit-wi')) return fail('Your role cannot open a PFMEA.');
     const wi = (state.masterWIs || []).find(w => w.id === wiId && w.revision === rev); if (!wi) return fail('Master WI not found.');
