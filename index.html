@@ -8620,7 +8620,14 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   MES.diagnose = state => {
     const base = diagnoseWithPlanner(state); if (base) return base;
     const sprints = plain(state?.projectPlan) && Array.isArray(state.projectPlan.sprints) ? state.projectPlan.sprints : [];
-    for (const row of sprints) { const problem = plain(row) ? sprintRangeProblem(row.startDate, row.endDate) : ''; if (problem) return { where: String(row.id), detail: `Sprint ${row.id} runs ${row.startDate} to ${row.endDate}. ${problem}`, fix: null }; }
+    // The full sprint shape first: a sprint that is both out of range and malformed is reported for the malformed field,
+    // since correcting its dates alone would not make the workspace valid.
+    for (let i = 0; i < sprints.length; i += 1) {
+      const row = sprints[i], id = plain(row) && typeof row.id === 'string' ? row.id : `projectPlan.sprints[${i}]`;
+      if (!sprintRowValid(row)) return { where: id, detail: `Sprint ${id} has a missing or invalid field. Restore it from a backup or export of this workspace, then reload.`, fix: null };
+      const problem = sprintRangeProblem(row.startDate, row.endDate);
+      if (problem) return { where: id, detail: `Sprint ${id} runs ${row.startDate} to ${row.endDate}. ${problem}`, fix: null };
+    }
     if (plain(state?.projectPlan) && Object.hasOwn(state.projectPlan, 'retiredSprints')) {
       const retired = state.projectPlan.retiredSprints;
       if (!Array.isArray(retired)) return { where: 'projectPlan.retiredSprints', detail: 'The retired sprint register (projectPlan.retiredSprints) is not a list. Restore it from a backup or export of this workspace, then reload.', fix: null };
@@ -8629,6 +8636,9 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
       const clash = retired.find(row => live.has(row.id));
       if (clash) return { where: clash.id, detail: `Sprint ID ${clash.id} is used by both a live and a retired sprint. Restore the workspace from a backup or export, then reload.`, fix: null };
     }
+    // Any other repeated sprint ID (two live sprints, or two retired records).
+    const seen = new Set(), retiredRows = plain(state?.projectPlan) && Array.isArray(state.projectPlan.retiredSprints) ? state.projectPlan.retiredSprints : [];
+    for (const row of [...sprints, ...retiredRows]) { const id = row && row.id; if (seen.has(id)) return { where: String(id), detail: `Sprint ID ${id} is used by more than one sprint record. Restore the workspace from a backup or export, then reload.`, fix: null }; seen.add(id); }
     return null;
   };
   // repair (the standalone save and load fallback) diagnoses with the engine's own rules. A workspace that passes those

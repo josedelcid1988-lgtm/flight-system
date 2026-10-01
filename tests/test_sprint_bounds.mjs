@@ -175,7 +175,12 @@ await check('diagnose names each invalid retired-sprint record and repair refuse
   const cases = [
     ['a register that is not a list', s => { s.projectPlan.retiredSprints = 'CORRUPT'; }, /^The retired sprint register \(projectPlan\.retiredSprints\) is not a list\. Restore it from a backup or export of this workspace, then reload\./, 'projectPlan.retiredSprints'],
     ['a retired row with a broken field', s => { s.projectPlan.retiredSprints[0].capacityHours = -5; }, /^Retired sprint SPT-0001 has a missing or invalid field\. Restore it from a backup or export of this workspace, then reload\./, 'SPT-0001'],
-    ['a retired ID that a live sprint also uses', s => { s.projectPlan.retiredSprints[0].id = 'SPT-0003'; }, /^Sprint ID SPT-0003 is used by both a live and a retired sprint\. Restore the workspace from a backup or export, then reload\./, 'SPT-0003']
+    ['a retired ID that a live sprint also uses', s => { s.projectPlan.retiredSprints[0].id = 'SPT-0003'; }, /^Sprint ID SPT-0003 is used by both a live and a retired sprint\. Restore the workspace from a backup or export, then reload\./, 'SPT-0003'],
+    ['two retired records with one ID', s => { s.projectPlan.retiredSprints[1].id = 'SPT-0001'; }, /^Sprint ID SPT-0001 is used by more than one sprint record\. Restore the workspace from a backup or export, then reload\./, 'SPT-0001'],
+    ['two live sprints with one ID', s => { s.projectPlan.sprints.push({ ...s.projectPlan.sprints[0] }); }, /^Sprint ID SPT-0003 is used by more than one sprint record\. Restore the workspace from a backup or export, then reload\./, 'SPT-0003'],
+    // A live sprint that is out of range and malformed is reported for the malformed field: correcting the dates alone
+    // would not make the workspace valid.
+    ['an out-of-range live sprint with a broken field', s => { s.projectPlan.sprints.push({ ...storedSprint('2026-01-01', '2026-12-31'), id: 'SPT-0050', capacityHours: -5 }); }, /^Sprint SPT-0050 has a missing or invalid field\. Restore it from a backup or export of this workspace, then reload\./, 'SPT-0050']
   ];
   for (const [what, breakIt, message, where] of cases) {
     const state = structuredClone(base); breakIt(state);
