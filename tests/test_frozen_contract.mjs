@@ -80,7 +80,7 @@ const SOD=[
   ['a standalone save recomputes every signature and is refused when one fails',"{const mv=MES.verifyManifests(state);if(!mv.ok){const f=mv.failures[0]||{};dropUncommittedServerCommands();state=structuredClone(lastSaved);",1],
   ['a CAR closure signs each action\'s completion evidence and completer, and who closed it and when',"    const subject = MES.carClosureSubject(car, note, true, who, at);",1],
   ['a signature made by this build binds who signed and when inside the signed hash',"const signedBy = (by, at) => ({ signer: signerOf_(by), signedAt: at ?? null });",1],
-  ['a stock NC approval signs the disposition record and the approver',"    const subject = MES.ncApprovalSubject(t, note, who, at, true);",1],
+  ['a stock NC approval signs the disposition record, the approver and the cited MRB decision',"    const subject = MES.ncApprovalSubject(t, note, who, at, true, MES.mrbDecisionHashOf(state, t));",1],
   ['the FAIR verification, box 22 and Skyryse QA approval sign the recorded inspection stamp',"verifierStamp: by.stamp ?? null,",1],
   ['an unsigned migrated-escape closure is exempt only through the structured record the migration writes',"&& legacyEscapeValid(t.resolution.legacy) &&",1],
   ['the recorded signer and time of a signed record must be the manifest signer and time',"const signerMismatch = (rec, m) => !plain(rec.by) || !plain(m.signer) || rec.by.credentialId !== m.signer.credentialId || rec.by.name !== m.signer.name || rec.at !== m.at;",1],
