@@ -139,6 +139,11 @@ try {
     await page.locator('[aria-label="Search Flight Maneuver records"]').fill('nothing-like-this');
     assert.match(await page.locator('.fr-empty').innerText(), /^No records match the search or filters/);
     assert.ok(bundle.includes('Nothing needs attention right now.'), 'an empty Quality Hangar says nothing needs attention, not that no records exist');
+    await go(page, 'mnv-intake');
+    await page.locator('[aria-label="Filter NC intake"]').selectOption('Escapes');
+    await go(page, 'mnv-spr');
+    await page.locator('.fr-empty').waitFor();
+    assert.equal(await page.locator('.fr-empty').innerText(), 'No problem reports yet.', 'a hidden NC intake filter does not leak into another page');
   });
 
   await check('M18 an expired lot reads Expired N days ago in the danger colour', async () => {
@@ -221,8 +226,9 @@ try {
     assert.deepEqual(primary, ['rgb(20, 22, 21)', 'none'], 'Raise NC uses the same solid primary as Create work order');
     await go(tabletPage, 'orders');
     await tabletPage.locator('.fr-order-table th .log-menu > summary').first().waitFor();
-    const tap = await tabletPage.locator('.fr-order-table th .log-menu > summary').first().evaluate(el => { const a = getComputedStyle(el, '::after'); return [parseFloat(a.width), parseFloat(a.height)]; });
-    assert.ok(tap[0] >= 44 && tap[1] >= 44, `column filter tap area is 44px at tablet width (${tap})`);
+    const taps = await tabletPage.evaluate(() => [...document.querySelectorAll('.fr-order-table thead th')].filter(th => th.querySelector('.log-menu > summary') && getComputedStyle(th).display !== 'none').map(th => { const f = th.querySelector('.log-menu > summary').getBoundingClientRect(), s = th.querySelector('.log-sort').getBoundingClientRect(); return [f.width, f.height, f.left - s.right]; }));
+    for (const [w, h, gap] of taps) assert.ok(w >= 44 && h >= 44 && gap >= 0, `column filter is a 44px target that does not overlap its sort button (${w}x${h}, gap ${gap})`);
+    assert.equal(await tabletPage.locator('.fr-order-page .fr-table-scroll').evaluate(el => el.scrollWidth <= el.clientWidth), true, 'the 44px filters still fit the table at 1024');
     await tablet.close();
   });
 

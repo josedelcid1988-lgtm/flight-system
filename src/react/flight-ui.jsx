@@ -452,7 +452,7 @@ function ManeuverHangar({ state, FM, view, onOpen }) {
   const [sourceFilter, setSourceFilter] = useState('All');
   const [compact, setCompact] = useState(() => { try { return localStorage.getItem(densityKey) === 'compact'; } catch { return false; } });
   const [selected, setSelected] = useState(null);
-  useEffect(() => { setKind(pageKind); setSelected(null); }, [pageKind]);
+  useEffect(() => { setKind(pageKind); setSelected(null); setIntakeFilter('All'); setSourceFilter('All'); }, [pageKind]);
   const metrics = FM.metrics(state);
   const intake = FM.intake(state).filter(row => pageKind === 'NC' ? (
     (intakeFilter === 'All' || (intakeFilter === 'Attention' ? row.mrbState === 'Needed' || row.mrb?.status === 'Open' || (row.ticketStatus === 'Open' && (row.hold || row.stock)) : intakeFilter === 'Open' ? row.ticketStatus === 'Open' : intakeFilter === 'Escapes' ? !!row.escape : row.ticketStatus === 'Resolved')) &&
@@ -478,7 +478,7 @@ function ManeuverHangar({ state, FM, view, onOpen }) {
     nextStep: row.jira?.key ? `Jira ${row.jira.key} · status is tracked here.` : 'Copy the record into Jira and record its key.'
   }));
   const rows = [...intake, ...cars, ...boards, ...sprs].filter(row => (kind === 'All' || row.kind === kind) && [row.id, row.kind, row.title, row.status, row.workOrderId, row.partNumber, row.owner, row.summary].map(asText).join(' ').toLowerCase().includes(query.trim().toLowerCase())).sort((a, b) => asText(a.dueDate || '9999').localeCompare(asText(b.dueDate || '9999')) || a.id.localeCompare(b.id));
-  const filtered = !!query.trim() || kind !== pageKind || intakeFilter !== 'All' || sourceFilter !== 'All';
+  const filtered = !!query.trim() || kind !== pageKind || (pageKind === 'NC' && (intakeFilter !== 'All' || sourceFilter !== 'All'));
   const openCount = navOpenCount(state, FM, pageKind);
   const density = () => setCompact(value => { const next = !value; try { localStorage.setItem(densityKey, next ? 'compact' : 'comfortable'); } catch {} return next; });
   return <div className="flight-react fr-maneuver">
