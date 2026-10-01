@@ -119,6 +119,13 @@ export function anchorMismatch(db, anchor) {
   return null;
 }
 
+// The anchor an export carries: when a commit finished but its final anchor write did not (the anchor still
+// names it as pending), the database equals the pending count and tip, which is the state the export holds.
+export function exportAnchor(db, anchor) {
+  if (!anchor || !anchor.pending) return anchor || null;
+  return matchesPending(chainTip(db), anchor) ? { records: anchor.pending.records, tip: anchor.pending.tip, anchoredAt: anchor.anchoredAt, settledFromPending: true } : anchor;
+}
+
 const putAnchor = (file, a) => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
@@ -379,7 +386,7 @@ export function createMirror(options = {}) {
         if (!['json', 'csv'].includes(format)) return fail(res, 400, 'bad_request', 'format is json or csv.');
         const day = new Date().toISOString().slice(0, 10);
         res.setHeader('content-disposition', `attachment; filename="flight-system-mirror-${day}.${format}"`);
-        return format === 'csv' ? send(res, 200, exportAll(db, 'csv', readAnchor(anchorPath)), 'text/csv; charset=utf-8') : send(res, 200, { ok: true, ...exportAll(db, 'json', readAnchor(anchorPath)) });
+        return format === 'csv' ? send(res, 200, exportAll(db, 'csv', exportAnchor(db, readAnchor(anchorPath))), 'text/csv; charset=utf-8') : send(res, 200, { ok: true, ...exportAll(db, 'json', exportAnchor(db, readAnchor(anchorPath))) });
       }
       if (url.pathname === `/api/${API_VERSION}/records`) {
         const entity = url.searchParams.get('entity'), id = url.searchParams.get('id');

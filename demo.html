@@ -14306,22 +14306,38 @@ window.SK_MIRROR = window.SK_MIRROR || {
   var tombs = client.tombs;
   // A device upgraded from a build without acknowledgements has confirmed records but no lastAck to name, so it
   // cannot tell whether the mirror was restored meanwhile. Its first confirmed post sends everything once.
-  var needBaseline = !client.ack && Object.keys(sent).length > 0;
+  var needBaseline = false; // set once the acknowledgement slots can be read, below
   var lastJson = {};          // entity key -> JSON last queued in this page (fast path; sent holds the hashes across reloads)
   var inflight = null, retryTimer = null, attempt = 0, lastError = '', lastSyncAt = null, memoryOnly = false, resentAt = null, lastWs = null;
-  // Every tab on this device shares one client record, so before sending and before saving, the acknowledgement
-  // another tab stored is merged in: within one epoch it only moves forward, and a reset after a restore (which
-  // starts a new epoch) wins over an older tab's higher one. A stale tab can never move it backward.
-  if (!Number.isInteger(client.ackEpoch)) client.ackEpoch = 0;
-  function mergeAck() {
-    var stored = read(CLIENT_KEY, null);
-    if (!stored || stored.id !== client.id) return;
-    var epoch = Number.isInteger(stored.ackEpoch) ? stored.ackEpoch : 0, theirs = stored.ack && Number.isInteger(stored.ack.id) ? stored.ack : null;
-    if (epoch > client.ackEpoch) { client.ackEpoch = epoch; client.ack = theirs; }
-    else if (epoch === client.ackEpoch && theirs && (!client.ack || theirs.id > client.ack.id)) client.ack = theirs;
+  // Acknowledgements: each page writes only its own slot (ACK_PREFIX + its page id), so two tabs never overwrite
+  // each other's, and localStorage needs no lock. The device's acknowledgement is the highest row id over all slots
+  // of the newest epoch; a reset after a restore writes a new epoch, which outranks every older slot. An ack stored
+  // by an older build in the client record counts as one more slot and is never rewritten.
+  var ACK_PREFIX = 'skyryse-mes-sync-ack-v1' + ':', ACK_PRUNE_MS = 10 * 60 * 1000;
+  var pageId = 'page-' + (window.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
+  function ackSlots() {
+    var out = [];
+    if (client.ack && Number.isInteger(client.ack.id)) out.push({ key: null, epoch: Number.isInteger(client.ackEpoch) ? client.ackEpoch : 0, ack: client.ack, at: 0 });
+    try { for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k && k.indexOf(ACK_PREFIX) === 0) { var v = read(k, null); if (v && Number.isInteger(v.epoch)) out.push({ key: k, epoch: v.epoch, ack: v.ack && Number.isInteger(v.ack.id) ? v.ack : null, at: Number(v.at) || 0 }); } } } catch (e) {}
+    return out;
   }
+  function currentAck() {
+    var slots = ackSlots(), epoch = 0, ack = null;
+    slots.forEach(function (sl) { if (sl.epoch > epoch) epoch = sl.epoch; });
+    slots.forEach(function (sl) { if (sl.epoch === epoch && sl.ack && (!ack || sl.ack.id > ack.id)) ack = sl.ack; });
+    return { epoch: epoch, ack: ack, slots: slots };
+  }
+  function writeAck(epoch, ack) {
+    var mine = read(ACK_PREFIX + pageId, null);
+    if (mine && mine.epoch === epoch && mine.ack && ack && mine.ack.id >= ack.id) return;
+    try { localStorage.setItem(ACK_PREFIX + pageId, JSON.stringify({ epoch: epoch, ack: ack, at: Date.now() })); } catch (e) { memoryOnly = true; }
+    // Slots left by closed pages that no longer decide anything (an older epoch, or below the device's ack) and
+    // were not written for ten minutes are removed; the slot that holds the device's ack is never removed.
+    var cur = currentAck(), now = Date.now();
+    cur.slots.forEach(function (sl) { if (!sl.key || sl.key === ACK_PREFIX + pageId || now - sl.at < ACK_PRUNE_MS) return; if (sl.epoch < cur.epoch || (cur.ack && sl.ack && sl.ack.id < cur.ack.id)) { try { localStorage.removeItem(sl.key); } catch (e) {} } });
+  }
+  needBaseline = !currentAck().ack && Object.keys(sent).length > 0;
   var persist = function () {
-    mergeAck();
     try { localStorage.setItem(QUEUE_KEY, JSON.stringify(queue)); localStorage.setItem(SENT_KEY, JSON.stringify(sent)); localStorage.setItem(CLIENT_KEY, JSON.stringify(client)); memoryOnly = false; }
     catch (e) { memoryOnly = true; }
   };
@@ -14430,8 +14446,7 @@ window.SK_MIRROR = window.SK_MIRROR || {
     var batch = pending().slice(0, Math.max(1, Math.min(500, Number(cfg.batchSize) || 50)));
     if (!batch.length) { paint(); return Promise.resolve(); }
     var headers = { 'content-type': 'application/json' }; if (cfg.token) headers.authorization = 'Bearer ' + cfg.token;
-    mergeAck();
-    var body = JSON.stringify({ clientId: client.id, lastAck: client.ack || undefined, records: batch.map(function (r) { var c = {}; Object.keys(r).forEach(function (k) { if (k !== 'synced' && k !== 'rejected') c[k] = r[k]; }); return c; }) });
+    var body = JSON.stringify({ clientId: client.id, lastAck: currentAck().ack || undefined, records: batch.map(function (r) { var c = {}; Object.keys(r).forEach(function (k) { if (k !== 'synced' && k !== 'rejected') c[k] = r[k]; }); return c; }) });
     inflight = fetch(base + '/api/v1/writes', { method: 'POST', headers: headers, body: body })
       .then(function (res) { return res.json().catch(function () { return {}; }).then(function (j) { if (!res.ok || !j.ok) throw new Error((j.error && j.error.message) || ('HTTP ' + res.status)); return j; }); })
       .then(function (j) {
@@ -14444,8 +14459,8 @@ window.SK_MIRROR = window.SK_MIRROR || {
         queue = queue.filter(function (r) { return !done[r.clientWriteId]; });
         // After a restore (or on a device's first post since upgrading), only rows confirmed in this answer are
         // known to be on the server; everything else is sent again.
-        if (j.ackCheck === 'missing' || needBaseline) { mergeAck(); client.ackEpoch += 1; client.ack = fresh; needBaseline = false; resendAll(); }
-        else if (fresh && (!client.ack || fresh.id > client.ack.id)) client.ack = fresh;
+        if (j.ackCheck === 'missing' || needBaseline) { writeAck(currentAck().epoch + 1, fresh); needBaseline = false; resendAll(); }
+        else if (fresh) writeAck(currentAck().epoch, fresh);
         queue.forEach(function (r) { if (bad[r.clientWriteId]) r.rejected = bad[r.clientWriteId]; });
         persist(); attempt = 0; lastError = Object.keys(bad).length ? 'The mirror refused ' + Object.keys(bad).length + ' record(s): ' + bad[Object.keys(bad)[0]] : ''; lastSyncAt = new Date().toISOString();
         inflight = null; paint();

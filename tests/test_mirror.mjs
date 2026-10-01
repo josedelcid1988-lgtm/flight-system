@@ -219,6 +219,18 @@ await m.close();
  const refused=await pd({clientId:'d',records:[rec(105)]});const rj=await refused.json();
  ok('a write after an earlier manifest was changed is refused, and nothing is stored',refused.status===409&&rj.error.code==='anchor_mismatch'&&Number(md.db.prepare('SELECT COUNT(*) n FROM records').get().n)===4,JSON.stringify(rj));
  await md.close();}
+// A commit whose final anchor write failed leaves the anchor naming it as pending. Exports then carry the
+// pending count and tip, which match the rows they hold, not the stale top-level ones.
+{const tp=path.join(tmp,'pend.sqlite');const mp=createMirror({dbPath:tp,backupDir:path.join(tmp,'b18'),port:0,backupEveryMinutes:0,...SECURE});const ap=await mp.listen();
+ const base=`http://127.0.0.1:${ap.port}/api/v1`;
+ await fetch(base+'/writes',{method:'POST',headers:{'content-type':'application/json',...WAUTH},body:JSON.stringify({clientId:'p',records:[rec(301),rec(302)]})});
+ const a=readAnchor(tp+'.anchor.json');fs.writeFileSync(tp+'.anchor.json',JSON.stringify({records:a.records-1,tip:'c'.repeat(64),anchoredAt:a.anchoredAt,pending:{records:a.records,tip:a.tip}}));
+ ok('the refusal case is real: the anchor file still names the earlier state at top level',readAnchor(tp+'.anchor.json').records===a.records-1);
+ const lines=(await (await get(base+'/export?format=csv')).text()).trim().split('\r\n');const tail=lines[lines.length-1].split(',').slice(-2);
+ ok('the CSV export of an interrupted commit carries the count and tip the rows match',tail[0]===String(a.records)&&tail[1]===a.tip,JSON.stringify(tail));
+ const j=await (await get(base+'/export?format=json')).json();
+ ok('the JSON export carries the same, and verifies against it',j.anchor.records===a.records&&j.anchor.tip===a.tip&&j.verify.ok,JSON.stringify({anchor:j.anchor,ok:j.verify.ok}));
+ await mp.close();}
 // restore-test --against takes the live anchor from where the server keeps it: --live-anchor or FS_MIRROR_ANCHOR.
 {const {DatabaseSync}=await import('node:sqlite');const tp=path.join(tmp,'custom.sqlite'),ap=path.join(tmp,'anchors','custom.anchor.json');const mc=createMirror({dbPath:tp,anchorPath:ap,backupDir:path.join(tmp,'b17'),port:0,backupEveryMinutes:0,...SECURE});const ac=await mc.listen();
  const pc=body=>fetch(`http://127.0.0.1:${ac.port}/api/v1/writes`,{method:'POST',headers:{'content-type':'application/json',...WAUTH},body:JSON.stringify(body)});
@@ -334,29 +346,33 @@ await authEdit("a.users.push({username:arg,displayName:'Temp Account',salt:'00',
  ok('the restored and refilled chain is intact against its anchor',m.verify().ok,JSON.stringify(m.verify()));
  const w4=await mkOrder(p);const before=count();st=await drain();
  ok('once caught up, the next write sends only what changed',st.resentAt&&count()-before<=3,JSON.stringify({added:count()-before}));}
-// Two tabs share the device's client record. A late answer in this tab must not move the stored acknowledgement
-// back below one another tab saved meanwhile; a restore reset by another tab (a newer epoch) is kept too.
-{const CK='skyryse-mes-sync-client-v1';let other=null;
+// Each page keeps its acknowledgement in its own slot; the device's is the highest of the newest epoch.
+const devAck=()=>p.evaluate(()=>{const P='skyryse-mes-sync-ack-v1:',slots=[];const c=JSON.parse(localStorage.getItem('skyryse-mes-sync-client-v1')||'{}');if(c.ack)slots.push({key:null,epoch:c.ackEpoch||0,ack:c.ack});for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k.startsWith(P)){const v=JSON.parse(localStorage.getItem(k));slots.push({key:k,epoch:v.epoch,ack:v.ack});}}let epoch=0,ack=null;slots.forEach(x=>{if(x.epoch>epoch)epoch=x.epoch;});slots.forEach(x=>{if(x.epoch===epoch&&x.ack&&(!ack||x.ack.id>ack.id))ack=x.ack;});return {epoch,ack,slots};});
+// Two tabs: another tab confirms a newer row while this tab's answer is in flight. This tab writes only its own
+// slot, so the other tab's acknowledgement is never overwritten and the device's never moves back.
+{const OTHER='skyryse-mes-sync-ack-v1:page-other-tab';let other=null;
  await ctx.route(/\/api\/v1\/writes$/,async route=>{const resp=await route.fetch();if(!other){
    const r2=await fetch(API+'/writes',{method:'POST',headers:{'content-type':'application/json',...WAUTH},body:JSON.stringify({clientId:'other-tab',records:[rec(201)]})});const j2=await r2.json();
-   other={id:j2.results[0].id,clientWriteId:'srv-201'};
-   await p.evaluate(([k,a])=>{const c=JSON.parse(localStorage.getItem(k));c.ack=a;localStorage.setItem(k,JSON.stringify(c));},[CK,other]);}
+   other={id:j2.results[0].id,clientWriteId:'srv-201'};const e=(await devAck()).epoch;
+   await p.evaluate(([k,v])=>localStorage.setItem(k,JSON.stringify(v)),[OTHER,{epoch:e,ack:other,at:Date.now()}]);}
   await route.fulfill({response:resp});});
  await mkOrder(p);await drain();await ctx.unroute(/\/api\/v1\/writes$/);
- const stored=await p.evaluate(k=>JSON.parse(localStorage.getItem(k)).ack,CK);
- ok('the stored acknowledgement never moves back below one another tab saved while this tab waited',!!other&&stored&&stored.id>=other.id,JSON.stringify({stored,other}));
- const before=await p.evaluate(k=>JSON.parse(localStorage.getItem(k)).ackEpoch,CK);
- await p.evaluate(([k])=>{const c=JSON.parse(localStorage.getItem(k));c.ackEpoch=(c.ackEpoch||0)+1;c.ack=null;localStorage.setItem(k,JSON.stringify(c));},[CK]);
- const r0=count();await mkOrder(p);const st2=await drain();
- const after=await p.evaluate(k=>JSON.parse(localStorage.getItem(k)),CK);
- ok('a reset another tab saved (a newer epoch) is kept, not overwritten by this tab\'s older acknowledgement',after.ackEpoch===before+1&&after.ack&&after.ack.id>=r0&&st2.unsynced===0,JSON.stringify({before,after:{e:after.ackEpoch,ack:after.ack},r0}));}
+ const d=await devAck();const theirs=await p.evaluate(k=>JSON.parse(localStorage.getItem(k)),OTHER);
+ ok('another tab\'s acknowledgement, saved while this tab waited, is left as it was',!!other&&theirs&&theirs.ack&&theirs.ack.id===other.id,JSON.stringify({theirs,other}));
+ ok('the device\'s acknowledgement never moves back below it',d.ack&&d.ack.id>=other.id,JSON.stringify(d.ack));
+ const mine=d.slots.filter(x=>x.key&&x.key!==OTHER);
+ ok('this page writes one slot of its own',mine.length>=1&&mine.every(x=>/^skyryse-mes-sync-ack-v1:page-/.test(x.key)),JSON.stringify(mine.map(x=>x.key)));
+ // Another tab resets after a restore: a newer epoch outranks every older slot, this page's included.
+ const before=d.epoch;await p.evaluate(([k,e])=>localStorage.setItem(k,JSON.stringify({epoch:e,ack:null,at:Date.now()})),[OTHER,before+1]);
+ const r0=count();await mkOrder(p);const st2=await drain();const after=await devAck();
+ ok('a reset another tab saved (a newer epoch) is kept, and this page\'s next acknowledgement joins that epoch',after.epoch===before+1&&after.ack&&after.ack.id>r0&&st2.unsynced===0,JSON.stringify({before,after:{e:after.epoch,ack:after.ack},r0}));}
 // A device upgraded from a build without acknowledgements: it has confirmed records but no lastAck, so its
 // first confirmed post sends everything once instead of trusting a mirror that may have been restored.
-{await p.evaluate(()=>{const c=JSON.parse(localStorage.getItem('skyryse-mes-sync-client-v1'));delete c.ack;localStorage.setItem('skyryse-mes-sync-client-v1',JSON.stringify(c));});
+{await p.evaluate(()=>{const c=JSON.parse(localStorage.getItem('skyryse-mes-sync-client-v1'));delete c.ack;delete c.ackEpoch;localStorage.setItem('skyryse-mes-sync-client-v1',JSON.stringify(c));Object.keys(localStorage).filter(k=>k.startsWith('skyryse-mes-sync-ack-v1:')).forEach(k=>localStorage.removeItem(k));});
  await p.reload();await p.waitForFunction(()=>window.__ready===true&&!!window.skMirror,null,{timeout:30000});
- const pre=await p.evaluate(()=>({ack:JSON.parse(localStorage.getItem('skyryse-mes-sync-client-v1')).ack||null,sent:Object.keys(JSON.parse(localStorage.getItem('skyryse-mes-sync-sent-v1')||'{}')).length,resent:window.skMirror.status().resentAt}));
+ const pre={ack:(await devAck()).ack,...(await p.evaluate(()=>({sent:Object.keys(JSON.parse(localStorage.getItem('skyryse-mes-sync-sent-v1')||'{}')).length,resent:window.skMirror.status().resentAt})))};
  const before=count();const w5=await mkOrder(p);st=await drain();
- const post=await p.evaluate(()=>JSON.parse(localStorage.getItem('skyryse-mes-sync-client-v1')).ack||null);
+ const post=(await devAck()).ack;
  ok('an upgraded device with confirmed records and no acknowledgement sends everything once on its first post, then records an acknowledgement',pre.ack===null&&pre.sent>0&&pre.resent===null&&w5.ok&&!!st.resentAt&&count()-before>=pre.sent&&!!post&&Number.isInteger(post.id),JSON.stringify({pre,added:count()-before,post}));
  const b2=count();await mkOrder(p);st=await drain();
  ok('after that baseline the next write sends only what changed',count()-b2<=3,JSON.stringify({added:count()-b2}));}
