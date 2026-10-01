@@ -116,6 +116,12 @@ async function createAccount(manager, user, { refuse = false } = {}) {
   else ok(`${manager.username} creates ${user.username} (${user.role})`, r.status === 200, JSON.stringify(r));
 }
 
+// Gives a person a role through the server's access route, as Accounts and roles does, citing their training.
+async function setRole(manager, username, role, { refuse = false, self = false } = {}) {
+  const r = await manager.page.evaluate(async a => { const x = await window.skServer.api('/auth/access', { method: 'POST', body: { action: 'roles', username: a.username, roles: [a.role], reason: 'Training floor demo role assignment.', trainingCode: a.code } }); return { status: x.status, json: x.json }; }, { username, role, code: TRAINING });
+  if (refuse) ok(`${manager.username} is refused: give ${username} the ${role} role${self ? ' (own account)' : ' without current training'}`, r.status === 403 && (self ? /own roles/ : /training/).test(r.json?.error || ''), JSON.stringify(r));
+  else ok(`${manager.username} gives ${username} the ${role} role, citing the training`, r.status === 200, JSON.stringify(r));
+}
 // Stops the server process and waits until it has exited, so its database files are closed before they are removed.
 async function stop(child) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
@@ -137,25 +143,34 @@ async function scene(browser) {
     const jose = await signIn(browser, base, 'jose', pw('jose'), { displayName: 'Jose Del Cid', code: server.code }); people.push(jose);
     ok('the first account is Master Access', await look(jose, () => window.skAuth.role()) === 'admin');
     ok('the console printed the training mode line', /Training mode: every page, print and download is marked TRAINING, NOT THE RECORD/.test(server.out()));
-    // The second QA Manager needs a current training record before the role is given (the role carries MRB seats).
+    // The setup guide's order, the only one the screens allow (Record a training lists existing accounts): add the
+    // person as General, record their training, then give the role in Accounts and roles, citing the training. A role
+    // with inspection or MRB authority is refused without a current training record.
     await createAccount(jose, { username: 'qm2', displayName: 'Riley Second QA Manager', role: 'qm', roles: ['qm'], password: pw('qm2'), trainingCode: TRAINING }, { refuse: true });
+    await createAccount(jose, { username: 'qm2', displayName: 'Riley Second QA Manager', role: 'general', roles: ['general'], password: pw('qm2') });
+    await setRole(jose, 'qm2', 'qm', { refuse: true });
     await act(jose, 'record ESD training for the second QA Manager', a => MES.recordTraining(state, { account: 'qm2', code: a.code, expires: a.expires, note: 'Training floor demo' }), { code: TRAINING, expires: EXPIRES });
     await act(jose, 'record his own training', a => MES.recordTraining(state, { account: 'jose', code: a.code, expires: a.expires }), { code: TRAINING, expires: EXPIRES }, { refuse: true });
     await act(jose, 'issue a stamp to his own account', a => MES.issueStamp(state, { name: 'Jose Del Cid', buyoffType: 'Quality', account: 'jose', expires: a }), EXPIRES, { refuse: true });
-    await createAccount(jose, { username: 'qm2', displayName: 'Riley Second QA Manager', role: 'qm', roles: ['qm'], password: pw('qm2'), trainingCode: TRAINING });
+    await setRole(jose, 'qm2', 'qm');
     const qm2 = await signIn(browser, base, 'qm2', pw('qm2')); people.push(qm2);
-    // ---- the second QA Manager records training and issues stamps, including Jose's ----
-    for (const account of ['jose', 'mfgeng', 'quality', 'engineering', 'cert', 'tech']) await act(qm2, `record ESD training for ${account}`, a => MES.recordTraining(state, { account: a.account, code: a.code, expires: a.expires, note: 'Training floor demo' }), { account, code: TRAINING, expires: EXPIRES });
-    await act(qm2, 'record her own training', a => MES.recordTraining(state, { account: 'qm2', code: a.code, expires: a.expires }), { code: TRAINING, expires: EXPIRES }, { refuse: true });
-    await serverRefuses(base, qm2, 'record her own training', 'MES.recordTraining', [{ account: 'qm2', code: TRAINING, expires: EXPIRES }]);
-    for (const user of [
+    ok('the second QA Manager holds the QA Manager role', await look(qm2, () => window.skAuth.role()) === 'qm');
+    await setRole(qm2, 'qm2', 'admin', { refuse: true, self: true });
+    // ---- everyone else: accounts by Jose, training by the second QA Manager, roles by Jose ----
+    const users = [
       { username: 'mfgeng', displayName: 'Morgan Training Engineer', role: 'me' },
       { username: 'quality', displayName: 'Quinn Training Inspector', role: 'qe' },
       { username: 'engineering', displayName: 'Erin Training Engineer', role: 'swe' },
       { username: 'cert', displayName: 'Casey Training Certification', role: 'cert' },
       { username: 'tech', displayName: 'Taylor Training Technician', role: 'technician' },
       { username: 'ops1', displayName: 'Owen Training Operations', role: 'operator' }
-    ]) await createAccount(jose, { ...user, roles: [user.role], password: pw(user.username), trainingCode: TRAINING });
+    ];
+    const gated = new Set(['me', 'qe', 'swe', 'cert']);
+    for (const user of users) await createAccount(jose, { ...user, role: gated.has(user.role) ? 'general' : user.role, roles: [gated.has(user.role) ? 'general' : user.role], password: pw(user.username) });
+    for (const account of ['jose', 'mfgeng', 'quality', 'engineering', 'cert', 'tech']) await act(qm2, `record ESD training for ${account}`, a => MES.recordTraining(state, { account: a.account, code: a.code, expires: a.expires, note: 'Training floor demo' }), { account, code: TRAINING, expires: EXPIRES });
+    await act(qm2, 'record her own training', a => MES.recordTraining(state, { account: 'qm2', code: a.code, expires: a.expires }), { code: TRAINING, expires: EXPIRES }, { refuse: true });
+    await serverRefuses(base, qm2, 'record her own training', 'MES.recordTraining', [{ account: 'qm2', code: TRAINING, expires: EXPIRES }]);
+    for (const user of users.filter(u => gated.has(u.role))) await setRole(jose, user.username, user.role);
     const stamps = {};
     for (const [account, name, buyoffType] of [['tech', 'Taylor Training Technician', 'Technician'], ['quality', 'Quinn Training Inspector', 'Quality'], ['jose', 'Jose Del Cid', 'Quality']]) {
       const r = await act(qm2, `issue a ${buyoffType} stamp to ${account}`, a => MES.issueStamp(state, a), { name, buyoffType, account, expires: EXPIRES });

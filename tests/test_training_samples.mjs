@@ -62,6 +62,9 @@ try {
     const usable = calCells.filter(c => c[6] === 'In Calibration').map(c => c[0]);
     const blocked = calCells.filter(c => c[6] !== 'In Calibration').map(c => c[0]);
     check('every In Calibration training tool passes the point-of-use check', usable.length >= 15 && usable.every(tag => MES.toolCheck(tag, NOW, state).ok === true), usable.filter(tag => !MES.toolCheck(tag, NOW, state).ok).join(', '));
+    const today = new Date().toISOString();
+    check('every In Calibration training tool also passes the point-of-use check today', usable.every(tag => MES.toolCheck(tag, today, state).ok === true), usable.filter(tag => !MES.toolCheck(tag, today, state).ok).join(', '));
+    check('the training tools stay usable until 2036, so the samples do not expire before a training session', calCells.filter(c => c[6] === 'In Calibration').every(c => c[5] >= '2036-01-01'));
     check('the Out for Calibration and Quarantined training tools are refused at point of use', blocked.length === 2 && blocked.every(tag => MES.toolCheck(tag, NOW, state).ok === false));
   }
 

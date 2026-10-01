@@ -181,10 +181,11 @@ try {
     // through an anchor, and a print whose pop-up was blocked, which falls back to a download.
     const downloads = [];
     for (const [label, script] of [
-      ['dlFile', () => dlFile('report.html', '<html><body><p>Report</p></body></html>')],
+      ['dlFile', () => dlFile('report.html', '<html><body><p>Report naming training-print-mark in its text</p></body></html>')],
       ['saveFile', () => saveFile(new Blob(['<html><body><p>ATP report</p></body></html>'], { type: 'text/html' }), 'atp-report.html')],
       ['anchor', () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['{"x":1}'], { type: 'application/json' })); a.download = 'export.json'; a.click(); }],
-      ['blocked print', () => { window.open = () => null; printRecord('<html><body><p>Record</p></body></html>', 'record.html'); }]
+      ['blocked print', () => { window.open = () => null; printRecord('<html><body><p>Record</p></body></html>', 'record.html'); }],
+      ['controlled document', () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['<!doctype html><html><body><p>Procedure</p></body></html>'], { type: 'text/html' })); a.download = 'procedure.html'; a.click(); }]
     ]) {
       const [download] = await Promise.all([page.waitForEvent('download', { timeout: 10000 }), page.evaluate(script)]);
       downloads.push({ label, name: download.suggestedFilename(), text: fs.readFileSync(await download.path(), 'utf8') });
@@ -193,8 +194,10 @@ try {
       ok('every saved file is named TRAINING-', downloads.every(d => /^TRAINING-/.test(d.name) && !/^TRAINING-TRAINING-/.test(d.name)), downloads.map(d => d.name).join(', '));
       ok('every saved HTML file carries the training mark exactly once', downloads.filter(d => d.label !== 'anchor').every(d => count(d.text, TRAINING_MARK) === 1), downloads.map(d => `${d.label}:${count(d.text, TRAINING_MARK)}`).join(', '));
       ok('a saved JSON file is unchanged inside', downloads.find(d => d.label === 'anchor').text === '{"x":1}');
+      ok('text that only names the mark class does not count as marked', /Report naming training-print-mark/.test(downloads.find(d => d.label === 'dlFile').text) && count(downloads.find(d => d.label === 'dlFile').text, TRAINING_MARK) === 1);
+      ok('an HTML controlled document downloaded through a link carries the mark ahead of its own bytes', /^<div class="training-print-mark"[\s\S]*<!doctype html><html><body><p>Procedure<\/p><\/body><\/html>$/.test(downloads.find(d => d.label === 'controlled document').text), downloads.find(d => d.label === 'controlled document').text.slice(0, 120));
     } else {
-      ok('production saves files under their own names with no training mark', downloads.map(d => d.name).join() === 'report.html,atp-report.html,export.json,record.html' && downloads.every(d => !d.text.includes(TRAINING_MARK)), downloads.map(d => d.name).join(', '));
+      ok('production saves files under their own names with no training mark', downloads.map(d => d.name).join() === 'report.html,atp-report.html,export.json,record.html,procedure.html' && downloads.every(d => !d.text.includes(TRAINING_MARK)), downloads.map(d => d.name).join(', '));
     }
     if (training) {
       ok('signed in, every page keeps the strip', !!marks.banner && marks.banner.text === TRAINING_MARK && marks.banner.visible, JSON.stringify(marks.banner));

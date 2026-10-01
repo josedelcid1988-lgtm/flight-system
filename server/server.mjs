@@ -169,15 +169,28 @@ const TRAINING_HEAD = '<style id="flight-training-style">'
 const TRAINING_BODY = `<div class="training-banner" role="note">${TRAINING_MARK}</div>`;
 const TRAINING_PRINT_TOP = `<div class="training-print-top" aria-hidden="true">${TRAINING_MARK}</div>`;
 // Runs after the app's own scripts. Prints and HTML downloads go through markDocument, dlFile or saveFile, so the mark
-// is added there, once; every file the page saves is named TRAINING-<name>; the strip is put back if a render
-// removes it, and the tab title keeps the word Training.
+// is added there, once. Any other HTML file the page saves through a download link (a controlled document, for
+// example) gets the mark ahead of its own bytes. Every file the page saves is named TRAINING-<name>; the strip is put
+// back if a render removes it, and the tab title keeps the word Training. A document counts as marked only when it
+// holds the mark element itself: record text is escaped in every print, so it cannot fake the start tag.
 const TRAINING_TAIL = `<script id="flight-training">(function(){var MARK=${JSON.stringify(TRAINING_PRINT_MARK)};`
-  + 'function mark(html){html=String(html);if(html.indexOf("training-print-mark")>=0)return html;return /<body[^>]*>/i.test(html)?html.replace(/<body[^>]*>/i,function(b){return b+MARK;}):MARK+html;}'
+  + 'var TAG=\'<div class="training-print-mark"\';'
+  + 'function mark(html){html=String(html);if(html.indexOf(TAG)>=0)return html;return /<body[^>]*>/i.test(html)?html.replace(/<body[^>]*>/i,function(b){return b+MARK;}):MARK+html;}'
   + 'var isHtml=function(type){return !type||/html/i.test(String(type));};'
+  // Object URLs made while the page builds an already marked file are trusted; any other HTML file is marked on download.
+  + 'var blobs=new Map(),trusted=new Set(),trust=0,make=URL.createObjectURL,revoke=URL.revokeObjectURL;'
+  + 'URL.createObjectURL=function(o){var u=make.call(URL,o);if(o instanceof Blob){blobs.set(u,o);if(trust)trusted.add(u);}return u;};'
+  + 'URL.revokeObjectURL=function(u){blobs.delete(u);trusted.delete(u);return revoke.call(URL,u);};'
+  + 'function trusting(f){return function(){trust++;try{return f.apply(this,arguments);}finally{trust--;}};}'
   + 'var md=window.markDocument;if(typeof md==="function")window.markDocument=function(html){return mark(md(html));};'
-  + 'var df=window.dlFile;if(typeof df==="function")window.dlFile=function(name,text,type){return df(name,isHtml(type)?mark(text):text,type);};'
-  + 'var sf=window.saveFile;if(typeof sf==="function")window.saveFile=async function(blob,name){var n=/^TRAINING-/.test(String(name))?name:"TRAINING-"+name;if(blob&&/html/i.test(blob.type||"")){try{blob=new Blob([mark(await blob.text())],{type:blob.type});}catch(e){}}return sf(blob,n);};'
-  + 'var click=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){if(this.hasAttribute("download")&&this.download&&!/^TRAINING-/.test(this.download))this.download="TRAINING-"+this.download;return click.apply(this,arguments);};'
+  + 'var df=window.dlFile;if(typeof df==="function")window.dlFile=trusting(function(name,text,type){return df(name,isHtml(type)?mark(text):text,type);});'
+  + 'if(typeof window.printRecord==="function")window.printRecord=trusting(window.printRecord);'
+  + 'if(typeof window.deliverTraveler==="function")window.deliverTraveler=trusting(window.deliverTraveler);'
+  + 'var sf=window.saveFile;if(typeof sf==="function")window.saveFile=async function(blob,name){var n=/^TRAINING-/.test(String(name))?name:"TRAINING-"+name;if(blob&&/html/i.test(blob.type||"")){try{blob=new Blob([mark(await blob.text())],{type:blob.type});}catch(e){}}trust++;try{return await sf(blob,n);}finally{trust--;}};'
+  + 'var click=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){'
+  + 'if(this.hasAttribute("download")){if(this.download&&!/^TRAINING-/.test(this.download))this.download="TRAINING-"+this.download;'
+  + 'var b=blobs.get(this.href);if(b&&!trusted.has(this.href)&&(/html/i.test(b.type||"")||/\\.html?$/i.test(this.download))){var u=make.call(URL,new Blob([MARK,b],{type:b.type||"text/html"}));this.href=u;setTimeout(function(){revoke.call(URL,u);},60000);}}'
+  + 'return click.apply(this,arguments);};'
   + `function strip(){if(document.body&&!document.querySelector(".training-banner")){var d=document.createElement("div");d.className="training-banner";d.setAttribute("role","note");d.textContent=${JSON.stringify(TRAINING_MARK)};document.body.appendChild(d);}}`
   + 'function title(){if(!/^Training \\u00b7 /.test(document.title))document.title="Training \\u00b7 "+document.title;}'
   + 'strip();title();try{new MutationObserver(strip).observe(document.body,{childList:true});var t=document.querySelector("title");if(t)new MutationObserver(title).observe(t,{childList:true,characterData:true,subtree:true});}catch(e){}'

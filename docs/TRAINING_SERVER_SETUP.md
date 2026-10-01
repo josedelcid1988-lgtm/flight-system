@@ -57,12 +57,14 @@ You need Node.js 22 LTS (22.13 or later) and a copy of this repository or the re
 2. Open the address. On the **Set up Master Access** screen, enter your name, username, a password and the
    setup code. That first account is yours, with Master Access. The code is not needed again.
 3. A second QA Manager is needed because nobody records their own training or issues their own stamp.
-   In **Your credentials**, use **Record a training** to record ESD (or another active training) for the
-   person, then **Add an account** with the QA Manager role, citing that training.
-4. Accounts for everyone: add each person with their role (Technician, Operations, Manufacturing
-   Engineering, Engineering, Quality, Certification). Roles that inspect or hold an MRB seat (Quality,
-   Manufacturing Engineering, Engineering, Certification, QA Manager) need a current training record
-   first, so record the training, then add the account.
+   In **Your credentials**: **Add an account** for the person with the General role, then **Record a
+   training** for them (ESD or another active training), then in **Accounts and roles** change their role
+   to QA Manager, citing that training. Record a training lists only existing accounts, so it is always
+   account first, then training, then the role.
+4. Accounts for everyone: add each person with their role (Technician, Operations). Roles that inspect or
+   hold an MRB seat (Quality, Manufacturing Engineering, Engineering, Certification, QA Manager) need a
+   current training record: add the person as General, record their training, then give them the role in
+   Accounts and roles, citing the training.
 5. Stamps and training: the **second QA Manager** signs in on their own computer, records your training and
    uses **Issue a stamp** for each technician, each inspector and you. Each holder then sets their own
    **Stamp PIN** in Your credentials before their first buy-off.
