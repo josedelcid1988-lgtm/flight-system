@@ -8127,7 +8127,9 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   // workspace stays valid and writable and the record is kept. Only a row that passes the full earlier sprint check
   // moves; any other malformed row is left where it is for validation to refuse.
   function retireOutOfBoundSprints(state) {
-    const p = state?.projectPlan; if (!plain(p) || !Array.isArray(p.sprints)) return;
+    // A retired register that is present but not a list is invalid stored data: migrate nothing and leave it for
+    // validation to refuse, rather than replacing (and so discarding) it.
+    const p = state?.projectPlan; if (!plain(p) || !Array.isArray(p.sprints) || (Object.hasOwn(p, 'retiredSprints') && !Array.isArray(p.retiredSprints))) return;
     const keep = [], retire = [];
     for (const row of p.sprints) {
       const problem = sprintRowValid(row) ? sprintRangeProblem(row.startDate, row.endDate) : '';
@@ -8136,7 +8138,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     }
     if (!retire.length) return;
     p.sprints = keep;
-    p.retiredSprints = [...(Array.isArray(p.retiredSprints) ? p.retiredSprints : []), ...retire];
+    p.retiredSprints = [...(p.retiredSprints || []), ...retire];
   }
   function sprintCapacity(state, workCenterId, startDate, endDate) {
     const center = WORK_CENTERS.find(row => row.id === workCenterId); if (!center || sprintRangeProblem(startDate, endDate)) return null;

@@ -156,6 +156,18 @@ await check('upgrade retires only a legacy sprint that was valid before the boun
   assert.equal(host.MES.validate(noBacklog), false, 'a retired record keeps its backlog');
 });
 
+await check('upgrade leaves a malformed retired register in place for validation to refuse', async () => {
+  // A retiredSprints value that is not a list is invalid stored data. The upgrade must not replace it (which would
+  // silently discard it and make the workspace pass); it migrates nothing, and validation still refuses the workspace.
+  for (const corrupt of ['CORRUPT', { 0: 'x' }, 7, null]) {
+    const raw = legacyWorkspace(); raw.projectPlan.retiredSprints = corrupt;
+    const state = host.MES.upgrade(raw);
+    assert.deepEqual(plainJson(state.projectPlan.retiredSprints), plainJson(corrupt), `${JSON.stringify(corrupt)} is kept as stored`);
+    assert.deepEqual(plainJson(state.projectPlan.sprints.map(row => row.id)), ['SPT-0001', 'SPT-0002', 'SPT-0003'], 'nothing is migrated');
+    assert.equal(host.MES.validate(state), false, `${JSON.stringify(corrupt)} still fails validation`);
+  }
+});
+
 await check('a retired sprint record is validated', async () => {
   const state = host.MES.upgrade(legacyWorkspace());
   const tampered = structuredClone(state); tampered.projectPlan.retiredSprints[0].retiredReason = '';

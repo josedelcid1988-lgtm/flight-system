@@ -88,6 +88,20 @@ try {
   await page.reload();
   await page.waitForFunction(() => window.__ready === true);
   assert.equal(await page.evaluate(name => (state.projectPlan?.projects || []).some(item => item.name === name), projectName), true, 'a React Plan project survives a reload');
+  // A sprint retired on upgrade (outside the 92-day bound) stays visible on the Projects screen with its reason and
+  // what to do next; it is not silently dropped from the planner's view.
+  const retired = await page.evaluate(() => {
+    const p = MES.ensureProjects(state), workCenterId = MES.WORK_CENTERS[0].id;
+    p.retiredSprints = [{ id: 'SPT-9901', name: 'Year-long legacy sprint', workCenterId, startDate: '2026-01-01', endDate: '2026-12-31', capacityHours: 0, backlog: [], by: { name: 'Ops Planner', role: 'Operations Manager', credentialId: 'ACCT-ops' }, at: '2026-01-01T00:00:00.000Z', retiredReason: 'Retired on upgrade: Sprint SPT-9901 runs 2026-01-01 to 2026-12-31. A sprint covers at most 92 days; this one covers 365. Split it into shorter sprints. Create a new sprint of at most 92 days for this work.', retiredAt: '2026-10-01T00:00:00.000Z' }];
+    if (!MES.validate(state)) throw new Error('retired sprint fixture is invalid');
+    view = 'plan'; render();
+    return p.retiredSprints[0];
+  });
+  const retiredRow = page.locator('.fr-sprint-retired').filter({ hasText: retired.id });
+  await retiredRow.waitFor();
+  assert.ok((await retiredRow.textContent()).includes(retired.name), 'the retired sprint is listed by name');
+  assert.ok((await retiredRow.textContent()).includes('Create a new sprint of at most 92 days for this work.'), 'the retired sprint shows its reason and the next step');
+  assert.equal(await page.getByRole('heading', { name: 'Retired sprints' }).count(), 1);
   // The Hangar milestone-risk button opens the milestone's own work order, not the first one in the workspace.
   const milestoneOrder = await page.evaluate(name => {
     const project = state.projectPlan.projects.find(item => item.name === name);
