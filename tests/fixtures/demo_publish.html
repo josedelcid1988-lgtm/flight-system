@@ -5377,7 +5377,6 @@ const OP_BOM_MAX = 12;
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
     if (!['Draft', 'Kitting', 'Building'].includes(order.status)) return fail('Operations can only be added before the work order reaches Quality.');
-    if (!pendingSequenceChange(order)) order.sequenceBaseline = JSON.parse(JSON.stringify(order.operations));
     if (engineeringChange(order)) return fail(engineeringHoldMessage);
     if (order.operations.length >= 20) return fail('A work order can have up to 20 operations.');
     const classification = input?.classification;
@@ -5431,6 +5430,10 @@ const OP_BOM_MAX = 12;
       const kit = Array.isArray(order.materials) ? order.materials : [], parts = new Set(kit.map(m => m.partNumber));
       const fresh = bom.lines.filter(line => !parts.has(line.partNumber));
       if (kit.length + fresh.length > KIT_MAX) return fail(`This operation's BOM adds ${fresh.length} new part${fresh.length === 1 ? '' : 's'} to a kit of ${kit.length} lines, and a work order kit holds up to ${KIT_MAX}. Take parts off this operation's BOM, or build them on a separate work order.`);
+      // A kit line already issued holds what was issued for it: more demand on it would show as ready while short.
+      const issued = bom.lines.map(line => kit.find(item => item.partNumber === line.partNumber && (item.ready || item.lot || item.source))).find(Boolean);
+      if (issued) return fail(`${issued.name} (${issued.partNumber}) is already issued to this order, so this operation's BOM can't add to it. ${order.status === 'Kitting' ? 'Mark it missing on the Kitting tab so its lot goes back to stock, add the operation, then kit the line again.' : 'Build the extra parts on a separate work order, or take the part off this operation\'s BOM.'}`);
+      if (order.status === 'Building' && fresh.length) return fail(`The build has started, so every kit line must already be verified, and this operation's BOM adds ${fresh.length} new part${fresh.length === 1 ? '' : 's'} to the kit. Build them on a separate work order, or take them off this operation's BOM.`);
       for (const line of bom.lines) { const m = kit.find(item => item.partNumber === line.partNumber); if (m && m.required + line.required > KIT_LINE_MAX) return fail(`${line.partNumber} would need ${m.required + line.required} on this kit, and a kit line holds up to ${KIT_LINE_MAX}. Build the extra on a separate work order.`); }
     }
     if (bom.lines.length) op.materials = bom.lines;
@@ -5440,6 +5443,8 @@ const OP_BOM_MAX = 12;
       const awaiting = order.tickets.some(t => t.status === 'Open' && plain(t.reworkPlan) && t.reworkPlan.stage === 'Awaiting ME operation' && t.reworkPlan.decision === classification);
       if (!reworkLink && !awaiting) return fail(`Link the NC this ${classification.toLowerCase()} operation works.`);
     }
+    // The released sequence is captured only once the change is certain, so a refused add leaves the order untouched.
+    if (!pendingSequenceChange(order)) order.sequenceBaseline = JSON.parse(JSON.stringify(order.operations));
     order.operations.splice(position, 0, op);
     mergeBOMIntoKit(order, op.id, bom.lines);
     { const want = ['Rework', 'Repair'].includes(classification) ? classification : null;

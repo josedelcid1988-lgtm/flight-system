@@ -126,6 +126,17 @@ const prod = createHost(here('../index.html'));
     check('an added operation\'s BOM lines are per unit: 4 per unit on a quantity-2 order kits 8 and stores 8 on the operation', added.ok && during.b === 8 && ((o.operations.find(op => op.id === added.opId) || {}).materials || [])[0]?.required === 8, `${added.message} ${during.b}`);
     const rejected = o ? prod.withAccount(qa, () => MES.rejectSequenceChange(sq, o.id, 'Keep the released sequence for this order.'), sq) : { message: 'order not created' };
     check('rejecting a sequence change restores the kit: the removed share comes back (10) and the added operation\'s line goes', removed.ok && added.ok && during.a === 6 && during.b === 8 && rejected.ok && need('BOM-001') === 10 && need('BOM-009') === undefined && MES.validate(sq) === true, `${removed.message} | ${added.message} | ${rejected.message} | during ${JSON.stringify(during)} after ${need('BOM-001')}/${need('BOM-009')}`);
+    // An added operation's BOM can't add to a kit line already issued (Codex security review on #331), nothing changed.
+    if (o) { const m = o.materials.find(x => x.partNumber === 'BOM-001'); if (m) Object.assign(m, { ready: true, lot: 'LOT-ISSUED-1' }); }
+    const issuedBefore = o && JSON.stringify(o);
+    const onIssued = o ? prod.withAccount(me, () => MES.addOrderOperation(sq, o.id, { title: 'Fit bracket', description: 'Fit another bracket', steps: 'Fit bracket', position: o.operations.length, buyoffType: 'Technician', classification: 'Manufacturing', callouts: [], bom: [{ partNumber: 'BOM-001', name: 'Bracket', required: 1 }] }), sq) : { message: 'order not created' };
+    check('an added operation\'s BOM that reuses an issued kit part is refused with the next step, the order unchanged', !onIssued.ok && /already issued to this order/.test(onIssued.message) && JSON.stringify(o) === issuedBefore, onIssued.message);
+    // During Building every kit line must be verified, so an added operation can't bring a new kit part.
+    if (o) o.status = 'Building';
+    const buildBefore = o && JSON.stringify(o);
+    const inBuild = o ? prod.withAccount(me, () => MES.addOrderOperation(sq, o.id, { title: 'Fit washer', description: 'Fit the washer', steps: 'Fit washer', position: o.operations.length, buyoffType: 'Technician', classification: 'Manufacturing', callouts: [], bom: [{ partNumber: 'NEW-WASHER', name: 'Washer', required: 1 }] }), sq) : { message: 'order not created' };
+    check('during Building an added operation\'s BOM with a new kit part is refused with the next step, the order unchanged', !inBuild.ok && /The build has started/.test(inBuild.message) && JSON.stringify(o) === buildBefore, inBuild.message);
+    if (o) o.status = 'Draft';
     // An operation whose BOM would take the kit past 20 lines is refused before anything changes.
     if (o) { o.materials = Array.from({ length: 20 }, (_, n) => ({ id: `kit-f${n}`, name: `Part ${n}`, partNumber: `FULL-${n}`, required: 1, ready: false })); }
     const fullBefore = o && JSON.stringify(o.materials);
