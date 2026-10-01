@@ -248,6 +248,9 @@ export function createServer(options = {}) {
   // production server: served only when the operator asks (options.serveDemo, FLIGHT_SERVE_DEMO=1 or --serve-demo).
   const serveDemo = options.serveDemo !== undefined ? options.serveDemo === true : process.env.FLIGHT_SERVE_DEMO === '1';
   const training = options.training !== undefined ? options.training === true : parseTrainingSetting(process.env.FLIGHT_TRAINING);
+  // The demo build lifts the separation-of-duties, PIN and stamp gates, so a training server, which enforces every gate,
+  // never serves it beside the training page.
+  if (training && serveDemo) throw new Error('Training mode enforces every gate, and the demo build relaxes them, so a training server does not serve demo.html. Start the training server without --serve-demo (and without FLIGHT_SERVE_DEMO=1), and offer the demo from a separate server if it is needed.');
   const jira = options.jira || {};
   const jiraConfig = {
     baseUrl: String(jira.baseUrl || process.env.FLIGHT_JIRA_BASE_URL || '').replace(/\/$/, ''),
@@ -1342,7 +1345,9 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
     catch (e) { console.error(`Restore failed: ${e.message} The restore runs as one transaction, so it left the database unchanged.`); process.exit(1); }
   } else {
   const host = arg('host', process.env.FLIGHT_HOST || DEFAULT_HOST);
-  const server = createServer({ dbPath, databaseUrl, host, ...(process.argv.includes('--serve-demo') ? { serveDemo: true } : {}), ...(process.argv.includes('--training') ? { training: true } : {}) });
+  let server;
+  try { server = createServer({ dbPath, databaseUrl, host, ...(process.argv.includes('--serve-demo') ? { serveDemo: true } : {}), ...(process.argv.includes('--training') ? { training: true } : {}) }); }
+  catch (e) { console.error(`Flight System server did not start: ${e.message}`); process.exit(1); }
   server.listenAsync(Number(arg('port', process.env.PORT || 8080)), host).then(port => {
     const a = server.address();
     console.log(`Flight System server listening on ${a.address}:${port} (${a.address === '127.0.0.1' || a.address === '::1' ? 'loopback only: this machine and its reverse proxy' : 'bound as --host or FLIGHT_HOST asked: allow it only behind a firewall or on a trusted network'}) (db ${server.store.db.location ? server.store.db.location() : 'sqlite'})`);

@@ -272,9 +272,9 @@ async function cli(args, env) {
   let out = '';
   child.stdout.on('data', d => { out += d; }); child.stderr.on('data', d => { out += d; });
   try {
-    for (const until = Date.now() + 20000; !/listening on [^\s]+:(\d+)/.test(out) && Date.now() < until;) await new Promise(r => setTimeout(r, 100));
+    for (const until = Date.now() + 20000; !/listening on [^\s]+:(\d+)/.test(out) && child.exitCode === null && Date.now() < until;) await new Promise(r => setTimeout(r, 100));
     const port = (out.match(/listening on [^\s]+:(\d+)/) || [])[1];
-    if (!port) return { out, html: '' };
+    if (!port) { for (const until = Date.now() + 5000; child.exitCode === null && Date.now() < until;) await new Promise(r => setTimeout(r, 50)); return { out, html: '', exitCode: child.exitCode }; }
     for (const until = Date.now() + 5000; !/First-run setup code/.test(out) && Date.now() < until;) await new Promise(r => setTimeout(r, 50));
     return { out, html: await (await fetch(`http://127.0.0.1:${port}/`)).text() };
   } finally { await stop(child); fs.rmSync(path.dirname(db), { recursive: true, force: true }); }
@@ -288,6 +288,12 @@ async function cli(args, env) {
   ok('FLIGHT_TRAINING=1 marks the served page', envOn.html.includes('class="training-banner"'), envOn.out);
   const plain = await cli([], {});
   ok('the production default serves no mark and logs no training mode', plain.html.length > 1000 && !plain.html.includes(TRAINING_MARK) && !/Training mode/.test(plain.out), plain.out);
+  // The demo build relaxes the gates a training server enforces, so the two cannot run together, by flag or setting.
+  const withDemo = await cli(['--training', '--serve-demo'], {});
+  const withDemoEnv = await cli([], { FLIGHT_TRAINING: '1', FLIGHT_SERVE_DEMO: '1' });
+  ok('a training server refuses to start with --serve-demo or FLIGHT_SERVE_DEMO=1, and says why', [withDemo, withDemoEnv].every(r => r.exitCode === 1 && !r.html && /did not start: Training mode enforces every gate, and the demo build relaxes them/.test(r.out)), withDemo.out + withDemoEnv.out);
+  let thrown = null; try { createServer({ dbPath: ':memory:', quiet: true, training: true, serveDemo: true }); } catch (e) { thrown = e; }
+  ok('createServer refuses training with serveDemo', /does not serve demo\.html/.test(thrown?.message || ''), String(thrown));
 }
 
 // ---- in the browser: the strip, the title and every print -------------------------------------------------------

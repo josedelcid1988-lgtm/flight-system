@@ -31,7 +31,12 @@ You need Node.js 22 LTS (22.13 or later) and a copy of this repository or the re
    and give everyone a training password they use nowhere else. Until the first account exists, anyone who
    can reach the address sees the setup screen: the setup code in your window is the only thing that
    protects it, so keep that window to yourself and create your account right away.
-6. Back up the database at the end of each session (it works while the server runs). A backup holds the
+6. Do the setup on the laptop itself, at `http://localhost:8080`. Over plain HTTP, Chrome and Edge on other
+   computers turn off the secure hashing the page needs to set up the first account, add an account, reset a
+   password, attach a training certificate or record evidence. Signing in, buy-offs with stamp and PIN,
+   inspection, MRB and FAIR work from the other computers. For the 20-person demo, use the IT machine with
+   HTTPS, where everything works from every computer.
+7. Back up the database at the end of each session (it works while the server runs). A backup holds the
    accounts and password hashes: keep it with the training database, never in a production location.
 
    ```bash
@@ -54,7 +59,7 @@ You need Node.js 22 LTS (22.13 or later) and a copy of this repository or the re
 ## First run (both setups)
 
 1. When the server starts with no accounts, its window prints `First-run setup code: <code>`. Copy it.
-2. Open the address. On the **Set up Master Access** screen, enter your name, username, a password and the
+2. Open the address (on the laptop variant, `http://localhost:8080` on the laptop itself). On the **Set up Master Access** screen, enter your name, username, a password and the
    setup code. That first account is yours, with Master Access. The code is not needed again.
 3. A second QA Manager is needed because nobody records their own training or issues their own stamp.
    In **Your credentials**: **Add an account** for the person with the General role, then **Record a
