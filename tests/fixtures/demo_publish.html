@@ -891,6 +891,8 @@ small,.rev-chip small,.meta dt,.meta .mono{font-size:12px!important;line-height:
 .next-action .btn.primary{min-height:48px;flex-shrink:0;max-width:60%}
 body.has-next-action .app{padding-bottom:88px}
 @media(min-width:1181px){.next-action{left:auto;right:28px;bottom:28px;border-radius:16px;min-width:380px;box-shadow:var(--shadow-2)}}
+/* Below 1181px the bar spans the page; start it at the rail's right edge so the rail does not hide its state label. */
+@media(max-width:1180px){.next-action{left:var(--fs-rail,0px)}}
 /* 'Inspection point' tag measured 4.0:1 (var(--accent) on var(--accent-soft)); 4.5:1 needed */
 .op-inspection{color:var(--accent-press)!important}
 /* operation callouts: ESD / FOD / MSDS */
@@ -12721,7 +12723,7 @@ document.addEventListener('submit', event => {
 
 // Every printed or downloaded document passes through here. It carries the build id and the SHA-256 of index.html
 // so a printed record traces to the exact build that produced it. The demo build also marks it.
-function markDocument(html){/* DEMO D-28 */{const mark="<div class=\"demo-print-mark\" style=\"margin:0 0 8px;padding:6px 10px;border:2px solid #7a1f00;color:#7a1f00;font:700 14px/18px sans-serif;text-align:center;letter-spacing:.06em\">DEMO, NOT FOR ACCEPTANCE</div>";html=/<body[^>]*>/i.test(html)?html.replace(/<body[^>]*>/i,b=>b+mark):mark+html;}const b=MES.buildStamp(),line=`<div class="fs-build-line" style="font:10px/1.4 Menlo,Consolas,monospace;color:#555;margin-top:10px">Flight System build ${esc(b.version)} · index.html SHA-256 ${esc(b.sha256)}</div>`;return /<\/body>/i.test(html)?html.replace(/<\/body>(?![\s\S]*<\/body>)/i,line+'</body>'):html+line;}
+function markDocument(html){/* DEMO D-28 */{const mark="<div class=\"demo-print-mark\" style=\"margin:0 0 8px;padding:6px 10px;border:2px solid #7a1f00;color:#7a1f00;font:700 14px/18px sans-serif;text-align:center;letter-spacing:.06em\">DEMO, NOT FOR ACCEPTANCE</div><style>@media screen{.demo-print-mark{margin-top:56px!important}}</style>";html=/<body[^>]*>/i.test(html)?html.replace(/<body[^>]*>/i,b=>b+mark):mark+html;}const b=MES.buildStamp(),line=`<div class="fs-build-line" style="font:10px/1.4 Menlo,Consolas,monospace;color:#555;margin-top:10px">Flight System build ${esc(b.version)} · index.html SHA-256 ${esc(b.sha256)}</div>`;return /<\/body>/i.test(html)?html.replace(/<\/body>(?![\s\S]*<\/body>)/i,line+'</body>'):html+line;}
 function printRecord(html,name){html=markDocument(html);const doc=html.replace('<body>','<body><button class="print-action" type="button" onclick="window.print()" style="position:fixed;top:12px;right:12px;padding:8px 16px;font-weight:700">Print</button><style>@media print{.print-action{display:none}}</style>'),url=URL.createObjectURL(new Blob([doc],{type:'text/html'})),w=window.open(url,'_blank');if(w){w.opener=null;setTimeout(()=>URL.revokeObjectURL(url),60000);notify('Opened for printing. Use Print in the preview.');}else{URL.revokeObjectURL(url);dlHtml(name,html);notify('Pop-ups are blocked, so the record was downloaded as a file to print.');}}
 document.addEventListener('click',e=>{const b=e.target.closest('[data-action="fair-print"],[data-action="conf-8130-print"]');if(!b)return;e.preventDefault();e.stopPropagation();const o=MES.getOrder(state,b.dataset.order);if(!o)return;if(b.dataset.action==='fair-print'){printRecord(fairHtml(o),`FAIR-${o.id}.html`);return;}const pk=(o.conformity||[]).find(x=>x.serial===b.dataset.serial);if(pk&&pk.form)printRecord(conf8130Html(o,pk),`8130-9-${o.partNumber}-${pk.serial}.html`);},true);
 // Printable records for tickets raised outside a work order (stock NC, CAR, MRB, PFMEA).
@@ -16082,8 +16084,17 @@ function fsTicketAssignment(order,ticket){MES.syncAssignments(state);return (sta
   })();
 
   // ---- DEMO, NOT FOR ACCEPTANCE on every page ---------------------------------------------------
+  // A strip along the bottom of the content area, from the rail's right edge. The page reserves its
+  // height, and the sticky next action, toasts and idle warning sit above it, so it covers nothing.
+  // The sign-in screen hides everything but itself; the strip is exempt so the first screen is marked.
+  var STRIP = 24;
   var style = document.createElement('style');
-  style.textContent = '.demo-banner{position:fixed;left:50%;bottom:8px;transform:translateX(-50%);z-index:2147483000;pointer-events:none;padding:4px 12px;border-radius:999px;background:#7a1f00;color:#fff;font:700 12px/16px -apple-system,BlinkMacSystemFont,sans-serif;letter-spacing:.04em;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.25)}@media print{.demo-banner{position:static;transform:none;display:block;text-align:center;margin:0 auto 8px}}'
+  style.textContent = '.demo-banner{position:fixed;left:var(--fs-rail,0px);right:0;bottom:0;height:' + STRIP + 'px;z-index:2147483000;pointer-events:none;display:flex;align-items:center;justify-content:center;background:#7a1f00;color:#fff;font:700 12px/16px -apple-system,BlinkMacSystemFont,sans-serif;letter-spacing:.04em;white-space:nowrap}'
+    + 'body{padding-bottom:' + STRIP + 'px}html .next-action{bottom:' + STRIP + 'px}html .toast,html .sk-idle-warning{bottom:' + (STRIP + 24) + 'px}'
+    + '@media(min-width:1181px){html .next-action{bottom:' + (STRIP + 28) + 'px}}'
+    + 'body:has(#sk-boot)>.demo-banner{visibility:visible!important;left:0}'
+    + '.demo-login-hint{margin:8px 0 0;padding:8px 10px;border:1px solid rgba(242,169,0,.6);border-radius:8px;color:#fff;font:12px/16px var(--font)}.demo-login-hint b{font-weight:700}'
+    + '@media print{body{padding-bottom:0}.demo-banner{position:static;height:auto;display:block;text-align:center;margin:0 auto 8px;background:none;color:#7a1f00}}'
     + '.demo-chip{display:inline-flex;align-items:center;gap:var(--s-1);margin-left:var(--s-2);padding:var(--s-1) var(--s-2);border-radius:var(--r-full);background:var(--warn-soft);color:var(--warn);font:600 12px/16px var(--font);white-space:nowrap}.demo-chip::before{content:"";width:7px;height:7px;border-radius:50%;background:#F2A900}@media(max-width:700px){.demo-chip{display:none}}';
   document.head.appendChild(style);
   function markPage() {
@@ -16092,6 +16103,13 @@ function fsTicketAssignment(order,ticket){MES.syncAssignments(state);return (sta
       banner.className = 'demo-banner'; banner.setAttribute('role', 'note');
       banner.textContent = 'DEMO, NOT FOR ACCEPTANCE';
       document.body.appendChild(banner);
+    }
+    var note = document.getElementById('sk-login-note');
+    if (note && !document.querySelector('.demo-login-hint')) {
+      var hint = document.createElement('p');
+      hint.className = 'demo-login-hint';
+      hint.innerHTML = 'Demo accounts (demo, tech, quality, mfgeng, operations, engineering and the rest) use the password <b>demo1234</b>.';
+      note.insertAdjacentElement('afterend', hint);
     }
     var bar = document.querySelector('.breadcrumbs');
     if (bar && !bar.querySelector('.demo-chip')) {

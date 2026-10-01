@@ -846,6 +846,8 @@ small,.rev-chip small,.meta dt,.meta .mono{font-size:12px!important;line-height:
 .next-action .btn.primary{min-height:48px;flex-shrink:0;max-width:60%}
 body.has-next-action .app{padding-bottom:88px}
 @media(min-width:1181px){.next-action{left:auto;right:28px;bottom:28px;border-radius:16px;min-width:380px;box-shadow:var(--shadow-2)}}
+/* Below 1181px the bar spans the page; start it at the rail's right edge so the rail does not hide its state label. */
+@media(max-width:1180px){.next-action{left:var(--fs-rail,0px)}}
 /* 'Inspection point' tag measured 4.0:1 (var(--accent) on var(--accent-soft)); 4.5:1 needed */
 .op-inspection{color:var(--accent-press)!important}
 /* operation callouts: ESD / FOD / MSDS */
