@@ -23,6 +23,7 @@ const count = (text, needle) => text.split(needle).length - 1;
   const page = trainingPage('<!doctype html><html><head><title>x</title></head><body><p>app</p><script>/*</body>*/</script></body></html>');
   ok('trainingPage adds the style in the head', /<head><style id="flight-training-style">/.test(page), page.slice(0, 120));
   ok('trainingPage adds the strip and its script before the last </body>', /<div class="training-banner" role="note">TRAINING, NOT THE RECORD<\/div><script id="flight-training">[\s\S]*<\/script><\/body><\/html>$/.test(page), page.slice(-200));
+  ok('trainingPage puts a print-only mark first in the body', /<body><div class="training-print-top" aria-hidden="true">TRAINING, NOT THE RECORD<\/div><p>app<\/p>/.test(page), page.slice(0, 400));
   ok('trainingPrintMark puts the mark right after <body>', /^<html><body[^>]*><div class="training-print-mark"[^>]*>TRAINING, NOT THE RECORD<\/div>/.test(trainingPrintMark('<html><body class="x"><p>r</p></body></html>')));
   ok('trainingPrintMark marks a fragment with no body', trainingPrintMark('<p>r</p>').startsWith('<div class="training-print-mark"'));
   ok('the mark reads TRAINING, NOT THE RECORD and has no em dash', TRAINING_MARK === 'TRAINING, NOT THE RECORD' && !/\u2014/.test(page));
@@ -59,14 +60,59 @@ async function serverCase(training) {
   ok('with training on, the server context says training', /window\.FLIGHT_SERVER=\{[^<]*"training":true/.test(on.html));
   ok('with training on, the signed-in page carries the strip too', on.signedInPage.includes('class="training-banner"'));
   ok('with training on, the archive print carries the mark at the top', on.print === 200 && /<body[^>]*><div class="training-print-mark"[^>]*>TRAINING, NOT THE RECORD<\/div>/.test(on.printed) && /flight-extract-stamp/.test(on.printed), on.printed.slice(0, 300));
-  ok('with training on, the archive export names training in the file and in its head', on.exportStatus === 200 && /filename="TRAINING-WO-/.test(on.disposition) && on.exportJson.training === TRAINING_MARK, `${on.disposition} ${on.exportJson.training}`);
-  ok('with training on, the extract hash still covers the same content', /^[0-9a-f]{64}$/.test(on.exportJson.extractSha256) && !String(on.exportJson.extractHashCovers).includes('training'));
+  ok('with training on, the archive export is named TRAINING- and carries the mark', on.exportStatus === 200 && /filename="TRAINING-WO-/.test(on.disposition) && on.exportJson.training === TRAINING_MARK, `${on.disposition} ${on.exportJson.training}`);
+  {
+    const x = on.exportJson, covered = Object.fromEntries(Object.entries(x.evidence || {}).map(([key, { base64, ...meta }]) => [key, meta]));
+    const content = { order: x.order, activity: x.activity, evidence: covered, archiveSha256: x.archiveSha256, archivedAt: x.archivedAt, archivedBy: x.archivedBy, schema: x.schema, training: x.training };
+    const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+    ok('with training on, the extract hash covers the training mark, so removing it breaks the hash', x.extractSha256 === hash(content) && x.extractSha256 !== hash({ ...content, training: undefined }) && /, training$/.test(x.extractHashCovers), x.extractHashCovers);
+  }
   const off = await serverCase(false);
   ok('with training off, no page carries the mark', !off.html.includes(TRAINING_MARK) && !off.signedInPage.includes(TRAINING_MARK) && !off.html.includes('training-banner') && !/"training":true/.test(off.html));
   ok('with training off, the archive print and export carry no mark', off.print === 200 && !off.printed.includes(TRAINING_MARK) && off.exportStatus === 200 && !/TRAINING-/.test(off.disposition) && off.exportJson.training === undefined);
   const withoutContext = html => html.replace(/<script id="flight-server">[^<]*<\/script>/, '');
   ok('training changes only the mark: the off page plus the injected parts is the on page', trainingPage(withoutContext(off.html)) === withoutContext(on.html));
   ok('with training off, the served page is the production page byte for byte, plus only the server context', withoutContext(off.html) === servedIndex(path.join(ROOT, 'index.html')));
+}
+
+// ---- a training server opens only a training database; a production server refuses one ---------------------------
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flight-training-db-'));
+  const start = async (file, training, extra = {}) => { const server = createServer({ dbPath: path.join(dir, file), quiet: true, training, setupCode: 'designation-code', ...extra }); try { await server.listenAsync(0, '127.0.0.1'); return { server, error: null }; } catch (error) { await server.store.close?.(); return { server: null, error: error.message }; } };
+  const prod = await start('production.sqlite', false);
+  const port = prod.server.address().port;
+  await fetch(`http://127.0.0.1:${port}/api/auth/accounts`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ setupCode: 'designation-code', users: [{ username: 'prodadmin', displayName: 'Production Admin', role: 'admin', password: 'production-password-1' }] }) });
+  await prod.server.closeAsync();
+  const onProd = await start('production.sqlite', true);
+  ok('a training server refuses a database that already holds records', /opens only a training database, and this database already holds records/.test(onProd.error || ''), onProd.error);
+  const fresh = await start('training.sqlite', true);
+  const first = fresh.server && await fresh.server.store.firstAuditRow();
+  ok('a training server designates a new database with its first audit row', !!fresh.server && first?.id === 1 && first.action === 'training-database', JSON.stringify(first));
+  await fresh.server.closeAsync();
+  const again = await start('training.sqlite', true);
+  ok('a training server opens its own training database again', !!again.server, again.error);
+  await again.server.closeAsync();
+  const prodOnTraining = await start('training.sqlite', false);
+  ok('a production server refuses a training database', /created for a training server\. Start it with --training/.test(prodOnTraining.error || ''), prodOnTraining.error);
+  const prodAgain = await start('production.sqlite', false);
+  ok('a production server still opens its own database', !!prodAgain.server, prodAgain.error);
+  await prodAgain.server.closeAsync();
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+{
+  const jira = { baseUrl: 'https://example.atlassian.net', email: 'svc@example.com', apiToken: 'secret-token' };
+  const server = createServer({ dbPath: ':memory:', quiet: true, training: true, setupCode: 'connector-code', jira });
+  const port = await server.listenAsync(0, '127.0.0.1'), base = `http://127.0.0.1:${port}`;
+  await fetch(`${base}/api/auth/accounts`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ setupCode: 'connector-code', users: [{ username: 'trainer', displayName: 'Training Lead', role: 'admin', password: 'training-password-1' }] }) });
+  const session = await (await fetch(`${base}/api/auth/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'trainer', password: 'training-password-1' }) })).json();
+  const auth = { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' };
+  const html = await (await fetch(`${base}/`, { headers: auth })).text();
+  ok('a training server reports the Jira connector as not configured even when Jira settings are present', /"jiraConfigured":false/.test(html));
+  const jiraCall = await fetch(`${base}/api/jira/issue`, { method: 'POST', headers: auth, body: JSON.stringify({ recordType: 'ecr', recordId: 'ECR-0001' }) });
+  ok('a training server sends nothing to Jira', jiraCall.status === 503, String(jiraCall.status));
+  const exportSetting = await fetch(`${base}/api/record-exports/settings`, { method: 'PUT', headers: auth, body: JSON.stringify({ recordType: 'work-order', enabled: true, destinationKind: 'folder', destination: 'exports', namingPattern: '{recordId}', rationale: 'Training test setting.' }) });
+  ok('a training server refuses to configure record exports', exportSetting.status === 409 && /off on a training server/.test((await exportSetting.json()).error || ''), String(exportSetting.status));
+  await server.closeAsync();
 }
 
 // ---- the command line flag and the environment setting ------------------------------------------------------
@@ -166,8 +212,8 @@ try {
       const printed = await view.evaluate(() => ({ top: document.querySelector('.training-print-mark').getBoundingClientRect().top, button: getComputedStyle(document.querySelector('.print-action')).display }));
       ok('printed page: the training mark is at the top and the Print button is not printed', printed.top < 40 && printed.button === 'none', JSON.stringify(printed));
       await page.emulateMedia({ media: 'print' });
-      const livePrint = await page.evaluate(() => { const e = document.querySelector('.training-banner'), s = getComputedStyle(e); return { position: s.position, display: s.display, text: e.textContent }; });
-      ok('printing the page itself (trace report) prints the training strip', livePrint.position === 'static' && livePrint.display === 'block' && livePrint.text === TRAINING_MARK, JSON.stringify(livePrint));
+      const livePrint = await page.evaluate(() => { const e = document.querySelector('.training-banner'), s = getComputedStyle(e), top = document.querySelector('.training-print-top'), t = top && getComputedStyle(top); return { position: s.position, display: s.display, text: e.textContent, top: top ? { first: document.body.firstElementChild === top, display: t.display, y: top.getBoundingClientRect().top, text: top.textContent } : null }; });
+      ok('printing the page itself (trace report) puts the mark first on the first sheet and repeats the strip at the foot of every sheet', livePrint.position === 'fixed' && livePrint.display !== 'none' && livePrint.text === TRAINING_MARK && !!livePrint.top && livePrint.top.first && livePrint.top.display === 'block' && livePrint.top.y < 40 && livePrint.top.text === TRAINING_MARK, JSON.stringify(livePrint));
     } else {
       ok('production pages, title, prints and downloads carry no training mark', marks.banner === null && !/^Training/.test(marks.title) && !marks.mark.includes(TRAINING_MARK) && !marks.preview.includes(TRAINING_MARK) && /fs-build-line/.test(marks.mark), JSON.stringify({ title: marks.title, mark: marks.mark }));
     }

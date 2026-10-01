@@ -16,8 +16,10 @@ You need Node.js 22 LTS (22.13 or later) and a copy of this repository or the re
    ```
 
    `--host 0.0.0.0` lets other computers on the same network reach it. Leave it out to use the server
-   only on your own laptop. `training.sqlite` is created next to where you run the command. Never point
-   `--db` at a real Flight System database.
+   only on your own laptop. `training.sqlite` is created next to where you run the command and is marked
+   as a training database on the first start. The training server refuses a database that already holds
+   real records, and the production server refuses a training database. Training servers never send
+   records to Jira or to a records system.
 2. Find your address. On a Mac run `ipconfig getifaddr en0`; on Windows run `ipconfig` and read the IPv4
    Address. Everyone opens `http://<that address>:8080` in Chrome or Edge.
 3. Firewall: the first start asks whether Node may accept incoming connections. Allow it on private

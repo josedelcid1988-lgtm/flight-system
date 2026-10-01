@@ -149,6 +149,7 @@ export function servedIndex(indexPath) {
 // HTML download, and the tab title. The mark is added to the page this server sends, so it is there before any
 // script runs and a browser cannot opt out of it. Production default: off, and the served page is unchanged.
 export const TRAINING_MARK = 'TRAINING, NOT THE RECORD';
+export const TRAINING_DESIGNATION = 'training-database';
 const TRAINING_STRIP = 24;
 const TRAINING_PRINT_MARK = `<div class="training-print-mark" style="margin:0 0 8px;padding:6px 10px;border:2px solid #0b3a6e;color:#0b3a6e;font:700 14px/18px sans-serif;text-align:center;letter-spacing:.06em">${TRAINING_MARK}</div>`
   // On screen the print preview's fixed Print button sits at the top right; start the mark below it. Print is unchanged.
@@ -159,9 +160,14 @@ const TRAINING_HEAD = '<style id="flight-training-style">'
   + `body{padding-bottom:${TRAINING_STRIP}px}html .next-action{bottom:${TRAINING_STRIP}px}html .toast,html .sk-idle-warning{bottom:${TRAINING_STRIP + 24}px}`
   + `@media(min-width:1181px){html .next-action{bottom:${TRAINING_STRIP + 28}px}}`
   + 'body:has(#sk-boot)>.training-banner{visibility:visible!important;left:0}'
-  + '@media print{body{padding-bottom:0}.training-banner{position:static;height:auto;display:block;text-align:center;margin:0 auto 8px;background:none;color:#0b3a6e;border:2px solid #0b3a6e;padding:4px}}'
+  + '.training-print-top{display:none}'
+  // Printing the page itself: the mark is the first thing on the first sheet, and the strip, fixed to the foot, is
+  // repeated on every sheet, so no printed page of a training screen is unmarked.
+  + '@media print{.training-print-top{display:block;margin:0 0 8px;padding:4px;text-align:center;color:#0b3a6e;border:2px solid #0b3a6e;font:700 12px/16px sans-serif;letter-spacing:.06em}'
+  + '.training-banner{position:fixed;left:0;right:0;bottom:0;height:auto;padding:2px;background:#fff;color:#0b3a6e;border-top:2px solid #0b3a6e}body{padding-bottom:24px}}'
   + '</style>';
 const TRAINING_BODY = `<div class="training-banner" role="note">${TRAINING_MARK}</div>`;
+const TRAINING_PRINT_TOP = `<div class="training-print-top" aria-hidden="true">${TRAINING_MARK}</div>`;
 // Runs after the app's own scripts. Prints and HTML downloads go through markDocument, dlFile or saveFile, so the mark
 // is added there, once; every file the page saves is named TRAINING-<name>; the strip is put back if a render
 // removes it, and the tab title keeps the word Training.
@@ -187,7 +193,7 @@ export function parseTrainingSetting(value) {
 export const trainingPage = html => {
   const end = html.lastIndexOf('</body>');
   const withTail = end >= 0 ? `${html.slice(0, end)}${TRAINING_BODY}${TRAINING_TAIL}${html.slice(end)}` : `${html}${TRAINING_BODY}${TRAINING_TAIL}`;
-  return withTail.replace('<head>', `<head>${TRAINING_HEAD}`);
+  return withTail.replace('<head>', `<head>${TRAINING_HEAD}`).replace(/<body[^>]*>/i, body => body + TRAINING_PRINT_TOP);
 };
 
 export function createServer(options = {}) {
@@ -218,6 +224,8 @@ export function createServer(options = {}) {
   };
   let jiraConfigured = false;
   try { const u = new URL(jiraConfig.baseUrl); jiraConfigured = !!(jiraConfig.email && jiraConfig.apiToken && u.protocol === 'https:' && /(^|\.)atlassian\.net$/i.test(u.hostname) && !u.username && !u.password && !u.search && !u.hash && (!u.pathname || u.pathname === '/')); } catch {}
+  // A training server sends nothing outward: no Jira issues and no configured record exports.
+  if (training) jiraConfigured = false;
   const jiraFetch = options.jiraFetch || globalThis.fetch;
   if (host.MES.MAX_EVIDENCE_BYTES && host.MES.MAX_EVIDENCE_BYTES > MAX_REQUEST_BYTES) throw new Error(`index.html allows ${host.MES.MAX_EVIDENCE_BYTES} byte recordings but the server's request limit is ${MAX_REQUEST_BYTES}. Raise MAX_REQUEST_BYTES and the proxy's client_max_body_size together.`);
   const log = options.quiet ? () => {} : (...a) => console.log(new Date().toISOString(), ...a);
@@ -551,6 +559,7 @@ export function createServer(options = {}) {
     return `HTTPS destination accepted ${job.exportId}`;
   };
   const drainExports = () => {
+    if (training) return Promise.resolve();
     if (exportDrain) return exportDrain;
     exportDrain = (async () => {
       // Keep taking batches until nothing new is pending: one commit can finalize more records than one batch holds.
@@ -573,6 +582,7 @@ export function createServer(options = {}) {
     return exportDrain;
   };
   const queueNewFinalRecords = async (previous, next, username, tx) => {
+    if (training) return [];
     const before = finalizedRecords(previous), after = finalizedRecords(next), queued = [];
     for (const [key, item] of after) {
       if (before.has(key)) continue;
@@ -1081,7 +1091,7 @@ export function createServer(options = {}) {
           const mode = url.searchParams.get('mode') === 'external' ? 'external' : 'internal';
           let html; try { html = host.MESPrint.document(a.entry.order, mode); } catch (e) { internalError(res, req, e, 'The record could not be printed.'); return; }
           const summary = { orderId: a.id, partNumber: a.entry.order.partNumber, status: a.entry.order.status, operationCount: (a.entry.order.operations || []).length, closedAt: a.entry.order.closure && a.entry.order.closure.at || null };
-          const stamp = await recordExtract(a.id, 'print', session.username, { order: a.entry.order, activity: a.entry.activity, archiveSha256: a.sha256, mode }, summary);
+          const stamp = await recordExtract(a.id, 'print', session.username, { order: a.entry.order, activity: a.entry.activity, archiveSha256: a.sha256, mode, ...(training ? { training: TRAINING_MARK } : {}) }, summary);
           html = html.replace('</body>', `${printExtractStamp(stamp)}</body>`);
           if (training) html = trainingPrintMark(html);
           await store.audit(session.username, 'archive-print', { orderId: a.id, mode });
@@ -1096,11 +1106,12 @@ export function createServer(options = {}) {
           evidence[key] = meta;
         }
         const summary = { orderId: a.id, partNumber: a.entry.order.partNumber, status: a.entry.order.status, operationCount: (a.entry.order.operations || []).length, activityCount: (a.entry.activity || []).length, evidenceCount: Object.keys(evidence).length, closedAt: a.entry.order.closure && a.entry.order.closure.at || null };
-        const content = { order: a.entry.order, activity: a.entry.activity, evidence, archiveSha256: a.sha256, archivedAt: a.archivedAt, archivedBy: a.archivedBy, schema: a.schema };
+        // A training extract carries its training mark inside the hashed content, so removing it breaks the extract hash.
+        const content = { order: a.entry.order, activity: a.entry.activity, evidence, archiveSha256: a.sha256, archivedAt: a.archivedAt, archivedBy: a.archivedBy, schema: a.schema, ...(training ? { training: TRAINING_MARK } : {}) };
         const stamp = await recordExtract(a.id, 'json-download', session.username, content, summary);
         await store.audit(session.username, 'archive-export', { orderId: a.id, exportId: stamp.exportId, sha256: stamp.sha256 });
         const head = { application: 'Flight System', kind: 'archived-work-order', exportId: stamp.exportId, exportedAt: stamp.exportedAt, exportedBy: stamp.exportedBy, hashAlgorithm: 'SHA-256', extractSha256: stamp.sha256, extractHashCovers: 'order, activity, evidence metadata including each recording SHA-256, archiveSha256, archivedAt, archivedBy, schema', dataSummary: summary, ...content, evidence: undefined };
-        if (training) head.training = TRAINING_MARK;
+        if (training) head.extractHashCovers += ', training';
         res.writeHead(200, { 'Content-Type': MIME['.json'], 'Content-Disposition': `attachment; filename="${training ? 'TRAINING-' : ''}${a.id}-archive.json"`, 'Cache-Control': 'no-store' });
         await streamArchiveExport(res, head, evidence);
         return;
@@ -1118,6 +1129,7 @@ export function createServer(options = {}) {
         if (!manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can configure record exports.' }); return; }
         if (m === 'GET') { send(res, 200, { recordTypes: EXPORT_RECORD_TYPES, settings: await store.exportSettings() }); return; }
         if (m === 'PUT') {
+          if (training) { send(res, 409, { error: 'Record exports are off on a training server: training records are never sent to a records system.' }); return; }
           const body = await readJson(req), recordType = String(body.recordType || ''), enabled = body.enabled;
           const destinationKind = String(body.destinationKind || ''), destination = String(body.destination || '').trim();
           const tokenSetting = String(body.tokenSetting || '').trim() || null, namingPattern = String(body.namingPattern || '').trim(), rationale = String(body.rationale || '').trim();
@@ -1197,7 +1209,23 @@ export function createServer(options = {}) {
   };
 
   server = http.createServer((req, res) => { handle(req, res); });
-  server.store = store; server.host = host; server.training = training; server.validState = validState; server.ready = storeReady.then(async () => { await wrapped; await verifyStoredCalibrationArchive(); void drainExports(); });
+  // A training server opens only a training database: a new store, which it designates with its first audit row, or
+  // a store that row already designates. A production server refuses a designated training database. The audit chain
+  // makes the designation part of the record, so training data cannot pass as production data or the reverse.
+  const checkTrainingDesignation = async () => {
+    const first = typeof store.firstAuditRow === 'function' ? await store.firstAuditRow() : undefined;
+    const designated = !!first && first.action === TRAINING_DESIGNATION;
+    if (!training) {
+      if (designated) throw new Error('This database was created for a training server. Start it with --training (or FLIGHT_TRAINING=1), or start the production server on its own database.');
+      return;
+    }
+    if (designated) return;
+    if (first === undefined) throw new Error('Training mode needs a store that can record its training designation.');
+    if (first || (await store.accounts()).length || await store.getDoc(TENANT)) throw new Error('Training mode opens only a training database, and this database already holds records. Start the training server on a new database file, for example --db training.sqlite.');
+    await store.audit(null, TRAINING_DESIGNATION, { mark: TRAINING_MARK });
+    log(`designated this new database as a training database (${TRAINING_MARK})`);
+  };
+  server.store = store; server.host = host; server.training = training; server.validState = validState; server.ready = storeReady.then(checkTrainingDesignation).then(async () => { await wrapped; await verifyStoredCalibrationArchive(); void drainExports(); });
   // Bind address: 127.0.0.1 unless options.host, FLIGHT_HOST or --host names another.
   // Once listening, the archive check starts on a later turn of the event loop, so startup does not wait for it.
   server.listenAsync = async (port, host = options.host || process.env.FLIGHT_HOST || DEFAULT_HOST) => {
@@ -1254,6 +1282,6 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
     console.log(`Flight System server listening on ${a.address}:${port} (${a.address === '127.0.0.1' || a.address === '::1' ? 'loopback only: this machine and its reverse proxy' : 'bound as --host or FLIGHT_HOST asked: allow it only behind a firewall or on a trusted network'}) (db ${server.store.db.location ? server.store.db.location() : 'sqlite'})`);
     if (server.training) console.log(`Training mode: every page, print and download is marked ${TRAINING_MARK}. Every rule and gate is enforced as in production.`);
     server.firstRunSetupCode().then(code => { if (code) console.log(`First-run setup code: ${code}\nEnter it on the Set up Master Access screen to create the first account. It is not needed again once that account exists.`); }).catch(() => {});
-  }, e => { console.error(`Flight System server could not listen on ${host}: ${e.message}. Check --host names an address on this machine and the port is free.`); process.exit(1); });
+  }, e => { console.error(e.code ? `Flight System server could not listen on ${host}: ${e.message}. Check --host names an address on this machine and the port is free.` : `Flight System server did not start: ${e.message}`); process.exit(1); });
   }
 }

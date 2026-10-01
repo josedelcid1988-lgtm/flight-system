@@ -353,6 +353,7 @@ function makeStore(pool, query, inTransaction, connectionString) {
       });
     },
     async audit(username, action, detail) { if (inTransaction) return appendAudit(username, action, detail); return store.transaction(tx => tx.audit(username, action, detail)); },
+    async firstAuditRow() { const row = (await query('SELECT id,action FROM audit ORDER BY id ASC LIMIT 1')).rows[0]; return row ? { id: Number(row.id), action: row.action } : null; },
     async auditRows(limit = 200) { return (await query('SELECT id,at,username,action,detail,prev_hash AS "prevHash",hash FROM audit ORDER BY id DESC LIMIT $1', [limit])).rows.map(r => ({ ...r, id: Number(r.id) })); },
     async verifyAudit() {
       const rows = (await query('SELECT id,at,username,action,detail,prev_hash,hash FROM audit ORDER BY id')).rows;
