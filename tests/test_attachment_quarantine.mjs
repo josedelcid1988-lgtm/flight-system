@@ -88,11 +88,41 @@ function surfaces(state) {
   check('a quarantine that is not a list fails validation', !MES.validate(notList));
   const badRec = structuredClone(state); badRec.maneuver.ncs.find(t => (t.quarantinedAttachments || []).length).quarantinedAttachments[0].removedAt = 'yesterday';
   check('a quality record quarantine entry with a bad removal time fails validation', !MES.validate(badRec));
+  // The removal details shown on an entry are bound to its signed manifest: editing any of them is caught.
+  for (const [field, change] of [['removeReason', f => { f.removeReason = 'A friendlier reason.'; }], ['removedBy', f => { f.removedBy = { ...f.removedBy, name: 'Someone Else' }; }], ['removedAt', f => { f.removedAt = new Date(Date.parse(f.removedAt) - 86400000).toISOString(); }], ['name', f => { f.name = 'renamed.png'; }], ['manifest', f => { delete f.manifest; }]]) {
+    const forged = structuredClone(state), entry = forged.orders.flatMap(o => o.operations).find(x => (x.quarantinedAttachments || []).length).quarantinedAttachments[0];
+    change(entry);
+    const verify = MES.verifyManifests(forged);
+    check(`a quarantine entry whose ${field} was changed after signing fails validation and manifest verification`, !MES.validate(forged) && !verify.ok && verify.failures.some(f => /signed removal record/.test(f.reason)));
+  }
+  // A quality record file may be larger than an operation file; it keeps its size in quarantine.
+  {
+    const big = structuredClone(state), bigNc = FlightManeuver.get(big, 'ncs', big.maneuver.ncs.find(t => t.status === 'Open').id);
+    const large = { name: 'large-scan.png', type: 'image/png', size: 450000, dataUrl: `data:image/png;base64,${'A'.repeat(500000)}` };
+    big.orders.forEach(o => { o.operations.forEach(x => { x.attachments = []; delete x.quarantinedAttachments; }); delete o.quarantinedKitFiles; o.tickets.forEach(t => delete t.quarantinedAttachments); });
+    Object.values(big.maneuver).forEach(list => Array.isArray(list) && list.forEach(r => { if (r) delete r.quarantinedAttachments; }));
+    const added = host.withAccount(technician, () => FlightManeuver.addRecordFile(big, 'ncs', bigNc.id, large), big);
+    const removed = added.ok && host.withAccount(qe, () => FlightManeuver.removeRecordFile(big, 'ncs', bigNc.id, bigNc.attachments.at(-1).id, REASON), big);
+    check('a large quality record file is quarantined and the workspace stays valid', added.ok && removed.ok && MES.validate(big) && MES.verifyManifests(big).ok);
+  }
+  // Quarantined files count toward the workspace limit for every file adder, quality records and kit lists included.
+  {
+    const heavy = structuredClone(state), hNc = heavy.maneuver.ncs.find(t => t.status === 'Open');
+    const filler = { ...hNc.quarantinedAttachments[0], dataUrl: `data:image/png;base64,${'B'.repeat(890000)}` };
+    hNc.quarantinedAttachments = [0, 1, 2, 3].map(i => ({ ...filler, id: `${filler.id}-H${i}`, manifest: { ...filler.manifest, subject: { ...filler.manifest.subject, fileId: `${filler.id}-H${i}` } } }));
+    const big = { name: 'more.png', type: 'image/png', size: 200000, dataUrl: `data:image/png;base64,${'C'.repeat(250000)}` };
+    const kitOrder = heavy.orders.find(o => ['Kitting', 'Building'].includes(o.status));
+    const kit = host.withAccount(operator, () => MES.addKitFile(heavy, kitOrder.id, big), heavy);
+    const rec = host.withAccount(technician, () => FlightManeuver.addRecordFile(heavy, 'ncs', hNc.id, big), heavy);
+    check('a kit list is refused when quarantined files fill the workspace limit, with what to do', kit.ok === false && /near its attachment limit, and removed files stay in quarantine/.test(kit.message));
+    check('a quality record file is refused when quarantined files fill the workspace limit, with what to do', rec.ok === false && /near its attachment limit/.test(rec.message));
+    check('a file logged by name only is still accepted at the limit', host.withAccount(operator, () => MES.addKitFile(heavy, kitOrder.id, { name: 'kit-by-name.pdf', type: 'application/pdf', size: 10 }), heavy).ok);
+  }
   // Quarantine is capped per record, with a plain refusal once full.
   {
     const full = structuredClone(state), fOrder = full.orders.find(o => o.operations.some(x => (x.quarantinedAttachments || []).length)), fOp = fOrder.operations.find(x => (x.quarantinedAttachments || []).length);
     const sample = fOp.quarantinedAttachments[0];
-    fOp.quarantinedAttachments = Array.from({ length: 50 }, (_, i) => ({ ...sample, id: `${sample.id}-Q${i}`, dataUrl: undefined, manifest: undefined }));
+    fOp.quarantinedAttachments = Array.from({ length: 50 }, (_, i) => ({ ...sample, id: `${sample.id}-Q${i}`, manifest: { ...sample.manifest, subject: { ...sample.manifest.subject, fileId: `${sample.id}-Q${i}` } } }));
     check('a full quarantine still validates', MES.validate(full));
     host.withAccount(technician, () => MES.addAttachment(full, fOrder.id, fOp.id, { name: 'one-more.txt', type: 'text/plain', size: 4 }), full);
     const fileId = fOp.attachments.at(-1).id, before = JSON.stringify(full);
