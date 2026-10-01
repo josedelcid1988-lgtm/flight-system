@@ -100,7 +100,8 @@ try {
   check('a bad file shows the refusal and records nothing', await page.evaluate(() => (state.calibrationLog || []).length) === 0);
   await page.locator('[data-qms-calibration-import] [name=csv]').fill(GOOD);
   await page.locator('[data-qms-calibration-import] button[type=submit]').click();
-  await page.getByText(/CALLOG-00003 · IMP-003/).waitFor();
+  // The calibration log is a table since the Jinx UX audit: the entry and its tool tag are separate cells.
+  await page.locator('tr[data-calibration-entry="CALLOG-00003"]', { hasText: 'IMP-003' }).waitFor();
   check('a good file records every row and lists the entries', await page.evaluate(() => state.calibrationLog.length === 3 && MES.validate(state) === true && MES.verifyManifests(state).ok === true));
   check('the import text has no em dash', !(await page.locator('[data-qms-calibration-import]').innerText()).includes('—'));
   await context.close();
