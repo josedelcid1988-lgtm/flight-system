@@ -200,6 +200,21 @@ try {
     await wide.close();
   });
 
+  await check('L3 L6 L9 L10 L15 low items: copy, touch targets and one primary style', async () => {
+    assert.ok(source.includes('placeholder="Example: Functional test result requires review"') && !source.includes('placeholder="Example:  test'), 'the NC summary example has no dropped word');
+    assert.ok(source.includes("${/[.!?]$/.test(note) ? '' : '.'}"), 'an MRB vote note that ends in a period is not given a second one');
+    const { context: tablet, page: tabletPage } = await open(1024, 768);
+    await go(tabletPage, 'mnv-intake');
+    await tabletPage.locator('.fr-primary').first().waitFor();
+    const primary = await tabletPage.locator('.fr-primary').first().evaluate(el => [getComputedStyle(el).backgroundColor, getComputedStyle(el).backgroundImage]);
+    assert.deepEqual(primary, ['rgb(20, 22, 21)', 'none'], 'Raise NC uses the same solid primary as Create work order');
+    await go(tabletPage, 'orders');
+    await tabletPage.locator('.fr-order-table th .log-menu > summary').first().waitFor();
+    const tap = await tabletPage.locator('.fr-order-table th .log-menu > summary').first().evaluate(el => { const a = getComputedStyle(el, '::after'); return [parseFloat(a.width), parseFloat(a.height)]; });
+    assert.ok(tap[0] >= 44 && tap[1] >= 44, `column filter tap area is 44px at tablet width (${tap})`);
+    await tablet.close();
+  });
+
   await check('M3 and M11 view names match the nav and developer copy is gone', async () => {
     for (const old of ["'Planning board'", "'Material forecast'", "wis:'Work instruction library'", "'Process risk analysis'", 'Skyryse Problem Reports']) assert.ok(!source.includes(old), `index.html no longer names a view ${old}`);
     for (const old of ['remain authoritative', 'approval gates remain in Flight Maneuver', 'supplied Datum source', 'Corrective action · in-house', 'Current Flight System records', 'Running serial assignment register', 'NC Intake', 'Corrective Actions', 'Problem Reports']) assert.ok(!bundle.includes(old), `the React bundle no longer shows "${old}"`);
