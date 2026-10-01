@@ -58,6 +58,10 @@ try {
   const expectedArchive = await sourceStore.archived('WO-BR-1');
   assert.ok(expectedAudit.ok, 'source audit chain verifies before backup');
 
+  // A session open when the backup is taken: a restore must not bring it back (Codex #16 r4127638817).
+  const backedUpSession = await sourceStore.openSession('br-admin');
+  assert.ok(await sourceStore.session(backedUpSession.token), 'the session is live before the backup');
+
   // Back up, then wipe the database completely.
   const archivePath = path.join(workdir, 'flight.dump');
   assert.equal(await sourceStore.backup(archivePath), 0);
@@ -85,6 +89,9 @@ try {
   assert.equal(chain.checked, expectedAudit.checked);
   assert.equal(chain.head, expectedAudit.head);
   console.log('ok PostgreSQL backup round-trips account, document, archive, and audit chain');
+  assert.equal(await restoredStore.session(backedUpSession.token), null, 'a session token from before the backup does not authenticate after the restore');
+  assert.equal(Number((await restoredStore._query('SELECT COUNT(*) AS n FROM sessions')).rows[0].n), 0, 'the restore leaves no session rows');
+  console.log('ok a restore ends every session that was in the backup');
 
   // A tampered restore refuses startup, same as the SQLite target.
   await restoredStore._query('ALTER TABLE audit DISABLE TRIGGER USER');
@@ -99,6 +106,26 @@ try {
   assert.ok((await restoredStore.verifyAudit()).ok, 'audit chain verifies after clean restore');
   assert.equal((await restoredStore.account('br-admin')).displayName, 'Backup Admin');
   console.log('ok restore with { clean: true } replaces the database in place');
+
+  // A clean restore that fails partway leaves the database as it was (Codex #16 r4127638807). An object
+  // outside the archive that depends on the documents table makes pg_restore --clean fail on DROP TABLE
+  // documents. pg_restore drops tables in reverse name order, so by then it has already dropped later
+  // tables such as lockouts; outside one transaction those drops stay committed and the lockout is lost.
+  await restoredStore.upsertAccount({ username: 'after-backup', displayName: 'After Backup', salt: 'ab-salt', hash: sha('ab-salt', 'ab-password-123'), role: 'admin' });
+  await restoredStore.noteFailedSignin('locked-user', 1, Date.now() + 60 * 60 * 1000);
+  assert.ok((await restoredStore.lockout('locked-user')).until > Date.now(), 'a lockout is recorded before the failing restore');
+  const auditBefore = await restoredStore.verifyAudit();
+  await restoredStore._query('CREATE VIEW restore_blocker AS SELECT tenant FROM documents');
+  await restoredStore.close(); restoredStore = null;
+  await assert.rejects(restorePostgres(scratchUrl.href, archivePath, { clean: true }), /pg_restore failed/);
+  restoredStore = await openPostgres(scratchUrl.href);
+  assert.ok((await restoredStore.lockout('locked-user')).until > Date.now(), 'a failed clean restore keeps tables it had already dropped, such as the lockouts');
+  assert.equal((await restoredStore.account('after-backup'))?.displayName, 'After Backup', 'a failed clean restore keeps the accounts table and its rows');
+  assert.equal((await restoredStore.getDoc('default'))?.etag, expectedDoc.etag, 'a failed clean restore keeps the workspace');
+  assert.ok((await restoredStore.archived('WO-BR-1'))?.sha256, 'a failed clean restore keeps the archive');
+  const auditAfter = await restoredStore.verifyAudit();
+  assert.ok(auditAfter.ok && auditAfter.checked >= auditBefore.checked && auditAfter.head, 'a failed clean restore keeps the audit chain');
+  console.log('ok a clean restore that fails partway changes nothing');
 } finally {
   await restoredStore?.close().catch(() => {});
   await sourceStore?.close().catch(() => {});

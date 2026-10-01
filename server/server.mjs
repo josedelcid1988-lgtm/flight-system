@@ -1053,8 +1053,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
     // Stop the server first when restoring into its database.
     if (!databaseUrl) { console.error('Restore targets PostgreSQL only: pass --database-url <connection string>.'); process.exit(1); }
     const { restorePostgres } = await import('./db-postgres.mjs');
-    try { await restorePostgres(databaseUrl, restoreFrom); console.log(`Restored ${restoreFrom} into the PostgreSQL database. Start the server normally; it verifies the audit chain on startup and refuses a tampered restore.`); }
-    catch (e) { console.error(`Restore failed: ${e.message}`); process.exit(1); }
+    try { await restorePostgres(databaseUrl, restoreFrom); console.log(`Restored ${restoreFrom} into the PostgreSQL database. Every session in the backup was ended, so everyone signs in again. Start the server normally; it verifies the audit chain on startup and refuses a tampered restore.`); }
+    catch (e) { console.error(`Restore failed: ${e.message}${e.restored ? '' : ' The restore runs as one transaction, so it left the database unchanged.'}`); process.exit(1); }
   } else {
   const host = arg('host', process.env.FLIGHT_HOST || DEFAULT_HOST);
   const server = createServer({ dbPath, databaseUrl, host, ...(process.argv.includes('--serve-demo') ? { serveDemo: true } : {}) });

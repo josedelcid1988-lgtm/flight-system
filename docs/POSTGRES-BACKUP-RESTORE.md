@@ -7,15 +7,21 @@ This note records the exact commands that were run against the live PostgreSQL t
 ## Intended cycle (from `docs/DATABASES.md` and `server/README.md`)
 
 ```bash
-# 1. Online backup of the live target
-FLIGHT_DATABASE_URL='<live-url>' \
-  node server/server.mjs --backup data/flight-backup.dump
+# Export the URL once, so the backup and the restore both see it. A one-command prefix
+# (FLIGHT_DATABASE_URL=... node ...) sets it for the backup only, and the restore would then
+# be refused after the wipe, leaving the database empty.
+export FLIGHT_DATABASE_URL='<live-url>'
 
-# 2. Stop the MES server that uses that database, then wipe and restore
-# Wipe is a DROP/CREATE of the target database, or restorePostgres(..., { clean: true }).
+# 1. Stop the MES server that uses that database, so no write lands between the backup and the
+#    baseline below. Then take the backup and record the baseline (step 4 of the next section).
+node server/server.mjs --database-url "$FLIGHT_DATABASE_URL" --backup data/flight-backup.dump
+
+# 2. Wipe and restore. Wipe is a DROP/CREATE of the target database, or
+#    restorePostgres(..., { clean: true }). The restore runs as one transaction, so a failed restore
+#    leaves the target unchanged, and it ends every session that was in the backup.
 node server/server.mjs --database-url "$FLIGHT_DATABASE_URL" --restore data/flight-backup.dump
 
-# 3. Re-open and verify record counts plus the audit chain
+# 3. Re-open and verify the content of every table plus the audit chain (next section).
 # openPostgres() refuses to start if the restored audit chain does not verify.
 ```
 
@@ -93,18 +99,34 @@ This command was not executed against a live PostgreSQL database. There is no `F
 1. The live connection string in `FLIGHT_DATABASE_URL` (or `--database-url`), with network reachability from the host that will run `pg_dump` / `pg_restore`.
 2. PostgreSQL client tools on that host (`pg_dump`, `pg_restore`, and a `psql` that can count rows).
 3. An agreed maintenance window. Restore is offline: stop the MES server first, or restore into an empty database and point the server at it afterwards (`server/README.md`).
-4. Pre-wipe counts to compare after restore, at minimum:
+4. A pre-wipe baseline to compare after the restore, taken with the server stopped (step 1 above). A row
+   count alone is not enough: a restored row whose content differs keeps the same count, and
+   `verifyAudit()` hashes only the `audit` table. So record a content digest of every persisted table,
+   and recompute the stored SHA-256 of every evidence item and archived order:
 
 ```sql
-SELECT 'documents' AS rel, COUNT(*) FROM documents
-UNION ALL SELECT 'accounts', COUNT(*) FROM accounts
-UNION ALL SELECT 'sessions', COUNT(*) FROM sessions
-UNION ALL SELECT 'audit', COUNT(*) FROM audit
-UNION ALL SELECT 'evidence', COUNT(*) FROM evidence
-UNION ALL SELECT 'archive', COUNT(*) FROM archive
-UNION ALL SELECT 'record_extracts', COUNT(*) FROM record_extracts
-UNION ALL SELECT 'record_export_jobs', COUNT(*) FROM record_export_jobs;
+-- Count and content digest of every persisted table. Every row must match after the restore,
+-- except sessions: the restore ends them all, so sessions must read 0 rows afterwards.
+SELECT 'documents' AS rel, COUNT(*) AS n, md5(COALESCE(string_agg(t::text, E'\n' ORDER BY t::text), '')) AS digest FROM documents t
+UNION ALL SELECT 'accounts', COUNT(*), md5(COALESCE(string_agg(t::text, E'\n' ORDER BY t::text), '')) FROM accounts t
+UNION ALL SELECT 'sessions', COUNT(*), md5(COALESCE(string_agg(t::text, E'\n' ORDER BY t::text), '')) FROM sessions t
+UNION ALL SELECT 'lockouts', COUNT(*), md5(COALESCE(string_agg(t::text, E'\n' ORDER BY t::text), '')) FROM lockouts t
+UNION ALL SELECT 'audit', COUNT(*), md5(COALESCE(string_agg(t::text, E'\n' ORDER BY t::text), '')) FROM audit t
+UNION ALL SELECT 'evidence', COUNT(*), md5(COALESCE(string_agg(t::text, E'\n' ORDER BY t::text), '')) FROM evidence t
+UNION ALL SELECT 'archive', COUNT(*), md5(COALESCE(string_agg(t::text, E'\n' ORDER BY t::text), '')) FROM archive t
+UNION ALL SELECT 'record_extracts', COUNT(*), md5(COALESCE(string_agg(t::text, E'\n' ORDER BY t::text), '')) FROM record_extracts t
+UNION ALL SELECT 'record_export_settings', COUNT(*), md5(COALESCE(string_agg(t::text, E'\n' ORDER BY t::text), '')) FROM record_export_settings t
+UNION ALL SELECT 'record_export_jobs', COUNT(*), md5(COALESCE(string_agg(t::text, E'\n' ORDER BY t::text), '')) FROM record_export_jobs t
+UNION ALL SELECT 'record_export_log', COUNT(*), md5(COALESCE(string_agg(t::text, E'\n' ORDER BY t::text), '')) FROM record_export_log t
+UNION ALL SELECT 'jira_issue_requests', COUNT(*), md5(COALESCE(string_agg(t::text, E'\n' ORDER BY t::text), '')) FROM jira_issue_requests t
+UNION ALL SELECT 'skill_runs', COUNT(*), md5(COALESCE(string_agg(t::text, E'\n' ORDER BY t::text), '')) FROM skill_runs t;
+
+-- Stored hashes recomputed from the stored content. Both queries must return no rows, before and after.
+SELECT id FROM evidence WHERE encode(sha256(bytes), 'hex') <> sha256;
+SELECT order_id FROM archive WHERE encode(sha256(convert_to(json, 'UTF8')), 'hex') <> sha256;
 ```
+
+   If `server/db-postgres.mjs` gains a table, add it to the digest query.
 
 Plus `store.verifyAudit()` after `openPostgres()`, which must report `ok: true` with the same `checked` and `head` as before the wipe.
 

@@ -99,23 +99,39 @@ export async function openPostgresReadOnly(connectionString) {
 // the server at it afterwards. Without { clean: true } the target must be empty,
 // because pg_restore fails on the existing objects; with { clean: true } every
 // object is dropped and recreated (--clean --if-exists) for a replace-in-place
-// restore. After a restore, open the database with openPostgres(), which refuses to
-// start when the restored audit chain does not verify.
+// restore. The restore runs as one transaction (--single-transaction): if any step
+// fails, nothing it dropped or wrote is kept, so a failed clean restore cannot leave
+// the database partly erased (Codex #16 r4127638807). Every session restored from the
+// archive is then ended. After a restore, open the database with openPostgres(), which
+// refuses to start when the restored audit chain does not verify.
 export async function restorePostgres(connectionString, archivePath, options = {}) {
   if (!connectionString) throw new Error('Set FLIGHT_DATABASE_URL to select the restore target.');
   if (!archivePath) throw new Error('A pg_dump custom-format archive path is required.');
-  const args = ['--exit-on-error', '--no-owner', '--dbname', connectionString];
+  const args = ['--exit-on-error', '--single-transaction', '--no-owner', '--dbname', connectionString];
   if (options.clean) args.push('--clean', '--if-exists');
   if (Array.isArray(options.extraArgs)) args.push(...options.extraArgs);
   args.push(archivePath);
-  return new Promise((resolve, reject) => {
+  await new Promise((resolve, reject) => {
     const child = spawn('pg_restore', args, { stdio: 'ignore' });
     child.once('error', reject);
     child.once('exit', (code, signal) => {
-      if (code === 0) resolve(0);
+      if (code === 0) resolve();
       else reject(new Error(`pg_restore failed (${signal || code}). Install PostgreSQL client tools and verify database access.`));
     });
   });
+  await endRestoredSessions(connectionString);
+  return 0;
+}
+
+// A backup holds the session table as it stood when the backup was taken, including sessions that were
+// signed out or replaced since. None of them may work again after a restore, so every restored session is
+// ended before the restore reports success: everyone signs in again (Codex #16 r4127638817).
+async function endRestoredSessions(connectionString) {
+  const { Pool } = await import('pg');
+  const pool = new Pool({ connectionString });
+  try { await pool.query('DELETE FROM sessions'); }
+  catch (e) { if (e && e.code !== '42P01') throw Object.assign(new Error(`The restore finished, but its sessions could not be ended (${e.message}). Do not start the server on this database until the sessions table is emptied.`), { restored: true }); }
+  finally { await pool.end().catch(() => {}); }
 }
 
 function makeStore(pool, query, inTransaction, connectionString) {
