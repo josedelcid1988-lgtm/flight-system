@@ -81,16 +81,16 @@ function Hangar({ state, MES, onOpen }) {
   });
   const open = item => setOrder(item);
   return <div className="flight-react">
-    <div className="fr-page-heading"><div><span className="fr-eyebrow">FLIGHT CONTROL</span><h1>Hangar<span>.</span></h1></div><div className="fr-workspace"><CalendarClock size={15}/> Current Flight System records</div></div>
+    <div className="fr-page-heading"><div><span className="fr-eyebrow">FLIGHT CONTROL</span><h1>Hangar<span>.</span></h1></div></div>
     <section className="fr-top-row" aria-label="Work queue summary and open holds">
       <div className="fr-summary"><span className="fr-eyebrow">YOUR WORK QUEUE</span><strong>{rows.length} <small>{filter.toLowerCase()} work orders</small></strong><span>Sorted by due date from the current workspace.</span></div>
-      <div className="fr-holds"><div className="fr-section-heading"><h2>Open holds</h2><span className="fr-count">{String(holds.length).padStart(2, '0')}</span></div>
+      <div className="fr-holds"><div className="fr-section-heading"><h2>Open holds</h2><span className="fr-count">{holds.length}</span></div>
         {holds.length ? holds.map(({ item, reason }) => <button className="fr-hold-row" key={item.id} onClick={() => open(item)}><span className="fr-hold-icon"><Boxes size={18}/></span><span><strong>{item.id} · {titleOf(item)}</strong><small>{reason}</small></span><ChevronRight size={16}/></button>) : <p className="fr-no-holds"><Check size={16}/> No blocking holds in open work orders.</p>}
       </div>
     </section>
-    {milestoneRisks.length > 0 && <section className="fr-milestone-watch" aria-label="Project milestones at risk"><div className="fr-section-heading"><h2>Project milestones at risk</h2><span className="fr-count">{String(milestoneRisks.length).padStart(2, '0')}</span></div>{milestoneRisks.map(item => <div className="fr-milestone-watch-row" key={item.id}><div><strong>{item.id} · {item.title}</strong><span>{item.risk} · due {new Date(`${item.dueDate}T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}{item.workOrderId ? ` · ${item.workOrderId}` : ''}</span></div>{item.workOrderId && <button className="fr-record-link" onClick={() => { const workOrder = state.orders.find(order => order.id === item.workOrderId); if (workOrder) onOpen(workOrder.id); }}>Open work order</button>}</div>)}</section>}
+    {milestoneRisks.length > 0 && <section className="fr-milestone-watch" aria-label="Project milestones at risk"><div className="fr-section-heading"><h2>Project milestones at risk</h2><span className="fr-count">{milestoneRisks.length}</span></div>{milestoneRisks.map(item => <div className="fr-milestone-watch-row" key={item.id}><div><strong>{item.id} · {item.title}</strong><span>{item.risk} · due {new Date(`${item.dueDate}T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}{item.workOrderId ? ` · ${item.workOrderId}` : ''}</span></div>{item.workOrderId && <button className="fr-record-link" onClick={() => { const workOrder = state.orders.find(order => order.id === item.workOrderId); if (workOrder) onOpen(workOrder.id); }}>Open work order</button>}</div>)}</section>}
     <section className="fr-queue" aria-labelledby="fr-queue-heading">
-      <div className="fr-queue-heading"><div className="fr-section-heading"><h2 id="fr-queue-heading">Work orders</h2><span className="fr-count">{String(rows.length).padStart(2, '0')}</span></div>
+      <div className="fr-queue-heading"><div className="fr-section-heading"><h2 id="fr-queue-heading">Work orders</h2><span className="fr-count">{rows.length}</span></div>
         <div className="fr-controls"><label className="fr-search"><Search size={16}/><input ref={searchRef} aria-label="Search work orders" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search work orders"/><kbd>⌘ K</kbd></label>
           <div className="fr-filter" aria-label="Work order filter">{['Open', 'All'].map(value => <button key={value} aria-pressed={filter === value} onClick={() => setFilter(value)}>{value}</button>)}</div>
           <button className="fr-density" aria-pressed={compact} onClick={changeDensity}><SlidersHorizontal size={15}/>{compact ? 'Comfortable' : 'Compact'}</button>
@@ -99,7 +99,7 @@ function Hangar({ state, MES, onOpen }) {
       <div className="fr-table-scroll"><table className={compact ? 'fr-compact' : ''}><thead><tr><th>Work order / Assembly</th><th>Next step</th><th>Owner</th><th>Due</th><th><span className="fr-visually-hidden">Details</span></th></tr></thead><tbody>
         {rows.map(item => { const next = (item.operations || []).find(operation => !operation.done); const label = next && (next.title || next.name) || item.status || 'Review record'; return <tr key={item.id}><td><button className="fr-record-link" onClick={() => open(item)}><span className="fr-order-icon"><FileText size={18}/></span><span><strong>{titleOf(item)}</strong><small>{item.id}<i> · {item.partNumber || 'Part not assigned'}</i></small></span></button></td><td><span className="fr-status"><i/>{label}</span></td><td>{item.owner || item.assignedTo || 'Unassigned'}</td><td>{displayFlightDate(dueOf(item))}</td><td><button className="fr-open-button" aria-label={'Open ' + item.id} onClick={() => open(item)}><ArrowUpRight size={18}/></button></td></tr>; })}
       </tbody></table>{!rows.length && <div className="fr-empty">No work orders match the current search and filter.</div>}</div>
-      <footer><span>{rows.length} work orders</span><span><Check size={13}/> Existing commands and approvals remain authoritative</span></footer>
+      <footer><span>{rows.length} work order{rows.length === 1 ? '' : 's'}</span></footer>
     </section>
     <RecordDrawer order={order} MES={MES} onClose={() => setOrder(null)} onOpen={onOpen}/>
   </div>;
@@ -136,7 +136,7 @@ function WorkOrderQueue({ state, MES, rows: sourceRows, initial, callbacks, onOp
   return <div className="flight-react fr-order-page">
     <div className="fr-page-heading"><div><span className="fr-eyebrow">FLIGHT CONTROL</span><h1>{initial.title || 'All work orders'}<span>.</span></h1>{initial.wiFilter && <p className="fr-order-filter-note">Cloned from <strong>{initial.wiFilter.id}</strong>{initial.wiFilter.revision ? ` Rev ${initial.wiFilter.revision}` : ' · all revisions'} <button className="fr-text-action" data-action="wi-filter-clear">Show all work orders</button></p>}</div><div className="fr-order-heading-actions" dangerouslySetInnerHTML={{ __html: initial.createButton }}/></div>
     <section className="fr-queue" aria-labelledby="fr-orders-heading">
-      <div className="fr-queue-heading"><div className="fr-section-heading"><h2 id="fr-orders-heading">Work orders</h2><span className="fr-count">{String(rows.length).padStart(2, '0')}</span></div>
+      <div className="fr-queue-heading"><div className="fr-section-heading"><h2 id="fr-orders-heading">Work orders</h2><span className="fr-count">{rows.length}</span></div>
         <div className="fr-controls"><label className="fr-search"><Search size={16}/><input id="order-search" ref={searchRef} type="search" aria-label="Search work orders" value={query} onChange={event => setSearch(event.target.value)} placeholder="Search orders"/><kbd>⌘ K</kbd></label>
           <label className="fr-filter-select"><span className="fr-visually-hidden">Work order status</span><select aria-label="Work order status" value={status} onChange={event => setStatusFilter(event.target.value)}>{['All', 'Blocked', 'Draft', 'Kitting', 'Building', 'Quality', 'Closed'].map(value => <option key={value}>{value}</option>)}</select></label>
           <label className="fr-filter-select"><span className="fr-visually-hidden">Site</span><select aria-label="Work order site" value={site} onChange={event => setSiteFilter(event.target.value)}>{['All', ...MES.SITES].map(value => <option key={value}>{value}</option>)}</select></label>
@@ -151,9 +151,9 @@ function WorkOrderQueue({ state, MES, rows: sourceRows, initial, callbacks, onOp
           <td><button className="fr-record-link" onClick={() => setSelected(order)}><strong>{order.id}</strong>{order.fai?.required && <span className="fr-fai-tag">FAI</span>}</button></td>
           <td><strong className="fr-mono">{order.partNumber} / Rev {order.revision}</strong><small>{titleOf(order)}</small>{order.aircraft && <small className="fr-mono">Aircraft {order.aircraft}</small>}{item.superseded && <small className="fr-revision-warning">Superseded revision</small>}</td>
           <td>{item.held ? <><span className="fr-order-blocked">Blocked</span><small>{order.status}{item.engineering ? ' · engineering change' : ''}{item.openTickets ? ` · ${item.openTickets} open NC` : ''}</small></> : <><span className="fr-status"><i/>{order.status}</span>{item.qaPending && <small>QA approval pending</small>}{item.openTickets ? <small>{item.openTickets} open NC</small> : null}</>}</td>
-          <td className="fr-mono"><time dateTime={item.created}>{displayFlightDate(item.created)}</time></td>
+          <td className="fr-mono fr-col-created"><time dateTime={item.created}>{displayFlightDate(item.created)}</time></td>
           <td className={`fr-mono${item.overdue ? ' is-overdue' : ''}`}><time dateTime={order.due || ''}>{displayFlightDate(order.due)}</time></td>
-          <td><div dangerouslySetInnerHTML={{ __html: item.progress }}/></td>
+          <td className="fr-col-progress"><div dangerouslySetInnerHTML={{ __html: item.progress }}/></td>
           <td>{order.pedigree}{order.subcategory && <small>{order.subcategory}</small>}</td>
           <td><select className={`fr-order-priority ${asText(order.priority).toLowerCase()}`} data-priority-order={order.id} aria-label={`Priority for ${order.id}`} disabled={order.status === 'Closed'} defaultValue={order.priority}>{MES.PRIORITIES.map(value => <option key={value}>{value}</option>)}</select></td>
         </tr>; })}</tbody></table>
@@ -201,7 +201,7 @@ function BigThree({ state, MES }) {
       <span className="muted">{snap.total} open blocker{snap.total === 1 ? '' : 's'} in your queue</span>
       {state.planner.calendar.connectors.ical && <><button className="btn quiet" data-action="cal-export">Export iCal</button><label className="btn quiet" htmlFor="flight-cal-import">Import iCal<input id="flight-cal-import" className="sr-only" type="file" accept=".ics,text/calendar" data-cal-import/></label></>}
       {window.skAuth?.can?.('configure-org') && <button className="btn quiet" data-action="cal-toggle">{state.planner.calendar.connectors.ical ? 'Disable iCal' : 'Enable iCal'}</button>}
-      <span className="muted">{state.planner.calendar.connectors.ical ? 'iCal file sync enabled' : 'iCal is off. Google and Outlook live connectors are not present in the supplied Datum source.'}</span>
+      <span className="muted">{state.planner.calendar.connectors.ical ? 'iCal file sync enabled' : 'iCal is off. Google and Outlook calendars cannot be connected yet.'}</span>
     </div>
   </section>;
 }
@@ -228,7 +228,7 @@ function PlanBoard({ state, MES, FlightPlan, onMutation, initialQuery = '', init
     const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
     const load = centerId ? MES.workCenterCapacity(state, centerId, date) : null;
     return <section className="fr-dispatch" aria-labelledby="fr-dispatch-heading">
-      <div className="fr-section-heading"><div><h2 id="fr-dispatch-heading">Work-center dispatch</h2><span className="fr-count">{String(load?.queue.length || 0).padStart(2, '0')}</span></div>
+      <div className="fr-section-heading"><div><h2 id="fr-dispatch-heading">Work-center dispatch</h2><span className="fr-count">{load?.queue.length || 0}</span></div>
         <div className="fr-dispatch-controls"><label>Work center<select aria-label="Work center" value={centerId} onChange={event => setCenterId(event.target.value)}>{centers.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label>Capacity date<input type="date" aria-label="Capacity date" value={date} onChange={event => setDate(event.target.value)}/></label></div>
       </div>
       {load && <div className={`fr-capacity${load.overCapacity ? ' is-over' : ''}`}><strong>{load.plannedHours.toLocaleString()} of {load.availableHours} hours scheduled</strong><span>{load.workdays}-day horizon through {displayDate(load.horizonEnd)}</span><span>{load.overCapacity ? `${(load.plannedHours - load.availableHours).toLocaleString()} hours over capacity` : `${load.remainingHours.toLocaleString()} hours remaining`}</span>{load.unestimatedOperations > 0 && <span>{load.unestimatedOperations} operation{load.unestimatedOperations === 1 ? '' : 's'} missing standard hours</span>}</div>}
@@ -250,7 +250,7 @@ function PlanBoard({ state, MES, FlightPlan, onMutation, initialQuery = '', init
       if (result.ok) { form.reset(); onMutation?.(result); }
     };
     return <section className="fr-projects" aria-labelledby="fr-projects-heading">
-      <div className="fr-section-heading"><div><h2 id="fr-projects-heading">Projects and milestones</h2><span className="fr-count">{String(projectPlan.projects.length).padStart(2, '0')}</span></div></div>
+      <div className="fr-section-heading"><div><h2 id="fr-projects-heading">Projects and milestones</h2><span className="fr-count">{projectPlan.projects.length}</span></div></div>
       <div className="fr-project-grid"><div className="fr-project-forms">
         <form onSubmit={event => submit(event, data => MES.createProject(state, { ...data }))}>
           <h3>New WBS project</h3><label>Project name<input name="name" maxLength="100" required/></label><label>Parent project<select name="parentId"><option value="">Top level</option>{projectPlan.projects.map(item => <option key={item.id} value={item.id}>{item.id} · {item.name}</option>)}</select></label><div className="fr-project-row"><label>Lifecycle<select name="lifecycle">{MES.PROJECT_LIFECYCLES.filter(item => item !== 'Closed').map(item => <option key={item}>{item}</option>)}</select></label><label>Sensitivity<select name="sensitivity">{MES.PROJECT_SENSITIVITY.map(item => <option key={item}>{item}</option>)}</select></label></div><div className="fr-project-row"><label>Start date<input type="date" name="startDate" value={startDate} onChange={event => setStartDate(event.target.value)} required/></label><label>Due date<input type="date" name="dueDate" min={startDate} required/></label></div><button type="submit">Add project</button>
@@ -284,7 +284,7 @@ function PlanBoard({ state, MES, FlightPlan, onMutation, initialQuery = '', init
     <Projects/>
     <Dispatch/>
     <section className="fr-queue" aria-labelledby="fr-plan-heading">
-      <div className="fr-queue-heading"><div className="fr-section-heading"><h2 id="fr-plan-heading">Planning queue</h2><span className="fr-count">{String(rows.length).padStart(2, '0')}</span></div>
+      <div className="fr-queue-heading"><div className="fr-section-heading"><h2 id="fr-plan-heading">Planning queue</h2><span className="fr-count">{rows.length}</span></div>
         <div className="fr-controls"><label className="fr-search"><Search size={16}/><input aria-label="Search planned orders" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search planned orders"/></label>
           <label className="fr-filter-select"><span className="fr-visually-hidden">Planned order status</span><select aria-label="Planned order status" value={status} onChange={event => setStatus(event.target.value)}>{['All', ...FlightPlan.STATUSES].map(value => <option key={value}>{value}</option>)}</select></label>
           <button className="fr-density" aria-pressed={compact} onClick={density}><SlidersHorizontal size={15}/>{compact ? 'Comfortable' : 'Compact'}</button>
@@ -308,11 +308,10 @@ function PlanBoard({ state, MES, FlightPlan, onMutation, initialQuery = '', init
   </div>;
 }
 
-function PlanningNav() {
+const planningViews = [['plan', 'Planned orders'], ['plan-kanban', 'Kanban'], ['plan-forecast', 'MRP forecast']];
+function PlanningNav({ current }) {
   return <nav className="fr-planning-nav" aria-label="Flight Plan views">
-    <button data-action="nav" data-view="plan">Planned orders</button>
-    <button data-action="nav" data-view="plan-kanban" aria-current="page">Kanban</button>
-    <button data-action="nav" data-view="plan-forecast">MRP forecast</button>
+    {planningViews.map(([key, label]) => <button key={key} data-action="nav" data-view={key} aria-current={key === current ? 'page' : undefined}>{label}</button>)}
   </nav>;
 }
 
@@ -330,12 +329,12 @@ function PlanKanban({ state, MES, FlightPlan }) {
   const toggleDensity = () => setCompact(value => { const next = !value; try { localStorage.setItem(densityKey, next ? 'compact' : 'comfortable'); } catch {} return next; });
   return <div className="flight-react fr-plan fr-kanban-page">
     <div className="fr-page-heading"><div><span className="fr-eyebrow">FLIGHT PLAN</span><h1>Kanban<span>.</span></h1></div><button className="fr-primary" data-action="plan-create"><Plus size={16}/> Plan from master WI</button></div>
-    <PlanningNav/>
+    <PlanningNav current="plan-kanban"/>
     <div className="fr-section-heading fr-kanban-heading"><div><h2>Planned order flow</h2><span className="fr-count">{all.filter(item => item.status !== 'Cancelled').length} active</span></div><button className="fr-density" aria-pressed={compact} onClick={toggleDensity}><SlidersHorizontal size={15}/>{compact ? 'Comfortable' : 'Compact'}</button></div>
     <div className={`fr-plan-lanes${compact ? ' is-compact' : ''}`}>{columns.map(column => {
       const rows = column.rows.slice().sort((a, b) => asText(a.needDate).localeCompare(asText(b.needDate)) || asText(a.id).localeCompare(asText(b.id)));
       return <section className="fr-plan-lane" aria-label={column.title} key={column.title}>
-        <div className="fr-plan-lane-head"><div><h2>{column.title}</h2><p>{column.hint}</p></div><span className="fr-count">{String(rows.length).padStart(2, '0')}</span></div>
+        <div className="fr-plan-lane-head"><div><h2>{column.title}</h2><p>{column.hint}</p></div><span className="fr-count">{rows.length}</span></div>
         <div className="fr-plan-lane-cards">{rows.map(item => {
           const config = item.configuration || {}, shortage = item.netsuite ? Math.max(0, item.quantity - item.netsuite.onHand) : 0, late = FlightPlan.overdue(item);
           return <article className={`fr-plan-card${late ? ' is-late' : ''}`} key={item.id}>
@@ -387,7 +386,7 @@ function PlanForecast({ state, MES, FlightPlan }) {
   const date = value => value ? new Date(`${value}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : 'Not scheduled';
   return <div className="flight-react fr-plan fr-forecast-page">
     <div className="fr-page-heading"><div><span className="fr-eyebrow">FLIGHT PLAN</span><h1>MRP forecast<span>.</span></h1></div><button className="fr-density" aria-pressed={compact} onClick={toggleDensity}><SlidersHorizontal size={15}/>{compact ? 'Comfortable' : 'Compact'}</button></div>
-    <PlanningNav/>
+    <PlanningNav current="plan-forecast"/>
     <div className="fr-forecast-summary"><div><span>Open planned orders</span><strong>{forecast.open.length}</strong></div><div><span>Component demands</span><strong>{forecast.explosion.length}</strong></div><div><span>Expiring lots</span><strong>{forecast.shelfLife.length}</strong></div><div><span>Non-interchangeable changes</span><strong>{forecast.designChanges.length}</strong></div></div>
     <ForecastTable title="Component demand" columns={['Component', 'Qty per · demand', 'On hand', 'Short', 'Lead', 'Order by', 'From']} empty="No open planned orders produce component demand." compact={compact} rows={forecast.explosion.map((item, index) => <tr key={`${item.part}/${item.rev}/${index}`}><td><strong className="fr-mono">{item.part} / Rev {item.rev}</strong><small>{item.title}</small></td><td>{item.qtyPer} · {item.qty}</td><td>{item.onHand}</td><td>{item.short ? <span className="fr-status is-error"><i/>{item.short}</span> : <span className="fr-status is-ready"><i/>Covered</span>}</td><td>{item.leadDays} days</td><td className={item.orderBy && item.orderBy < today ? 'fr-overdue-label' : ''}>{date(item.orderBy)}</td><td><ForecastOrderLinks orders={item.orders}/></td></tr>)}/>
     <ForecastTable title="Lead time from actuals" columns={['Part', 'Runs', 'Average', 'Longest', 'Real closures']} empty="No completed work-order history is available." compact={compact} rows={forecast.leadTime.map(item => <tr key={item.part}><td><strong className="fr-mono">{item.part}</strong></td><td>{item.runs.join(', ')}</td><td>{item.avg} days</td><td>{item.max} days</td><td>{item.real ? <span className="fr-status is-ready"><i/>{item.real}</span> : <span className="fr-muted">Demo history only</span>}</td></tr>)}/>
@@ -432,9 +431,20 @@ function ManeuverDrawer({ item, onClose, onOpen }) {
   </dialog>;
 }
 
+// The sidebar badge and the list heading count the same records: open NCs, open corrective actions,
+// boards that are open or still needed, and problem reports that are not closed.
+function navOpenCount(state, FM, kind) {
+  if (kind === 'NC') return FM.intake(state).filter(row => row.ticketStatus === 'Open').length;
+  if (kind === 'CAR') return FM.list(state, 'cars').filter(row => !['Closed', 'Cancelled'].includes(row.status)).length;
+  if (kind === 'MRB') return FM.list(state, 'mrb').filter(row => row.status === 'Open').length + FM.intake(state).filter(row => row.mrbState === 'Needed').length;
+  if (kind === 'SPR') return FM.list(state, 'sprs').filter(row => row.status !== 'Closed').length;
+  return null;
+}
+
 function ManeuverHangar({ state, FM, view, onOpen }) {
   const pageKind = ({ 'mnv-intake': 'NC', 'mnv-cars': 'CAR', 'mnv-mrb': 'MRB', 'mnv-spr': 'SPR' })[view] || 'All';
-  const pageTitle = ({ NC: 'NC Intake', CAR: 'Corrective Actions', MRB: 'Material Review Board', SPR: 'Problem Reports' })[pageKind] || 'Quality Hangar';
+  const pageTitle = ({ NC: 'NC intake', CAR: 'Corrective actions', MRB: 'Material Review Board', SPR: 'Problem reports' })[pageKind] || 'Quality Hangar';
+  const recordNoun = ({ NC: ['NC record', 'NC records'], CAR: ['corrective action', 'corrective actions'], MRB: ['board', 'boards'], SPR: ['problem report', 'problem reports'] })[pageKind] || ['record', 'records'];
   const [query, setQuery] = useState('');
   const [kind, setKind] = useState(pageKind);
   const [intakeFilter, setIntakeFilter] = useState('All');
@@ -467,14 +477,16 @@ function ManeuverHangar({ state, FM, view, onOpen }) {
     nextStep: row.jira?.key ? `Jira ${row.jira.key} · status is tracked here.` : 'Copy the record into Jira and record its key.'
   }));
   const rows = [...intake, ...cars, ...boards, ...sprs].filter(row => (kind === 'All' || row.kind === kind) && [row.id, row.kind, row.title, row.status, row.workOrderId, row.partNumber, row.owner, row.summary].map(asText).join(' ').toLowerCase().includes(query.trim().toLowerCase())).sort((a, b) => asText(a.dueDate || '9999').localeCompare(asText(b.dueDate || '9999')) || a.id.localeCompare(b.id));
+  const filtered = !!query.trim() || kind !== pageKind || intakeFilter !== 'All' || sourceFilter !== 'All';
+  const openCount = navOpenCount(state, FM, pageKind);
   const density = () => setCompact(value => { const next = !value; try { localStorage.setItem(densityKey, next ? 'compact' : 'comfortable'); } catch {} return next; });
   return <div className="flight-react fr-maneuver">
-    <div className="fr-page-heading"><div><span className="fr-eyebrow">FLIGHT MANEUVER</span><h1>{pageTitle}<span>.</span></h1></div><div className="fr-workspace">{pageKind === 'All' ? 'Corrective action · in-house' : `${pageTitle} · Flight Maneuver`}</div></div>
+    <div className="fr-page-heading"><div><span className="fr-eyebrow">FLIGHT MANEUVER</span><h1>{pageTitle}<span>.</span></h1></div></div>
     <section className="fr-mnv-metrics" aria-label="Flight Maneuver current record metrics">
       {[['Open CARs', metrics.carsOpen, 'mnv-cars'], ['Overdue CARs', metrics.carsOverdue, 'mnv-cars'], ['MRB waiting', metrics.mrbNeeded + metrics.mrbOpen, 'mnv-mrb'], ['Open escapes', metrics.escapesOpen, 'mnv-intake'], ['SPR open', metrics.sprOpen, 'mnv-spr'], ['Waiting on Jira', metrics.jiraWaiting, 'mnv-spr']].map(([label, value, view]) => <button key={label} className={`fr-mnv-metric${/overdue|waiting/i.test(label) && value ? ' is-warning' : ''}`} data-action="nav" data-view={view}><span>{label}</span><strong>{value}</strong></button>)}
     </section>
     <section className="fr-queue fr-mnv-queue" aria-labelledby="fr-mnv-queue-heading">
-      <div className="fr-queue-heading"><div className="fr-section-heading"><h2 id="fr-mnv-queue-heading">{pageKind === 'All' ? 'Records needing attention' : pageTitle}</h2><span className="fr-count">{String(rows.length).padStart(2, '0')}</span></div>
+      <div className="fr-queue-heading"><div className="fr-section-heading"><h2 id="fr-mnv-queue-heading">{pageKind === 'All' ? 'Records needing attention' : pageTitle}</h2><span className="fr-count">{rows.length}</span>{openCount !== null && <span className="fr-count-open" data-open-count={openCount}>{openCount} open</span>}</div>
         <div className="fr-controls"><label className="fr-search"><Search size={16}/><input aria-label="Search Flight Maneuver records" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search ticket, part or work order"/></label>
           {pageKind === 'NC' && <><label className="fr-filter-select"><span className="fr-visually-hidden">Intake filter</span><select aria-label="Filter NC intake" value={intakeFilter} onChange={event => setIntakeFilter(event.target.value)}>{['All', 'Attention', 'Open', 'Escapes', 'Resolved'].map(value => <option key={value}>{value}</option>)}</select></label><label className="fr-filter-select"><span className="fr-visually-hidden">Source</span><select aria-label="Filter NC source" value={sourceFilter} onChange={event => setSourceFilter(event.target.value)}>{['All', 'Work order', 'Stock'].map(value => <option key={value}>{value}</option>)}</select></label></>}
           <label className="fr-filter-select"><span className="fr-visually-hidden">Record type</span><select aria-label="Filter record type" value={kind} onChange={event => setKind(event.target.value)}>{['All', 'NC', 'CAR', 'MRB', 'SPR'].map(value => <option key={value}>{value}</option>)}</select></label>
@@ -486,8 +498,8 @@ function ManeuverHangar({ state, FM, view, onOpen }) {
       </div>
       <div className="fr-table-scroll"><table className={compact ? 'fr-compact' : ''}><thead><tr><th>Record</th><th>Details</th><th>Owner</th><th>Due</th><th>Status</th><th><span className="fr-visually-hidden">Open detail</span></th></tr></thead><tbody>
         {rows.map(row => <tr key={`${row.kind}/${row.id}`} className={row.dueDate && row.dueDate < new Date().toISOString().slice(0, 10) && !recordIsTerminal(row.status) ? 'fr-overdue' : ''}><td><button className="fr-record-link" onClick={() => setSelected(row)}><strong>{row.id}</strong><small>{row.kind} · {row.title}</small></button></td><td><strong>{row.summary || row.nextStep}</strong>{row.workOrderId && <small>{row.workOrderId}{row.partNumber ? ` · ${row.partNumber}` : ''}</small>}</td><td>{row.owner || 'Unassigned'}</td><td>{displayFlightDate(row.dueDate)}</td><td><span className="fr-status"><i/>{row.status || 'Open'}</span></td><td><button className="fr-open-button" aria-label={`View ${row.id} details`} onClick={() => setSelected(row)}><ArrowUpRight size={18}/></button></td></tr>)}
-      </tbody></table>{!rows.length && <div className="fr-empty">No records match the current search and type filter.</div>}</div>
-      <footer><span>{rows.length} {pageKind === 'All' ? 'current records' : pageTitle.toLowerCase() + ' records'}</span><span><Check size={13}/> Record detail and approval gates remain in Flight Maneuver</span></footer>
+      </tbody></table>{!rows.length && <div className="fr-empty">{filtered ? 'No records match the search or filters. Clear them to see every record.' : `No ${recordNoun[1]} yet.`}</div>}</div>
+      <footer><span>{rows.length} {recordNoun[rows.length === 1 ? 0 : 1]}</span></footer>
     </section>
     {pageKind === 'All' && <div className="fr-mnv-create"><button data-action="mnv-nc-new"><Plus size={15}/> Raise NC</button><button data-action="mnv-spr-new"><Plus size={15}/> Raise SPR</button><button data-action="nav" data-view="mnv-intake">NC intake <ArrowUpRight size={15}/></button></div>}
     <ManeuverDrawer item={selected} onClose={() => setSelected(null)} onOpen={onOpen}/>
@@ -509,9 +521,9 @@ function SerialRegister({ state, onTrace, onOpen }) {
     return next;
   });
   return <div className="flight-react fr-serials">
-    <div className="fr-page-heading"><div><span className="fr-eyebrow">FLIGHT CONTROL</span><h1>Serial numbers<span>.</span></h1></div><div className="fr-workspace">Running serial assignment register</div></div>
+    <div className="fr-page-heading"><div><span className="fr-eyebrow">FLIGHT CONTROL</span><h1>Serial numbers<span>.</span></h1></div></div>
     <section className="fr-queue" aria-labelledby="fr-serial-heading">
-      <div className="fr-queue-heading"><div className="fr-section-heading"><h2 id="fr-serial-heading">Serial number register</h2><span className="fr-count">{String(rows.length).padStart(2, '0')}</span></div>
+      <div className="fr-queue-heading"><div className="fr-section-heading"><h2 id="fr-serial-heading">Serial number register</h2><span className="fr-count">{rows.length}</span></div>
         <div className="fr-controls"><label className="fr-search"><Search size={16}/><input aria-label="Search serial numbers" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search serial, part, work order or lot"/></label>
           <label className="fr-filter-select"><span className="fr-visually-hidden">Serial status</span><select aria-label="Serial status" value={status} onChange={event => setStatus(event.target.value)}>{['All', 'Assigned', 'In build', 'Closed', 'Voided'].map(value => <option key={value}>{value}</option>)}</select></label>
           <button className="fr-density" aria-pressed={compact} onClick={density}><SlidersHorizontal size={15}/>{compact ? 'Comfortable' : 'Compact'}</button>
@@ -593,7 +605,7 @@ function TraceSearch({ state, MES, initialQuery, onSearch, onReport, onRoute }) 
   const traceLink = value => <button className="fr-text-action" onClick={() => { setQuery(value); onSearch(value); }}>{value}</button>;
   const routeLink = (action, attrs, label) => <button className="fr-text-action" onClick={() => onRoute(action, attrs)}>{label}<ArrowUpRight size={13}/></button>;
   const table = (title, headers, rows, empty) => <section className="fr-trace-section" key={title} aria-label={title}>
-    <div className="fr-section-heading"><h2>{title}</h2><span className="fr-count">{String(rows.length).padStart(2, '0')}</span></div>
+    <div className="fr-section-heading"><h2>{title}</h2><span className="fr-count">{rows.length}</span></div>
     {rows.length ? <div className="fr-table-scroll" role="region" aria-label={`${title} results`} tabIndex="0"><table className={compact ? 'fr-compact' : ''}><thead><tr>{headers.map(label => <th key={label}>{label}</th>)}</tr></thead><tbody>{rows}</tbody></table></div> : <p className="fr-empty">{empty}</p>}
   </section>;
   let sections = [];
@@ -611,7 +623,7 @@ function TraceSearch({ state, MES, initialQuery, onSearch, onReport, onRoute }) 
   if (result && archived.length) sections.push(<React.Fragment key="archived">{archiveNote && <p className="fr-trace-alert is-warning" role="alert">{archiveNote}</p>}{table('Archived work orders', ['Work order', 'Title', 'Part', 'Serials', 'Lots', 'Closed', 'Archived record'], archived.map(row => <tr key={row.orderId}><td className="fr-mono">{row.orderId}</td><td>{row.title}</td><td className="fr-mono">{row.partNumber}</td><td className="fr-mono">{(row.serials || []).join(', ') || 'None'}</td><td className="fr-mono">{(row.lots || []).join(', ') || 'None'}</td><td>{row.closedAt ? String(row.closedAt).slice(0, 10) : ''}</td><td><button type="button" className="fr-text-action" aria-label={`Print archived ${row.orderId}`} onClick={() => openArchived(row.orderId, 'print')}>Print<ArrowUpRight size={13}/></button> <button type="button" className="fr-text-action" aria-label={`Export archived ${row.orderId}`} onClick={() => openArchived(row.orderId, 'export')}>Export<FileText size={13}/></button></td></tr>), 'No archived work orders match.')}</React.Fragment>);
   const hasRows = (result && ['orders', 'tickets', 'mrb', 'sprs', 'cars', 'changes', 'wis'].some(key => Array.isArray(result[key]) && result[key].length > 0)) || archived.length > 0;
   return <div className="flight-react fr-trace">
-    <div className="fr-page-heading"><div><span className="fr-eyebrow">FLIGHT CONTROL</span><h1>Traceability<span>.</span></h1><p>Search a serial, lot, calibrated tool, master WI or change number.</p></div><div className="fr-workspace">Current Flight System records</div></div>
+    <div className="fr-page-heading"><div><span className="fr-eyebrow">FLIGHT CONTROL</span><h1>Traceability<span>.</span></h1><p>Search a serial, lot, calibrated tool, master WI or change number.</p></div></div>
     <section className="fr-queue" aria-label="Traceability search">
       <form className="fr-queue-heading" onSubmit={event => { event.preventDefault(); onSearch(query.trim()); }}><label className="fr-search"><Search size={16}/><input aria-label="Traceability search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Serial, lot, tool tag, WI or change number" autoComplete="off"/></label><div className="fr-controls"><button className="fr-primary" type="submit">Search</button><button className="fr-density" type="button" aria-pressed={compact} onClick={density}><SlidersHorizontal size={15}/>{compact ? 'Comfortable' : 'Compact'}</button></div></form>
       {result && <><div className="fr-trace-summary"><strong>{result.kind === 'serial' ? 'Serial number' : result.kind === 'lot' ? 'Lot number' : result.kind === 'tool' ? 'Calibrated tool' : result.kind === 'wi' ? 'Master work instruction' : result.kind === 'change' ? 'Change number' : 'Search'} · {result.query}</strong><span>{result.orders.length} work orders · {result.tickets.length} NCs · {result.sprs.length} SPRs · {result.cars.length} CARs · {result.changes.length} changes</span></div>{['serial', 'lot'].includes(result.kind) && <button className="fr-primary fr-trace-report" onClick={() => onReport(result.query)}><FileText size={16}/> Full traceability report</button>}{sections.length ? <div className="fr-trace-sections">{sections}{!hasRows && <div className="fr-empty">No traceability records match that search.</div>}</div> : <div className="fr-empty">No traceability records match that search.</div>}</>}
@@ -681,7 +693,7 @@ function ActivityLog({ events, onOpenOrder }) {
   });
   const clear = () => { setQuery(''); setKind('All activity'); setActor('Everyone'); setFrom(''); setTo(''); };
   return <div className="flight-react fr-activity">
-    <div className="fr-page-heading"><div><span className="fr-eyebrow">FLIGHT CONTROL</span><h1>Activity record<span>.</span></h1><p>Search and review recorded work events.</p></div><div className="fr-workspace">Current Flight System records</div></div>
+    <div className="fr-page-heading"><div><span className="fr-eyebrow">FLIGHT CONTROL</span><h1>Activity record<span>.</span></h1><p>Search and review recorded work events.</p></div></div>
     <section className="fr-queue" aria-label="Activity record">
       <div className="fr-queue-heading fr-activity-filters">
         <label className="fr-search"><Search size={16}/><input ref={searchRef} type="search" aria-label="Search activity" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search activity, person or work order"/><kbd>⌘ K</kbd></label>
