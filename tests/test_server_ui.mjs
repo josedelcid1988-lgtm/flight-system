@@ -319,10 +319,17 @@ try {
 
   // #292: the recovery banner clears once the same account has a later write confirmed by the server, and only then.
   const RECOVERY_STORAGE_KEY = 'skyryse-mes-work-order-v1-unconfirmed-server-recovery-v1';
-  const recoveryPriorityChange = refuse => page.evaluate(refuse => {
+  // A change counts as the person's only after their own input, so each change below follows a real key press
+  // unless the check is about a change made without one.
+  // Priorities toggle between High and Normal: an AOG order would start the page's own AOG broadcast tick mid-check.
+  const recoveryPriorityChange = async (refuse, personInput = true, target = null) => {
+    if (personInput) await page.keyboard.press('Shift');
+    return recoveryPriorityEvaluate({ refuse, target });
+  };
+  const recoveryPriorityEvaluate = ({ refuse, target }) => page.evaluate(({ refuse, target }) => {
     const order = state.orders.find(item => item.status === 'Building');
     if (!order) throw new Error('No Building order is available for the recovery banner check.');
-    const next = order.priority === 'AOG' ? 'Normal' : 'AOG';
+    const next = target || (order.priority === 'High' ? 'Normal' : 'High');
     if (!window.__recoveryApi) {
       const api = window.skServer.api.bind(window.skServer);
       window.__recoveryApi = true;
@@ -339,7 +346,7 @@ try {
     const result = MES.setPriority(state, order.id, next);
     if (!result.ok) throw new Error(result.message);
     save();
-  }, refuse);
+  }, { refuse, target });
   const recoveryState = () => page.evaluate(key => ({
     banner: !!document.querySelector('#flight-server-recovery'),
     memory: !!unconfirmedServerRecovery,
@@ -378,26 +385,30 @@ try {
     return { otherKept, staleKept, noneKept };
   });
   assert.deepEqual(guarded, { otherKept: true, staleKept: true, noneKept: true }, "a confirmed write does not clear another account's recovery copy, a newer copy, or a copy made after it was sent");
-  // A batch the page sends on its own (here the AOG broadcast tick, with the server's acceptance stubbed) is not the
-  // person's change, so its confirmation leaves the recovery copy in place.
-  const automatic = await page.evaluate(async () => {
-    const own = unconfirmedServerRecovery, api = window.skServer.api;
-    window.skServer.api = async (path, options) => String(path) === '/workspace/actions/MES.logAogBroadcast'
-      ? { status: 200, etag: serverEtag, json: {} }
-      : api(path, options);
+  // A change confirmed by the server that the page made on its own keeps the copy, even right after the person's
+  // input: credential binding after sign-in or load sends MES.selectProfile as an automatic change.
+  await page.keyboard.press('Shift');
+  const binding = await page.evaluate(async () => {
+    const own = unconfirmedServerRecovery, sent = [], api = window.skServer.api;
+    window.skServer.api = async (path, options) => { if (options?.method) sent.push(String(path)); return api(path, options); };
     try {
-      serverActionQueue.push({ action: 'MES.logAogBroadcast', args: [state.orders[0].id] });
-      flushServerActions();
+      state.profile.role = 'unbound-role-check';
+      window.skBindCredential();
       await serverActionChain;
     } finally { window.skServer.api = api; }
-    return { status: window.skServer.sync.status, kept: unconfirmedServerRecovery === own && sessionStorage.getItem(SERVER_RECOVERY_KEY) !== null && !!document.querySelector('#flight-server-recovery') };
+    return { sent: sent.includes('/workspace/actions/MES.selectProfile'), status: window.skServer.sync.status, kept: unconfirmedServerRecovery === own && sessionStorage.getItem(SERVER_RECOVERY_KEY) !== null && !!document.querySelector('#flight-server-recovery') };
   });
-  assert.deepEqual(automatic, { status: 'synced', kept: true }, 'a confirmed automatic AOG broadcast does not clear the recovery copy');
+  assert.deepEqual(binding, { sent: true, status: 'synced', kept: true }, 'a confirmed automatic credential binding does not clear the recovery copy');
+  // A change with no input from the person behind it keeps the copy as well.
+  await page.evaluate(() => { serverLastPersonInput = 0; });
+  await recoveryPriorityChange(false, false);
+  await page.waitForFunction(() => window.skServer?.sync?.status === 'synced', null, { timeout: 10000 });
+  assert.deepEqual(await recoveryState(), { banner: true, memory: true, stored: true }, 'a confirmed change that did not follow the person\'s input does not clear the recovery copy');
   await page.evaluate(() => document.querySelector('[data-action="dismiss-server-recovery"]').click());
   assert.deepEqual(await recoveryState(), { banner: false, memory: false, stored: false }, 'Dismiss still clears the recovery banner and its copy');
-  // Put the order back so the page's own AOG tick does not send a broadcast during the checks that follow.
+  // Put the order back to its starting priority for the checks that follow.
   if (await page.evaluate(() => state.orders.find(item => item.status === 'Building')?.priority) !== recoveryStartPriority) {
-    await recoveryPriorityChange(false);
+    await recoveryPriorityChange(false, true, recoveryStartPriority);
     await page.waitForFunction(() => window.skServer?.sync?.status === 'synced', null, { timeout: 10000 });
   }
 
