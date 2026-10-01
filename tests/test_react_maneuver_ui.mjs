@@ -30,7 +30,8 @@ try {
   await page.keyboard.press('Escape');
   await dialog.waitFor({ state: 'detached' });
   assert.equal(await page.evaluate(() => document.activeElement?.textContent?.includes('FLIGHT') || document.activeElement?.classList?.contains('fr-record-link')), true);
-  for (const [view, kind, heading] of [['mnv-intake', 'NC', 'NC Intake'], ['mnv-cars', 'CAR', 'Corrective Actions'], ['mnv-mrb', 'MRB', 'Material Review Board'], ['mnv-spr', 'SPR', 'Problem Reports']]) {
+  // Page headings use the sidebar names in sentence case (NC intake, Corrective actions, Problem reports).
+  for (const [view, kind, heading] of [['mnv-intake', 'NC', 'NC intake'], ['mnv-cars', 'CAR', 'Corrective actions'], ['mnv-mrb', 'MRB', 'Material Review Board'], ['mnv-spr', 'SPR', 'Problem reports']]) {
     await page.evaluate(value => { view = value; render(); }, view);
     await page.getByRole('heading', { name: `${heading}.` }).waitFor();
     assert.equal(await page.locator('.fr-maneuver .fr-queue tbody tr').count() > 0, true, `${heading} page renders current records`);
@@ -59,7 +60,7 @@ try {
   // mixed queue is due-date sorted, so its first record is not guaranteed to
   // be a CAR when fixtures or the current date change.
   await page.evaluate(() => { view = 'mnv-cars'; render(); });
-  await page.getByRole('heading', { name: 'Corrective Actions.' }).waitFor();
+  await page.getByRole('heading', { name: 'Corrective actions.' }).waitFor();
   await page.locator('.fr-maneuver').waitFor();
   const carRow = page.locator('.fr-queue tbody tr').filter({ hasText: 'CAR-1001' });
   await carRow.waitFor();
