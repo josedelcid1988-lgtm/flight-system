@@ -96,7 +96,9 @@ training server.
 
 A training server opens only a training database. On a new, empty database it writes a `training-database` row as the
 first row of the audit chain; it refuses any database that already holds records without that row. A production
-server refuses a database that carries it. Give the training server its own `--db` file. Setup steps for a laptop rehearsal and an IT machine are in
+server refuses a database that carries it, and never serves or changes a workspace a training server saved. The
+designation is checked and written in one transaction under the workspace lock, so two servers starting on the same
+new database cannot both claim it. Give the training server its own `--db` file. Setup steps for a laptop rehearsal and an IT machine are in
 [`TRAINING_SERVER_SETUP.md`](TRAINING_SERVER_SETUP.md).
 
 ## Health check

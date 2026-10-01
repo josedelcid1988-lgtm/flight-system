@@ -321,7 +321,10 @@ export function createServer(options = {}) {
   const registerProblem = state => host.MES.stampRegisterProblem?.(state) || host.FlightPlan.plannedOrdersProblem?.(state) || null;
   // A damaged planned-order value can make MES.upgrade itself throw (planning blockers read it as a list); that is
   // reported as the same plain register problem, not an unexpected failure (Codex review of #220).
-  const loadState = async () => { const row = await store.getDoc(TENANT); if (!row) return { state: null, etag: null }; const parsed = JSON.parse(row.json); let state; try { state = host.MES.upgrade(structuredClone(parsed)); } catch (e) { const damaged = registerProblem(parsed); if (damaged) return { state: null, etag: row.etag, raw: parsed, registers: damaged, problem: damaged }; throw e; } return { state, etag: row.etag, raw: parsed, registers: state ? registerProblem(state) : null, problem: state ? null : (host.MES.diagnose(parsed) || {}).detail || 'The document does not match the current record format.' }; };
+  // A production server never serves or acts on a workspace a training server saved, whatever reached its store.
+  const trainingRefusal = 'This workspace was saved by a training server. A production server does not serve or change training records.';
+  const trainingDoc = json => !training && json.includes('"trainingServer"') && Object.hasOwn(JSON.parse(json), 'trainingServer');
+  const loadState = async () => { const row = await store.getDoc(TENANT); if (!row) return { state: null, etag: null }; if (trainingDoc(row.json)) return { state: null, etag: row.etag, problem: trainingRefusal }; const parsed = JSON.parse(row.json); let state; try { state = host.MES.upgrade(structuredClone(parsed)); } catch (e) { const damaged = registerProblem(parsed); if (damaged) return { state: null, etag: row.etag, raw: parsed, registers: damaged, problem: damaged }; throw e; } return { state, etag: row.etag, raw: parsed, registers: state ? registerProblem(state) : null, problem: state ? null : (host.MES.diagnose(parsed) || {}).detail || 'The document does not match the current record format.' }; };
   // Derived-state convergence: the browser engine recomputes these on boot, refresh and render
   // without ever queuing them as commands (planning blockers, assignment auto-close, master WI /
   // plan / maneuver defaults). The server runs them here, inside every commit path, before
@@ -954,7 +957,7 @@ export function createServer(options = {}) {
       }
 
       // -- workspace --
-      if (route === '/workspace' && m === 'GET') { const row = await store.getDoc(TENANT); if (!row) { send(res, 404, { error: 'No workspace yet.' }); return; } res.writeHead(200, { 'Content-Type': MIME['.json'], ETag: row.etag, 'Cache-Control': 'no-store' }); res.end(row.json); return; }
+      if (route === '/workspace' && m === 'GET') { const row = await store.getDoc(TENANT); if (!row) { send(res, 404, { error: 'No workspace yet.' }); return; } if (trainingDoc(row.json)) { send(res, 422, { error: trainingRefusal }); return; } res.writeHead(200, { 'Content-Type': MIME['.json'], ETag: row.etag, 'Cache-Control': 'no-store' }); res.end(row.json); return; }
       if (route === '/workspace' && m === 'PUT') {
         // Snapshot replacement is permitted exactly once, to initialize an empty server or apply
         // a preflighted migration. Existing shared records can only change through MES actions.
@@ -1242,17 +1245,29 @@ export function createServer(options = {}) {
   // a store that row already designates. A production server refuses a designated training database. The audit chain
   // makes the designation part of the record, so training data cannot pass as production data or the reverse.
   const checkTrainingDesignation = async () => {
-    const first = typeof store.firstAuditRow === 'function' ? await store.firstAuditRow() : undefined;
-    const designated = !!first && first.action === TRAINING_DESIGNATION;
-    if (!training) {
-      if (designated) throw new Error('This database was created for a training server. Start it with --training (or FLIGHT_TRAINING=1), or start the production server on its own database.');
+    if (typeof store.firstAuditRow !== 'function') {
+      if (training) throw new Error('Training mode needs a store that can record its training designation.');
       return;
     }
-    if (designated) return;
-    if (first === undefined) throw new Error('Training mode needs a store that can record its training designation.');
-    if (first || (await store.accounts()).length || await store.getDoc(TENANT)) throw new Error('Training mode opens only a training database, and this database already holds records. Start the training server on a new database file, for example --db training.sqlite.');
-    await store.audit(null, TRAINING_DESIGNATION, { mark: TRAINING_MARK });
-    log(`designated this new database as a training database (${TRAINING_MARK})`);
+    const designatedRow = row => !!row && row.action === TRAINING_DESIGNATION;
+    if (!training) {
+      if (designatedRow(await store.firstAuditRow())) throw new Error('This database was created for a training server. Start it with --training (or FLIGHT_TRAINING=1), or start the production server on its own database.');
+      return;
+    }
+    // The check and the designation are one transaction under the workspace lock (an exclusive write transaction in
+    // SQLite, an advisory lock in PostgreSQL), so two servers starting on the same new database cannot both claim it.
+    let refusal = null, designated = false;
+    await store.transaction(async tx => {
+      await tx.lockDoc(TENANT);
+      const first = await tx.firstAuditRow();
+      if (designatedRow(first)) return true;
+      if (first || (await tx.accounts()).length || await tx.getDoc(TENANT)) { refusal = 'Training mode opens only a training database, and this database already holds records. Start the training server on a new database file, for example --db training.sqlite.'; return false; }
+      await tx.audit(null, TRAINING_DESIGNATION, { mark: TRAINING_MARK });
+      designated = true;
+      return true;
+    });
+    if (refusal) throw new Error(refusal);
+    if (designated) log(`designated this new database as a training database (${TRAINING_MARK})`);
   };
   server.store = store; server.host = host; server.training = training; server.validState = validState; server.ready = storeReady.then(checkTrainingDesignation).then(async () => { await wrapped; await verifyStoredCalibrationArchive(); void drainExports(); });
   // Bind address: 127.0.0.1 unless options.host, FLIGHT_HOST or --host names another.

@@ -145,6 +145,55 @@ async function serverCase(training) {
   await p.server.closeAsync();
 }
 
+// ---- two servers starting together on one new database; a production server never serves a training workspace ----
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flight-training-race-'));
+  const file = path.join(dir, 'shared.sqlite');
+  const prod = createServer({ dbPath: file, quiet: true, training: false, setupCode: 'race-code' });
+  const train = createServer({ dbPath: file, quiet: true, training: true, setupCode: 'race-code' });
+  const [p, t] = await Promise.allSettled([prod.listenAsync(0, '127.0.0.1'), train.listenAsync(0, '127.0.0.1')]);
+  const first = await train.store.firstAuditRow();
+  ok('two servers starting together on one new database: the training designation is the first audit row exactly once', t.status === 'fulfilled' && first?.action === 'training-database' && (await train.store.auditRows(50)).filter(row => row.action === 'training-database').length === 1, JSON.stringify({ p: p.status, t: t.status, first }));
+  if (t.status === 'fulfilled') {
+    const tb = `http://127.0.0.1:${t.value}`;
+    await fetch(`${tb}/api/auth/accounts`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ setupCode: 'race-code', users: [{ username: 'lead', displayName: 'Training Lead', role: 'admin', password: 'race-password-1' }] }) });
+    const { token } = await (await fetch(`${tb}/api/auth/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'lead', password: 'race-password-1' }) })).json();
+    const { createHost } = await import('../server/mes-host.mjs');
+    const engine = createHost(path.join(ROOT, 'index.html')).MES, seed = engine.seed(); engine.ensureMasterWIs(seed);
+    await fetch(`${tb}/api/workspace`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(seed) });
+    if (p.status === 'fulfilled') {
+      // The production server that started alongside sees the same file: it neither serves nor changes the training workspace.
+      const pb = `http://127.0.0.1:${p.value}`;
+      const session = await (await fetch(`${pb}/api/auth/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'lead', password: 'race-password-1' }) })).json();
+      const auth = { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' };
+      const read = await fetch(`${pb}/api/workspace`, { headers: auth });
+      const row = await prod.store.getDoc('default');
+      const act = await fetch(`${pb}/api/workspace/actions/MES.setPriority`, { method: 'POST', headers: { ...auth, 'If-Match': row.etag }, body: JSON.stringify({ args: ['WO-NONE', 'High'] }) });
+      ok('a production server that started alongside refuses to serve or change the training workspace', read.status === 422 && act.status === 422 && /saved by a training server/.test((await act.json()).error || ''), `${read.status} ${act.status}`);
+    } else ok('the production server that lost the race did not start (it found the training designation, or the training server held the database)', /created for a training server|database is locked/.test(String(p.reason?.message)), String(p.reason?.message));
+  }
+  if (p.status === 'fulfilled') await prod.closeAsync(); else await prod.store.close?.();
+  if (t.status === 'fulfilled') await train.closeAsync();
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
+{
+  // However a training workspace reached a production store, the production server neither serves nor changes it.
+  const { createHost } = await import('../server/mes-host.mjs');
+  const engine = createHost(path.join(ROOT, 'index.html')).MES, seed = engine.seed(); engine.ensureMasterWIs(seed);
+  const server = createServer({ dbPath: ':memory:', quiet: true, training: false, setupCode: 'planted-code' });
+  const port = await server.listenAsync(0, '127.0.0.1'), base = `http://127.0.0.1:${port}`;
+  await fetch(`${base}/api/auth/accounts`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ setupCode: 'planted-code', users: [{ username: 'lead', displayName: 'Production Lead', role: 'admin', password: 'planted-password-1' }] }) });
+  const { token } = await (await fetch(`${base}/api/auth/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'lead', password: 'planted-password-1' }) })).json();
+  const etag = await server.store.putDoc('default', JSON.stringify({ ...seed, trainingServer: { mark: TRAINING_MARK } }), null, 'test');
+  const auth = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  const read = await fetch(`${base}/api/workspace`, { headers: auth });
+  const act = await fetch(`${base}/api/workspace/actions/MES.setPriority`, { method: 'POST', headers: { ...auth, 'If-Match': etag }, body: JSON.stringify({ args: ['WO-NONE', 'High'] }) });
+  const actJson = await act.json().catch(() => ({}));
+  ok('a production server neither serves nor changes a training workspace that reached its store', read.status === 422 && act.status === 422 && /saved by a training server/.test(actJson.error || ''), `${read.status} ${act.status} ${actJson.error}`);
+  await server.closeAsync();
+}
+
 // ---- browser-side connectors stay off on a training server whatever the build configures -------------------------
 {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flight-training-connectors-'));
