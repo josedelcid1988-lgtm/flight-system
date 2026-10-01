@@ -14,7 +14,10 @@ shipped default) the app is unchanged.
 - Chain anchor: the row count and the link of the last row are kept outside the database (the
   anchor file), so rows removed from the end, or a changed last row, are found too. The server
   refuses to start, refuses every write (409 `anchor_mismatch`) and refuses every backup while the
-  database does not match its anchor, so the anchor is never overwritten to cover a change.
+  database does not match its anchor, so the anchor is never overwritten to cover a change. Before
+  the first write, and before any write after another process changed the database file, the
+  server walks the whole chain and every manifest, so a changed earlier row or manifest is refused
+  the same way.
 - Two tokens: the page carries an append-only write token; reading, verifying and exporting need
   the operator token, which never goes into the page.
 - Loopback only in plain HTTP: to serve other machines it runs behind a TLS-terminating reverse proxy.
@@ -109,8 +112,8 @@ Every endpoint except `POST /api/v1/writes` and health needs the operator token.
 | `POST /api/v1/writes` | Write token (or operator token). Body `{ clientId, lastAck, records: [...] }`, up to 500 records. `lastAck` is the newest row the server confirmed to this client; the answer carries `ackCheck: 'missing'` when the server no longer holds it (it was restored from an older backup), and the app then sends every record again. Each comes back `stored`, `duplicate` (the same `clientWriteId` and payload already stored: a safe retry) or `rejected` with a reason (bad hash, malformed manifest, a `clientWriteId` reused for a different payload). |
 | `GET /api/v1/health` | With the token: row and manifest counts, the last write time, the backup settings and the last backup file. Without it: `{ ok, api }` only. |
 | `GET /api/v1/verify` | Walks the whole chain and compares its count and tip with the anchor: `chainIntact`, the row count, the chain tip, the anchor, and `firstBreak: { id, reason }` when it is broken. `legacyRows` counts rows written before manifests joined the chain (their manifests are not covered by the link). |
-| `GET /api/v1/export?format=json` | Full retention export: every record with its manifests, plus a verify result. |
-| `GET /api/v1/export?format=csv` | The same records as CSV, one row per record. |
+| `GET /api/v1/export?format=json` | Full retention export: every record with its manifests, the chain anchor (`anchor`) and a verify result against it. |
+| `GET /api/v1/export?format=csv` | The same records as CSV, one row per record. The last row also carries the anchor (`chain_anchor_records`, `chain_anchor_tip`), so a file missing rows from its end, or with a changed last row, shows it. |
 | `GET /api/v1/records?entity=order&id=WO-10001` | Every record for one entity, oldest first, with its manifests. For audits. |
 
 ## Backups
@@ -155,10 +158,13 @@ of that disk.
    absent from its latest snapshot is deleted, including deletions made before this build. Intermediate versions written
    between the backup and the restore are only in the database you moved aside. Before deciding anything about them, compare:
    ```bash
-   node server/mirror/restore-test.mjs <backup>.sqlite --against <the database you moved aside>
+   node server/mirror/restore-test.mjs <backup>.sqlite --against <the database you moved aside> \
+     --live-anchor <its anchor file>
    ```
-   This confirms the backup is an exact prefix of the old database and prints how many rows came
-   after it. Record the restore and its outcome in the quality system.
+   This confirms the old database is intact against its own anchor, that the backup is an exact
+   prefix of it, and prints how many rows came after it. Give the anchor with `--live-anchor`, or set
+   `FS_MIRROR_ANCHOR` as the server had it; without either the anchor next to the database is used,
+   and a missing anchor fails the check. Record the restore and its outcome in the quality system.
 
 `tests/test_mirror.mjs` runs this whole cycle (backup, restore test, start a server on the restored
 file, check the chain tip matches, keep writing) on every run of the suites. Run

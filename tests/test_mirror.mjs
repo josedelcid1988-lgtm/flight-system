@@ -11,7 +11,7 @@ const TESTS=decodeURI(new URL('.',import.meta.url).pathname);
 // never the copies run-suites --mirror makes with SK_MIRROR already set.
 const FIXTURES=TESTS+'fixtures/';
 const ROOT=path.resolve(TESTS,'..');
-const {createMirror,settings,sha256,verifyChain,pruneBackups,readAnchor,startRefusal,ackCheck}=await import(path.join(ROOT,'server/mirror/server.mjs'));
+const {createMirror,settings,sha256,verifyChain,pruneBackups,readAnchor,startRefusal,ackCheck,anchorMismatch}=await import(path.join(ROOT,'server/mirror/server.mjs'));
 const PROD='file://'+FIXTURES+'publish.html';
 const STAMP=(h=>({build:h.match(/<meta name="fs-build" content="([^"]*)">/)[1],sha256:h.match(/<meta name="fs-build-sha256" content="([^"]*)">/)[1]}))(fs.readFileSync(FIXTURES+'publish.html','utf8'));
 const fails=[];const ok=(w,c,m='')=>{console.log((c?'  ok   ':'  FAIL ')+w+(c?'':' -> '+m));if(!c)fails.push(w);};
@@ -47,6 +47,9 @@ ok('records read-back without entity and id is refused with the next step',(awai
 const exp=await (await get(API+'/export?format=json')).json();
 ok('JSON export carries every record, its manifests and a verify result',exp.records.length===4&&exp.records.every(x=>x.manifests.length===1)&&exp.verify.ok,JSON.stringify(exp).slice(0,200));
 const csvRes=await get(API+'/export?format=csv');const csv=await csvRes.text();
+{const lines=csv.trim().split('\r\n'),head=lines[0].split(','),cell=(l,c)=>l.split(',').slice(-2)[['chain_anchor_records','chain_anchor_tip'].indexOf(c)];
+ ok('CSV export carries the chain anchor on its last row, so a removed suffix or a rewritten last row shows in the file',head.slice(-2).join()==='chain_anchor_records,chain_anchor_tip'&&cell(lines[4],'chain_anchor_records')==='4'&&cell(lines[4],'chain_anchor_tip')===v.tip&&cell(lines[1],'chain_anchor_tip')==='',lines[4].slice(-160));
+ ok('JSON export carries the chain anchor it was verified against',exp.anchor&&exp.anchor.records===4&&exp.anchor.tip===v.tip,JSON.stringify(exp.anchor));}
 ok('CSV export has a header and one line per record, with manifests_sha256 so the chain can be recomputed',csv.trim().split('\r\n').length===5&&csv.startsWith('id,client_write_id')&&csv.split('\r\n')[0].split(',').includes('manifests_sha256')&&/attachment/.test(csvRes.headers.get('content-disposition')||''),csv.slice(0,120));
 let refused='';try{m.db.exec("UPDATE records SET actor='x' WHERE id=1");}catch(e){refused=e.message;}
 ok('the database refuses UPDATE on records',/append-only/.test(refused),refused);
@@ -206,6 +209,30 @@ await m.close();
  const rt=spawnSync(process.execPath,[path.join(ROOT,'server/mirror/restore-test.mjs'),bk2,'--against',g2],{encoding:'utf8'});
  ok('restore-test --against fails when a live signature manifest was changed',rt.status===1&&/live database is not intact/.test(rt.stderr)&&/signature manifests/.test(rt.stderr),rt.stdout+rt.stderr);}
 
+// Every write is checked against the whole chain once the database was changed outside the server: a changed
+// signature manifest of an earlier row passes the tip check but is refused, and nothing is stored.
+{const {DatabaseSync}=await import('node:sqlite');const tp=path.join(tmp,'deep.sqlite');const md=createMirror({dbPath:tp,backupDir:path.join(tmp,'b16'),port:0,backupEveryMinutes:0,...SECURE});const ad=await md.listen();
+ const pd=body=>fetch(`http://127.0.0.1:${ad.port}/api/v1/writes`,{method:'POST',headers:{'content-type':'application/json',...WAUTH},body:JSON.stringify(body)});
+ ok('writes are accepted while the database is untouched',(await pd({clientId:'d',records:[rec(101),rec(102),rec(103)]})).status===200&&(await pd({clientId:'d',records:[rec(104)]})).status===200);
+ {const d=new DatabaseSync(tp);d.exec('DROP TRIGGER manifests_no_update');d.exec("UPDATE signature_manifests SET signer_credential='ACCT-forged' WHERE record_id=1");d.close();}
+ ok('the refusal case is real: the tip check alone still passes',anchorMismatch(md.db,readAnchor(tp+'.anchor.json'))===null);
+ const refused=await pd({clientId:'d',records:[rec(105)]});const rj=await refused.json();
+ ok('a write after an earlier manifest was changed is refused, and nothing is stored',refused.status===409&&rj.error.code==='anchor_mismatch'&&Number(md.db.prepare('SELECT COUNT(*) n FROM records').get().n)===4,JSON.stringify(rj));
+ await md.close();}
+// restore-test --against takes the live anchor from where the server keeps it: --live-anchor or FS_MIRROR_ANCHOR.
+{const {DatabaseSync}=await import('node:sqlite');const tp=path.join(tmp,'custom.sqlite'),ap=path.join(tmp,'anchors','custom.anchor.json');const mc=createMirror({dbPath:tp,anchorPath:ap,backupDir:path.join(tmp,'b17'),port:0,backupEveryMinutes:0,...SECURE});const ac=await mc.listen();
+ const pc=body=>fetch(`http://127.0.0.1:${ac.port}/api/v1/writes`,{method:'POST',headers:{'content-type':'application/json',...WAUTH},body:JSON.stringify(body)});
+ await pc({clientId:'c',records:[rec(111),rec(112)]});const bkc=mc.backup();await pc({clientId:'c',records:[rec(113)]});await mc.close();
+ const run=(args,env={})=>spawnSync(process.execPath,[path.join(ROOT,'server/mirror/restore-test.mjs'),bkc,'--against',tp,...args],{encoding:'utf8',env:{...process.env,...env}});
+ ok('the live anchor is kept away from the database (the case under test)',fs.existsSync(ap)&&!fs.existsSync(tp+'.anchor.json'));
+ let rt=run([]);ok('without the live anchor, --against fails and says how to give it',rt.status===1&&/no anchor for the live database/.test(rt.stderr)&&/--live-anchor/.test(rt.stderr),rt.stdout+rt.stderr);
+ rt=run(['--live-anchor',ap]);ok('with --live-anchor, an intact live database passes',rt.status===0&&/matches the first 2 of 3/.test(rt.stdout),rt.stdout+rt.stderr);
+ rt=run([],{FS_MIRROR_ANCHOR:ap});ok('FS_MIRROR_ANCHOR is honoured the same way',rt.status===0,rt.stdout+rt.stderr);
+ // The live last row, which no later row links and the backup does not hold, is rewritten consistently.
+ {const d=new DatabaseSync(tp);d.exec('DROP TRIGGER records_no_update');const pj=JSON.stringify({id:'WO-113',value:'forged'});d.prepare('UPDATE records SET payload_json=?, payload_sha256=? WHERE id=3').run(pj,sha256(pj));d.close();}
+ {const d=new DatabaseSync(tp,{readOnly:true});ok('the refusal case is real: without an anchor the rewritten live chain still verifies',verifyChain(d).ok);d.close();}
+ rt=run(['--live-anchor',ap]);ok('with its anchor, --against finds the rewritten live last row',rt.status===1&&/live database is not intact/.test(rt.stderr)&&/chain tip/.test(rt.stderr),rt.stdout+rt.stderr);}
+
 // Fail closed (issue 76): no token configured refuses to start, no origin configured sends no CORS header, and
 // health tells a caller without the token only that the mirror is up.
 {let refusedStart='';try{createMirror({dbPath:path.join(tmp,'none.sqlite'),backupDir:path.join(tmp,'b5'),port:0,backupEveryMinutes:0});}catch(e){refusedStart=e.message;}
@@ -307,6 +334,22 @@ await authEdit("a.users.push({username:arg,displayName:'Temp Account',salt:'00',
  ok('the restored and refilled chain is intact against its anchor',m.verify().ok,JSON.stringify(m.verify()));
  const w4=await mkOrder(p);const before=count();st=await drain();
  ok('once caught up, the next write sends only what changed',st.resentAt&&count()-before<=3,JSON.stringify({added:count()-before}));}
+// Two tabs share the device's client record. A late answer in this tab must not move the stored acknowledgement
+// back below one another tab saved meanwhile; a restore reset by another tab (a newer epoch) is kept too.
+{const CK='skyryse-mes-sync-client-v1';let other=null;
+ await ctx.route(/\/api\/v1\/writes$/,async route=>{const resp=await route.fetch();if(!other){
+   const r2=await fetch(API+'/writes',{method:'POST',headers:{'content-type':'application/json',...WAUTH},body:JSON.stringify({clientId:'other-tab',records:[rec(201)]})});const j2=await r2.json();
+   other={id:j2.results[0].id,clientWriteId:'srv-201'};
+   await p.evaluate(([k,a])=>{const c=JSON.parse(localStorage.getItem(k));c.ack=a;localStorage.setItem(k,JSON.stringify(c));},[CK,other]);}
+  await route.fulfill({response:resp});});
+ await mkOrder(p);await drain();await ctx.unroute(/\/api\/v1\/writes$/);
+ const stored=await p.evaluate(k=>JSON.parse(localStorage.getItem(k)).ack,CK);
+ ok('the stored acknowledgement never moves back below one another tab saved while this tab waited',!!other&&stored&&stored.id>=other.id,JSON.stringify({stored,other}));
+ const before=await p.evaluate(k=>JSON.parse(localStorage.getItem(k)).ackEpoch,CK);
+ await p.evaluate(([k])=>{const c=JSON.parse(localStorage.getItem(k));c.ackEpoch=(c.ackEpoch||0)+1;c.ack=null;localStorage.setItem(k,JSON.stringify(c));},[CK]);
+ const r0=count();await mkOrder(p);const st2=await drain();
+ const after=await p.evaluate(k=>JSON.parse(localStorage.getItem(k)),CK);
+ ok('a reset another tab saved (a newer epoch) is kept, not overwritten by this tab\'s older acknowledgement',after.ackEpoch===before+1&&after.ack&&after.ack.id>=r0&&st2.unsynced===0,JSON.stringify({before,after:{e:after.ackEpoch,ack:after.ack},r0}));}
 // A device upgraded from a build without acknowledgements: it has confirmed records but no lastAck, so its
 // first confirmed post sends everything once instead of trusting a mirror that may have been restored.
 {await p.evaluate(()=>{const c=JSON.parse(localStorage.getItem('skyryse-mes-sync-client-v1'));delete c.ack;localStorage.setItem('skyryse-mes-sync-client-v1',JSON.stringify(c));});

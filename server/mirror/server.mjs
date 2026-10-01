@@ -251,9 +251,17 @@ const CSV_COLUMNS = ['id', 'client_write_id', 'store_key', 'entity_type', 'entit
 const csvCell = v => { const s = v === null || v === undefined ? '' : String(v); return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
 export function exportAll(db, format = 'json', anchor) {
   const rows = db.prepare('SELECT * FROM records ORDER BY id').all();
-  if (format === 'csv') return [CSV_COLUMNS.join(','), ...rows.map(r => CSV_COLUMNS.map(c => csvCell(r[c])).join(','))].join('\r\n') + '\r\n';
+  if (format === 'csv') {
+    // The anchor travels in the file: chain_anchor_records and chain_anchor_tip are filled on the last row only
+    // (and on a lone row when the database is empty), so a removed suffix or a rewritten last row is visible
+    // from the CSV alone. They are not part of any row's link.
+    const cols = [...CSV_COLUMNS, 'chain_anchor_records', 'chain_anchor_tip'];
+    const a = anchor || null, tail = r => ({ ...r, chain_anchor_records: a ? a.records : '', chain_anchor_tip: a ? a.tip : '' });
+    const body = rows.length ? rows.map((r, i) => i === rows.length - 1 ? tail(r) : r) : (a ? [tail({})] : []);
+    return [cols.join(','), ...body.map(r => cols.map(c => csvCell(r[c])).join(','))].join('\r\n') + '\r\n';
+  }
   const add = withManifests(db);
-  return { exportedAt: new Date().toISOString(), api: API_VERSION, verify: verifyChain(db, anchor === undefined ? {} : { anchor }), records: rows.map(add) };
+  return { exportedAt: new Date().toISOString(), api: API_VERSION, anchor: anchor || null, verify: verifyChain(db, anchor === undefined ? {} : { anchor }), records: rows.map(add) };
 }
 
 // ---- backups ---------------------------------------------------------------------------------------
@@ -323,7 +331,7 @@ export function createMirror(options = {}) {
   // The operator token reads everything; the write token (in the page) can only append.
   const operator = req => cfg.allowNoToken || (!!cfg.token && same(bearer(req), `Bearer ${cfg.token}`));
   const writer = req => operator(req) || (!!cfg.writeToken && same(bearer(req), `Bearer ${cfg.writeToken}`));
-  let lastBackup = null;
+  let lastBackup = null, verifiedVersion = null;
   const send = (res, status, body, type = 'application/json') => {
     const cors = cfg.allowOrigin ? { 'access-control-allow-origin': cfg.allowOrigin, 'access-control-allow-headers': 'content-type, authorization', 'access-control-allow-methods': 'GET, POST, OPTIONS', vary: 'Origin' } : {};
     res.writeHead(status, { 'content-type': type === 'application/json' ? 'application/json; charset=utf-8' : type, ...cors, 'cache-control': 'no-store' });
@@ -344,7 +352,12 @@ export function createMirror(options = {}) {
         if (!writer(req)) return fail(res, 401, 'unauthorized', 'Send the write token as Authorization: Bearer <token>.');
         let body; try { body = JSON.parse(await readBody(req)); } catch (e) { return e.status === 413 ? fail(res, 413, 'too_large', `Request body over ${cfg.maxBodyBytes} bytes.`) : fail(res, 400, 'bad_request', 'Body is not valid JSON.'); }
         const anchorNow = settleAnchor(anchorPath, db);
-        const drift = anchorMismatch(db, anchorNow);
+        // SQLite's data_version changes only when another connection commits to the database file. Until it
+        // does, the rows are the ones this server wrote and verified, and the tip check against the anchor is
+        // enough; once it changes, or on the first write, the whole chain and every manifest are walked first.
+        const version = Number(db.prepare('PRAGMA data_version').get().data_version);
+        let drift = anchorMismatch(db, anchorNow);
+        if (!drift && version !== verifiedVersion) { const v = verifyChain(db, { anchor: anchorNow }); if (v.ok) verifiedVersion = version; else drift = `the chain is broken at row ${v.firstBreak.id}: ${v.firstBreak.reason}`; }
         if (drift) { console.error(`write refused: ${drift}`); return fail(res, 409, 'anchor_mismatch', 'The mirror database no longer matches its chain anchor, so no record is stored until the operator investigates. The app keeps the records queued.'); }
         const check = ackCheck(db, body && body.lastAck);
         const r = appendRecords(db, body && body.clientId, body && body.records, undefined, { beforeCommit: next => writePendingAnchor(anchorPath, anchorNow, next) });
@@ -366,7 +379,7 @@ export function createMirror(options = {}) {
         if (!['json', 'csv'].includes(format)) return fail(res, 400, 'bad_request', 'format is json or csv.');
         const day = new Date().toISOString().slice(0, 10);
         res.setHeader('content-disposition', `attachment; filename="flight-system-mirror-${day}.${format}"`);
-        return format === 'csv' ? send(res, 200, exportAll(db, 'csv'), 'text/csv; charset=utf-8') : send(res, 200, { ok: true, ...exportAll(db, 'json', readAnchor(anchorPath)) });
+        return format === 'csv' ? send(res, 200, exportAll(db, 'csv', readAnchor(anchorPath)), 'text/csv; charset=utf-8') : send(res, 200, { ok: true, ...exportAll(db, 'json', readAnchor(anchorPath)) });
       }
       if (url.pathname === `/api/${API_VERSION}/records`) {
         const entity = url.searchParams.get('entity'), id = url.searchParams.get('id');

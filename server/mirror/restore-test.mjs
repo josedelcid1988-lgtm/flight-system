@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Restore test: proves a backup can be restored and that it carries an intact record chain.
 //
-//   node server/mirror/restore-test.mjs <backup.sqlite> [--against <live.sqlite>] [--no-anchor]
+//   node server/mirror/restore-test.mjs <backup.sqlite> [--against <live.sqlite> [--live-anchor <file>]] [--no-anchor]
 //
 // The backup is copied to a temporary folder and opened there (the original is never touched). The
 // script walks the whole hash chain against the anchor written next to the backup (<backup>.anchor.json),
@@ -16,10 +16,14 @@ import { DatabaseSync } from 'node:sqlite';
 import { verifyChain, readAnchor, defaultAnchorPath } from './server.mjs';
 
 const argv = process.argv.slice(2);
-const backup = argv.find((a, i) => !a.startsWith('--') && argv[i - 1] !== '--against');
+const backup = argv.find((a, i) => !a.startsWith('--') && argv[i - 1] !== '--against' && argv[i - 1] !== '--live-anchor');
 const againstAt = argv.indexOf('--against');
 const against = againstAt >= 0 ? argv[againstAt + 1] : null;
 const noAnchor = argv.includes('--no-anchor');
+// The live database's anchor: --live-anchor, else FS_MIRROR_ANCHOR (where the server keeps it when it is held
+// off the database host), else the file next to the live database.
+const liveAnchorAt = argv.indexOf('--live-anchor');
+const liveAnchorArg = liveAnchorAt >= 0 ? argv[liveAnchorAt + 1] : (process.env.FS_MIRROR_ANCHOR || null);
 if (!backup || !fs.existsSync(backup)) { console.error('FAIL give the backup file to test: node server/restore-test.mjs <backup.sqlite> [--against <live.sqlite>]'); process.exit(1); }
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fs-restore-'));
@@ -41,7 +45,10 @@ try {
   if (against) {
     const live = new DatabaseSync(against, { readOnly: true });
     // The live database must itself be intact (its manifest rows included), or matching its records proves nothing.
-    const liveAnchorFile = defaultAnchorPath(against), lv = verifyChain(live, fs.existsSync(liveAnchorFile) ? { anchor: readAnchor(liveAnchorFile) } : {});
+    const liveAnchorFile = liveAnchorArg ? path.resolve(liveAnchorArg) : defaultAnchorPath(against);
+    const liveAnchor = fs.existsSync(liveAnchorFile) ? readAnchor(liveAnchorFile) : undefined;
+    if (liveAnchor === undefined && !noAnchor) { console.error(`FAIL no anchor for the live database at ${liveAnchorFile}: rows removed from its end, or a changed last row, cannot be ruled out. Give it with --live-anchor <file> (or FS_MIRROR_ANCHOR), or --no-anchor to check without one.`); ok = false; }
+    const lv = verifyChain(live, liveAnchor === undefined ? {} : { anchor: liveAnchor });
     if (!lv.ok) { console.error(`FAIL the live database is not intact: row ${lv.firstBreak.id}, ${lv.firstBreak.reason}`); ok = false; }
     // manifests_sha256 is part of each row's link; compare it whenever both databases have the column. A
     // backup with the column against a live database without it (or the reverse) is not a prefix.
