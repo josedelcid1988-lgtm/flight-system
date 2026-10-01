@@ -75,6 +75,8 @@ const SOD=[
   ['the Skyryse QA approval of a FAIR signs the box 22 review',"{ fair: fairId(order), verified: fair.verified.manifest.hash, reviewed: fair.reviewed.manifest.hash,",1],
   ['the Skyryse QA approval of a FAIR waits for box 22',"    if (!plain(fair.reviewed)) return fail('Box 22 is not signed.",1],
   ['every load and save refuses a signed record or signature that a reached stage requires but is missing',"const v = state => origValidate(state) && maneuverValid(state) && MES.missingSignatures(state).length === 0;",1],
+  ['a standalone save recomputes every signature and is refused when one fails',"{const mv=MES.verifyManifests(state);if(!mv.ok){const f=mv.failures[0]||{};dropUncommittedServerCommands();state=structuredClone(lastSaved);",1],
+  ['a CAR closure signs each action\'s completion evidence and completer',"    const subject = MES.carClosureSubject(car, note, true);",1],
   ['validation refuses a stock NC dispositioned and approved by the same person',"    if (ncSelfApproved(t)) return false;",1],
   ['the recorded signer and time of a signed record must be the manifest signer and time',"const signerMismatch = (rec, m) => !plain(rec.by) || !plain(m.signer) || rec.by.credentialId !== m.signer.credentialId || rec.by.name !== m.signer.name || rec.at !== m.at;",1],
 ];

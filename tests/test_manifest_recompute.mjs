@@ -159,6 +159,11 @@ ok('MES.validate (standalone load and save) refuses a removed AQI signature, DAR
 ok('MES.validate refuses an empty or partial manifest object in place of a signature (AQI, MRB, CAR, FAIR approval, NC approval)',['emptyAqi','emptyMrb','partialCar','emptyFair','emptyNc'].every(k=>r[k]===false),JSON.stringify(r));
 ok('the validation diagnosis names the incomplete signed record',/A signed record is incomplete at .*AQI signature/.test(r.diagnose),JSON.stringify(r.diagnose));
 
+// ---- a CAR closure signed by this build also binds each action's evidence and completer ----
+r=await run(([car])=>{const s=structuredClone(state),c=s.maneuver.cars.find(c=>c.id===car);c.actions.forEach(a=>{a.evidence=a.evidence||'Work instruction revised and trained.';a.completedBy=a.completedBy||{name:'Kai Quality',role:'Quality Engineer',credentialId:'ACCT-kqe'};});c.closure.manifest=MES.signManifest(s,'Corrective action closure',MES.carClosureSubject(c,c.closure.note,true),c.closure.at);const sg=c.closure.manifest.signer;c.closure.by={name:sg.name,role:sg.role,credentialId:sg.credentialId};const ok0=MES.verifyManifests(s).ok;const edit=f=>{const x=structuredClone(s),y=x.maneuver.cars.find(z=>z.id===car);f(y);const v=MES.verifyManifests(x);return v.failures.some(z=>z.where.includes(`${car} closure`));};return {before:ok0,marker:c.closure.manifest.subject.actionEvidence===true,evidence:edit(y=>{y.actions[0].evidence='Replaced after closure.';}),completer:edit(y=>{y.actions[0].completedBy={...y.actions[0].completedBy,credentialId:'ACCT-other'};}),strip:edit(y=>{y.actions[0].evidence='Replaced after closure.';delete y.closure.manifest.subject.actions[0].evidence;})};},[car]);
+ok('a CAR closure signed by this build binds each action\'s evidence and completer: it verifies, and replacing either afterwards fails',r.before===true&&r.marker===true&&r.evidence===true&&r.completer===true,JSON.stringify(r));
+ok('editing the stored closure subject does not let replaced evidence pass (the form follows the hashed marker)',r.strip===true,JSON.stringify(r));
+
 // ---- verification fails closed: a manifest whose stored subject was signed by this build is recomputed even when
 // the live record adds or drops a key ----
 r=await run(([car])=>{const s=structuredClone(state),c=s.maneuver.cars.find(c=>c.id===car);const subject={id:c.id,title:c.title,severity:c.severity,rootCause:c.rootCause.statement,actions:c.actions.map(a=>({id:a.id,description:a.description,completedAt:a.completedAt})),verification:c.verification.at,effectiveness:c.effectiveness.result,note:c.closure.note};c.closure.manifest=MES.signManifest(s,'Corrective action closure',subject,c.closure.at);const sg=c.closure.manifest.signer;c.closure.by={name:sg.name,role:sg.role,credentialId:sg.credentialId};const ok0=MES.verifyManifests(s).ok;c.rootCause=null;const v=MES.verifyManifests(s);return {before:ok0,ok:v.ok,where:v.failures.map(f=>f.where)};},[car]);
@@ -177,6 +182,20 @@ ok('in production, an 8130-9 completed and AQI-signed by the same person without
 // (The demo workspace was built under the demo's lifted rules, so its self-approved NCs are given another dispositioner first.)
 r=await run(([json,id])=>{const base=(s=>{((s.maneuver&&s.maneuver.ncs)||[]).forEach(t=>{if(t.dispo&&t.resolution&&t.resolution.by&&t.dispo.credentialId===t.resolution.by.credentialId)t.dispo={...t.dispo,credentialId:'ACCT-demo-dispositioner'};});return s;})(JSON.parse(json));const mk=f=>{const s=structuredClone(base),t=s.maneuver.ncs.find(x=>x.id===id);f(t);return MES.validate(s);};return {clean:mk(()=>{}),self:mk(t=>{t.dispo={...t.dispo,credentialId:t.resolution.by.credentialId,name:t.resolution.by.name};})};},[confJson,nc]);
 ok('in production, validation refuses a stock NC whose disposition and approval carry the same credential',r.clean===true&&r.self===false,JSON.stringify(r));
+// A saved copy whose signed content was edited outside the app is not opened.
+await p.goto('file://'+FIXTURES+'demo_publish.html');await p.waitForTimeout(1500);
+// The demo build keeps its workspace under its own key (a demo deviation).
+const key='skyryse-mes-work-order-qa100-v1';
+ok('fixture: the demo keeps its workspace in browser storage',await run(k=>!!localStorage.getItem(k),key),key);
+await run(([json,key])=>localStorage.setItem(key,json),[confJson,key]);await p.reload();await p.waitForTimeout(2500);
+// ---- standalone save and load recompute every signature (#315) ----
+// A save that would break a signature is refused and rolled back.
+r=await run(([mrb])=>{const before=JSON.stringify(state);const m=state.maneuver.mrb.find(x=>x.id===mrb);m.decision.note='Edited after the decision.';const saved=save();const after=JSON.stringify(state);return {saved,rolledBack:after===before};},[mrb]);
+ok('a standalone save that would break a signature is refused and rolled back',r.saved===false&&r.rolledBack===true,JSON.stringify(r));
+await run(([json,mrb,key])=>{const s=JSON.parse(json),m=s.maneuver.mrb.find(x=>x.id===mrb);m.decision.note='Edited outside the app.';localStorage.setItem(key,JSON.stringify(s));},[confJson,mrb,key]);
+await p.reload();await p.waitForTimeout(2500);
+r=await run(()=>{const box=document.querySelector('#storage-alert');return {hidden:box?box.hidden:null,text:box?box.textContent:''};});
+ok('a saved workspace whose signed content was edited outside the app is not opened, and the alert names the record',r.hidden===false&&/failed verification at .*board decision/.test(r.text),JSON.stringify(r));
 ok('no page errors',errs.length===0,errs.join(' | '));
 console.log('errors',errs,'FAILS',JSON.stringify(fails));await b.close();
 process.exit(fails.length?1:0);
