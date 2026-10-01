@@ -50,6 +50,10 @@ ok('the person who completed the analysis has no safety-buyoff and is refused',r
 // An action closer and the analysis completer are refused the same way.
 const variant=(fn)=>run(([fn])=>{const s=structuredClone(state),t=s.maneuver.pfmeas.find(x=>x.id==='PFM-301'),pqm={name:'Parker Manager',role:'Quality Manager',credentialId:'ACCT-pqm',account:'pqm'};
   delete t.reviewed[Object.keys(t.reviewed).find(k=>t.reviewed[k].by.credentialId==='ACCT-pqm')];t.rows.push({id:'FM-2',opId:s.masterWIs.find(w=>w.id===t.wiId&&w.revision===t.wiRevision).operations[1].id,mode:'Fastener under-torqued',effect:'Loose joint',cause:'Wrong setting',controls:'Torque audit',s:9,o:2,d:3,rpn:54,action:'Add a torque-limiting driver',owner:'T. Engineer',due:'2026-11-01',done:null,by:{name:'Taylor Engineer',role:'Manufacturing Engineer',credentialId:'ACCT-tme',account:'tme'},at:new Date().toISOString()});
+  // FM-2 is a row saved before actionSet existed: its action setter is named only in the ticket history.
+  t.history.push({at:new Date().toISOString(),action:'FM-2 action: Add a torque-limiting driver (owner T. Engineer, due 2026-11-01).',actor:'Taylor Engineer · ACCT-tme'});
+  if(fn==='legacySetter')t.history[t.history.length-1].actor='Parker Manager · ACCT-pqm';
+  if(fn==='legacyUnknown')t.history.pop();
   if(fn==='closer')t.rows[1].done={evidence:'Driver issued and verified.',s:9,o:1,d:2,rpn:18,by:pqm,at:new Date().toISOString()};
   if(fn==='scoper')t.scope={...t.scope,by:pqm};
   if(fn==='setter')t.rows[1].actionSet={by:pqm,at:new Date().toISOString()};
@@ -64,6 +68,10 @@ r=await variant('actions');ok('the QA Manager who completed the action step is r
 r=await variant('setter');ok('the QA Manager who set a PFMEA action, owner and due date is refused the Safety Team buy-off',r.ok===false&&/you recorded part of this analysis/.test(r.message),JSON.stringify(r));
 r=await run(()=>{const s=structuredClone(state),t=s.maneuver.pfmeas.find(x=>x.id==='PFM-301');t.status='Analysis';const res=FlightManeuver.setPfmeaAction(s,'PFM-301',t.rows[0].id,{action:'Add a kit label scan',owner:'T. Engineer',due:'2026-12-01'});return {ok:res.ok,message:res.message,by:t.rows[0].actionSet&&t.rows[0].actionSet.by.credentialId,valid:MES.validate(s)};});
 ok('setting a PFMEA action records who set it',r.ok===true&&r.by==='ACCT-pqm'&&r.valid===true,JSON.stringify(r));
+r=await variant('legacySetter');ok('a QA Manager named in the history as setting an action on a pre-upgrade row is refused the Safety Team buy-off',r.ok===false&&/you recorded part of this analysis/.test(r.message),JSON.stringify(r));
+r=await variant('legacyUnknown');ok('a pre-upgrade action whose setter is not on record refuses the Safety Team buy-off until it is recorded again',r.ok===false&&/does not show who assigned the action on FM-2/.test(r.message),JSON.stringify(r));
+r=await run(()=>[...MES.pfmeaContributors({rows:[{id:'FM-9',by:null,action:'Scan the label'}],history:[{action:'FM-9 action: Scan the label (owner A, due 2026-12-01).',actor:'A · B · ACCT-x'},{action:'FM-90 action: other',actor:'Z · ACCT-z'}],reviewed:{}})]);
+ok('a legacy action setter is read from the credential at the end of the history actor, for that row only',JSON.stringify(r)==='["ACCT-x"]',JSON.stringify(r));
 r=await variant('none');ok('with none of that work, the same QA Manager gives the buy-off',r.ok===true,JSON.stringify(r));
 
 // ---- the Safety Team role gives it, and the manifest binds the analysis content ----
@@ -84,6 +92,13 @@ const tamper=fn=>run(([fn])=>{const s=structuredClone(state),t=s.maneuver.pfmeas
 for(const [fn,what] of [['note','the Safety Team rationale'],['cause','a failure-mode cause'],['controls','the current controls'],['reviewed','a no-risk rationale'],['scope','the scope and team'],['signer','who gave the Safety Team buy-off'],['signerName','the Safety Team signer name'],['signerRole','the Safety Team signer role'],['signedAt','when the Safety Team buy-off was given'],['analysisBy','who completed the analysis'],['actionsAt','when the action step was completed']]){
   r=await tamper(fn);ok(`editing ${what} after the buy-off fails verification`,r.ok===false&&r.failures.some(f=>/PFM-301 Safety Team buy-off/.test(f.where)),JSON.stringify(r));
 }
+
+// ---- a recorded Safety Team buy-off without its manifest fails ----
+r=await run(()=>{const s=structuredClone(state),t=s.maneuver.pfmeas.find(x=>x.id==='PFM-301');delete t.safety.manifest;const v=MES.verifyManifests(s);return {ok:v.ok,failures:v.failures,valid:MES.validate(s)};});
+ok('deleting the Safety Team buy-off manifest fails verification',r.ok===false&&r.failures.some(f=>/PFM-301 Safety Team buy-off/.test(f.where)&&/no signature manifest/.test(f.reason)),JSON.stringify(r));
+ok('deleting the Safety Team buy-off manifest makes the workspace invalid',r.valid===false,JSON.stringify(r));
+r=await run(()=>{const s=structuredClone(state),t=s.maneuver.pfmeas.find(x=>x.id==='PFM-301');t.safety.manifest=null;return {ok:MES.verifyManifests(s).ok,valid:MES.validate(s)};});
+ok('a null Safety Team buy-off manifest fails the same way',r.ok===false&&r.valid===false,JSON.stringify(r));
 
 // ---- a buy-off signed before this rule keeps verifying against what it stored ----
 r=await run(()=>{const s=structuredClone(state),t=s.maneuver.pfmeas.find(x=>x.id==='PFM-301');const legacy={pfmea:t.id,wi:`${t.wiId} Rev ${t.wiRevision}`,rows:t.rows.map(r=>({id:r.id,opId:r.opId,rpn:r.rpn,revised:r.done?r.done.rpn:null}))};t.safety.manifest=MES.signManifest(s,'PFMEA Safety Team buy-off',legacy,t.safety.at);t.rows[0].cause='Edited later';const v=MES.verifyManifests(s);return {ok:v.ok,failures:v.failures,valid:MES.validate(s)};});

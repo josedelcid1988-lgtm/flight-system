@@ -60,6 +60,8 @@ const SOD=[
   ['only conformity and AQI signatures require named grants',"var GRANTED=['conformity','aqi-sign'];",1],
   ['the person who recorded a disposition cannot approve it (work order NC and stock NC)',"=== actor(state).credentialId) return fail('Separation of duties: the person who recorded the disposition cannot approve it.');",2],
   ['the person who recorded a root cause cannot close the CAR',"if (sameActor(who, car.rootCause.by)) return fail('Separation of duties: the person who recorded the root cause cannot close the request. Use another Quality credential.');",1],
+  ['a pre-upgrade PFMEA action with no recorded setter blocks the Safety Team buy-off',"{ const unknown = MES.pfmeaUnattributedActions(t); if (unknown.length) return fail(`Separation of duties: the record does not show who assigned the action",1],
+  ['a recorded Safety Team buy-off without its manifest fails verification',"if (!plain(m)) { failures.push({ where: `${t.id} Safety Team buy-off`, reason: 'the Safety Team buy-off has no signature manifest' }); return; }",1],
   ['a no-risk reviewer, action closer or analysis completer cannot give the Safety Team buy-off',"if (MES.pfmeaContributors(t).has(actor(state).credentialId)) return fail('Separation of duties: you recorded part of this analysis",1],
   ['an author of the PFMEA cannot give the Safety Team buy-off',"if (t.rows.some(r => r.by && r.by.credentialId === actor(state).credentialId)) return fail('Separation of duties: an author of the analysis cannot give the Safety Team buy-off.');",1],
   ['the author of a standard rework cannot approve it',"if (author.credentialId && author.credentialId === actor(state).credentialId) return fail('The person who wrote or last edited this standard rework can’t approve it.",1],
