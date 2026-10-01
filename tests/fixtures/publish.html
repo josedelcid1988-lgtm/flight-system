@@ -2785,8 +2785,12 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     for (let i = 0; i < held.length; i += 1) {
       if (i >= records.length || canonicalPayload(held[i]) !== canonicalPayload(records[i])) return `The change would remove or alter calibration archive record ${plain(held[i]) && held[i].id ? held[i].id : `#${i + 1}`} in the shared log. Archive records are append-only; nothing was saved. Reload the workspace and try again.`;
     }
+    // Only what the stored log allows to move may move: never the latest entry for a tool, an entry a buy-off cites, or
+    // an entry recorded before the chain, however consistent the record that claims it.
+    const movable = removed.length ? new Set(calibrationArchivable(prev)) : null;
     for (const e of removed) {
       const claim = claims.get(e.id);
+      if (claim && !movable.has(e.id)) return `Calibration entry ${e.id} cannot be archived: in the shared log it is the latest entry for ${e.tag}, is cited by a work order buy-off, or was recorded before the hash chain. Nothing was saved or archived. Reload the workspace and archive again.`;
       if (!claim) return `The change would remove calibration entry ${e.id} from the shared log without archiving it. The calibration log is append-only; nothing was saved. Reload the workspace and record the change as a correction.`;
       if (canonicalPayload(claim.summary) !== canonicalPayload(calibrationArchiveSummary(e))) return `Calibration archive record ${claim.record.id} does not match calibration entry ${e.id} as the shared log holds it. Nothing was saved or archived. Reload the workspace and archive again.`;
     }
@@ -2977,8 +2981,11 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   function calibrationCapacity(state) {
     const count = plain(state) && Array.isArray(state.calibrationLog) ? state.calibrationLog.length : 0, near = count >= CALIBRATION_LOG_WARN, server = calibrationArchiveStore();
     const n = v => v.toLocaleString('en-US');
-    const next = server ? 'A QA Manager should archive superseded entries now with Archive superseded entries below.' : 'To make room, a QA Manager must archive superseded entries, which needs the shared Flight System server. Ask your Flight System administrator to move this workspace to the server before the log is full.';
-    return { count, limit: CALIBRATION_LOG_LIMIT, warnAt: CALIBRATION_LOG_WARN, near, archiveAvailable: server, archivable: calibrationArchivable(state).length, archived: calibrationArchivedSummaries(state).length, message: near ? `The calibration log holds ${n(count)} of ${n(CALIBRATION_LOG_LIMIT)} entries. When it is full, no calibration, quarantine, retirement or correction can be recorded. ${next}` : '' };
+    const archivable = calibrationArchivable(state).length;
+    // Nothing archivable (every entry the latest for its tool, cited by a buy-off, or recorded before the chain): archiving
+    // cannot make room, so the warning names the administrator rather than a button that is not shown.
+    const next = !archivable ? 'No entry can be archived to make room: each one is the latest entry for its tool, is cited by a work order buy-off, or was recorded before the hash chain. Ask your Flight System administrator how to continue before the log is full.' : server ? 'A QA Manager should archive superseded entries now with Archive superseded entries below.' : 'To make room, a QA Manager must archive superseded entries, which needs the shared Flight System server. Ask your Flight System administrator to move this workspace to the server before the log is full.';
+    return { count, limit: CALIBRATION_LOG_LIMIT, warnAt: CALIBRATION_LOG_WARN, near, archiveAvailable: server, archivable, archived: calibrationArchivedSummaries(state).length, message: near ? `The calibration log holds ${n(count)} of ${n(CALIBRATION_LOG_LIMIT)} entries. When it is full, no calibration, quarantine, retirement or correction can be recorded. ${next}` : '' };
   }
   // Latest calibration entry for a tag; a superseded entry is skipped when its correction exists.
   // Read-only: the name intentionally matches no server-mutator prefix.

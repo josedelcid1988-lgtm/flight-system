@@ -107,18 +107,30 @@ try {
   assert.equal((await server.store.verifyAudit()).ok, true);
   console.log('ok PostgreSQL archive extracts and audit hash chain');
 
-  // #130: archived calibration entries are stored once, read back unchanged, listed by tool, and never changed.
-  const calEntry = { id: 'CALLOG-00001', tag: 'PG-CAL', status: 'In Calibration', calibratedAt: '2026-09-28', expires: '2027-09-28', recordedAt: '2026-09-28T17:00:00.000Z', recordedBy: 'Quinn Manager \u00b7 ACCT-pg', calibrationSignature: { manifest: { hash: 'a'.repeat(64) } } };
-  const calJson = JSON.stringify(calEntry);
-  await server.store.putCalibrationArchived({ id: calEntry.id, tag: calEntry.tag, recordId: 'CALARC-0001', json: calJson, sha256: createHash('sha256').update(calJson).digest('hex'), by: 'pg-admin' });
-  const calRow = await server.store.calibrationArchived('CALLOG-00001');
-  assert.equal(JSON.stringify(calRow.entry), calJson, 'an archived calibration entry reads back unchanged');
-  assert.equal(calRow.recordId, 'CALARC-0001');
-  assert.deepEqual((await server.store.calibrationArchiveList('pg-cal')).map(row => row.id), ['CALLOG-00001'], 'archived calibration entries list by tool');
-  assert.deepEqual(await server.store.calibrationArchiveList('pg-cal', 500, 'CALLOG-00001'), [], 'the listing pages after an entry id cursor');
-  await assert.rejects(server.store.putCalibrationArchived({ id: calEntry.id, tag: calEntry.tag, recordId: 'CALARC-0002', json: calJson, sha256: 'x', by: 'pg-admin' }), 'an archived calibration entry is stored once');
-  await assert.rejects(server.store._query("UPDATE calibration_archive SET record_id='CALARC-0009' WHERE entry_id='CALLOG-00001'"), /append-only/, 'an archived calibration entry cannot be changed');
-  await assert.rejects(server.store._query("DELETE FROM calibration_archive WHERE entry_id='CALLOG-00001'"), /append-only/, 'an archived calibration entry cannot be deleted');
+  // #130: a superseded calibration entry archived through the server is stored once, unchanged, listed by tool with a
+  // cursor, and never changed. Two concurrent archives of the same workspace version end in one success and one plain
+  // refusal (Codex review on #194), never a server error from the duplicate insert.
+  const actionOn = async (name, args, etag) => call(`/workspace/actions/${name}`, { method: 'POST', token, headers: { 'If-Match': etag }, body: { args } });
+  const calTool = { tag: 'PG-ARC', description: 'DIGITAL CALIPER', torque: false, serial: '', calibratedAt: '2026-09-28', expires: '2027-09-28', status: 'In Calibration', location: '', note: 'Lab cert 1' };
+  let calEtag = (await call('/workspace', { token })).headers.get('etag');
+  const firstCal = await actionOn('MES.recordCalibration', [calTool], calEtag);
+  assert.equal(firstCal.status, 200, firstCal.text);
+  const secondCal = await actionOn('MES.recordCalibration', [{ ...calTool, note: 'Lab cert 2' }], firstCal.json.etag);
+  assert.equal(secondCal.status, 200, secondCal.text);
+  calEtag = secondCal.json.etag;
+  const racers = await Promise.all([actionOn('MES.recordCalibrationArchive', [], calEtag), actionOn('MES.recordCalibrationArchive', [], calEtag)]);
+  const raceStatuses = racers.map(r => r.status).sort();
+  assert.ok(raceStatuses.includes(200) && raceStatuses.filter(st => st === 200).length === 1 && raceStatuses.every(st => st === 200 || st === 409 || st === 422), `two concurrent archives end in one success and one plain refusal, got ${raceStatuses.join(', ')}: ${racers.map(r => r.text).join(' | ')}`);
+  const archivedId = firstCal.json.result.id;
+  const calRow = await server.store.calibrationArchived(archivedId);
+  const liveDoc = JSON.parse((await server.store.getDoc('default')).json);
+  assert.ok(calRow && calRow.entry.id === archivedId && !liveDoc.calibrationLog.some(e => e.id === archivedId), 'the archived entry is in the archive table and out of the live log');
+  assert.equal(calRow.sha256, createHash('sha256').update(JSON.stringify(calRow.entry)).digest('hex'));
+  assert.deepEqual((await server.store.calibrationArchiveList('pg-arc')).map(row => row.id), [archivedId], 'archived calibration entries list by tool');
+  assert.deepEqual(await server.store.calibrationArchiveList('pg-arc', 500, archivedId), [], 'the listing pages after an entry id cursor');
+  await assert.rejects(server.store.putCalibrationArchived({ id: archivedId, tag: 'PG-ARC', recordId: 'CALARC-0002', json: '{}', sha256: 'x', by: 'pg-admin' }), 'an archived calibration entry is stored once');
+  await assert.rejects(server.store._query("UPDATE calibration_archive SET record_id='CALARC-0009' WHERE entry_id=$1", [archivedId]), /append-only/, 'an archived calibration entry cannot be changed');
+  await assert.rejects(server.store._query('DELETE FROM calibration_archive WHERE entry_id=$1', [archivedId]), /append-only/, 'an archived calibration entry cannot be deleted');
   console.log('ok PostgreSQL calibration archive is append-only and reads back unchanged');
 
   for(let n=0;n<100;n+=1){const jobs=await server.store.exportJobs(100);if(jobs.length===closedCount+fairCount&&jobs.every(job=>['delivered','failed'].includes(job.status)))break;await new Promise(resolve=>setTimeout(resolve,50));}

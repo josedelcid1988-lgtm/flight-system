@@ -173,6 +173,9 @@ check('4,500 entries is within 10% of the limit', MES.calibrationCapacity(nearSt
 const nearText = MES.calibrationCapacity(nearState).message;
 check('the warning says how full the log is and what to do next, in plain text', /4,500 of 5,000/.test(nearText) && /archive superseded entries/i.test(nearText) && !/—/.test(nearText), nearText);
 check('4,499 entries is not yet near the limit', MES.calibrationCapacity({ ...nearState, calibrationLog: nearState.calibrationLog.slice(0, 4499) }).near === false);
+// Codex review on #194: near the limit with nothing archivable, the warning does not point at an archive button that is not shown.
+const nearStuck = MES.calibrationCapacity({ calibrationLog: Array.from({ length: 4500 }, (_, i) => ({ id: `FILLER-${i}` })) });
+check('near the limit with nothing archivable, the warning says no entry can be archived and names the administrator', nearStuck.near && nearStuck.archivable === 0 && /No entry can be archived/.test(nearStuck.message) && /administrator/.test(nearStuck.message) && !/Archive superseded entries below/.test(nearStuck.message) && !/\u2014/.test(nearStuck.message), nearStuck.message);
 const full = structuredClone(before);
 while (full.calibrationLog.length < 5000) full.calibrationLog.push({ id: `FILLER-${full.calibrationLog.length}` });
 const fullRefusal = as(qa, full, () => MES.recordCalibration(full, { ...tool, tag: 'FULL-001' }));
@@ -199,6 +202,13 @@ check('MES.recordCalibrationArchive is a reviewed server command', typeof host.r
   const rewritten = structuredClone(s);
   rewritten.calibrationLogHead.archived = [];
   check('the server write gate refuses a write that drops an archive record it holds', /archive record/.test(MES.calibrationLogChanges(s, rewritten) || ''), MES.calibrationLogChanges(s, rewritten));
+  // Codex review on #194: the gate also checks eligibility against the stored copy, so a write cannot archive the
+  // latest entry for a tool even when its record, summaries and digest are consistent.
+  const latestGone = structuredClone(before);
+  as(qa, latestGone, () => MES.recordCalibration(latestGone, { ...tool, tag: 'ARC-B', note: 'Recalibrated' }));
+  as(qa, latestGone, () => MES.recordCalibrationArchive(latestGone));
+  check('the crafted write archives CALLOG-00002, the latest stored entry for ARC-B', !latestGone.calibrationLog.some(e => e.id === 'CALLOG-00002') && MES.validate(latestGone));
+  check('the server write gate refuses to archive an entry the stored log does not allow to move', /CALLOG-00002/.test(MES.calibrationLogChanges(before, latestGone) || '') && /cannot be archived|may not be archived/.test(MES.calibrationLogChanges(before, latestGone) || ''), MES.calibrationLogChanges(before, latestGone));
 }
 
 // Server: the archive runs as a server action, the archived entries are stored unchanged and can be read back.
@@ -310,11 +320,23 @@ const setUpAccounts = async call => {
     const clean = open();
     let cleanStarted = true; try { await clean.server.ready; } catch { cleanStarted = false; }
     check('a restart with an intact calibration archive starts', cleanStarted);
+    const extra = { ...before.calibrationLog[1], id: 'CALLOG-09001' }, extraJson = JSON.stringify(extra);
+    clean.server.store.putCalibrationArchived({ id: 'CALLOG-09001', tag: extra.tag, recordId: 'CALARC-0009', json: extraJson, sha256: sha256(extraJson), by: 'someone-else' });
+    clean.server.store.close();
+    const withExtra = open();
+    let extraRefusal = null; try { await withExtra.server.ready; } catch (e) { extraRefusal = e; }
+    check('a restart whose calibration archive holds an entry no archive record names refuses to start', extraRefusal && /CALLOG-09001/.test(extraRefusal.message), extraRefusal?.message);
+    try { withExtra.server.store.close(); } catch {}
+    const fixUp = open();
+    try { await fixUp.server.ready; } catch {}
+    fixUp.server.store.db.exec('DROP TRIGGER calibration_archive_no_delete');
+    fixUp.server.store.db.prepare('DELETE FROM calibration_archive WHERE entry_id = ?').run('CALLOG-09001');
+    const clean2 = fixUp;
     // A partial restore brings back other history under the same entry id, with a self-consistent row hash.
     const other = { ...before.calibrationLog[0], note: 'Other history' }, json = JSON.stringify(other);
-    clean.server.store.db.exec('DROP TRIGGER calibration_archive_no_update');
-    clean.server.store.db.prepare('UPDATE calibration_archive SET json = ?, sha256 = ? WHERE entry_id = ?').run(json, sha256(json), 'CALLOG-00001');
-    clean.server.store.close();
+    clean2.server.store.db.exec('DROP TRIGGER calibration_archive_no_update');
+    clean2.server.store.db.prepare('UPDATE calibration_archive SET json = ?, sha256 = ? WHERE entry_id = ?').run(json, sha256(json), 'CALLOG-00001');
+    clean2.server.store.close();
     const tampered = open();
     let refusal = null; try { await tampered.server.ready; } catch (e) { refusal = e; }
     check('a restart whose calibration archive does not match the signed archive records refuses to start, naming the entries', refusal && /CALARC-0001/.test(refusal.message) && /CALLOG-00001/.test(refusal.message) && /does not match|do not match/.test(refusal.message), refusal?.message);
@@ -322,6 +344,19 @@ const setUpAccounts = async call => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 {
+  // Codex review on #194: rows no archive record in the workspace names are history from elsewhere, so they are refused too.
+  {
+    const stray = makeServer();
+    await stray.server.ready;
+    try {
+      await setUpAccounts(stray.call);
+      const strayToken = await signIn(stray.call, 'arc-admin');
+      const json = JSON.stringify(before.calibrationLog[0]);
+      stray.server.store.putCalibrationArchived({ id: 'CALLOG-00001', tag: 'ARC-A', recordId: 'CALARC-0001', json, sha256: sha256(json), by: 'someone-else' });
+      const refusedInit = await stray.call('PUT', '/api/workspace', { token: strayToken, body: before });
+      check('the server refuses to initialize when its calibration archive holds entries no archive record in the workspace names', refusedInit.status === 422 && /CALLOG-00001/.test(refusedInit.json?.error || '') && /no archive record/.test(refusedInit.json?.error || '') && !stray.server.store.getDoc('default'), JSON.stringify(refusedInit.json));
+    } finally { stray.server.store.close(); }
+  }
   // A workspace that names archived entries the server does not hold is refused at initialization.
   const { server, call } = makeServer();
   await server.ready;

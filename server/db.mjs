@@ -95,6 +95,8 @@ export function openDb(path) {
     // Runs fn inside one transaction; rolls back if it throws or returns false.
     async transaction(fn) { db.exec('BEGIN IMMEDIATE'); try { const r = await fn(this); if (r === false) { db.exec('ROLLBACK'); return r; } db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; } },
     async lockAuthority() {},
+    // A write already holds the database lock (BEGIN IMMEDIATE), so the workspace lock is a no-op here.
+    async lockDoc() {},
     putDoc(tenant, json, expectedEtag, by) {
       const cur = this.getDoc(tenant);
       if (cur && expectedEtag === null) return null; // null: the document must not exist yet (first initialization)
@@ -157,6 +159,7 @@ export function openDb(path) {
     },
     // ---- archived calibration entries (#130) ----
     calibrationArchived(id) { const r = db.prepare('SELECT entry_id, tag, record_id, json, sha256, archived_at, archived_by FROM calibration_archive WHERE entry_id = ?').get(id); return r ? { id: r.entry_id, tag: r.tag, recordId: r.record_id, entry: JSON.parse(r.json), sha256: r.sha256, archivedAt: r.archived_at, archivedBy: r.archived_by } : null; },
+    calibrationArchiveIds() { return db.prepare('SELECT entry_id FROM calibration_archive ORDER BY entry_id').all().map(r => r.entry_id); },
     putCalibrationArchived(e) { db.prepare('INSERT INTO calibration_archive (entry_id, tag, record_id, json, sha256, archived_at, archived_by) VALUES (?, ?, ?, ?, ?, ?, ?)').run(e.id, e.tag, e.recordId, e.json, e.sha256, now(), e.by || null); },
     // The archived entries for one tool, or all of them, in entry id order after the given entry id (a page cursor).
     calibrationArchiveList(tag, limit = 500, after = '') {

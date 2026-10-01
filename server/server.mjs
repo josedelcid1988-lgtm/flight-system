@@ -310,7 +310,12 @@ export function createServer(options = {}) {
       if (sha256hex(JSON.stringify(row.entry)) !== row.sha256) return `Archived calibration entry ${id} on this server no longer matches the SHA-256 it was stored with. Restore the server database from a good backup. Nothing was saved.`;
       held.push({ id, recordId: row.recordId, entry: row.entry });
     }
-    return host.MES.calibrationArchiveHeldProblem(state, held);
+    const heldProblem = host.MES.calibrationArchiveHeldProblem(state, held);
+    if (heldProblem) return heldProblem;
+    // Every row in the table must be one the workspace's archive records name: rows from elsewhere are not this history.
+    const namedIds = new Set(named), unnamed = (await store.calibrationArchiveIds()).filter(id => !namedIds.has(id));
+    if (unnamed.length) return `This server's calibration archive holds ${unnamed.length} entr${unnamed.length === 1 ? 'y' : 'ies'} that no archive record in the workspace names, starting with ${unnamed.slice(0, 5).join(', ')}. They belong to other history. Restore the server database that holds this workspace's calibration archive. Nothing was saved.`;
+    return null;
   };
   // At startup: a stored workspace that names archived calibration entries must find them intact, or the server refuses
   // to start, as it does for a tampered audit chain.
@@ -346,6 +351,9 @@ export function createServer(options = {}) {
     const rows = r.archived.map(e => { const json = JSON.stringify({ order: e.order, activity: e.activity }); return { id: e.order.id, json, sha256: sha256hex(json), schema: state.version, keys: e.keys, by: username }; });
     let etag = null, clash = null, queuedExports = [];
     await store.transaction(async tx => {
+      // Take the workspace lock before probing the archive tables, so concurrent writers wait here and the later one sees
+      // the rows the earlier one stored (a clash or a changed ETag) instead of failing on a duplicate insert.
+      await tx.lockDoc(TENANT);
       if (expectedEtag === null && await tx.getDoc(TENANT)) return false;
       for (const row of rows) { if (await tx.archivedSha(row.id)) { clash = row.id; return false; } await tx.putArchived(row); }
       for (const row of calibrationRows) { if (await tx.calibrationArchived(row.id)) { clash = row.id; return false; } await tx.putCalibrationArchived(row); }
