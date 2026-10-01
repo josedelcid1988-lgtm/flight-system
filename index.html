@@ -4944,18 +4944,20 @@ const OP_BOM_MAX = 12;
     return { lines: out };
   }
   // A released WI's operation BOM lines are per unit of the part. For a new work order each is multiplied by the order
-  // quantity; the kit merges a part listed on several operations into one line. Refused when the kit would hold more
-  // than 20 lines or a line more than 999, the limits a work order kit validates against.
+  // quantity; the kit merges a part listed on several operations into one line. `base` is the kit the order starts
+  // with (empty in production) and counts too. Refused when the kit would hold more than 20 lines or a line more than
+  // 999, the limits a work order kit validates against.
   const KIT_MAX = 20, KIT_LINE_MAX = 999;
-  function wiKitPlan(wi, quantity) {
+  function wiKitPlan(wi, quantity, base = []) {
     const qty = Number.isInteger(quantity) && quantity > 0 ? quantity : 1, byOp = new Map(), totals = new Map();
+    base.forEach(line => totals.set(line.partNumber, (totals.get(line.partNumber) || 0) + line.required));
     for (const op of (Array.isArray(wi?.operations) ? wi.operations : [])) {
       if (!Array.isArray(op.materials) || !op.materials.length) continue;
       const lines = op.materials.map(line => ({ ...JSON.parse(JSON.stringify(line)), required: line.required * qty }));
       byOp.set(op.id, lines);
       lines.forEach(line => totals.set(line.partNumber, (totals.get(line.partNumber) || 0) + line.required));
     }
-    if (totals.size > KIT_MAX) return { error: `${wiKey(wi)} lists ${totals.size} different BOM parts across its operations, and a work order kit holds up to ${KIT_MAX} lines. Ask Manufacturing Engineering to revise the WI's BOM before this order is created.` };
+    if (totals.size > KIT_MAX) return { error: `A work order from ${wiKey(wi)} would need ${totals.size} different kit parts, and a work order kit holds up to ${KIT_MAX} lines. Ask Manufacturing Engineering to revise the WI's BOM before this order is created.` };
     for (const [partNumber, total] of totals) if (total > KIT_LINE_MAX) return { error: `A quantity of ${qty} needs ${total} of ${partNumber}, and a kit line holds up to ${KIT_LINE_MAX}. Create the work order for a smaller quantity.` };
     return { byOp };
   }
@@ -7524,7 +7526,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
 
     // The kit starts from the WI's operation BOM, per unit times the order quantity. Checked before anything is created,
     // so an order whose kit would break the kit limits is refused with a plain reason instead of failing validation.
-    const kitPlan = wiKitPlan(wi, input.quantity);
+    const kitPlan = wiKitPlan(wi, input.quantity, materials());
     if (kitPlan.error) return fail(kitPlan.error);
     const number = Math.max(10000, ...state.orders.map(order => parseInt(order.id.slice(3), 10))) + 1;
     if (number > 99999999) return fail('The work order number limit has been reached.');
