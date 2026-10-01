@@ -50,6 +50,12 @@ check('importWorkOrders resolves as a server action', typeof host.resolveAction(
   check('the workspace validates and every manifest verifies', MES.validate(state) === true && MES.verifyManifests(state).ok === true, (MES.diagnose(state) || {}).detail);
 }
 
+{
+  const state = fresh();
+  const res = run(state, ops, () => MES.importWorkOrders(state, [HEADER, 'MWI-0002,A,Development,Mfg.,1,C3,,,,,'].join('\n')));
+  check('a single row reads as one draft', res.ok && /^Imported 1 work order as a draft: WO-\d+\.$/.test(res.message), res.message);
+}
+
 // ---- all or nothing: every refusal leaves the workspace untouched -------------------------------------------------
 const refused = (name, text, pattern) => {
   const state = fresh(), before = JSON.stringify(state);
