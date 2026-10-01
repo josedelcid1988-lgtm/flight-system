@@ -1970,7 +1970,9 @@ function ExecutionTab({ state, MES, order, selectedOp, skCan }) {
     const checks = draft.tools.filter(tag => !stepTags.has(String(tag).trim().toUpperCase())).map(tag => MES.toolCheck(tag, new Date().toISOString(), state));
     const needType = opp.buyoffType || 'Technician', stamp = MES.buyoffCredential(state.profile, needType);
     const usable = MES.calibratedToolChecks(state, new Date().toISOString()).filter(c => c.ok).map(c => c.tool);
-    const canBuyoff = stamp.ok && !MES.atpPending(opp).length && !(opp.classification === MES.EXTERNAL_CLASS && !opp.externalPO) && !(MES.WORK_CENTERS?.some(c => c.id === opp.workCenterId && c.external) && opp.externalReceipt?.status !== 'Accepted');
+    // Same wording as the buy-off dialog's list in index.html (buyoffPrereqs).
+    const holdReason = MES.atpPending(opp).length ? 'A software push on this ATP operation is waiting for Software Engineering to accept or reject it.' : (opp.classification === MES.EXTERNAL_CLASS && !opp.externalPO) ? 'Add the NetSuite PO for this sub-processing operation.' : (MES.WORK_CENTERS?.some(c => c.id === opp.workCenterId && c.external) && opp.externalReceipt?.status !== 'Accepted') ? 'Receiving records the ERP PO receipt and inspection for this external work.' : '';
+    const canBuyoff = stamp.ok && !holdReason;
     const signoffLine = stamp.override ? (() => { const ma = MES.masterAccess() || (window.skAuth && window.skAuth.actor && window.skAuth.actor()) || {}; return <>Master Access override · <strong>{asText(ma.name || 'Master Access')}</strong><br/>{asText(ma.credentialId || '')}</>; })() : (() => { const a = window.skAuth && window.skAuth.actor && window.skAuth.actor(); return <>{a && a.name && a.name !== state.profile.name ? <>Signed in as <strong>{asText(a.name)}</strong> · stamping as </> : 'Buy-off as '}<strong>{asText(state.profile.name)}</strong><br/><span className="mono">{asText(state.profile.credentialId)}</span> · Not a real signature</>; })();
     return <form id="operation-form" data-order={asText(ord.id)} data-op={asText(opp.id)}>
       {(opp.steps || []).length ? null : <><h3>Completion evidence</h3><label className="check-label"><input type="checkbox" name="instruction" defaultChecked={draft.instruction} required/><span> instruction reviewed</span></label><label className="check-label"><input type="checkbox" name="evidence" defaultChecked={draft.evidence} required/><span> completion evidence recorded</span></label></>}
@@ -1987,7 +1989,7 @@ function ExecutionTab({ state, MES, order, selectedOp, skCan }) {
       </fieldset>
       <div className="form-error" id="operation-error" role="alert"></div>
       {(opp.steps || []).length && !stepsDone(opp) ? null : <div className="task-actions"><p>{signoffLine}</p>
-        {(opp.steps || []).length ? <><button className="btn primary" type="button" data-action="buyoff-now" data-order={asText(ord.id)} data-op={asText(opp.id)} disabled={!canBuyoff}>Complete operation <Check size={16}/></button><button type="submit" hidden tabIndex="-1" aria-hidden="true"></button></> : <button className="btn primary" type="submit" disabled={!canBuyoff}>Complete operation <Check size={16}/></button>}
+        {(opp.steps || []).length ? <><button className="btn primary" type="button" data-action="buyoff-now" data-order={asText(ord.id)} data-op={asText(opp.id)} disabled={!stamp.ok}>Complete operation <Check size={16}/></button><button type="submit" hidden tabIndex="-1" aria-hidden="true"></button></> : <><button className="btn primary" type="submit" disabled={!canBuyoff} aria-describedby={stamp.ok && holdReason ? 'buyoff-hold-reason' : undefined}>Complete operation <Check size={16}/></button>{stamp.ok && holdReason ? <p className="disabled-reason" id="buyoff-hold-reason">{holdReason}</p> : null}</>}
       </div>}
     </form>;
   };

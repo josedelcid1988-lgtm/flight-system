@@ -207,8 +207,25 @@ try {
     // The PIN copied into the operation form's hidden buy-off field is cleared when the prompt closes without a buy-off.
     const copied = await page.evaluate(() => document.querySelector('#operation-form .buyoff-inline[hidden] [name=pin]')?.value);
     await page.locator('#step-stamp-form [data-action="close-dialog"]').click(); await page.waitForTimeout(200);
-    const cleared = await page.evaluate(() => document.querySelector('#operation-form .buyoff-inline[hidden] [name=pin]')?.value);
-    ok('the PIN copied for a refused buy-off is cleared when the prompt closes', copied === '2468' && cleared === '', JSON.stringify({ copied, cleared }));
+    const cleared = await page.evaluate(() => ({ copy: document.querySelector('#operation-form .buyoff-inline[hidden] [name=pin]')?.value, prompt: document.getElementById('step-stamp-pin')?.value }));
+    ok('the PIN copied for a refused buy-off is cleared when the prompt closes', copied === '2468' && cleared.copy === '', JSON.stringify({ copied, cleared }));
+    ok('the PIN in the closed prompt itself is cleared too', cleared.prompt === '', JSON.stringify(cleared));
+    await page.locator('.steps-complete [data-action="buyoff-now"]').click(); await page.waitForSelector('#step-stamp-form');
+    await page.fill('#step-stamp-number', fx.stamp); await page.fill('#step-stamp-pin', '2468');
+    // While the buy-off is being recorded the prompt cannot be closed; if it is closed anyway, nothing is recorded.
+    // The media check is made slow but passing, so only the closed prompt can stop the buy-off.
+    await page.evaluate(() => { window.__realEnsure = window.ensureMediaForBuyoff; window.ensureMediaForBuyoff = () => new Promise(r => setTimeout(r, 900)); });
+    await page.locator('#step-stamp-form button[type=submit]').click(); await page.waitForTimeout(150);
+    const locked = await page.evaluate(() => ({ err: document.getElementById('step-stamp-error')?.textContent, opErr: document.getElementById('operation-error')?.textContent, open: document.getElementById('dialog').open, pending: !!document.querySelector('#step-stamp-form[data-pending]'), closers: [...document.querySelectorAll('#dialog [data-action="close-dialog"]')].map(b => b.disabled), complete: document.querySelector('#step-stamp-form button[type=submit]').disabled }));
+    await page.keyboard.press('Escape'); await page.waitForTimeout(100);
+    ok('while a buy-off is pending, Not yet, the close button and Complete are disabled', locked.pending && locked.closers.length >= 2 && locked.closers.every(Boolean) && locked.complete, JSON.stringify(locked));
+    ok('while a buy-off is pending, Escape does not close the prompt', await page.evaluate(() => document.getElementById('dialog').open));
+    await page.evaluate(() => document.getElementById('dialog').close());
+    await page.waitForTimeout(1200);
+    d = await page.evaluate(a => ({ done: MES.getOrder(state, a.o).operations.find(x => x.id === a.op).done, error: document.getElementById('operation-error')?.textContent.trim(), closers: [...document.querySelectorAll('#dialog [data-action="close-dialog"]')].map(b => b.disabled) }), fx);
+    ok('a prompt closed while pending records nothing and says so', !d.done && /stamp prompt was closed/.test(d.error), JSON.stringify(d));
+    ok('the dialog close buttons work again for the next dialog', d.closers.every(b => !b), JSON.stringify(d));
+    await page.evaluate(() => { window.ensureMediaForBuyoff = window.__realEnsure; });
     await page.locator('.steps-complete [data-action="buyoff-now"]').click(); await page.waitForSelector('#step-stamp-form');
     await page.fill('#step-stamp-number', fx.stamp); await page.fill('#step-stamp-pin', '2468');
     // The real buy-off goes through and closes the dialog.
@@ -248,9 +265,16 @@ try {
     ok('FOD checklist branch', branches.fod.some(t => /FOD checklist .* > \.fod-checklist/.test(t)), JSON.stringify(branches.fod));
     ok('installation recording branch', branches.recording.some(t => /installation recording\. > \.installation-evidence/.test(t)), JSON.stringify(branches.recording));
     ok('rejected recording branch', branches.rejected.some(t => /rejected recording/.test(t)), JSON.stringify(branches.rejected));
+    const stepTool = await page.evaluate(() => { const o = state.orders.find(x => x.id === 'WO-10006'), op = structuredClone(o.operations.find(x => !x.done)); op.requiresTooling = false; op.steps = [{ id: 's1', title: 'Torque', instruction: 'Torque it.' }]; op.stepChecks = { s1: { torque: { tool: 'NOT-IN-LOG-1', value: '5', unit: 'in-lb' } } }; return buyoffPrereqs(o, op).map(x => x.text); });
+    ok('a tool captured on a step that is not usable is listed as a blocker', stepTool.some(t => /NOT-IN-LOG-1/.test(t)), JSON.stringify(stepTool));
     ok('torque value branch', branches.torque.some(t => /^Enter the torque value applied with .* > #torque-/.test(t)), JSON.stringify(branches.torque));
     const eng = await page.evaluate(() => { const s = structuredClone(state), o = s.orders.find(x => x.id === 'WO-10006'), op = o.operations.find(x => !x.done); return MES.completeOperation(s, o.id, op.id, '', { stampNumber: MES.buyoffCredential(s.profile, op.buyoffType).holder?.number }); });
     ok('the engine still refuses a buy-off with the standard inspection unconfirmed', !eng.ok && /standard inspection|Check off/.test(eng.message), JSON.stringify(eng));
+    // An operation with no steps held by an external PO: Complete operation is disabled and says why next to the button.
+    await page.evaluate(() => { const o = state.orders.find(x => x.id === 'WO-10006'), op = o.operations.find(x => !x.done); op.steps = []; op.stepChecks = {}; op.classification = MES.EXTERNAL_CLASS; op.externalPO = null; openOrder(o.id); });
+    await page.waitForTimeout(400);
+    const hold = await page.evaluate(() => { const b = document.querySelector('#operation-form .task-actions button[type=submit]'), r = document.getElementById('buyoff-hold-reason'); return { found: !!b, disabled: b?.disabled, described: b?.getAttribute('aria-describedby'), reason: r?.textContent.trim(), visible: !!r && r.offsetParent !== null }; });
+    ok('a held no-step buy-off shows its reason beside the disabled button', hold.found && hold.disabled && hold.visible && hold.reason === 'Add the NetSuite PO for this sub-processing operation.' && hold.described === 'buyoff-hold-reason', JSON.stringify(hold));
     await page.context().close();
   }
 } catch (error) {
