@@ -7759,6 +7759,8 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const operation = order.operations.find(item => item.id === opId);
     if (order.status !== 'Building' || !operation || operation.done || order.operations.find(item => !item.done) !== operation) return { error: 'Video evidence can change only on the current, unfinished Building operation.' };
     if (blockingTickets(order, opId).length) return { error: 'Resolve the open hold on this operation before changing video evidence.' };
+    // Rejecting a pending sequence change drops the operations it added, so they take no recordings until QA decides.
+    if (pendingSequenceChange(order) && Array.isArray(order.sequenceBaseline) && !order.sequenceBaseline.some(item => item && item.id === opId)) return { error: 'This operation was added by a sequence change that is waiting for QA. Record video evidence after QA approves the change.' };
     return { order, operation };
   }
 
@@ -13349,7 +13351,7 @@ function fileRemover(d){
 function removeFileDialog(d, name, from){
   const reopen = from && from.closest && from.closest('#dialog') ? (d.scope==='ticket' ? 'ticket' : d.scope==='mnv' ? 'files' : '') : '';
   const attrs = ['scope','order','op','ticket','kind','rec','file'].filter(k=>d[k]).map(k=>`data-${k}="${esc(d[k])}"`).join(' ');
-  openDialog('Remove this file?', `<p>This takes <strong>${esc(name)}</strong> off the record. The file is not erased: it stays in quarantine on the record with your reason, who removed it and when.</p><div class="field"><label for="remove-file-reason">Reason for removal</label><textarea id="remove-file-reason" maxlength="300" minlength="3" rows="2" required placeholder="e.g. attached to the wrong record, replaced by a corrected file"></textarea></div><p id="remove-file-error" class="form-error" role="alert"></p><div class="dialog-actions"><button class="btn" data-action="close-dialog">Keep file</button><button class="btn primary" data-action="confirm-remove-file" ${attrs} data-reopen="${reopen}">Remove and quarantine</button></div>`);
+  openDialog('Remove this file?', `<p>This takes <strong>${esc(name)}</strong> off the record. The file is not erased: it stays in quarantine on the record with your reason, who removed it and when.</p><div class="field"><label for="remove-file-reason">Reason for removal</label><textarea id="remove-file-reason" maxlength="300" minlength="3" rows="2" required placeholder="e.g. attached to the wrong record, replaced by a corrected file"></textarea></div><p id="remove-file-error" class="form-error" role="alert"></p><div class="dialog-actions"><button class="btn" data-action="${reopen ? 'keep-file' : 'close-dialog'}" ${attrs} data-reopen="${reopen}">Keep file</button><button class="btn primary" data-action="confirm-remove-file" ${attrs} data-reopen="${reopen}">Remove and quarantine</button></div>`);
   document.getElementById('remove-file-reason')?.focus();
 }
 // A data URL is decoded to the exact bytes it holds: base64 as written, and percent escapes as octets, with any
@@ -13369,8 +13371,10 @@ function dataUrlBlob(url){
   return new Blob([bytes],{type:m[1]||'application/octet-stream'});
 }
 document.addEventListener('click', event => {
-  const b = event.target.closest('[data-action="confirm-remove-file"], [data-action="att-q-download"]'); if (!b || b.disabled) return;
+  const b = event.target.closest('[data-action="confirm-remove-file"], [data-action="att-q-download"], [data-action="keep-file"]'); if (!b || b.disabled) return;
   const d = b.dataset;
+  // Keep file returns to the ticket or record the removal was started from, as a completed removal does.
+  if (d.action === 'keep-file') { $('#dialog').close(); if (d.reopen === 'ticket') ticketDialog(d.ticket); else if (d.reopen === 'files' && window.recordFilesDialog) recordFilesDialog(d.kind, d.rec); return; }
   if (d.action === 'att-q-download') {
     const f = fileHolder(d).quarantined.find(x => x.id === d.file); let blob = null;
     try { blob = f && dataUrlBlob(f.dataUrl); } catch { return notify('This quarantined file could not be decoded for download. Its stored record is unchanged; ask an administrator to export the workspace for the original content.'); }

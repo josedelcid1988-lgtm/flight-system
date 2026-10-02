@@ -576,6 +576,21 @@ function surfaces(state) {
   check('a well-formed data URL is still accepted', ok.ok);
 }
 
+// ---- engine: an operation added by a pending sequence change takes no recording until QA decides ----
+{
+  const state = curated(), qmUser = { username: 'quar-qm', displayName: 'Quincy Manager', role: 'qm' };
+  const { order, op } = recordingTarget(state);
+  const at = order.operations.indexOf(op);
+  const added = host.withAccount(me, () => MES.addOrderOperation(state, order.id, { title: 'Prep surface', description: 'Prepare the surface.', steps: 'Clean surface', position: at, buyoffType: 'Technician', classification: 'Manufacturing', callouts: [] }), state);
+  const fresh = order.operations.find(x => !x.done);
+  check('a sequence change inserts a new current operation for the recording check', added.ok && !!MES.pendingSequenceChange(order) && !(order.sequenceBaseline || []).some(b => b.id === fresh.id));
+  const before = JSON.stringify(state);
+  const refused = host.withAccount(technician, () => MES.attachEvidence(state, order.id, fresh.id, clip(evId(990))), state);
+  check('a recording on an operation added by a pending sequence change is refused with what to do, and nothing changes', !refused.ok && /added by a sequence change that is waiting for QA/.test(refused.message) && JSON.stringify(state) === before);
+  const rejected = host.withAccount(qmUser, () => MES.rejectSequenceChange(state, order.id, 'Not needed on this build.'), state);
+  check('so the sequence change can still be rejected', rejected.ok && !MES.pendingSequenceChange(order));
+}
+
 // ---- engine: a sequence change that would copy files past the workspace limit is refused before anything changes ----
 {
   const state = curated();
@@ -824,6 +839,10 @@ function surfaces(state) {
     // A quality record file, removed from the record files dialog, goes the same way.
     const rec = await page.evaluate(photo => { FlightManeuver.ensure(state); const raised = FlightManeuver.raiseNC(state, { sourceType: 'Serial number', type: 'NC', title: 'Scratched housing', description: 'Scratch on the housing face.', partNumber: 'SR-IH-040', revision: 'A', serial: 'IH-040-AQ2', quantity: 1, foundAt: 'Stock', pedigree: 'Production', escaped: 'no' }); if (!raised.ok) return { error: raised.message }; const nc = FlightManeuver.get(state, 'ncs', raised.id); const r = FlightManeuver.addRecordFile(state, 'ncs', nc.id, photo); if (!r.ok || !save()) return { error: r.message }; recordFilesDialog('ncs', nc.id); return { id: nc.id, file: nc.attachments.at(-1).id }; }, photo);
     assert.equal(rec.error, undefined, `a record file is added for the page check: ${rec.error}`);
+    // Keep file goes back to the record's files, as a completed removal does, and removes nothing.
+    await page.locator(`#dialog [data-action="rec-att-remove"][data-file="${rec.file}"]`).click();
+    await dialog.getByRole('button', { name: 'Keep file' }).click();
+    check('Keep file returns to the record files dialog it was started from and changes nothing', await page.locator(`#dialog [data-action="rec-att-remove"][data-file="${rec.file}"]`).count() === 1 && await page.evaluate(r => FlightManeuver.get(state, 'ncs', r.id).attachments.some(f => f.id === r.file), rec));
     await page.locator(`#dialog [data-action="rec-att-remove"][data-file="${rec.file}"]`).click();
     await page.locator('#remove-file-reason').fill('Duplicate of the inspection photo.');
     await dialog.getByRole('button', { name: 'Remove and quarantine' }).click();
