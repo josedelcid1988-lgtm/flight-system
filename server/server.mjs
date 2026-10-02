@@ -1111,6 +1111,9 @@ export function createServer(options = {}) {
         void drainExports();
         send(res, 202, { id: job.id, status: job.status, exportId: job.exportId }); return;
       }
+      // -- access review: the account list and its lockouts for the read-only access review report, managers only.
+      // It changes nothing; the page derives every status from the same authority functions it enforces with. --
+      if (route === '/auth/access-report' && m === 'GET') { if (!manages(session.account)) { send(res, 403, { error: 'Only a QA Manager or Master Access account opens the access review report. Ask one of them for a copy.' }); return; } send(res, 200, { generatedAt: new Date().toISOString(), by: session.username, users: (await store.accounts()).map(publicAccount), lockouts: await store.lockouts() }); return; }
       // -- lockouts: listed and cleared by a manager, one named user at a time, with a reason, audited --
       if (route === '/auth/lockouts' && m === 'GET') { if (!manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can see lockouts.' }); return; } send(res, 200, { lockouts: await store.lockouts() }); return; }
       if (route === '/auth/unlock' && m === 'POST') {

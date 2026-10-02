@@ -11,6 +11,27 @@ What changed in Flight System, newest first. The build id is set in `VERSION.md`
 the end of `VERSION.md` names the exact files and the suite results for the build. Storage keys, form
 numbers and record number formats have not changed in any entry below.
 
+
+## Access review report and plain reasons for blocked permissions
+
+Read only: no rule, permission, role, grant, stamp or training behavior changed, and nothing is written to the
+workspace or the accounts.
+
+- **Access review report.** On the Admin page a QA Manager or Master Access account opens and prints "Access
+  review: who can do what": every account with its primary role, extra roles (Paused with the reason while their
+  training is not current), the conformity and AQI authorities (Active, Paused with the reason, Not active when
+  the grant record does not verify, such as one made to oneself or altered, or Not granted), each stamp with
+  type, status, issue and expiry dates and whether it is valid now, Support Access, the sign-in lockout and the
+  effective capabilities. It shows when it was generated, by whom and the build id, and prints through the
+  usual record print (the demo print says DEMO, NOT FOR ACCEPTANCE). Every status comes from the functions that
+  enforce access (`capsOf`, `grantActive`, `grantValid`, `extraRoleActive`, `MES.trainingCurrentFor`,
+  `MES.hasValidInspectionStamp`). Anyone else, a Quality Supervisor included, is refused with a plain message.
+  With a server, `GET /api/auth/access-report` applies the same manager gate as lockouts and the audit log and
+  supplies the accounts and the lockouts in force.
+- **Why blocked.** The Admin page (Accounts and roles) lists, per account, one plain sentence for each blocked
+  or paused permission, and Your credentials lists the signed-in person's own, for example "Inspection is
+  paused: Quality stamp SKY-0002 expired on Jan 1, 2026. Ask the QA Manager to renew it."
+
 ## Work orders frozen in QA review; signed QA send back to Building (#542)
 
 QA Manager decision: once a work order is sent to QA, no changes are allowed. Saved workspaces open as they are.
