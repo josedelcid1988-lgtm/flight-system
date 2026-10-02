@@ -1,5 +1,10 @@
 # Flight System server components
 
+Every response carries browser security headers (`server/security-headers.mjs`). The page may call only
+this server unless `FLIGHT_CSP_CONNECT_SRC` lists more origins: set it when `index.html` is set up for
+Okta (`SK_IDENTITY`), the mirror (`SK_MIRROR`) or an integration bridge (`SK_INTEGRATIONS`), or the
+browser blocks those calls.
+
 The main authenticated MES server is `server/server.mjs`; SQLite and PostgreSQL setup, backups, and the PostgreSQL integration check are documented in [`docs/DATABASES.md`](../docs/DATABASES.md).
 
 ## PostgreSQL backup and restore

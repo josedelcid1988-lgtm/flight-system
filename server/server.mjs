@@ -921,7 +921,8 @@ export function createServer(options = {}) {
       const action = /^\/workspace\/actions\/([A-Za-z0-9_.]+)$/.exec(route);
       if (action && m === 'POST') {
         // Every refusal on this route is audited, as PUT /workspace refusals are (#582): the action name, the status and
-        // a reason. The request arguments are never recorded; they can carry record content or a probe's payload.
+        // a reason. The request arguments themselves are never recorded; reasons and engine messages are capped at 500
+        // characters.
         const auditRefusal = async (status, reason, extra = {}) => { await store.audit(session.username, 'action-refused', { action: action[1].slice(0, 120), status, reason: String(reason).slice(0, 500), ...extra }); };
         const fn = host.resolveAction(action[1]);
         if (!fn) { await auditRefusal(404, 'no such action'); send(res, 404, { error: `No action named ${action[1]}.` }); return; }
@@ -1194,7 +1195,8 @@ const SECRET_SETTING = /^\s*(?:[a-z_]*password|oauth_client_secret|scram_(?:clie
 export function connectionStringHasPassword(value) {
   const text = String(value || '').trim();
   const uri = /^[a-z][a-z0-9+.-]*:\/\//i.exec(text);
-  if (!uri) return text.split(/\s+/).some(pair => { const eq = pair.indexOf('='); return eq > 0 && SECRET_SETTING.test(pair.slice(0, eq)) && pair.slice(eq + 1) !== '' && pair.slice(eq + 1) !== "''"; });
+  // keyword=value form: libpq allows white space around the =, and a quoted value may hold spaces.
+  if (!uri) return [...text.matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*=\s*('(?:\\.|[^'\\])*'?|[^\s']\S*|)/g)].some(([, key, value]) => SECRET_SETTING.test(key) && value !== '' && value !== "''");
   const rest = text.slice(uri[0].length), at = rest.indexOf('@'), slash = rest.indexOf('/');
   if (at >= 0 && (slash < 0 || at < slash)) { const userinfo = rest.slice(0, at); if (userinfo.includes(':') && userinfo.slice(userinfo.indexOf(':') + 1) !== '') return true; }
   else if (at >= 0 && rest.slice(0, slash).split(',').some(host => /:[^:\]]*$/.test(host) && !/:\d*$/.test(host))) return true;
@@ -1208,8 +1210,10 @@ export const DATABASE_URL_PASSWORD_REFUSAL = 'The --database-url connection stri
 // FLIGHT_DATABASE_URL is the way to give a password. A --database-url that carries one is refused (#584): the
 // command line of a running process is readable from the process list for its whole life. The refusal never
 // repeats the string.
-export function storeSettings(arg, env = process.env) {
-  const dbOverride = arg('db', null), cliUrl = arg('database-url', null);
+// --database-url=<url> is read too, so a password written that way is refused instead of left unread in argv.
+export function storeSettings(arg, env = process.env, argv = process.argv) {
+  const joined = argv.find(item => String(item).startsWith('--database-url='));
+  const dbOverride = arg('db', null), cliUrl = arg('database-url', null) || (joined ? joined.slice('--database-url='.length) || null : null);
   if (cliUrl && connectionStringHasPassword(cliUrl)) throw Object.assign(new Error(DATABASE_URL_PASSWORD_REFUSAL), { code: 'DATABASE_URL_PASSWORD' });
   return {
     dbPath: dbOverride || env.FLIGHT_DB || path.join(ROOT, 'data', 'flight.sqlite'),

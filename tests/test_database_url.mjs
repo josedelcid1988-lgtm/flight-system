@@ -30,7 +30,10 @@ const withPassword = [
   `host=db user=flight password=${SECRET} dbname=flight`,
   `host=db password='${SECRET} with spaces'`,
   `host=db sslpassword=${SECRET}`,
-  `host=db scram_client_key=${SECRET}`
+  `host=db scram_client_key=${SECRET}`,
+  `host=db user=flight password = ${SECRET} dbname=flight`,
+  `host=db password =${SECRET}`,
+  `host=db password= '${SECRET}'`
 ];
 const withoutPassword = [
   'postgresql://flight@db/flight',
@@ -56,6 +59,12 @@ for (const url of withPassword) {
 }
 ok('the refusal names FLIGHT_DATABASE_URL and says nothing was started', /FLIGHT_DATABASE_URL/.test(DATABASE_URL_PASSWORD_REFUSAL) && /did not start/.test(DATABASE_URL_PASSWORD_REFUSAL));
 ok('--database-url without a password is accepted', storeSettings(argsOf({ 'database-url': 'postgresql://flight@db/flight' }), { FLIGHT_DATABASE_URL: 'postgresql://other@db/other' }).databaseUrl === 'postgresql://flight@db/flight');
+{
+  let error = null;
+  try { storeSettings(argsOf({}), {}, ['node', 'server.mjs', `--database-url=postgresql://flight:${SECRET}@db/flight`]); } catch (e) { error = e; }
+  ok('--database-url=<url> carrying a password is refused too', !!error && error.code === 'DATABASE_URL_PASSWORD' && !error.message.includes(SECRET));
+  ok('--database-url=<url> without a password is read', storeSettings(argsOf({}), {}, ['node', 'server.mjs', '--database-url=postgresql://flight@db/flight']).databaseUrl === 'postgresql://flight@db/flight');
+}
 ok('FLIGHT_DATABASE_URL with a password is accepted (the environment is not the process list)', storeSettings(argsOf({}), { FLIGHT_DATABASE_URL: `postgresql://flight:${SECRET}@db/flight` }).databaseUrl === `postgresql://flight:${SECRET}@db/flight`);
 ok('--db still picks SQLite over FLIGHT_DATABASE_URL', (s => s.databaseUrl === null && s.dbPath === 'x.sqlite')(storeSettings(argsOf({ db: 'x.sqlite' }), { FLIGHT_DATABASE_URL: 'postgresql://flight@db/flight' })));
 ok('with nothing named, FLIGHT_DB or the default SQLite file', storeSettings(argsOf({}), { FLIGHT_DB: 'y.sqlite' }).dbPath === 'y.sqlite' && storeSettings(argsOf({}), {}).databaseUrl === null);
