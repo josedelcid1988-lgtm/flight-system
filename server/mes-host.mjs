@@ -110,9 +110,10 @@ export function createHost(indexPath, html = fs.readFileSync(indexPath, 'utf8'))
     const owner = owners[namespace];
     return owner && typeof owner[functionName] === 'function' && !functionName.startsWith('_') ? owner[functionName] : null;
   }
-  // The HTTP action route is a mutation boundary. Only engine functions that the browser
-  // classifies as commands may be invoked there; getters, migration helpers and signature
-  // primitives must never become remotely callable just because they are exported on MES.
+  // The HTTP action route is a mutation boundary, and the explicit list further down (actionAllow) is the only thing
+  // that decides it. The name rule, exact names and exclusions here do not make anything callable: they are the
+  // review aid that proposes candidates (tests/test_server_security.mjs fails while a command-like export is neither
+  // listed nor excluded) and the page mirrors them to decide which calls it sends to the server.
   const actionName = /^(?:run|add|update|remove|delete|create|complete|close|issue|approve|reject|sign|mark|assign|advance|resolve|disposition|request|release|record|submit|start|stop|review|accept|return|void|reopen|split|move|link|verify|raise|cancel|withdraw|incorporate|peer|roll|set|save|store|open|finish|grant|revoke|capture|attach|detach|quarantine|repair|replace|send|change|configure|stamp|buyoff|log|tick|decide|vote|reset|publish|apply|import|reinspect|firm|convert|carry|propose|escalate|select|clock|aqi|post|acknowledge|edit|revise|ping|push|ical|check|notify|qa|note)/i;
   const actionExact = new Set(['containNC', 'effectivenessCheck', 'pfmeaSafetyBuyoff', 'pruneExpiredNotices']);
   const actionExclude = new Set(['repair','signManifest','verifyManifests','verifyAIActionLog','stampCheck','stampRegister','stampRegisterProblem','stampRegisterCsv','stampCredential','stampHolderFor','ticketAttachments','openProcessECRs','syncAssignments','buyoffCredential','ensure','seedDemoRecords','icalExport','openMaintenanceFor',
@@ -127,11 +128,12 @@ export function createHost(indexPath, html = fs.readFileSync(indexPath, 'utf8'))
     // Rolls a work order revision for the approval that owns the change (sequence change, engineering change).
     'rollWorkOrderRevision']);
 
-  // The reviewed commands, by namespace. The prefix rule above only proposes; a function is callable remotely
-  // only when it is named here too, so a new engine export is refused until someone reviews it and adds it (the
-  // page's serverMutatorAllow must carry the same list; tests/test_server.mjs compares them, and
-  // tests/test_server_security.mjs fails while any command-like function is neither listed nor excluded).
-  const actionAllow = new Set([
+  // The reviewed commands, by namespace: the complete set of engine functions the action route may run. A function
+  // is callable remotely only when its qualified name is here, whatever it is called, so a new engine export is
+  // refused until someone reviews it and adds it. The list is frozen and pinned by tests/test_server_security.mjs, so
+  // an addition is a deliberate, reviewed change; the page's serverMutatorAllow must carry the same names
+  // (tests/test_server.mjs compares them).
+  const actionAllow = Object.freeze([
     'MES.addSavedView', 'MES.removeSavedView',
     'MES.recordCalibration', 'MES.importCalibrations', 'MES.updateCalibration', 'MES.recordCalibrationArchive',
     'MES.addAttachment', 'MES.addTicketAttachment', 'MES.removeTicketAttachment', 'MES.removeAttachment',
@@ -187,11 +189,12 @@ export function createHost(indexPath, html = fs.readFileSync(indexPath, 'utf8'))
     'FlightManeuver.completePfmeaAnalysis', 'FlightManeuver.setPfmeaAction', 'FlightManeuver.closePfmeaAction',
     'FlightManeuver.completePfmeaActions', 'FlightManeuver.pfmeaSafetyBuyoff'
   ]);
+  // Looked up through a private copy, so nothing outside this module can widen the boundary.
+  const allowedActions = new Set(actionAllow);
   function resolveAction(name) {
     const text = String(name), qualified = text.includes('.') ? text : `MES.${text}`;
     const [namespace, functionName, extra] = qualified.split('.');
-    if (extra !== undefined || !actionAllow.has(qualified)) return null;
-    if (!(actionName.test(functionName) || actionExact.has(functionName)) || actionExclude.has(functionName)) return null;
+    if (extra !== undefined || !allowedActions.has(qualified)) return null;
     const owner = { MES, FlightPlan, FlightManeuver }[namespace];
     return owner && Object.hasOwn(owner, functionName) ? resolve(qualified) : null;
   }

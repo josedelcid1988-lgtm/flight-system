@@ -94,29 +94,66 @@ try {
     }
   });
 
-  // #30: a remote command must be named on the reviewed list; matching a command-like prefix is not enough.
+  // #30, #594: the action route runs only the functions named on an explicit, frozen list. The name rule only proposes
+  // candidates for review; matching it never makes a function callable.
   await check('only reviewed engine commands are remotely callable', async () => {
-    const host = server.host, allow = host.actionAllow;
-    assert.ok(allow instanceof Set && allow.size > 100, 'the server carries an explicit list of commands');
-    for (const name of allow) assert.equal(typeof host.resolveAction(name), 'function', `${name} on the list resolves`);
+    const host = server.host, allow = host.actionAllow, listed = new Set(allow);
+    assert.ok(Array.isArray(allow) && Object.isFrozen(allow) && allow.length > 100, 'the server carries an explicit, frozen list of commands');
+    assert.equal(listed.size, allow.length, 'no command is listed twice');
+    for (const name of allow) {
+      assert.equal(typeof host.resolveAction(name), 'function', `${name} on the list resolves`);
+      // Byte-identical for a listed command: the route runs the same engine function it ran before the list decided.
+      assert.equal(host.resolveAction(name), host.resolve(name), `${name} resolves to the engine function itself`);
+    }
     // Review gate: every exported engine function the prefix rule would take is either listed or excluded, so a
     // new one fails here until someone decides which it is.
     const unreviewed = [];
     for (const ns of ['MES', 'FlightPlan', 'FlightManeuver']) for (const key of Object.keys(host[ns])) {
       if (typeof host[ns][key] !== 'function' || key.startsWith('_')) continue;
-      if ((host.actionPattern.test(key) || host.actionExact.has(key)) && !host.actionExclude.has(key) && !allow.has(`${ns}.${key}`)) unreviewed.push(`${ns}.${key}`);
+      if ((host.actionPattern.test(key) || host.actionExact.has(key)) && !host.actionExclude.has(key) && !listed.has(`${ns}.${key}`)) unreviewed.push(`${ns}.${key}`);
     }
     assert.deepEqual(unreviewed, [], 'every command-like engine function has been reviewed');
+    // Nothing off the list resolves, whatever its name: every exported function is callable exactly when listed.
+    for (const ns of ['MES', 'FlightPlan', 'FlightManeuver']) for (const key of Object.keys(host[ns])) {
+      if (typeof host[ns][key] !== 'function') continue;
+      assert.equal(typeof host.resolveAction(`${ns}.${key}`) === 'function', listed.has(`${ns}.${key}`), `${ns}.${key} is callable exactly when it is on the list`);
+    }
     assert.equal(host.resolveAction('MES.openMaintenanceFor'), null, 'a read that only looks like a command is not callable');
     assert.equal(typeof host.resolveAction('setPriority'), 'function', 'an unqualified name means MES');
-    for (const name of ['MES.constructor', 'MES.hasOwnProperty', 'FlightPlan.setPriority', 'Object.assign']) assert.equal(host.resolveAction(name), null, `${name} is not a command`);
+    for (const name of ['MES.constructor', 'MES.hasOwnProperty', 'MES.__proto__', 'FlightPlan.setPriority', 'Object.assign', 'MES.setPriority.call', 'mes.setPriority', 'MES.SETPRIORITY', '']) assert.equal(host.resolveAction(name), null, `${name || 'an empty name'} is not a command`);
+  });
+  // The list cannot be widened from outside the module: the exported copy is frozen and the route reads a private one.
+  await check('the reviewed command list cannot be changed at run time', async () => {
+    const host = server.host;
+    assert.throws(() => { host.actionAllow.push('MES.quarantineOrder'); }, TypeError, 'the exported list refuses an addition');
+    assert.throws(() => { host.actionAllow[0] = 'MES.quarantineOrder'; }, TypeError, 'the exported list refuses a replacement');
+    host.actionExact.add('quarantineOrder'); host.actionExclude.delete('quarantineOrder');
+    try { assert.equal(host.resolveAction('MES.quarantineOrder'), null, 'widening the review aid does not make a function callable'); }
+    finally { host.actionExact.delete('quarantineOrder'); host.actionExclude.add('quarantineOrder'); }
+  });
+  // Additions are deliberate: changing the list changes this pin, so the change shows in review with the reason.
+  await check('the reviewed command list is pinned', async () => {
+    const allow = server.host.actionAllow, digest = createHash('sha256').update([...allow].sort().join('\n')).digest('hex');
+    assert.equal(allow.length, 224, 'the number of reviewed commands');
+    assert.equal(digest, '23f52d4f5f72cb7faa02b614e3c1d6de881c37b3627e6a37fee0a53220847ce5', 'the reviewed command list changed: review the change, then update this pin and its count');
+  });
+  // A function named like a command but not on the list is refused and the refusal is audited, nothing changes.
+  await check('a command-like function off the list is refused and audited', async () => {
+    const host = server.host;
     host.MES.setUnreviewedThing = state => { state.touched = true; return { ok: true }; };
     try {
+      assert.ok(host.actionPattern.test('setUnreviewedThing'), 'the name matches the old command-name rule');
       assert.equal(host.resolveAction('MES.setUnreviewedThing'), null, 'a new exported function is not callable until it is added to the list');
-      const before = await server.store.getDoc('default');
-      const r = await api('POST', '/workspace/actions/MES.setUnreviewedThing', { token: adminToken, body: { args: [] }, headers: { 'If-Match': before ? before.etag : '"none"' } });
-      assert.equal(r.status, 404, JSON.stringify(r.json));
-      assert.deepEqual(await server.store.getDoc('default'), before, 'nothing changed');
+      for (const name of ['MES.setUnreviewedThing', 'MES.quarantineOrder', 'MES.rollWorkOrderRevision', 'MES.repair']) {
+        assert.ok(host.actionPattern.test(name.split('.')[1]), `${name} matches the old command-name rule`);
+        const before = await server.store.getDoc('default');
+        const r = await api('POST', `/workspace/actions/${name}`, { token: adminToken, body: { args: [] }, headers: { 'If-Match': before ? before.etag : '"none"' } });
+        assert.equal(r.status, 404, JSON.stringify(r.json));
+        assert.equal(r.json.error, `No action named ${name}.`);
+        assert.deepEqual(await server.store.getDoc('default'), before, `${name}: nothing changed`);
+        const rows = await server.store.auditRows(1000);
+        assert.ok(rows.some(row => row.action === 'action-refused' && row.username === 'sec-admin' && JSON.parse(row.detail || '{}').action === name), `${name}: the refusal is audited`);
+      }
     } finally { delete host.MES.setUnreviewedThing; }
   });
 
