@@ -821,6 +821,11 @@ const orderChanges = {
         for (const t of ['record', 'operations']) { if (await u.page.locator('#main [data-action=pedigree-approve]').count()) break; await u.orderTab(t); }
         await u.click('[data-action=pedigree-approve]');
         if (await u.dialogOpen()) { if (await u.page.locator('#dialog[open] [name=acknowledge]').count()) await u.fill('#dialog[open]', { acknowledge: true }); await u.submitDialog(); }
+        if (i === 0 && (await u.order(id)).pedigreeChange) {
+          // D-46: after the first approval the demo tells one person they may give the second, not to find another discipline.
+          const said = await u.toast(), panel = await u.page.locator('#main').innerText().catch(() => '');
+          u.check('after the first pedigree approval the demo does not send the solo user to another discipline', !/different discipline/i.test(said + panel) && /in this demo the same person may give it/.test(said), said);
+        }
       }
       const o = await u.order(id);
       if (o.pedigreeChange || o.pedigree !== 'Development') throw new Error(`pedigree is ${o.pedigree}, change ${JSON.stringify(o.pedigreeChange)}: ` + await u.toast());
@@ -837,6 +842,9 @@ const orderChanges = {
       for (const t of ['record', 'operations']) { if (await u.page.locator('#main [data-action=closure-decide]').count()) break; await u.orderTab(t); }
       const review = u.page.locator('#main [data-action=closure-decide]').first();
       if (!await review.count()) throw new Error('no Review closure control for the requester: ' + (await u.page.locator('#main .closure-pending').innerText().catch(() => '')).slice(0, 200));
+      // D-47: the banner next to Review closure does not tell the requester to find a different person.
+      const banner = await u.page.locator('#main').innerText().catch(() => '');
+      u.check('the pending closure banner gives the requester the solo next step', !/approval from a different person/i.test(banner) && /in this demo the requester may review it/.test(banner), banner.slice(0, 200));
       await review.click(); await u.settle();
       if (await u.dialogOpen()) { if (await u.page.locator('#dialog[open] [name=acknowledge]').count()) await u.fill('#dialog[open]', { acknowledge: true }); const note = u.page.locator('#dialog[open] textarea').first(); if (await note.count()) await note.fill('Approved: demand reduced.'); await u.submitDialog(); }
       const o = await u.order(child);

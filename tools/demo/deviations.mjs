@@ -203,6 +203,25 @@ const LIST = [
     why: 'The workspace check accepts a maintenance record verified and closed by the person who opened it, matching the closing rule lifted above, so the change saves instead of rolling back. Production rejects such a record.',
     find: 'item.closedBy.credentialId !== item.openedBy.credentialId', count: 1,
     replace: (ctx, m, id) => `(true /* DEMO ${id} */ || ${m})` },
+  { area: 'Separation of duties', title: 'Pedigree change text says one person may give both approvals',
+    why: 'The pedigree change dialog, panel, request and approval messages and their history entries match the relaxations D-22 and D-39, so a solo walk-through is not told to find a second discipline. Production keeps the different discipline wording.',
+    find: /First approval recorded\. A second approval from a different discipline is needed\.|One more approval from a different discipline required\.|Second approval must come from a different discipline; General User accounts cannot approve\.|Two approvals from different disciplines required\. Reason: \$\{|Two approvals from different disciplines are needed\.|two approvals from two different disciplines \(/g, count: 6,
+    // The first approval message is a single-quoted string; the others sit inside template literals.
+    replace: (ctx, m, id) => m.startsWith('First') ? `First approval recorded. A second approval is needed; in this demo the same person may give it.'/* DEMO ${id} */+'`
+      : `\${''/* DEMO ${id} */}` + (m.startsWith('One') ? 'One more approval required; in this demo the same person may give it.'
+      : m.startsWith('Second') ? 'Two approvals are needed; in this demo one person may give both. General User accounts cannot approve.'
+      : m.startsWith('two') ? 'two approvals; in this demo one person may give both. Approvers hold an approving role ('
+      // The request history line ends in the reason; recorded history already in a workspace is left as written.
+      : m.includes('Reason') ? 'Two approvals required; in this demo one person may give both. Reason: ${'
+      : 'Two approvals are needed; in this demo one person may give both.') },
+  { area: 'Separation of duties', title: 'Closure request text says the requester may review it',
+    why: 'The pending closure banner matches the relaxation D-40, which shows Review closure to the requester, so it does not tell a solo walk-through to find another person. Production asks for Quality approval from a different person.',
+    find: 'Needs Quality approval from a different person.', count: 1,
+    replace: (ctx, m, id) => `\${''/* DEMO ${id} */}Needs Quality approval; in this demo the requester may review it.` },
+  { area: 'Separation of duties', title: 'Analysis draft review message says the reviewer may accept it',
+    why: 'The message after an analysis draft is reviewed matches the relaxation D-41, so a solo walk-through is told its real next step. Production says a different qualified person must accept it.',
+    find: 'reviewed. A different qualified person must accept it.', count: 1,
+    replace: (ctx, m, id) => `reviewed.\${''/* DEMO ${id} */} In this demo the reviewer may accept it next.` },
 ];
 
 export const DEVIATIONS = LIST.map((d, i) => Object.freeze({ ...d, id: `D-${i + 1}` }));

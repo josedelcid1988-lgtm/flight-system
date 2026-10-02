@@ -19,7 +19,7 @@ The accounts `tech`, `quality`, `mfgeng`, `operations`, `engineering` are pilot 
 their real role (Technician, Quality, Manufacturing Engineering, Operations, Engineering) so a pilot
 can rehearse the real hand-offs. Every other demo account (`demo`, `master`, `safety`,
 `certification` and any account a person creates) has full access (D-6 to D-36). The stamp,
-PIN and separation-of-duties relaxations (D-13 to D-19; D-20 to D-45) apply to every
+PIN and separation-of-duties relaxations (D-13 to D-19; D-20 to D-48) apply to every
 demo account so no scenario stalls. Sign in with any account and the password `demo1234`.
 
 Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-28 to D-29).
@@ -83,3 +83,6 @@ Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-2
 | D-43 | Separation of duties | The author or reviewer of a controlled document may release it | One person can author, review and release a controlled document, so a document can be walked to Released alone. Production requires a third person, different from the author and the reviewer. | 1 |
 | D-44 | Separation of duties | System QMS records validate when one person signed every step | The workspace check accepts a controlled document reviewed or released by its author and an audit or finding closed by the person who opened it, matching the two rules above, so a demo workspace stays valid. Production rejects each of these records. | 4 |
 | D-45 | Separation of duties | Equipment maintenance validates when the opener closed it | The workspace check accepts a maintenance record verified and closed by the person who opened it, matching the closing rule lifted above, so the change saves instead of rolling back. Production rejects such a record. | 1 |
+| D-46 | Separation of duties | Pedigree change text says one person may give both approvals | The pedigree change dialog, panel, request and approval messages and their history entries match the relaxations D-22 and D-39, so a solo walk-through is not told to find a second discipline. Production keeps the different discipline wording. | 6 |
+| D-47 | Separation of duties | Closure request text says the requester may review it | The pending closure banner matches the relaxation D-40, which shows Review closure to the requester, so it does not tell a solo walk-through to find another person. Production asks for Quality approval from a different person. | 1 |
+| D-48 | Separation of duties | Analysis draft review message says the reviewer may accept it | The message after an analysis draft is reviewed matches the relaxation D-41, so a solo walk-through is told its real next step. Production says a different qualified person must accept it. | 1 |
