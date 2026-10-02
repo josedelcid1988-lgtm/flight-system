@@ -989,18 +989,26 @@ const admin = {
   name: 'admin', title: 'Admin: create an account, roles, training, stamp',
   async run(u) {
     const user = 'solo-inspector';
-    const openAccess = async () => { await u.closeDialog(); await u.click('[data-action=profile]', { root: 'body' }); if (!(await u.dialogOpen())) throw new Error('the credentials dialog did not open'); };
+    // Accounts, roles, training and stamps are managed on the Admin page, one tab each (#332). Its collapsed sections are
+    // opened so every form in the tab can be filled.
+    const openAdmin = async tab => {
+      await u.closeDialog(); await u.click('[data-admin-nav]', { root: 'body' }); await u.settle();
+      await u.page.locator(`[data-admin-tab="${tab}"]`).click(); await u.settle();
+      const P = `#admin-panel-${tab}`;
+      if (!(await u.page.locator(P).count())) throw new Error('the Admin ' + tab + ' tab did not open');
+      await u.page.evaluate(P => document.querySelectorAll(P + ' details').forEach(d => { d.open = true; }), P);
+      return P;
+    };
     await u.step('create an account', async () => {
-      await openAccess();
-      await u.fill('#dialog[open] form[data-access-add]', { displayName: 'Solo Inspector', username: user, password: 'demo1234' });
-      const role = u.page.locator('#dialog[open] form[data-access-add] [name=role]');
+      const A = await openAdmin('accounts');
+      await u.fill(`${A} form[data-access-add]`, { displayName: 'Solo Inspector', username: user, password: 'demo1234' });
+      const role = u.page.locator(`${A} form[data-access-add] [name=role]`);
       if (await role.count()) await role.selectOption({ label: 'Quality' }).catch(() => role.selectOption('qe'));
-      await u.page.locator('#dialog[open] form[data-access-add] button[type=submit]').click(); await u.wait(450);
-      if (!(await u.read(n => skAuth.users().some(x => x.username === n), user))) throw new Error('account not created: ' + await u.toast() + ' ' + (await u.page.locator('#dialog[open] .access-add-error, #dialog[open] [role=alert]').allTextContents()).join('/'));
+      await u.page.locator(`${A} form[data-access-add] button[type=submit]`).click(); await u.wait(450);
+      if (!(await u.read(n => skAuth.users().some(x => x.username === n), user))) throw new Error('account not created: ' + await u.toast() + ' ' + (await u.page.locator(`${A} .access-add-error, ${A} [role=alert]`).allTextContents()).join('/'));
     });
     await u.step('record training for the new account', async () => {
-      await openAccess();
-      const f = '#dialog[open] form#training-record-form';
+      const f = `${await openAdmin('training')} form#training-record-form`;
       await u.fill(f, { account: user }); await u.wait(150);
       const code = await u.page.locator(`${f} [name=code] option`).evaluateAll(os => (os.find(o => o.value === 'ESD') || os.find(o => o.value))?.value);
       await u.fill(f, { code, expires: u.today(365), note: 'Classroom and practical, demo walk-through.' });
@@ -1008,16 +1016,16 @@ const admin = {
       if (!(await u.read(n => (state.trainingRecords || []).some(r => r.account === n), user))) throw new Error('training not recorded: ' + await u.toast());
     });
     await u.step('change its primary role and add a second role', async () => {
-      await openAccess();
-      const sel = u.page.locator(`#dialog[open] select[data-role-user="${user}"]`);
+      let A = await openAdmin('accounts');
+      const sel = u.page.locator(`${A} select[data-role-user="${user}"]`);
       if (!await sel.count()) throw new Error('no role control for ' + user);
       await sel.selectOption({ label: 'Quality Supervisor' }); await u.wait(450);
-      if (await u.dialogOpen() && !(await u.page.locator(`#dialog[open] select[data-role-user="${user}"]`).count())) await answerDialog(u);
+      if (await u.dialogOpen()) await answerDialog(u);
       const now = await u.read(n => skAuth.users().find(x => x.username === n), user);
       if (now.role !== 'qs') throw new Error('primary role not changed: ' + now.role + ' ' + await u.toast());
-      await openAccess();
-      await u.page.locator(`#dialog[open] [data-roles-user="${user}"]`).click(); await u.settle();
-      const form = `#dialog[open] form[data-access-change][data-kind=roles][data-user="${user}"]`;
+      A = await openAdmin('accounts');
+      await u.page.locator(`${A} [data-roles-user="${user}"]`).click(); await u.settle();
+      const form = `${A} form[data-access-change][data-kind=roles][data-user="${user}"]`;
       await u.page.locator(`${form} input[name=roles][value=qe]`).check();
       await u.page.locator(`${form} [name=reason]`).fill('Also performs Quality Engineering reviews, per the training record.');
       const tc = u.page.locator(`${form} [name=trainingCode]`);
@@ -1027,8 +1035,7 @@ const admin = {
       if (!JSON.stringify(after).includes('"qe"')) throw new Error('second role not recorded: ' + (await u.page.locator(`${form} .access-add-error`).textContent().catch(() => '')) + ' ' + JSON.stringify(after.roles) + ' ' + await u.toast());
     });
     await u.step('issue a stamp to the new account', async () => {
-      await openAccess();
-      const f = '#dialog[open] form#stamp-issue-form';
+      const f = `${await openAdmin('stamps')} form#stamp-issue-form`;
       const num = u.page.locator(`${f} [name=number]`); if (!(await num.inputValue())) await num.fill('SKY-0901');
       await u.fill(f, { name: 'Solo Inspector', buyoffType: 'Quality', account: user, expires: u.today(365) });
       await u.page.locator(`${f} button[type=submit]`).click(); await u.wait(450);

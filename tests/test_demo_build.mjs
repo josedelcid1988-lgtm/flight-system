@@ -283,11 +283,18 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
    localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify({users:[{username:'ops9',displayName:'Ops Nine',...H,role:'ops',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'mlee',displayName:'Morgan Lee',...H,role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'}]}));},H);
   await s.goto('file://'+FIXTURES+'publish.html');await s.waitForFunction(()=>!document.getElementById('sk-login').hidden,null,{timeout:20000});await s.close();}
  // A page already open on the sign-in screen (an active signed-in tab would rewrite shared storage from its own copy).
- const open=await ctx.newPage();open.on('pageerror',e=>errs.push(e.message));
- await open.goto('file://'+FIXTURES+'publish.html');await open.waitForFunction(()=>!document.getElementById('sk-login').hidden&&/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||''),null,{timeout:20000});
+ // The seed page's write can still miss a tab opened after it closes (#556), so each tab confirms the accounts are in
+ // storage on the sign-in screen and, when they are not, writes the same accounts itself and loads again. Nothing else
+ // has been written yet, so this cannot replace the leftovers added below.
+ const accounts=JSON.stringify({users:[{username:'ops9',displayName:'Ops Nine',...H,role:'ops',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'mlee',displayName:'Morgan Lee',...H,role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'}]});
+ const seededOn=async pg=>{for(let i=0;i<5;i++){await pg.goto('file://'+FIXTURES+'publish.html');
+  if(await pg.waitForFunction(()=>!document.getElementById('sk-login').hidden&&/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||''),null,{timeout:8000}).then(()=>true,()=>false))return;
+  await pg.evaluate(a=>{if(!/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||''))localStorage.setItem('skyryse-mes-auth-v1',a);},accounts);await pg.waitForTimeout(500);}
+  throw new Error('the seeded accounts never reached this tab\'s storage');};
+ const open=await ctx.newPage();open.on('pageerror',e=>errs.push(e.message));await seededOn(open);
  // The leftovers are written by the finding page itself before it loads (a write from another tab arrives asynchronously).
  const leftovers=()=>{if(sessionStorage.getItem('left'))return;sessionStorage.setItem('left','1');const a=JSON.parse(localStorage.getItem('skyryse-mes-auth-v1'));if(!a.users.some(u=>u.username==='master')){a.users.push({username:'master',displayName:'Master Access',salt:'00',hash:'f'.repeat(64),role:'admin',createdAt:'2026-09-17T00:00:00.000Z',createdBy:'demo build'});localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify(a));localStorage.setItem('skyryse-mes-sync-queue-v1',JSON.stringify([{clientWriteId:'old-demo-w',storeKey:'skyryse-mes-work-order-qa100-v1',entityType:'order',entityId:'WO-10009',operation:'upsert',payloadJson:'{}'},{clientWriteId:'prod-w',storeKey:'skyryse-mes-work-order-v1',entityType:'order',entityId:'WO-1',operation:'upsert',payloadJson:'{}'}]));}};
- const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));await p.addInitScript(leftovers);
+ const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));await seededOn(p);await p.addInitScript(leftovers);
  await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(2500);
  const f1=await p.evaluate(()=>({gate:(document.getElementById('sk-legacy-review')||{}).textContent||null,stored:localStorage.getItem('skyryse-mes-legacy-demo-review-v1'),users:JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.map(u=>u.username),queue:JSON.parse(localStorage.getItem('skyryse-mes-sync-queue-v1')||'[]').map(x=>x.clientWriteId),ev:JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').filter(e=>/^legacy-demo-/.test(e.type))}));
  ok('review record refused: nothing is removed, the page closes and says to free storage, and the finding is logged',!!f1.gate&&/Browser storage is full/.test(f1.gate)&&f1.stored===null&&f1.users.includes('master')&&f1.queue.includes('old-demo-w')&&f1.ev.some(e=>e.type==='legacy-demo-found'&&e.reviewSaved===false)&&!f1.ev.some(e=>e.type==='legacy-demo-removed'),JSON.stringify(f1));
