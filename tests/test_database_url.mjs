@@ -20,6 +20,8 @@ const withPassword = [
   `postgres://flight:${SECRET}@db/flight`,
   `postgresql://flight:${SECRET}@db:5432/flight?sslmode=require`,
   `postgresql://flight:${SECRET}@[::1]:5432/flight`,
+  // An unescaped @ in the user name: the Node client takes the user info to the last @, so the password is after it.
+  `postgresql://flight@example.com:${SECRET}@db/flight`,
   `postgresql://flight:${SECRET}@h1:5432,h2/flight`,
   `postgresql://flight@db/flight?password=${SECRET}`,
   `postgresql://flight@db/flight?sslmode=require&Password=${SECRET}`,

@@ -1198,6 +1198,9 @@ export function connectionStringHasPassword(value) {
   const uri = /^[a-z][a-z0-9+.-]*:\/\//i.exec(text);
   // keyword=value form: libpq allows white space around the =, and a quoted value may hold spaces.
   if (!uri) return [...text.matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*=\s*('(?:\\.|[^'\\])*'?|[^\s']\S*|)/g)].some(([, key, value]) => SECRET_SETTING.test(key) && value !== '' && value !== "''");
+  // The PostgreSQL client for Node reads the URL the WHATWG way, where the user info runs to the last @ of the
+  // authority, so an unescaped @ in a user name still leaves the password after it; that reading is checked too.
+  try { if (new URL(text).password) return true; } catch {}
   const rest = text.slice(uri[0].length), at = rest.indexOf('@'), slash = rest.indexOf('/');
   if (at >= 0 && (slash < 0 || at < slash)) { const userinfo = rest.slice(0, at); if (userinfo.includes(':') && userinfo.slice(userinfo.indexOf(':') + 1) !== '') return true; }
   else if (at >= 0 && rest.slice(0, slash).split(',').some(host => /:[^:\]]*$/.test(host) && !/:\d*$/.test(host))) return true;
