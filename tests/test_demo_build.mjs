@@ -71,6 +71,9 @@ const errs=[];
 // storage writes (#556); the mirror run copies only the HTML fixtures, so the page is written here, under this run's own
 // name so a concurrent run never shares it, and removed on exit.
 const BLANK=`_same_origin_blank_${process.pid}.html`;fs.writeFileSync(FIXTURES+BLANK,'<!doctype html><meta charset=utf-8><title>blank</title>');process.on('exit',()=>fs.rmSync(FIXTURES+BLANK,{force:true}));
+// Before a reload that depends on a write made just before it, wait until another page of the origin sees the write:
+// a write can otherwise be lost to the reload under load (#556).
+const settled=async(ctx,seen)=>{const probe=await ctx.newPage();await probe.goto('file://'+FIXTURES+BLANK);await probe.waitForFunction(seen,null,{timeout:20000});await probe.close();};
 async function open(file,user){const ctx=await b.newContext({viewport:{width:1440,height:1000}});if(user)await ctx.addInitScript(([u,sess])=>{sessionStorage.setItem(sess,u);sessionStorage.setItem('sk-boot-seen','1');sessionStorage.setItem('sk-mnv-landing-seen','1');},[user,/demo/.test(path.basename(file))?'skyryse-mes-demo-session-v1':'skyryse-mes-session-v1']);const p=await ctx.newPage();p.on('pageerror',e=>errs.push(file+': '+e.message));await p.goto('file://'+path.join(ROOT,file));await p.waitForTimeout(1500);return {p,ctx};}
 const REAL={tech:['operate-steps'],operations:['operate','operate-steps'],mfgeng:['edit-wi','create-wo','dispo-nc'],quality:['approve-wo','approve-nc'],engineering:['push-software']};
 const NOT={tech:['create-wo','approve-wo','edit-wi','dispo-nc','manage-access'],operations:['create-wo','approve-wo','edit-wi','approve-nc'],mfgeng:['approve-wo','approve-wi','approve-nc'],quality:['edit-wi','create-wo','dispo-nc','operate'],engineering:['edit-wi','approve-nc','operate','create-wo']};
@@ -183,6 +186,7 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  ok('partial sign-in failure counts are set aside; a lockout in force is kept',JSON.stringify(Object.keys(r.locks))==='["locked1"]'&&r.locks.locked1.until>Date.now()&&r.legacyLocks.master.fails===3&&r.legacyLocks.mlee.fails===4,JSON.stringify({locks:r.locks,legacyLocks:r.legacyLocks}));
  // The browser stays closed across reloads, for every account: nobody signs in, a session is ended, switching is refused.
  const closedState=()=>p.evaluate(()=>{const g=document.getElementById('sk-legacy-review');return {gate:!!g,boot:!!document.getElementById('sk-boot'),login:!document.getElementById('sk-login').hidden,inputs:g?g.querySelectorAll('input,button,form').length:-1,session:sessionStorage.getItem('skyryse-mes-session-v1'),user:window.skAuth&&skAuth.user()&&skAuth.user().username};});
+ await settled(ctx,()=>!!localStorage.getItem('skyryse-mes-legacy-demo-review-v1'));
  await p.reload();await p.waitForTimeout(700);
  let g=await closedState();
  ok('after a reload the browser is still closed, with no sign-in form and nothing to press',g.gate&&g.boot&&!g.login&&g.inputs===0,JSON.stringify(g));
@@ -211,7 +215,7 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(600);
  await p.evaluate(()=>{localStorage.clear();sessionStorage.removeItem('skyryse-mes-session-v1');});
  // The reload waits until another page of the origin sees the cleared storage, so the clear cannot be lost to it.
- {const probe=await ctx.newPage();await probe.goto('file://'+FIXTURES+BLANK);await probe.waitForFunction(()=>localStorage.length===0,null,{timeout:20000});await probe.close();}
+ await settled(ctx,()=>localStorage.length===0);
  await p.reload();await p.waitForTimeout(900);
  const fresh=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),login:!document.getElementById('sk-login').hidden,title:document.getElementById('sk-login-title').textContent}));
  ok('once the site data is cleared, production opens on first-account setup',!fresh.gate&&fresh.login&&/Set up Master Access/.test(fresh.title),JSON.stringify(fresh));
@@ -250,7 +254,7 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  await p.waitForTimeout(6000);
  await p.evaluate(v=>{if(!localStorage.getItem('skyryse-mes-legacy-demo-review-v1'))localStorage.setItem('skyryse-mes-legacy-demo-review-v1',v);},v);
  // The reload waits until another page of the origin sees the record, so the write cannot be lost to it (#556).
- {const probe=await ctx.newPage();await probe.goto('file://'+FIXTURES+BLANK);await probe.waitForFunction(()=>!!localStorage.getItem('skyryse-mes-legacy-demo-review-v1'),null,{timeout:20000});await probe.close();}
+ await settled(ctx,()=>!!localStorage.getItem('skyryse-mes-legacy-demo-review-v1'));
  await p.reload();await p.waitForTimeout(900);
  const open=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),user:window.skAuth&&skAuth.user()&&skAuth.user().username}));
  ok('that tab is then closed and its Operations session ends',open.gate&&!open.user,JSON.stringify(open));
@@ -286,6 +290,7 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  const o=await open.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),login:!document.getElementById('sk-login').hidden}));
  ok('review record refused: a tab already open is told and closes, its sign-in form gone',o.gate&&!o.login,JSON.stringify(o));
  // Every later load finds the same leftovers, since nothing was removed, and closes again.
+ await settled(ctx,()=>JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')||'{"users":[]}').users.some(u=>u.username==='master'));
  await p.reload();await p.waitForTimeout(900);
  {const l=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),users:JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.map(u=>u.username)}));
  ok('review record refused: a later load finds the leftovers again and closes',l.gate&&l.users.includes('master'),JSON.stringify(l));}
