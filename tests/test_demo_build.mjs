@@ -186,8 +186,11 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  await p.reload();await p.waitForTimeout(700);
  let g=await closedState();
  ok('after a reload the browser is still closed, with no sign-in form and nothing to press',g.gate&&g.boot&&!g.login&&g.inputs===0,JSON.stringify(g));
+ await ctx.addInitScript(()=>{if(window.name.startsWith('sk-test-session:')){sessionStorage.setItem('skyryse-mes-session-v1',window.name.slice(16));window.name='';}});
  for(const who of ['ops1','mlee','qa2']){
-  await p.evaluate(u=>sessionStorage.setItem('skyryse-mes-session-v1',u),who);await p.reload();await p.waitForTimeout(800);
+  // The session is handed to the next load through window.name, which the tab keeps across the reload: a session
+  // storage write made just before the reload can be lost under load, and that load would then have no session to end.
+  await p.evaluate(u=>{window.name='sk-test-session:'+u;},who);await p.reload();await p.waitForTimeout(800);
   g=await closedState();
   ok(`a session of ${who} is ended on a closed browser, a QA Manager or Master Access account included`,g.gate&&g.session===null&&g.user===null,JSON.stringify(g));}
  {const ends=await p.evaluate(()=>JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').filter(e=>e.type==='signout'&&/older demo build/.test(e.reason||'')).map(e=>e.username));
@@ -206,7 +209,10 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  await p.evaluate(()=>sessionStorage.removeItem('skyryse-mes-demo-session-v1'));
  // Clearing the browser's site data reopens it: production starts over with first-account setup.
  await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(600);
- await p.evaluate(()=>{localStorage.clear();sessionStorage.removeItem('skyryse-mes-session-v1');});await p.reload();await p.waitForTimeout(900);
+ await p.evaluate(()=>{localStorage.clear();sessionStorage.removeItem('skyryse-mes-session-v1');});
+ // The reload waits until another page of the origin sees the cleared storage, so the clear cannot be lost to it.
+ {const probe=await ctx.newPage();await probe.goto('file://'+FIXTURES+BLANK);await probe.waitForFunction(()=>localStorage.length===0,null,{timeout:20000});await probe.close();}
+ await p.reload();await p.waitForTimeout(900);
  const fresh=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),login:!document.getElementById('sk-login').hidden,title:document.getElementById('sk-login-title').textContent}));
  ok('once the site data is cleared, production opens on first-account setup',!fresh.gate&&fresh.login&&/Set up Master Access/.test(fresh.title),JSON.stringify(fresh));
  await ctx.close();}
