@@ -164,7 +164,7 @@ try {
     };
     return () => { server.store.transaction = original; const row = server.store.getDoc('default'); assert.ok(server.store.putDoc('default', saved, row.etag, 'test')); };
   };
-  await check('training that lapses while a manager-only write is open refuses export settings, unlock and supersede', async () => {
+  await check('training that lapses while a manager-only write is open refuses export settings, unlock, supersede and export retry', async () => {
     const stored = MES.upgrade(JSON.parse(server.store.getDoc('default').json));
     assert.deepEqual(server.host.rolesOf(server.store.account('current-qm'), stored), ['qe', 'qm'], 'the role counts before each request');
     let restore = lapseBeforeNextTransaction();
@@ -190,6 +190,28 @@ try {
       assert.equal(r.status, 403, JSON.stringify(r.json));
       assert.equal(server.store.evidenceMeta(target).supersededBy || null, null, 'the recording is not superseded');
     } finally { restore(); }
+    // The retry checks authority and queues the job in the same transaction, so a lapse that lands first refuses it.
+    const jobId = 'JOB-580000000000000000000A7E';
+    assert.ok(server.store.queueExportJob({ id: jobId, recordType: 'fair', recordId: 'FAIR-LATE-LAPSE', exportId: `EXT-${jobId}`, sha256: 'e'.repeat(64), payload: '{}', destinationKind: 'folder', destination: path.join(os.tmpdir(), 'flight-exports-late'), tokenSetting: null, namingPattern: '{recordType}-{recordId}-{exportId}.json', createdBy: 'one' }));
+    server.store.updateExportJob(jobId, { status: 'failed', detail: 'Destination offline.' });
+    restore = lapseBeforeNextTransaction();
+    try {
+      const r = await api('POST', `/record-exports/jobs/${jobId}/retry`, { token: current });
+      assert.equal(r.status, 403, JSON.stringify(r.json));
+      assert.equal(server.store.exportJob(jobId).status, 'failed', 'the job is not queued again');
+    } finally { restore(); }
+    // With training current, the retry is queued inside the transaction that decided authority, so no write can land
+    // between the check and the queue (Codex review on #633: the check used to commit before the retry opened its own).
+    const original = { transaction: server.store.transaction, retry: server.store.retryExportJob };
+    let open = 0; const calls = [];
+    server.store.transaction = async fn => { open += 1; try { return await original.transaction.call(server.store, fn); } finally { open -= 1; } };
+    server.store.retryExportJob = function (...args) { calls.push({ insideTransaction: open > 0 && server.store.db.isTransaction }); return original.retry.apply(this, args); };
+    try {
+      const r = await api('POST', `/record-exports/jobs/${jobId}/retry`, { token: current });
+      assert.equal(r.status, 202, JSON.stringify(r.json));
+      assert.deepEqual(calls, [{ insideTransaction: true }], 'the retry runs inside the authority transaction');
+      assert.ok(server.store.exportLog(jobId, 100).some(entry => entry.status === 'queued' && /Manual retry requested by current-qm/.test(entry.detail)), 'the retry is logged');
+    } finally { server.store.transaction = original.transaction; server.store.retryExportJob = original.retry; }
   });
 
   await check('authority is decided again inside the account transaction: training that lapses before the commit refuses the change', async () => {

@@ -1141,13 +1141,17 @@ export function createServer(options = {}) {
       const exportRetry = /^\/record-exports\/jobs\/(JOB-[A-F0-9]+)\/retry$/.exec(route);
       if (exportRetry && m === 'POST') {
         if (!await manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can retry record exports.' }); return; }
-        const current = await store.exportJob(exportRetry[1]);
-        if (!current) { send(res, 404, { error: 'Record export job not found.' }); return; }
-        if (current.status !== 'failed') { send(res, 409, { error: `This export is ${current.status}; only a failed delivery can be retried.` }); return; }
-        // The SQLite store's retry opens its own transaction, so authority is decided in one immediately before it.
-        if (!await store.transaction(tx => managesInTx(tx, session.username))) { send(res, 403, { error: 'Only a Master Access or QA Manager account can retry record exports.' }); return; }
-        const job = await store.retryExportJob(current.id, session.username);
-        if (!job) { send(res, 409, { error: 'This export changed before the retry could be queued. Reload the delivery history and try again.' }); return; }
+        // Authority, the job's status and the retry are decided under one transaction, so a lapse cannot land between them.
+        const outcome = await store.transaction(async tx => {
+          if (!await managesInTx(tx, session.username)) return { status: 403, error: 'Only a Master Access or QA Manager account can retry record exports.' };
+          const current = await tx.exportJob(exportRetry[1]);
+          if (!current) return { status: 404, error: 'Record export job not found.' };
+          if (current.status !== 'failed') return { status: 409, error: `This export is ${current.status}; only a failed delivery can be retried.` };
+          const job = await tx.retryExportJob(current.id, session.username);
+          return job ? { job } : { status: 409, error: 'This export changed before the retry could be queued. Reload the delivery history and try again.' };
+        });
+        if (!outcome.job) { send(res, outcome.status, { error: outcome.error }); return; }
+        const job = outcome.job;
         void drainExports();
         send(res, 202, { id: job.id, status: job.status, exportId: job.exportId }); return;
       }

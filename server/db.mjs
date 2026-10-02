@@ -224,7 +224,12 @@ export function openDb(path) {
     pendingExportJobs(limit = 100) { return db.prepare("SELECT id FROM record_export_jobs WHERE status='pending' ORDER BY created_at LIMIT ?").all(limit).map(r => this.exportJob(r.id)); },
     exportJobs(limit = 200) { return db.prepare('SELECT id FROM record_export_jobs ORDER BY created_at DESC LIMIT ?').all(limit).map(r => this.exportJob(r.id)); },
     updateExportJob(id, { status, detail = null }) { db.exec('BEGIN IMMEDIATE'); try { const job = this.exportJob(id); if (!job) { db.exec('ROLLBACK'); return null; } const attempts = job.attempts + 1; db.prepare('UPDATE record_export_jobs SET status=?,attempts=?,updated_at=?,last_error=? WHERE id=?').run(status, attempts, now(), detail, id); db.prepare('INSERT INTO record_export_log (job_id,at,attempt,status,detail) VALUES (?,?,?,?,?)').run(id, now(), attempts, status, detail); db.exec('COMMIT'); return this.exportJob(id); } catch (error) { db.exec('ROLLBACK'); throw error; } },
-    retryExportJob(id, by) { db.exec('BEGIN IMMEDIATE'); try { const job = this.exportJob(id); if (!job) { db.exec('ROLLBACK'); return null; } db.prepare("UPDATE record_export_jobs SET status='pending',attempts=0,updated_at=?,last_error=NULL WHERE id=?").run(now(), id); db.prepare("INSERT INTO record_export_log (job_id,at,attempt,status,detail) VALUES (?,?,0,'queued',?)").run(id, now(), `Manual retry requested by ${by}.`); db.exec('COMMIT'); return this.exportJob(id); } catch (error) { db.exec('ROLLBACK'); throw error; } },
+    // Inside store.transaction the caller already holds the lock, so the retry joins that transaction.
+    retryExportJob(id, by) {
+      const queue = () => { const job = this.exportJob(id); if (!job || job.status !== 'failed') return null; db.prepare("UPDATE record_export_jobs SET status='pending',attempts=0,updated_at=?,last_error=NULL WHERE id=?").run(now(), id); db.prepare("INSERT INTO record_export_log (job_id,at,attempt,status,detail) VALUES (?,?,0,'queued',?)").run(id, now(), `Manual retry requested by ${by}.`); return this.exportJob(id); };
+      if (db.isTransaction) return queue();
+      db.exec('BEGIN IMMEDIATE'); try { const job = queue(); db.exec(job ? 'COMMIT' : 'ROLLBACK'); return job; } catch (error) { db.exec('ROLLBACK'); throw error; }
+    },
     exportLog(jobId, limit = 100) { return db.prepare('SELECT job_id,at,attempt,status,detail FROM record_export_log WHERE job_id=? ORDER BY id DESC LIMIT ?').all(jobId,limit); },
     pendingExportCount() { return db.prepare("SELECT COUNT(*) AS c FROM record_export_jobs WHERE status IN ('pending','retrying','failed')").get().c; },
     // ---- evidence ----
