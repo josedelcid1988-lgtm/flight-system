@@ -293,8 +293,15 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
   await s.goto('file://'+FIXTURES+'publish.html');await s.waitForFunction(()=>!document.getElementById('sk-login').hidden,null,{timeout:20000});
  // A page already open on the sign-in screen (an active signed-in tab would rewrite shared storage from its own copy).
  // The seeding page stays open until this page sees the seed: a page closed just after its write can lose it (#556).
+ // Like the seeding page, it opens the blank page first: the first page of a fresh tab can miss the writes of other
+ // pages for over a minute under load (#556). If the seed has still not reached it, the seeding page, the only writer
+ // so far, writes it again.
  const open=await ctx.newPage();open.on('pageerror',e=>errs.push(e.message));
- await open.goto('file://'+FIXTURES+'publish.html');await open.waitForFunction(()=>!document.getElementById('sk-login').hidden&&/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||''),null,{timeout:60000});
+ await open.goto('file://'+FIXTURES+BLANK);await open.goto('file://'+FIXTURES+'publish.html');
+ const seedSeen=()=>open.waitForFunction(()=>!document.getElementById('sk-login').hidden&&/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||''),null,{timeout:30000}).then(()=>true,()=>false);
+ if(!(await seedSeen())){await s.evaluate(()=>{const v=localStorage.getItem('skyryse-mes-auth-v1');if(v){localStorage.removeItem('skyryse-mes-auth-v1');localStorage.setItem('skyryse-mes-auth-v1',v);}});await seedSeen();}
+ {const st=await open.evaluate(()=>({login:!document.getElementById('sk-login').hidden,seeded:/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||'')}));
+ ok('review record refused: the seeded accounts reach a page already open on the sign-in screen',st.login&&st.seeded,JSON.stringify(st));}
  await s.close();
  // The leftovers are written by the finding page itself before it loads (a write from another tab arrives asynchronously).
  const leftovers=()=>{if(sessionStorage.getItem('left'))return;sessionStorage.setItem('left','1');const a=JSON.parse(localStorage.getItem('skyryse-mes-auth-v1'));if(!a.users.some(u=>u.username==='master')){a.users.push({username:'master',displayName:'Master Access',salt:'00',hash:'f'.repeat(64),role:'admin',createdAt:'2026-09-17T00:00:00.000Z',createdBy:'demo build'});localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify(a));localStorage.setItem('skyryse-mes-sync-queue-v1',JSON.stringify([{clientWriteId:'old-demo-w',storeKey:'skyryse-mes-work-order-qa100-v1',entityType:'order',entityId:'WO-10009',operation:'upsert',payloadJson:'{}'},{clientWriteId:'prod-w',storeKey:'skyryse-mes-work-order-v1',entityType:'order',entityId:'WO-1',operation:'upsert',payloadJson:'{}'}]));}};
