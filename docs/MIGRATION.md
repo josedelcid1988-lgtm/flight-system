@@ -43,6 +43,10 @@ Sign in to the browser that contains the current Flight System data. In its deve
 
 Paste the clipboard contents into a JSON file. The export contains password hashes and potentially sensitive production records. Keep it in a protected location and remove it when migration and verification are complete.
 
+### A browser closed after an older demo build
+
+A standalone browser that once opened a demo build from before the demo had its own storage keys is closed to production use: that demo let anyone create, change or reset accounts with relaxed rules, so none of the browser's accounts can be trusted. Export its workspace and recordings with the script above, but leave the accounts out: delete the `'skyryse-mes-auth-v1': accounts` line before running it. The migration then creates no account from this browser; create the people's accounts on the server, where a QA Manager grants roles against current training. After the migration is applied and verified, clear the browser's site data for Flight System.
+
 ## Dry run
 
 ```sh
