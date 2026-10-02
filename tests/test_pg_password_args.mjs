@@ -41,6 +41,17 @@ const cases = [
   // Codex 4161531093: libpq's URI has no fragment, so a # is part of the password, wherever the password is.
   ['a URI query password with a #', 'postgresql://flight@db/flight?password=Head#Tail', { dbname: 'postgresql://flight@db/flight', env: { PGPASSWORD: 'Head#Tail' } }],
   ['a URI user-info password with a #', 'postgresql://flight:Head#Tail@db/flight', { dbname: 'postgresql://flight@db/flight', env: { PGPASSWORD: 'Head#Tail' } }],
+  // libpq takes the user info up to the first @ before any /, so an unencoded ? stays in the password (Codex 4161235818).
+  ['a URI user-info password with an unencoded ?', 'postgresql://flight:Hidden-1?Tail@db/flight', { dbname: 'postgresql://flight@db/flight', env: { PGPASSWORD: 'Hidden-1?Tail' } }],
+  // Codex 4161788869: the first @ ends the user info, so a host that starts with @ (an abstract socket) stays the host.
+  ['a URI whose host starts with @', 'postgresql://flight:Secret-9@@flight-socket/flight', { dbname: 'postgresql://flight@@flight-socket/flight', env: { PGPASSWORD: 'Secret-9' } }],
+  // Codex 4161788877: an @ in a query value is ordinary data.
+  ['a URI query password with an @', 'postgresql://flight@db/flight?password=p@q', { dbname: 'postgresql://flight@db/flight', env: { PGPASSWORD: 'p@q' } }],
+  // Codex 4161788875: an empty password is no password to libpq, so the inherited PGPASSWORD is left alone.
+  ['a URI with an empty user-info password', 'postgresql://flight:@db/flight', { dbname: 'postgresql://flight@db/flight', env: {} }],
+  ['a URI whose empty query password overrides the user info', 'postgresql://flight:old@db/flight?password=', { dbname: 'postgresql://flight@db/flight', env: {} }],
+  ['keywords with an empty quoted password', "host=db password=''", { dbname: 'host=db', env: {} }],
+  ['an IPv6 host with a port', 'postgresql://flight:pw@[::1]:5432/flight', { dbname: 'postgresql://flight@[::1]:5432/flight', env: { PGPASSWORD: 'pw' } }],
   ['a bare database name', 'flight', { dbname: 'flight', env: {} }],
 ];
 for (const [label, input, want] of cases) {
@@ -59,9 +70,9 @@ const refusals = [
   ['a URI client key passphrase', 'postgresql://flight:pw@db/flight?sslkey=client.key&sslpassword=Hidden-1', {}, /client key passphrase/],
   ['a URI client key passphrase with no password', 'postgresql://flight@db/flight?sslpassword=Hidden-1', {}, /client key passphrase/],
   ['a keyword client key passphrase', 'host=db sslkey=client.key sslpassword=Hidden-1', {}, /client key passphrase/],
-  // Codex 4161235818: an unencoded ? / or # cuts the user info short; the @ after it is refused, not passed on.
-  ['user info cut short by an unencoded ?', 'postgresql://flight:Hidden-1?Tail@db/flight', {}, /@ outside its user info/],
-  ['user info cut short by an unencoded /', 'postgresql://flight:Hidden-1/Tail@db/flight', {}, /@ outside its user info/],
+  // Codex 4161235818: an unencoded / cuts the user info short (libpq looks for the @ only before the first /), so the
+  // password would land in the host or database name; that is refused, not passed on.
+  ['user info cut short by an unencoded /', 'postgresql://flight:Hidden-1/Tail@db/flight', {}, /cut-off password/],
   // Codex 4161235811: a NUL cannot go into an environment variable; spawn would quote it, so it is refused first.
   ['a URI password with a NUL', 'postgresql://flight:Hidden-1%00tail@db/flight', {}, /NUL character/],
 ];

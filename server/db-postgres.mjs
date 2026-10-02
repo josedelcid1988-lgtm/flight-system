@@ -201,34 +201,38 @@ export function pgRestoreTarget(connectionString, env = process.env) {
   const raw = String(connectionString);
   const refuse = why => { throw new Error(`The PostgreSQL connection string ${why}. Nothing was run. Fix FLIGHT_DATABASE_URL and try again.`); };
   const pct = text => { try { return decodeURIComponent(text); } catch { return refuse('has a malformed percent-encoded part'); } };
-  let dbname = raw, password = null, service = false;
+  let dbname = raw, password = null, service = false, found = false;
   // A bare database name (no = and not a URI) holds no password: libpq reads it as the dbname alone.
   if (!/^postgres(ql)?:\/\//i.test(raw) && !raw.includes('=')) return { dbname: raw, env: {} };
   if (/^postgres(ql)?:\/\//i.test(raw)) {
     // libpq's URI has no fragment: a # is ordinary data wherever it appears, so a password such as ?password=Head#Tail
     // is read whole (Codex 4161531093).
-    const uri = raw.match(/^(postgres(?:ql)?:\/\/)([^/?]*)([^?]*)(?:\?(.*))?$/is);
-    if (!uri) refuse('is not a URI libpq can read');
-    const [, scheme, authority, path, query] = uri;
-    // An @ past the authority means user info was cut short by an unencoded / or ?, so a password may sit in what
-    // looks like the path or query (Codex 4161235818). libpq needs those characters percent-encoded anyway.
-    if (`${path}${query ?? ''}`.includes('@')) refuse('has an @ outside its user info; percent-encode any / ? or @ in the user name and password');
-    const at = authority.lastIndexOf('@');
-    let userinfo = at >= 0 ? authority.slice(0, at) : null;
-    const hosts = at >= 0 ? authority.slice(at + 1) : authority;
+    const scheme = raw.match(/^postgres(?:ql)?:\/\//i)[0];
+    let rest = raw.slice(scheme.length), userinfo = null;
+    // As in libpq's conninfo_uri_parse_options, the user info runs to the first @ found before any /, so a host that
+    // itself starts with @ (an abstract socket) stays the host (Codex 4161788869), and an unencoded ? in a password is
+    // read the way libpq reads it (Codex 4161235818).
+    const firstAt = rest.indexOf('@'), firstSlash = rest.indexOf('/');
+    if (firstAt >= 0 && (firstSlash < 0 || firstAt < firstSlash)) { userinfo = rest.slice(0, firstAt); rest = rest.slice(firstAt + 1); }
+    const [, hosts, path, query] = rest.match(/^([^/?]*)([^?]*)(?:\?(.*))?$/s);
+    // With no user info, a host:port whose port is not a number, or an @ in the database name, means an unencoded / cut
+    // the user info short and part of a password would land in --dbname. libpq cannot connect to that either, so it is
+    // refused. An @ in a query value is ordinary data (Codex 4161788877).
+    if (userinfo === null && (hosts.split(',').some(h => /:[^:\]]*$/.test(h) && !/:\d*$/.test(h)) || path.includes('@'))) refuse('has text libpq would read as a host or database name but that looks like a cut-off password; percent-encode any / ? or @ in the user name and password');
     if (userinfo !== null && userinfo.includes(':')) {
+      found = true;
       password = pct(userinfo.slice(userinfo.indexOf(':') + 1));
       userinfo = userinfo.slice(0, userinfo.indexOf(':'));
     }
     const kept = [];
     for (const part of query === undefined ? [] : query.split('&')) {
       const eq = part.indexOf('='), key = pct(eq >= 0 ? part.slice(0, eq) : part);
-      if (key === 'password') { password = pct(eq >= 0 ? part.slice(eq + 1) : ''); continue; }
+      if (key === 'password') { found = true; password = pct(eq >= 0 ? part.slice(eq + 1) : ''); continue; }
       if (key === 'service') service = true;
       if (key === 'sslpassword') refuse(SSL_PASSWORD_REFUSAL);
       kept.push(part);
     }
-    if (password === null) return { dbname: raw, env: {} };
+    if (!found) return { dbname: raw, env: {} };
     dbname = `${scheme}${userinfo !== null ? `${userinfo}@` : ''}${hosts}${path}${kept.length ? `?${kept.join('&')}` : ''}`;
   } else {
     // keyword=value pairs, as libpq's conninfo_parse reads them: a value that starts with ' runs to the closing quote;
@@ -244,18 +248,21 @@ export function pgRestoreTarget(connectionString, env = process.env) {
       if (!match) refuse('is not a list of keyword=value settings libpq can read');
       index = pair.lastIndex;
       const [, key, value] = match;
-      if (key === 'password') { password = (value.startsWith("'") ? value.slice(1, -1) : value).replace(/\\(.)/g, '$1'); continue; }
+      if (key === 'password') { found = true; password = (value.startsWith("'") ? value.slice(1, -1) : value).replace(/\\(.)/g, '$1'); continue; }
       if (key === 'service') service = true;
       if (key === 'sslpassword') refuse(SSL_PASSWORD_REFUSAL);
       // Kept as key=value with the value exactly as written, escapes included, so an escaped trailing space survives
       // (Codex 4161531104).
       kept.push(`${key}=${value}`);
     }
-    if (password === null) return { dbname: raw, env: {} };
+    if (!found) return { dbname: raw, env: {} };
     dbname = kept.join(' ');
   }
   // A NUL cannot pass through an environment variable; spawn would refuse it with an error quoting the value, so it is
   // refused here with words that never repeat it (Codex 4161235811).
+  // libpq treats an empty password as none and falls back to PGPASSWORD or the password file, so an empty one is
+  // removed from --dbname but not set, leaving any inherited PGPASSWORD in place (Codex 4161788875).
+  if (password === '') return { dbname, env: {} };
   if (password.includes('\0')) refuse('has a password with a NUL character');
   if (service || (env && env.PGSERVICE)) refuse('names a password and a connection service; keep the password in the service file or in PGPASSWORD, not in the string, so backups and restores use the same password as the server');
   return { dbname, env: { PGPASSWORD: password } };
