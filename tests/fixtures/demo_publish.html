@@ -9007,7 +9007,14 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   const who = state => { const a = root && root.skAuth && root.skAuth.actor && root.skAuth.actor(); return a ? { name: a.name, role: a.role, credentialId: a.credentialId } : snapshot(state.profile); };
   const log = (state, po, action, actor) => { po.history = [...po.history, { at: new Date().toISOString(), action, actor: actor || `${who(state).name} · ${who(state).credentialId}` }].slice(-100); };
   const wiKey = po => `${po.masterWI.id}|${po.masterWI.revision}`;
-  const netsuiteRead = partNumber => ({ snapshotAt: NETSUITE_SNAPSHOT, onHand: MES.NETSUITE_STOCK[partNumber] ? MES.NETSUITE_STOCK[partNumber].reduce((n, lot) => n + lot.onHand, 0) : (DEMO_FINISHED_STOCK[partNumber] || 0) });
+  // Live on-hand from the NetSuite bridge (SK_INTEGRATIONS mode 'mcp'), kept in memory by the integration seam
+  // as window.SK_ERP_LIVE. Read only: it never enters the workspace except as the planned order's own snapshot.
+  const liveOnHand = partNumber => {
+    const items = typeof window !== 'undefined' && window.SK_ERP_LIVE && window.SK_ERP_LIVE.items;
+    const row = items && Object.prototype.hasOwnProperty.call(items, partNumber) ? items[partNumber] : null;
+    return row && Number.isInteger(row.onHand) && row.onHand >= 0 && str(row.snapshotAt, 40) ? { snapshotAt: row.snapshotAt, onHand: row.onHand, live: true } : null;
+  };
+  const netsuiteRead = partNumber => liveOnHand(partNumber) || ({ snapshotAt: NETSUITE_SNAPSHOT, onHand: MES.NETSUITE_STOCK[partNumber] ? MES.NETSUITE_STOCK[partNumber].reduce((n, lot) => n + lot.onHand, 0) : (DEMO_FINISHED_STOCK[partNumber] || 0) });
   const list = state => Array.isArray(state?.plannedOrders) ? state.plannedOrders : [];
   const get = (state, id) => list(state).find(po => po.id === id) || null;
   const overdue = po => ['Planned', 'Firm'].includes(po.status) && po.needDate < today();
@@ -9040,10 +9047,10 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const po = {
       id: `PO-${number}`, masterWI: { id: wi.id, revision: wi.revision, title: wi.title },
       configuration: { partNumber: wi.partNumber, partRevision: wi.partRevision, pedigree: input.pedigree, subcategory: input.subcategory, site: input.site ?? null, aircraft: input.aircraft },
-      quantity: input.quantity, needDate: input.needDate, status: 'Planned', workOrder: null, netsuite: netsuiteRead(wi.partNumber),
+      quantity: input.quantity, needDate: input.needDate, status: 'Planned', workOrder: null, netsuite: (({ snapshotAt, onHand }) => ({ snapshotAt, onHand }))(netsuiteRead(wi.partNumber)),
       createdAt: new Date().toISOString(), createdBy: actor ? { name: actor, role: 'Flight Plan', credentialId: 'DEMO' } : who(state), history: []
     };
-    log(state, po, `Planned from ${MES.wiKey(wi)} · ${wi.partNumber} Rev ${wi.partRevision}. NetSuite on hand ${po.netsuite.onHand} at snapshot ${NETSUITE_SNAPSHOT}.`, actor && `${actor} · DEMO`);
+    log(state, po, `Planned from ${MES.wiKey(wi)} · ${wi.partNumber} Rev ${wi.partRevision}. NetSuite on hand ${po.netsuite.onHand} at ${liveOnHand(wi.partNumber) ? 'live read' : 'snapshot'} ${po.netsuite.snapshotAt}.`, actor && `${actor} · DEMO`);
     if (!Array.isArray(state.plannedOrders)) state.plannedOrders = [];
     state.plannedOrders.unshift(po);
     return { ok: true, message: `${po.id} planned from ${MES.wiKey(wi)}.`, id: po.id };
@@ -12415,7 +12422,7 @@ function renderPlanForecast(){
   ${panel('fc-design','Design changes · non-interchangeable revisions','A new component revision marked not interchangeable cannot draw on old-revision stock, so open demand becomes a new buy.',table('Design changes',['Component','Supersedes','Old rev on hand','New rev on hand','Open demand','Buy'],f.designChanges.map(c=>row([`<strong class="mono">${esc(c.part)} / Rev ${esc(c.rev)}</strong><small>${esc(c.title)}</small>`,`<span class="mono">Rev ${esc(c.supersedes)}</span>`,`<span class="mono">${c.oldOnHand}</span> <small>unusable</small>`,`<span class="mono">${c.newOnHand}</span>`,`<span class="mono">${c.demand}</span>`,c.buy?`<span class="pill high">${c.buy}</span>`:'<span class="pill ready">Covered</span>'])),'No non-interchangeable changes.'))}
   </section>`;
 }
-function planWiReadout(){const sel=$('#plan-wi');if(!sel)return;const [id,rev]=sel.value.split('|'),wi=MES.findWI(state,id,rev);if(!wi)return;$('#plan-part').value=`${wi.partNumber} / Rev ${wi.partRevision}`;$('#plan-title').value=wi.title;$('#plan-stock').textContent=`NetSuite on hand for ${wi.partNumber}: ${FlightPlan.netsuiteRead(wi.partNumber).onHand} (snapshot ${FlightPlan.NETSUITE_SNAPSHOT}, read only).`;}
+function planWiReadout(){const sel=$('#plan-wi');if(!sel)return;const [id,rev]=sel.value.split('|'),wi=MES.findWI(state,id,rev);if(!wi)return;$('#plan-part').value=`${wi.partNumber} / Rev ${wi.partRevision}`;$('#plan-title').value=wi.title;{const ns=FlightPlan.netsuiteRead(wi.partNumber);$('#plan-stock').textContent=`NetSuite on hand for ${wi.partNumber}: ${ns.onHand} (${ns.live?'live read':'snapshot'} ${ns.snapshotAt}, read only).`;}}
 function planCreateDialog(){
   const released=(state.masterWIs||[]).filter(wi=>wi.status==='Released');if(!released.length){openDialog('Plan from master WI','<p>No master WI is released yet. Release one in the Master WI module first.</p><div class="dialog-actions"><button class="btn primary" data-action="close-dialog">OK</button></div>');return;}
   openDialog('Plan from master WI',`<form id="plan-form"><div class="form-grid">
@@ -15181,14 +15188,47 @@ window.SK_INTEGRATIONS = window.SK_INTEGRATIONS || {
   window.skIntegrations = {
     netsuite: {
       itemAvailability: function (partNumbers) { return remote('/netsuite/item-availability', { partNumbers: partNumbers }); },
+      // Read only. Defined for the bridge; kitting still issues from the Flight System ledger (docs/erp/NETSUITE_BRIDGE.md, decision 1).
+      lotStock: function (partNumber) { return remote('/netsuite/lot-stock', { partNumber: partNumber }); },
+      // Refreshes the live on-hand that Flight Plan reads (window.SK_ERP_LIVE). Bad rows are dropped, never trusted.
+      refreshAvailability: function () {
+        var parts = {};
+        try {
+          Object.keys(window.MES.NETSUITE_STOCK || {}).forEach(function (p) { parts[p] = 1; });
+          (state.masterWIs || []).forEach(function (wi) { if (wi && typeof wi.partNumber === 'string') parts[wi.partNumber] = 1; });
+        } catch (e) {}
+        var list = Object.keys(parts).filter(function (p) { return /^[A-Za-z0-9._\/-]{1,50}$/.test(p); }).slice(0, 500);
+        if (window.SK_INTEGRATIONS.mode !== 'mcp' || !list.length) return Promise.resolve({ ok: false, manual: true, message: 'Integration bridge not configured; Flight Plan shows the snapshot.' });
+        return remote('/netsuite/item-availability', { partNumbers: list }).then(function (res) {
+          if (!res.ok || !Array.isArray(res.items)) { window.SK_ERP_LIVE = { items: {}, error: res.message || 'The bridge did not return items.', at: new Date().toISOString() }; return res; }
+          var items = {};
+          res.items.forEach(function (row) {
+            if (row && list.indexOf(row.partNumber) >= 0 && Number.isInteger(row.onHand) && row.onHand >= 0 && row.onHand <= 10000000 && typeof row.snapshotAt === 'string' && row.snapshotAt.length <= 40 && !isNaN(Date.parse(row.snapshotAt))) items[row.partNumber] = { onHand: row.onHand, snapshotAt: row.snapshotAt };
+          });
+          window.SK_ERP_LIVE = { items: items, at: new Date().toISOString() };
+          try { if (typeof render === 'function') render(); } catch (e) {}
+          return Object.assign({}, res, { accepted: Object.keys(items).length });
+        });
+      },
       createRequisition: function (request) { return remote('/netsuite/purchase-requisition', request); },
       postAssemblyBuild: function (orderId) { var o = window.MES.getOrder(state, orderId); return remote('/netsuite/assembly-build', { orderId: orderId, csv: window.MES.netsuiteCsv(o), inventory: o && o.inventory }); }
     },
     jira: { createIssue: function (recordType, recordId) { if (!window.skServer?.active) return Promise.resolve({ ok: false, manual: true, message: 'An authenticated Flight server is required to send Jira issues.' }); return window.skServer.api('/jira/issue', { method: 'POST', body: { recordType: recordType, recordId: recordId } }); } },
     github: { registerRepo: function (op) { return remote('/github/watch', op); } },
     slack: { post: function (channel, text) { return remote('/slack/post', { channel: channel, text: text }); } },
-    describe: function () { return { mode: window.SK_INTEGRATIONS.mode, endpoint: window.SK_INTEGRATIONS.endpoint, routes: ['/netsuite/item-availability', '/netsuite/purchase-requisition', '/netsuite/assembly-build', '/jira/issue', '/github/watch', '/slack/post'] }; }
+    describe: function () { return { mode: window.SK_INTEGRATIONS.mode, endpoint: window.SK_INTEGRATIONS.endpoint, routes: ['/netsuite/item-availability', '/netsuite/lot-stock', '/netsuite/purchase-requisition', '/netsuite/assembly-build', '/jira/issue', '/github/watch', '/slack/post'] }; }
   };
+  if (window.SK_INTEGRATIONS.mode === 'mcp' && window.SK_INTEGRATIONS.endpoint) {
+    // Signed-in only. Read on sign-in, then every 15 minutes; a failed read is retried on the next minute.
+    var lastRead = 0, reading = false;
+    var refreshStock = function (force) {
+      if (reading || !(window.skAuth && window.skAuth.user && window.skAuth.user())) return;
+      if (force !== true && Date.now() - lastRead < 15 * 60000) return;
+      reading = true;
+      window.skIntegrations.netsuite.refreshAvailability().then(function (res) { if (res && res.ok) lastRead = Date.now(); }, function () {}).then(function () { reading = false; });
+    };
+    refreshStock(true); window.addEventListener('sk-auth', function () { refreshStock(true); }); setInterval(refreshStock, 60000);
+  }
   // When the bridge is live, posting to NetSuite goes through it and the returned reference is recorded.
   if (window.MES && typeof window.MES.markNetSuitePosted === 'function' && !window.MES.markNetSuitePosted.__hardened) {
     var baseMark = window.MES.markNetSuitePosted;
