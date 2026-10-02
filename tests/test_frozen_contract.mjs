@@ -81,6 +81,23 @@ for(const [label,text,count] of SOD) has(label,text,count);
 has('a signature manifest names the signer, meaning, time, signed subject, SHA-256 and build',"return { meaning, at, signer, algorithm: 'SHA-256', hash: sha256(canonical(subject)), subject: JSON.parse(JSON.stringify(subject)), authenticated: false, build: buildStamp(),",1);
 has('the signer is the signed-in account with its credential',"const signer = acct ? { name: acct.name, role: acct.role, credentialId: acct.credentialId, account: acct.account }",1);
 
+// ---- #542: a work order in QA review is frozen; only a signed QA send back returns it to Building ----
+has('the QA review freeze text',"const qaFreezeMessage = 'This work order is in QA review. Ask Quality to send it back to Building before changing it.';",1);
+has('the QA review freeze is a status check on the order',"const qaFrozen = order => plain(order) && order.status === 'Quality' ? fail(qaFreezeMessage) : null;",1);
+has('the freeze guards serials, file removal, engineering change, priority, AOG, schedule, ATP link, PO and project link',"{ const frozen = qaFrozen(order); if (frozen) return frozen; }",14);
+has('serial auto-assign skips a work order in QA review',"if (!isSerialized(order.partNumber) || order.sourceBuild || qaFrozen(order)) return [];",1);
+has('only Quality adds evidence files in QA review',"if (order.status === 'Quality' && !can('approve-wo') && !can('inspect-steps')) return fail(qaFreezeMessage);",1);
+has('only the Quality role (approve-wo) sends a work order back',"{ const d = denied('approve-wo', 'send a work order back to Building'); if (d) return d; }",1);
+has('a send back starts only from Quality',"if (order.status !== 'Quality') return fail(`Only a work order in QA review can be sent back to Building.",1);
+has('a send back needs a rationale of 1 to 300 characters',"if (!rationale || rationale.length > 300) return fail('Enter the rationale for sending the work order back to Building (1 to 300 characters).');",1);
+has('the send-back signature binds the order, its revisions, the rationale, the NC, the statuses, the signer and the time',"const sendBackSubject = (order, entry) => ({ orderId: order.id, sendBackId: entry.id, revision: entry.revision, woRev: entry.woRev, rationale: entry.rationale, ticketId: entry.ticketId, from: entry.from, to: entry.to, by: entry.by && entry.by.credentialId, at: entry.at });",1);
+has('a send back is signed with a SHA-256 manifest',"entry.manifest = signManifest(state, SEND_BACK_MEANING, sendBackSubject(order, entry), at);",1);
+has('validation rechecks every send back',"    if (!sendBacksValid(order)) return false;",1);
+has('manifest verification rechecks every send back',"recheck(`${order.id} ${e.id} send back`, e.manifest, sendBackSubject(order, e));",1);
+has('the order keeps a bounded send-back list',"const SEND_BACK_MAX = 20;",1);
+has('a split never copies the signed send backs onto the new order',"    delete child.sendBacks;",2);
+{const serverSrc=fs.readFileSync(path.join(ROOT,'server','mes-host.mjs'),'utf8');ok('the server allows MES.sendBackToBuilding as a reviewed action',serverSrc.split("'MES.sendBackToBuilding'").length-1===1&&src.split("'MES.sendBackToBuilding'").length-1===1);}
+
 // ---- the production build ----
 const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{});
 const p=await (await b.newContext({viewport:{width:1440,height:1000}})).newPage();
@@ -128,6 +145,23 @@ const qePeer=await run(w=>MES.peerReviewMasterWI(state,w.id,w.revision),ops);
 await as('radmin');
 const editorRelease=await run(w=>MES.releaseMasterWI(structuredClone(state),w.id,w.revision,{eco:'ECO-1234'}),ops);
 ok('a person who saved the operations cannot release that revision',opsEdit.s.ok&&opsEdit.authors.length===2&&!editorRelease.ok&&/you edited/.test(editorRelease.message),JSON.stringify({opsEdit,qePeer,editorRelease}));
+
+// #542 on the production build: a Quality order refuses changes even for Master Access, and only Quality sends it back.
+await as('jdoe');
+// The production fixture ships no orders, so the curated sample's Quality order is put into a copy of its workspace.
+const qaOrder=JSON.parse(fs.readFileSync(FIXTURES+'demo_publish.html','utf8').match(/window\.__DEMO_SEED=(\{[\s\S]*?\});/)[1]).orders.find(x=>x.status==='Quality');
+await run(()=>{window.__withQA=o=>{const c=structuredClone(state);c.orders=[...(c.orders||[]).filter(x=>x.id!==o.id),structuredClone(o)];return c;};});
+const qa=await run((o)=>{const c=window.__withQA(o);if(!MES.validate(c))return null;return {id:o.id,priority:MES.setPriority(c,o.id,o.priority==='High'?'Normal':'High'),serial:MES.assignSerial(c,o.id,'')};},qaOrder);
+ok('a production workspace with a work order in QA review is valid',!!qa,'invalid');
+if(qa){
+  ok('Master Access cannot change a work order in QA review',!qa.priority.ok&&!qa.serial.ok&&qa.priority.message===qa.serial.message&&/This work order is in QA review/.test(qa.priority.message),JSON.stringify(qa));
+  await as('tme');
+  const byME=await run((o)=>MES.sendBackToBuilding(window.__withQA(o),o.id,{rationale:'Rework needed.'}),qaOrder);
+  ok('Manufacturing Engineering cannot send a work order back to Building',!byME.ok&&/Your role cannot send a work order back to Building/.test(byME.message),JSON.stringify(byME));
+  await as('kqe');
+  const back=await run((o)=>{const c=window.__withQA(o);const r=MES.sendBackToBuilding(c,o.id,{rationale:'Rework needed.'});return {r,status:MES.getOrder(c,o.id).status,valid:MES.validate(c),verified:MES.verifyManifests(c).ok};},qaOrder);
+  ok('Quality sends it back to Building with a signed, valid record',back.r.ok&&back.status==='Building'&&back.valid&&back.verified,JSON.stringify(back));
+}
 
 // Every approval writes person, credential, time and a SHA-256 manifest.
 const m=await run(()=>MES.signManifest(state,'Contract check',{x:1},new Date().toISOString()));
