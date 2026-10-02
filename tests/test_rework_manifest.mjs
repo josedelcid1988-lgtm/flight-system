@@ -182,11 +182,20 @@ const repair = walk('seed-curated', 'WO-10003', 'Repair', {}, state => { MES.get
   const moved = structuredClone(state);
   MES.getOrder(moved, 'WO-10005').tickets.find(x => x.id === 'NC-0001').reworkPlan.opId = MES.getOrder(moved, 'WO-10005').operations[0].id;
   ok('Legacy: an edit to the signed release of a legacy plan is still refused', MES.validate(moved) === false && failsAt(moved, /NC-0001 rework release/));
-  // A plan approved and released by a build before #581: that release wrote no manifest at all.
-  const old = MES.upgrade(structuredClone(raw));
-  { const ot = MES.getOrder(old, 'WO-10005').tickets.find(x => x.id === 'NC-0001'), at = new Date(Date.parse(ot.reworkPlan.approvedAt) + 60000).toISOString();
+  // Codex P1 on #602 (78c8c73): the release this build signed for a legacy approval cannot be stripped back to legacy.
+  const strippedRelease = structuredClone(state);
+  delete MES.getOrder(strippedRelease, 'WO-10005').tickets.find(x => x.id === 'NC-0001').manifest;
+  const srV = verify(strippedRelease);
+  ok('Legacy: removing the signed release of a legacy approval is refused by validate', MES.validate(strippedRelease) === false && /NC-0001 is closed without a signed QA release, but it was not released before releases were signed/.test(detail(strippedRelease)), detail(strippedRelease));
+  ok('Legacy: verifyManifests fails that release instead of listing it as unsigned legacy', !srV.ok && srV.failures.some(f => f.where === 'WO-10005 NC-0001 rework release' && /does not predate signing/.test(f.reason)) && !srV.unsignedLegacy.includes('WO-10005 NC-0001 rework release'), JSON.stringify({ failures: srV.failures, unsignedLegacy: srV.unsignedLegacy }));
+  // A plan approved and released by a build before #581: that release wrote no manifest at all. The saved workspace
+  // holds it closed before this build first opens it, so the seal lists both the approval and the release.
+  const oldRaw = structuredClone(raw);
+  { const ot = oldRaw.orders.find(o => o.id === 'WO-10005').tickets.find(x => x.id === 'NC-0001'), at = new Date(Date.parse(ot.reworkPlan.approvedAt) + 60000).toISOString();
     ot.reworkPlan = { ...ot.reworkPlan, stage: 'Released', releasedBy: { name: 'Riley Release', role: 'Quality Engineer', credentialId: 'ACCT-rw-qe2' }, releasedAt: at };
     ot.status = 'Resolved'; ot.resolution = ot.reworkPlan.approval; ot.resolvedBy = ot.reworkPlan.approvedBy; ot.resolvedAt = at; }
+  const old = MES.upgrade(oldRaw);
+  ok('Legacy: the seal lists the pre-#581 release as well as the approval', !!old && old.reworkLegacySeal.releases.includes(`NC-0001@${raw.orders.find(o => o.id === 'WO-10005').tickets.find(x => x.id === 'NC-0001').createdAt}`), JSON.stringify(old && old.reworkLegacySeal));
   const oldV = verify(old);
   ok('Legacy: a ticket closed by a pre-#581 release still validates', MES.validate(old), JSON.stringify(MES.diagnose(old)));
   ok('Legacy: verifyManifests lists its approval and release as unsigned legacy, not failures', oldV.ok && oldV.unsignedLegacy.includes('WO-10005 NC-0001 rework approval') && oldV.unsignedLegacy.includes('WO-10005 NC-0001 rework release'), JSON.stringify({ ok: oldV.ok, unsignedLegacy: oldV.unsignedLegacy, failures: oldV.failures }));
@@ -207,7 +216,7 @@ const repair = walk('seed-curated', 'WO-10003', 'Repair', {}, state => { MES.get
   ok('Seal: removing both signatures of a signed plan is refused by validate', MES.validate(both) === false);
   ok('Seal: diagnose names the plan whose signatures were removed', new RegExp(`${rework.ticketId} has an unsigned Rework or Repair approval, but it was not approved before approvals were signed`).test(detail(both)), detail(both));
   ok('Seal: MES.upgrade does not accept the stripped plan', MES.upgrade(structuredClone(both)) === null);
-  const listed = structuredClone(both); listed.reworkLegacySeal.tickets.push(`${rework.ticketId}@${MES.getOrder(listed, 'WO-10006').tickets.find(x => x.id === rework.ticketId).createdAt}`);
+  const listed = structuredClone(both); { const tk = MES.getOrder(listed, 'WO-10006').tickets.find(x => x.id === rework.ticketId); listed.reworkLegacySeal.releases.push(`${tk.id}@${tk.createdAt}`); } listed.reworkLegacySeal.tickets.push(`${rework.ticketId}@${MES.getOrder(listed, 'WO-10006').tickets.find(x => x.id === rework.ticketId).createdAt}`);
   ok('Seal: the stripped plan passes only if the seal is edited too (outside what the seal can catch)', MES.validate(listed) === true);
   const noSeal = structuredClone(rework.state); delete noSeal.reworkLegacySeal;
   ok('Seal: a workspace with signed plans and no seal is refused', MES.validate(noSeal) === false && /no record of the unsigned approvals that predate signing/.test(detail(noSeal)), detail(noSeal));
