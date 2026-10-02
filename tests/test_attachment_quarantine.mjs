@@ -783,8 +783,8 @@ function surfaces(state) {
   const openAs = async username => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 980 } });
     await context.addInitScript(([users, username]) => {
-      localStorage.setItem('skyryse-mes-auth-v1', JSON.stringify({ users: users.map(u => ({ ...u, salt: 'test', hash: 'unused', createdAt: new Date().toISOString() })) }));
-      sessionStorage.setItem('skyryse-mes-session-v1', username);
+      localStorage.setItem('skyryse-mes-demo-auth-v1', JSON.stringify({ users: users.map(u => ({ ...u, salt: 'test', hash: 'unused', createdAt: new Date().toISOString() })) }));
+      sessionStorage.setItem('skyryse-mes-demo-session-v1', username);
       sessionStorage.setItem('sk-boot-seen', '1');
     }, [users, username]);
     const page = await context.newPage(), errors = [];
