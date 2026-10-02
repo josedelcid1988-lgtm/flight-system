@@ -615,7 +615,15 @@ try {
       assert.equal(r.json.rows.length, Math.min(200, total), `limit=${limit} reads the default page`);
     }
     assert.equal((await api('GET', '/audit?limit=2', { token })).json.rows.length, 2);
-    assert.equal((await api('GET', '/audit?limit=5000', { token })).status, 200, 'a limit past 1,000 is capped, not refused');
+    // The log here is far shorter than 1,000 rows, so the cap is checked on the limit the route hands the store.
+    const auditRows = server.store.auditRows, asked = [];
+    server.store.auditRows = function (limit) { asked.push(limit); return auditRows.call(this, limit); };
+    try {
+      assert.equal((await api('GET', '/audit?limit=5000', { token })).status, 200, 'a limit past 1,000 is capped, not refused');
+      await api('GET', '/audit?limit=-1', { token });
+      await api('GET', '/audit?limit=1000', { token });
+    } finally { server.store.auditRows = auditRows; }
+    assert.deepEqual(asked, [1000, 200, 1000], 'the store reads at most 1,000 rows, and the default page for a negative limit');
   });
   await check('the manager can unlock an account with a reason and audit record', async () => {
     // Wrong passwords sent at the same time still count one each: the counter is a single atomic write.

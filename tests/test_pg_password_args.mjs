@@ -31,6 +31,8 @@ const cases = [
   // Codex 4160965078: every password assignment leaves the argument, and the last one is the password libpq uses.
   ['keywords with a repeated password', 'password=old host=db password=current dbname=flight', { dbname: 'host=db dbname=flight', env: { PGPASSWORD: 'current' } }],
   ['keywords with no password', 'host=db dbname=flight', { dbname: 'host=db dbname=flight', env: {} }],
+  // Independent review of a93f783: libpq's white space is the ASCII isspace set, so a no-break space is part of the value.
+  ['keywords with a no-break space inside a password', 'host=db password=pa\u00a0ss dbname=flight', { dbname: 'host=db dbname=flight', env: { PGPASSWORD: 'pa\u00a0ss' } }],
   // Codex 4161235788: libpq unescapes a backslash in an unquoted value too, so \\ is one backslash.
   ['keywords with an escaped backslash, unquoted', 'host=db password=pa\\\\ss dbname=flight', { dbname: 'host=db dbname=flight', env: { PGPASSWORD: 'pa\\ss' } }],
   ['keywords with an escaped quote, unquoted', "host=db password=it\\'s", { dbname: 'host=db', env: { PGPASSWORD: "it's" } }],
@@ -80,6 +82,9 @@ const refusals = [
   ['a URI password name with a trailing space', 'postgresql://flight@db/flight?password%20=Hidden-1', {}, /in lowercase with no spaces around it/],
   // Cursor 4163494602: a URI with leading white space has no = and would otherwise pass as a bare database name.
   ['a URI with a leading space', ' postgresql://flight:Hidden-1@db/flight', {}, /something before postgresql/],
+  // Independent review of a93f783: libpq matches the scheme in lowercase only, and refuses a parameter with no =.
+  ['a URI with its scheme in capitals', 'POSTGRESQL://flight:Hidden-1@db/flight', {}, /in capitals/],
+  ['a URI password parameter with no value', 'postgresql://flight@db/flight?password&sslmode=require', {}, /password with no value/],
   ['a quoted URI', '"postgresql://flight:Hidden-1@db/flight"', {}, /something before postgresql/],
   ['a URI with a leading tab', '\tpostgres://flight:Hidden-1@db/flight', {}, /something before postgresql/],
   ['a URI client key passphrase name with a literal space', 'postgresql://flight@db/flight?sslmode=require& sslpassword=Hidden-1', {}, /in lowercase with no spaces around it/],

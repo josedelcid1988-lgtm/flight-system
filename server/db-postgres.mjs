@@ -209,13 +209,14 @@ export function pgRestoreTarget(connectionString, env = process.env) {
   let dbname = raw, password = null, service = false, found = false;
   // A URI with anything before its scheme (a space, a tab, a quote) is not one libpq reads as a URI, yet it can carry a
   // password in its user info, so it is refused instead of passed on as a bare name (Cursor 4163494602).
-  if (!/^postgres(ql)?:\/\//i.test(raw) && /postgres(ql)?:\/\//i.test(raw)) refuse('has something before postgresql://; start it with postgresql:// so the password can be kept off the command line');
+  // libpq matches the scheme in lowercase only, so POSTGRESQL:// is no URI to it either (independent review of a93f783).
+  if (!/^postgres(ql)?:\/\//.test(raw) && /postgres(ql)?:\/\//i.test(raw)) refuse('has something before postgresql:// or writes it in capitals; start it with postgresql:// in lowercase so the password can be kept off the command line');
   // A bare database name (no = and not a URI) holds no password: libpq reads it as the dbname alone.
-  if (!/^postgres(ql)?:\/\//i.test(raw) && !raw.includes('=')) return { dbname: raw, env: {} };
-  if (/^postgres(ql)?:\/\//i.test(raw)) {
+  if (!/^postgres(ql)?:\/\//.test(raw) && !raw.includes('=')) return { dbname: raw, env: {} };
+  if (/^postgres(ql)?:\/\//.test(raw)) {
     // libpq's URI has no fragment: a # is ordinary data wherever it appears, so a password such as ?password=Head#Tail
     // is read whole (Codex 4161531093).
-    const scheme = raw.match(/^postgres(?:ql)?:\/\//i)[0];
+    const scheme = raw.match(/^postgres(?:ql)?:\/\//)[0];
     let rest = raw.slice(scheme.length), userinfo = null;
     // As in libpq's conninfo_uri_parse_options, the user info runs to the first @ found before any /, so a host that
     // itself starts with @ (an abstract socket) stays the host (Codex 4161788869), and an unencoded ? in a password is
@@ -236,7 +237,9 @@ export function pgRestoreTarget(connectionString, env = process.env) {
     for (const part of query === undefined ? [] : query.split('&')) {
       const eq = part.indexOf('='), key = pct(eq >= 0 ? part.slice(0, eq) : part);
       caseCheck(key);
-      if (key === 'password') { found = true; password = pct(eq >= 0 ? part.slice(eq + 1) : ''); continue; }
+      // libpq refuses a parameter with no =, so a bare ?password is refused rather than read as an empty password.
+      if (eq < 0 && ['password', 'sslpassword', 'service'].includes(key)) refuse(`has ${key} with no value; write ${key}= followed by its value`);
+      if (key === 'password') { found = true; password = pct(part.slice(eq + 1)); continue; }
       if (key === 'service') service = true;
       if (key === 'sslpassword') refuse(SSL_PASSWORD_REFUSAL);
       kept.push(part);
@@ -247,11 +250,12 @@ export function pgRestoreTarget(connectionString, env = process.env) {
     // keyword=value pairs, as libpq's conninfo_parse reads them: a value that starts with ' runs to the closing quote;
     // any other value runs to whitespace, and a ' inside it is an ordinary character (Codex 4161531100). In both, a
     // backslash escapes the next character, so both are unescaped the same way (Codex 4161235788).
-    const pair = /\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*('(?:\\.|[^'\\])*'|(?:\\.|[^\s'\\])(?:\\.|[^\s\\])*|)/y;
+    // White space is libpq's isspace set only, not every Unicode space JavaScript's \s takes.
+    const pair = /[ \t\n\r\f\v]*([A-Za-z_][A-Za-z0-9_]*)[ \t\n\r\f\v]*=[ \t\n\r\f\v]*('(?:\\.|[^'\\])*'|(?:\\.|[^ \t\n\r\f\v'\\])(?:\\.|[^ \t\n\r\f\v\\])*|)/y;
     const kept = [];
     let index = 0;
     while (index < raw.length) {
-      if (/^\s*$/.test(raw.slice(index))) break;
+      if (/^[ \t\n\r\f\v]*$/.test(raw.slice(index))) break;
       pair.lastIndex = index;
       const match = pair.exec(raw);
       if (!match) refuse('is not a list of keyword=value settings libpq can read');
