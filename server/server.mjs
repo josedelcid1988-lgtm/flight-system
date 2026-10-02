@@ -228,7 +228,19 @@ export function createServer(options = {}) {
   // The route gate counts roles the way the engine and /auth/access do (#580): an extra role counts only while its
   // role training is current in the stored workspace. With no readable workspace only the primary and standard roles
   // count, never an extra role whose training cannot be checked.
-  const gateState = async () => { try { const { state } = await loadState(); return state || null; } catch { return null; } };
+  // The upgraded state is cached like the evidence-id set below: reused only while the stored row has the same ETag
+  // and byte-identical JSON, so any write forces a rebuild before the next decision.
+  let gateCache = null;
+  const gateState = async () => {
+    try {
+      const doc = await store.getDoc(TENANT);
+      if (!doc) { gateCache = null; return null; }
+      if (gateCache && gateCache.etag === doc.etag && gateCache.json === doc.json) return gateCache.state;
+      const state = host.MES.upgrade(structuredClone(JSON.parse(doc.json))) || null;
+      gateCache = { etag: doc.etag, json: doc.json, state };
+      return state;
+    } catch { return null; }
+  };
   const managesIn = (account, state) => host.rolesOf(account, state).some(role => ['qm', 'admin'].includes(role));
   const supervisesIn = (account, state) => !managesIn(account, state) && host.rolesOf(account, state).includes('qs');
   const manages = async account => managesIn(account, await gateState());
