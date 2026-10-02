@@ -385,6 +385,9 @@ export function createServer(options = {}) {
     // conflict before any comparison against that workspace, so the loser never reads as a calibration or archive refusal.
     if (expectedEtag === null && beforeRow) return { conflict: true };
     const beforeState = beforeRow ? JSON.parse(beforeRow.json) : null;
+    // Every signature is verified before any closed order leaves the document: an order moved to the archive is no longer
+    // in the workspace validState checks below, and not every caller validated before committing (Codex r4161912798).
+    { const pre = host.MES.verifyManifests(state); if (!pre.ok) { const f = pre.failures[0] || {}; return { problem: `A signed record failed verification at ${f.where || 'an unknown record'}: ${f.reason || 'invalid manifest'}.` }; } }
     const r = host.MES.archiveOrders ? host.MES.archiveOrders(state) : { ok: true, archived: [] };
     if (!r.ok) return { problem: r.message };
     for (const e of r.archived) if (!host.MES.archivedOrderValid(e)) return { problem: `${e.order.id} could not move to the archive: it does not validate as a closed work order. It stays in the live workspace.` };

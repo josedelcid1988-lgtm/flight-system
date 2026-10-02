@@ -65,6 +65,9 @@ r=await run(([id])=>{const t=f=>{const s=structuredClone(window.__S);f(s.orders.
 ok('changing or removing the recorded FAIR work order revision fails verification',!r.changed.ok&&r.changed.why.some(w=>/work order revision/.test(w))&&!r.removed.ok&&r.removed.why.some(w=>/work order revision/.test(w)),JSON.stringify(r));
 ok('a FAIR bound to a revision that is not in the work order revision log fails verification',!r.unknown.ok&&r.unknown.why.some(w=>/not in the work order revision log/.test(w)),JSON.stringify(r));
 
+r=await run(([id])=>{const s=structuredClone(window.__S),o=s.orders.find(x=>x.id===id);o.fair.reviewed.manifest.meaning='AS9102 FAIR review declined';const v=MES.verifyManifests(s);return {ok:v.ok,where:v.failures.map(f=>f.where)};},[ID]);
+ok('relabeling the box 22 signature meaning fails verification (Codex r4161912783)',!r.ok&&r.where.some(w=>/FAIR box 22/.test(w)),JSON.stringify(r));
+
 // ---- the lock: every locked action, every role ----
 // Each case runs on a fresh copy (window.__C). prepare() puts the copy in the state the action needs, as the QA Manager.
 const CASES=[

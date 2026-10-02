@@ -157,6 +157,34 @@ try {
     assert.match(r.json.error, /migrated-escape record that the shared workspace does not hold/);
   });
 
+  // r4161912794: once the server holds a migrated-escape NC, the whole record stays as stored. Only a CAR or rework order
+  // link, added files and added history may change.
+  for (const [label, edit, field] of [
+    ['description', t => { t.description = 'Rewritten after migration.'; }, 'description'],
+    ['part identity', t => { t.partNumber = 'SR-9999'; }, 'partNumber'],
+    ['raiser', t => { t.raisedBy = { ...(t.raisedBy || {}), name: 'Someone Else', credentialId: 'ACCT-other' }; }, 'raisedBy'],
+    ['escape data', t => { t.escape = { ...t.escape, detectedAt: t.escape.detectedAt === 'Customer' ? 'Receiving inspection' : 'Customer' }; }, 'escape'],
+    ['migration history entry', t => { t.history = t.history.map(e => /^Migrated from escape/.test(e.action) ? { ...e, at: '2020-01-01T00:00:00.000Z' } : e); }, 'history'],
+    ['history (an entry dropped)', t => { t.history = t.history.slice(1); }, 'history'],
+  ]) {
+    await check(`r4161912794 the server refuses a change to the ${label} of a stored migrated-escape NC`, async () => {
+      const live = await started(raw);
+      const id = migratedNcs(JSON.parse(live.server.store.getDoc('default').json))[0].id;
+      const before = live.server.store.getDoc('default').etag;
+      const r = await viaAction(live, ws => edit(ws.maneuver.ncs.find(x => x.id === id)));
+      assert.equal(r.status, 422, JSON.stringify(r.json));
+      assert.match(r.json.error, new RegExp(`${id} is a migrated escape closure the shared workspace holds; its ${field} cannot change`));
+      assert.equal(live.server.store.getDoc('default').etag, before, 'nothing was stored');
+    });
+  }
+  await check('r4161912794 a CAR link, an added file and added history on a stored migrated-escape NC still save', async () => {
+    const live = await started(raw);
+    const stored = JSON.parse(live.server.store.getDoc('default').json);
+    const id = migratedNcs(stored)[0].id, car = (stored.maneuver.cars || [])[0];
+    const r = await viaAction(live, ws => { const t = ws.maneuver.ncs.find(x => x.id === id); if (car) t.carId = car.id; t.attachments = [...(t.attachments || []), { id: `ATT-${id}-9`, name: 'photo.jpg', type: 'image/jpeg', size: 10, storage: 'reference', addedAt: new Date().toISOString(), addedBy: { name: 'Admin', role: 'System Administrator', credentialId: 'ACCT-admin' } }]; t.history = [...t.history, { at: new Date().toISOString(), action: 'photo.jpg attached (logged by name only).', actor: 'Admin · ACCT-admin' }]; });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+  });
+
   // r4160517069: an initial upload has no stored copy, so the record must match the NC's own migration entry, and every
   // accepted record is audited under the importing QA Manager or Master Access account in the same transaction.
   const legacyAudit = server => server.store.auditRows(1000).filter(r => r.action === 'legacy-escape-import').map(r => ({ username: r.username, detail: typeof r.detail === 'string' ? JSON.parse(r.detail) : r.detail }));
