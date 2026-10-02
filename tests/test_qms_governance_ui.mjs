@@ -35,6 +35,22 @@ try {
   await page.locator('[data-flight-skill-run] [name=reason]').fill('Review the reported fit interference evidence.');
   await page.locator('[data-flight-skill-run] button[type=submit]').click();
   await page.getByText(/5-Why draft AID-0001 created/i).waitFor();
+  // Codex review on #621: the run form hands the parsed object itself to MES.runSkill, so the engine measures it before
+  // anything copies it; a flat input with 200,000 keys is refused with the value-count message and no draft is added.
+  { const wide = JSON.stringify(Object.fromEntries(Array.from({ length: 200000 }, (_, i) => [`k${i}`, i])));
+    await page.evaluate(text => {
+      window.__watchedText = text; window.__parsedInput = null; window.__passedSame = null;
+      const parse = JSON.parse; JSON.parse = function (t, ...rest) { const value = parse.call(this, t, ...rest); if (t === window.__watchedText) window.__parsedInput = value; return value; };
+      const run = MES.runSkill; MES.runSkill = function (st, input, ...rest) { if (window.__parsedInput) window.__passedSame = input === window.__parsedInput; return run.call(this, st, input, ...rest); };
+    }, wide);
+    const draftsBefore = await page.evaluate(() => (state.aiSkillDrafts || []).length);
+    await page.locator('[data-flight-skill-run] [name=input]').fill(wide);
+    await page.locator('[data-flight-skill-run] [name=reason]').fill('A run input wider than the value budget.');
+    await page.locator('[data-flight-skill-run] button[type=submit]').click();
+    await page.locator('[data-flight-skill-error]').getByText(/holds more than 50,000 values/).waitFor();
+    assert.equal(await page.evaluate(() => window.__passedSame), true, 'the form passes the parsed object itself, not a copy');
+    assert.equal(await page.evaluate(() => (state.aiSkillDrafts || []).length), draftsBefore, 'no draft is added');
+    await page.locator('[data-flight-skill-run] [name=input]').fill(''); }
   await page.locator('[data-flight-skill-review="AID-0001"]').click();
   await page.getByText(/AID-0001 reviewed/i).waitFor();
   await page.evaluate(() => { sessionStorage.setItem('skyryse-mes-session-v1', 'engineer'); window.dispatchEvent(new Event('sk-auth')); view='qms-records'; render(); });
