@@ -207,6 +207,7 @@ export function createServer(options = {}) {
     const reference = randomBytes(6).toString('hex').toUpperCase();
     log('error', reference, req.method, req.url, error && error.stack ? error.stack : String(error));
     send(res, 500, { error: `${what} Try again; if it keeps failing, give your administrator reference ${reference}.`, reference });
+    return reference;
   };
   // Bodies are counted in bytes against MAX_REQUEST_BYTES; a declared Content-Length over it is refused before reading.
   const readBody = req => new Promise((resolve, reject) => {
@@ -943,7 +944,7 @@ export function createServer(options = {}) {
         if (!ifMatch) { await auditRefusal(428, 'missing If-Match', { etag }); send(res, 428, { error: 'Include the current workspace ETag in If-Match before running an action.' }); return; }
         if (ifMatch && ifMatch !== etag) { await auditRefusal(409, 'stale If-Match', { etag }); send(res, 409, { error: 'The workspace changed on another device. Reload to continue.', etag }); return; }
         let result;
-        try { result = host.withAccount(session.account, () => fn(state, ...args), state); } catch (e) { internalError(res, req, e, 'The action could not run. Nothing was saved.'); return; }
+        try { result = host.withAccount(session.account, () => fn(state, ...args), state); } catch (e) { const reference = internalError(res, req, e, 'The action could not run. Nothing was saved.'); await auditRefusal(500, 'the engine action failed; the server log holds the detail', { reference }); return; }
         if (!result || result.ok === false) { await auditRefusal(403, 'refused by the engine', { message: String(result && result.message || '').slice(0, 500) }); send(res, 403, { error: result ? result.message : 'Refused.', result }); return; }
         const invalid = validState(state); if (invalid) { await auditRefusal(422, `would leave the workspace invalid: ${invalid}`); send(res, 422, { error: `The action would leave the workspace invalid: ${invalid}` }); return; }
         // An evidence refusal keeps its own evidence-refused row (reports and tests read it) and joins the action trail.

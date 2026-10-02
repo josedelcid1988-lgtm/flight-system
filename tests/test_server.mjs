@@ -458,8 +458,16 @@ try {
     const invalidRow = await latest();
     assert.deepEqual([invalidRow.action, invalidRow.status], ['MES.setPriority', 422]);
     assert.match(invalidRow.reason, /^would leave the workspace invalid: /);
-    assert.equal((await refused()).length, count + 9, 'each refusal adds exactly one audit row');
-    assert.equal(JSON.stringify((await refused()).slice(0, 9)).includes(secret), false, 'no refusal row records the request arguments');
+    // An engine function that throws on malformed arguments is refused with 500 and audited with the reference the
+    // caller receives, never the arguments or the error text.
+    server.host.resolveAction = name => name === 'MES.setPriority' ? () => { throw new Error(`engine detail ${secret}`); } : resolveAction(name);
+    let thrown;
+    try { thrown = await api('POST', '/workspace/actions/MES.setPriority', { token, body: { args: [null, secret] }, headers: { 'If-Match': before.etag } }); }
+    finally { server.host.resolveAction = resolveAction; }
+    assert.equal(thrown.status, 500);
+    assert.deepEqual(await latest(), { action: 'MES.setPriority', status: 500, reason: 'the engine action failed; the server log holds the detail', reference: thrown.json.reference });
+    assert.equal((await refused()).length, count + 10, 'each refusal adds exactly one audit row');
+    assert.equal(JSON.stringify((await refused()).slice(0, 10)).includes(secret), false, 'no refusal row records the request arguments or the error text');
     assert.equal(server.store.getDoc('default').etag, before.etag, 'the refused actions leave the shared workspace unchanged');
     assert.equal(server.store.verifyAudit().ok, true, 'the audit chain still verifies');
   });
