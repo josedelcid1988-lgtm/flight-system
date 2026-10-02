@@ -217,11 +217,13 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  ok('an account made in the older demo signs in to the demo with its chosen password',await p.evaluate(()=>skAuth.user()&&skAuth.user().username)==='qa.boss');
  await p.evaluate(()=>sessionStorage.removeItem('skyryse-mes-demo-session-v1'));
  // Clearing the browser's site data reopens it: production starts over with first-account setup.
- await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(600);
- await p.evaluate(()=>{localStorage.clear();sessionStorage.removeItem('skyryse-mes-session-v1');});
- await settled(ctx,()=>localStorage.length===0);
- await p.reload();await p.waitForTimeout(900);
- const fresh=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),login:!document.getElementById('sk-login').hidden,title:document.getElementById('sk-login-title').textContent}));
+ // Cleared site data is a browser with no storage for the origin, so production opens in a context of its own: in this
+ // harness a write from an earlier page of the same context can reach storage after a clear and bring the leftovers
+ // back (#556), which a real clear of the site data, with the older demo's tabs closed, does not.
+ const cleared=await b.newContext({viewport:{width:1440,height:1000}});const cp=await cleared.newPage();cp.on('pageerror',e=>errs.push(e.message));
+ await cp.goto('file://'+FIXTURES+'publish.html');await cp.waitForFunction(()=>!document.getElementById('sk-login').hidden||!!document.getElementById('sk-legacy-review'),null,{timeout:60000});
+ const fresh=await cp.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),login:!document.getElementById('sk-login').hidden,title:document.getElementById('sk-login-title').textContent}));
+ await cleared.close();
  ok('once the site data is cleared, production opens on first-account setup',!fresh.gate&&fresh.login&&/Set up Master Access/.test(fresh.title),JSON.stringify(fresh));
  await ctx.close();}
 // An identity provider set for production (here before load, as a deployment page does) never reaches the demo.
@@ -260,8 +262,15 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  // open until this tab sees it: a write from a page that reloaded or closed just after can be lost (#556).
  {const other=await ctx.newPage();await other.goto('file://'+FIXTURES+BLANK);
   await other.evaluate(v=>{if(!localStorage.getItem('skyryse-mes-legacy-demo-review-v1'))localStorage.setItem('skyryse-mes-legacy-demo-review-v1',v);},v);
-  for(const end=Date.now()+60000;Date.now()<end;){if(await p.evaluate(()=>!!localStorage.getItem('skyryse-mes-legacy-demo-review-v1')).catch(()=>false))break;await p.waitForTimeout(250);}
-  await p.reload();await p.waitForTimeout(900);await other.close();}
+  // The tab reloads itself once it sees the record; it is reloaded here only if it has not closed by then, so the two
+  // reloads never race.
+  let reloaded=false;
+  for(const end=Date.now()+60000;Date.now()<end;){
+   const r=await p.evaluate(()=>({record:!!localStorage.getItem('skyryse-mes-legacy-demo-review-v1'),gate:!!document.getElementById('sk-legacy-review')})).catch(()=>null);
+   if(r&&r.gate)break;
+   if(r&&r.record&&!reloaded){reloaded=true;await p.waitForTimeout(3000);if(!(await p.evaluate(()=>!!document.getElementById('sk-legacy-review')).catch(()=>false)))await p.reload().catch(()=>{});}
+   await p.waitForTimeout(250);}
+  await p.waitForTimeout(900);await other.close();}
  const open=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),user:window.skAuth&&skAuth.user()&&skAuth.user().username}));
  ok('that tab is then closed and its Operations session ends',open.gate&&!open.user,JSON.stringify(open));
  await ctx.close();}
