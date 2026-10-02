@@ -146,6 +146,52 @@ try {
     assert.equal(allowed.status, 200, JSON.stringify(allowed.json));
   });
 
+  // Codex review on #633: every manager-only write decides authority again under its transaction, so training that lapses
+  // while the request is open (here: removed from the stored workspace just before the write's transaction runs) refuses
+  // it. The stored workspace is put back after each request so the next case starts trained.
+  const lapseBeforeNextTransaction = () => {
+    const original = server.store.transaction.bind(server.store);
+    const saved = server.store.getDoc('default').json;
+    server.store.transaction = async fn => {
+      server.store.transaction = original;
+      const row = server.store.getDoc('default');
+      const lapsed = JSON.parse(row.json);
+      for (const person of lapsed.people || []) if (person && person.account === 'current-qm') person.training = [];
+      if (Array.isArray(lapsed.trainingRecords)) lapsed.trainingRecords = lapsed.trainingRecords.filter(r => r.account !== 'current-qm');
+      assert.ok(server.store.putDoc('default', JSON.stringify(lapsed), row.etag, 'test'));
+      assert.deepEqual(server.host.rolesOf(server.store.account('current-qm'), MES.upgrade(JSON.parse(server.store.getDoc('default').json))), ['qe'], 'the lapse is stored before the write runs');
+      return original(fn);
+    };
+    return () => { server.store.transaction = original; const row = server.store.getDoc('default'); assert.ok(server.store.putDoc('default', saved, row.etag, 'test')); };
+  };
+  await check('training that lapses while a manager-only write is open refuses export settings, unlock and supersede', async () => {
+    const stored = MES.upgrade(JSON.parse(server.store.getDoc('default').json));
+    assert.deepEqual(server.host.rolesOf(server.store.account('current-qm'), stored), ['qe', 'qm'], 'the role counts before each request');
+    let restore = lapseBeforeNextTransaction();
+    try {
+      const setting = { recordType: 'training', enabled: false, destinationKind: 'folder', destination: path.join(os.tmpdir(), 'flight-exports-late'), namingPattern: '{recordType}-{recordId}-{exportId}.json', rationale: 'Late training lapse.' };
+      const r = await api('PUT', '/record-exports/settings', { token: current, body: setting });
+      assert.equal(r.status, 403, JSON.stringify(r.json));
+      assert.equal(server.store.exportSetting('training'), null, 'no export setting is saved');
+    } finally { restore(); }
+    server.store.setLockout('plain-tech', 5, Date.now() + 60000);
+    restore = lapseBeforeNextTransaction();
+    try {
+      const r = await api('POST', '/auth/unlock', { token: current, body: { username: 'plain-tech', reason: 'Verified in person.' } });
+      assert.equal(r.status, 403, JSON.stringify(r.json));
+      assert.ok(server.store.lockout('plain-tech').until > Date.now(), 'the lockout stays');
+    } finally { restore(); server.store.clearLockout('plain-tech'); }
+    const target = 'EV-00000000-0000-4000-8000-000000058003', replacement = 'EV-00000000-0000-4000-8000-000000058004';
+    await uploadEvidence(target, tech);
+    await uploadEvidence(replacement, tech);
+    restore = lapseBeforeNextTransaction();
+    try {
+      const r = await api('POST', `/evidence/${target}/supersede`, { token: current, body: { by: replacement, reason: 'Clearer recording.' } });
+      assert.equal(r.status, 403, JSON.stringify(r.json));
+      assert.equal(server.store.evidenceMeta(target).supersededBy || null, null, 'the recording is not superseded');
+    } finally { restore(); }
+  });
+
   await check('authority is decided again inside the account transaction: training that lapses before the commit refuses the change', async () => {
     // Codex review on #633: the account route checked authority against a workspace read before password hashing and
     // the transaction. Here the training record is removed from the stored workspace just before the transaction runs.

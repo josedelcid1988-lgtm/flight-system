@@ -244,6 +244,10 @@ export function createServer(options = {}) {
   const managesIn = (account, state) => host.rolesOf(account, state).some(role => ['qm', 'admin'].includes(role));
   const supervisesIn = (account, state) => !managesIn(account, state) && host.rolesOf(account, state).includes('qs');
   const manages = async account => managesIn(account, await gateState());
+  const stateOfRow = row => { if (!row) return null; try { return host.MES.upgrade(structuredClone(JSON.parse(row.json))) || null; } catch { return null; } };
+  // A manager-only write decides authority again from the actor and the workspace as its transaction reads them, after
+  // lockAuthority and right before it writes (#580): a role's training can lapse while the request is open.
+  const managesInTx = async (tx, username) => { await tx.lockAuthority(); const account = await tx.account(username); return !!account && managesIn(account, stateOfRow(await tx.getDoc(TENANT))); };
   // Lockouts are kept in SQLite, so a restart does not clear a brute-force lockout.
   const lockedFor = async username => { const f = await store.lockout(username); return f.until > Date.now() ? Math.ceil((f.until - Date.now()) / 60000) : 0; };
   const noteFailure = async username => { const r = await store.noteFailedSignin(username, LOCK_AFTER, Date.now() + LOCK_MS); if (r.locked) await store.audit(username, 'lockout', { minutes: LOCK_MS / 60000 }); return { n: r.fails, until: r.until }; };
@@ -729,9 +733,7 @@ export function createServer(options = {}) {
             const current = await tx.accounts();
             // Authority is decided again here, from the actor and the workspace as this transaction reads them (#580): a
             // role's training can lapse, or a retraining requirement land, between the check above and this commit.
-            const txRow = await tx.getDoc(TENANT);
-            let txState = null;
-            if (txRow) { try { txState = host.MES.upgrade(structuredClone(JSON.parse(txRow.json))) || null; } catch { txState = null; } }
+            const txState = stateOfRow(await tx.getDoc(TENANT));
             const txActor = session ? current.find(x => x.username === session.username) || null : null;
             if (!firstRun && !(txActor && (managesIn(txActor, txState) || supervisesIn(txActor, txState)))) { refusal = { status: 403, error: 'Only a Master Access, QA Manager, or Quality Supervisor account can manage accounts.' }; return false; }
             if (firstRun && current.length) { refusal = { status: 409, error: 'An account was created on this server while you were setting it up. Sign in with it instead.' }; return false; }
@@ -1004,10 +1006,17 @@ export function createServer(options = {}) {
         if (row.supersededBy) { send(res, 409, { error: `${ev[1]} was already superseded by ${row.supersededBy}.` }); return; }
         if (!EVIDENCE_ID.test(by) || by === ev[1] || !await store.evidenceMeta(by)) { send(res, 400, { error: 'Upload the replacement recording first, then name its EV ID in "by".' }); return; }
         if (reason.length < 3 || reason.length > 300) { send(res, 400, { error: 'Give the reason for superseding (3 to 300 characters).' }); return; }
-        const out = await store.supersedeEvidence(ev[1], by, reason);
+        let out = null, allowed = true;
+        await store.transaction(async tx => {
+          if (!await managesInTx(tx, session.username)) { allowed = false; return false; }
+          out = await tx.supersedeEvidence(ev[1], by, reason);
+          if (!out) return false;
+          await tx.audit(session.username, 'evidence-supersede', { id: ev[1], by, reason });
+          return true;
+        });
+        if (!allowed) { send(res, 403, { error: 'Only a Master Access or QA Manager account can supersede evidence.' }); return; }
         // The update applies only while the row is unsuperseded; a request that lost that race changes nothing and is not audited.
         if (!out) { const now = await store.evidenceMeta(ev[1]); send(res, 409, { error: `${ev[1]} was already superseded by ${now?.supersededBy || 'another recording'}.` }); return; }
-        await store.audit(session.username, 'evidence-supersede', { id: ev[1], by, reason });
         send(res, 200, out); return;
       }
       if (route === '/evidence/report' && m === 'GET') {
@@ -1118,7 +1127,9 @@ export function createServer(options = {}) {
           const oldValue = await store.exportSetting(recordType);
           const setting = { recordType, enabled, destinationKind, destination, tokenSetting, namingPattern, updatedBy: session.username, rationale };
           let saved;
-          await store.transaction(async tx => { saved = await tx.putExportSetting(setting); await tx.audit(session.username, 'record-export-setting', { recordType, oldValue, newValue: saved, rationale }); return true; });
+          let allowed = true;
+          await store.transaction(async tx => { if (!await managesInTx(tx, session.username)) { allowed = false; return false; } saved = await tx.putExportSetting(setting); await tx.audit(session.username, 'record-export-setting', { recordType, oldValue, newValue: saved, rationale }); return true; });
+          if (!allowed) { send(res, 403, { error: 'Only a Master Access or QA Manager account can configure record exports.' }); return; }
           send(res, 200, { setting: saved }); return;
         }
       }
@@ -1133,6 +1144,8 @@ export function createServer(options = {}) {
         const current = await store.exportJob(exportRetry[1]);
         if (!current) { send(res, 404, { error: 'Record export job not found.' }); return; }
         if (current.status !== 'failed') { send(res, 409, { error: `This export is ${current.status}; only a failed delivery can be retried.` }); return; }
+        // The SQLite store's retry opens its own transaction, so authority is decided in one immediately before it.
+        if (!await store.transaction(tx => managesInTx(tx, session.username))) { send(res, 403, { error: 'Only a Master Access or QA Manager account can retry record exports.' }); return; }
         const job = await store.retryExportJob(current.id, session.username);
         if (!job) { send(res, 409, { error: 'This export changed before the retry could be queued. Reload the delivery history and try again.' }); return; }
         void drainExports();
@@ -1143,7 +1156,12 @@ export function createServer(options = {}) {
       if (route === '/auth/unlock' && m === 'POST') {
         if (!await manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can unlock an account.' }); return; }
         const body = await readJson(req), username = String(body.username || '').trim().toLowerCase(), reason = String(body.reason || '').trim();
-        const r = await unlockAccount(store, username, reason, session.username);
+        let r = null;
+        await store.transaction(async tx => {
+          if (!await managesInTx(tx, session.username)) { r = { status: 403, body: { error: 'Only a Master Access or QA Manager account can unlock an account.' } }; return false; }
+          r = await unlockAccount(tx, username, reason, session.username);
+          return r.status < 300;
+        });
         send(res, r.status, r.body); return;
       }
       if (route === '/auth/hash-report' && m === 'GET') { if (!await manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can read the password hash report.' }); return; } await wrapped; send(res, 200, { params: SCRYPT, ...await hashReport() }); return; }
