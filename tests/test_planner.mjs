@@ -33,7 +33,10 @@ ok('planning fills the three slots with the top-ranked tasks as proposals', () =
   const plan = host.MES.createBigThreePlan(state, DAY);
   assert.equal(plan.ok, true);
   assert.deepEqual(plain(plan.day.big3.map(slot => slot.ref?.id)), plain(ranked.slice(0, 3).map(task => task.id)), 'slots take the candidates in rank order');
-  assert.ok(plan.day.big3.every(slot => slot.t && slot.status === 'proposed' && slot.done === false && slot.src === 'blocker'));
+  // A must-start milestone ranks among blockers but is marked as a milestone; each slot carries its candidate's kind.
+  const source = task => task.kind === 'must-start milestone' ? 'milestone' : 'blocker';
+  assert.deepEqual(plain(plan.day.big3.map(slot => [slot.src, slot.ref.type])), plain(ranked.slice(0, 3).map(task => [source(task), source(task)])), 'each slot is marked with its candidate\'s source');
+  assert.ok(plan.day.big3.every(slot => slot.t && slot.status === 'proposed' && slot.done === false));
   assert.equal(plan.top.length, 3);
   assert.equal(host.MES.validate(state), true);
 });
