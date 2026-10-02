@@ -216,6 +216,10 @@ export function pgRestoreTarget(connectionString, env = process.env) {
   // password in its user info, so it is refused instead of passed on as a bare name (Cursor 4163494602).
   // libpq matches the scheme in lowercase only, so POSTGRESQL:// is no URI to it either (independent review of a93f783).
   if (!/^postgres(ql)?:\/\//.test(raw) && /postgres(ql)?:\/\//i.test(raw)) refuse('holds postgresql:// somewhere other than at its very start, or writes it in capitals; start it with postgresql:// in lowercase and do not nest one connection string in another');
+  // Any other :// (another scheme such as pg:// or socket://, which node-pg accepts but libpq reads as a bare name, or a
+  // second postgresql:// after the first) would reach --dbname whole, user info and password included, so it is
+  // refused (Cursor 4170469991).
+  if (raw.replace(/^postgres(ql)?:\/\//, '').includes('://')) refuse('uses a scheme other than postgresql://, or holds a second one; start it with postgresql:// once and percent-encode any :// in a value');
   // A bare database name (no = and not a URI) holds no password: libpq reads it as the dbname alone.
   if (!/^postgres(ql)?:\/\//.test(raw) && !raw.includes('=')) return { dbname: raw, env: {} };
   if (/^postgres(ql)?:\/\//.test(raw)) {
@@ -233,6 +237,10 @@ export function pgRestoreTarget(connectionString, env = process.env) {
     // a password would land in --dbname as the "port". libpq cannot connect to that either, so it is refused. An @ in
     // the database name or a query value is ordinary data to libpq (Codex 4161788877, Jinx review 5387290877).
     if (userinfo === null && hosts.split(',').some(h => /:[^:\]]*$/.test(h) && !/:\d*$/.test(h))) refuse('has text libpq would read as a host or database name but that looks like a cut-off password; percent-encode any / ? or @ in the user name and password');
+    // An all-digit password cut short the same way reads as a port, so a numbered port with an @ later in the database
+    // name is refused too: postgresql://flight:123/Tail@db/flight would pass its password on as host and port (Codex
+    // 4170446394). A real @ in a database name behind a port is written %40.
+    if (userinfo === null && hosts.split(',').some(h => /:\d+$/.test(h)) && path.includes('@')) refuse('has text libpq would read as a host or database name but that looks like a cut-off password; percent-encode any / ? or @ in the user name and password, and write an @ in a database name as %40');
     if (userinfo !== null && userinfo.includes(':')) {
       found = true;
       password = pct(userinfo.slice(userinfo.indexOf(':') + 1));

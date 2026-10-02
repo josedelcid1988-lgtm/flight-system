@@ -52,6 +52,7 @@ const cases = [
   // Jinx review 5387290877 (P3): an @ in the database name is ordinary data, with or without user info.
   ['a URI database name with an @', 'postgresql://flight:pw@db/my@db', { dbname: 'postgresql://flight@db/my@db', env: { PGPASSWORD: 'pw' } }],
   ['a URI database name with an @ and no user info', 'postgresql://db/my@db', { dbname: 'postgresql://db/my@db', env: {} }],
+  ['a URI database name with an encoded @ behind a port', 'postgresql://db:5432/my%40db?password=pw', { dbname: 'postgresql://db:5432/my%40db', env: { PGPASSWORD: 'pw' } }],
   // Codex 4161788875: an empty password is no password to libpq, so the inherited PGPASSWORD is left alone.
   ['a URI with an empty user-info password', 'postgresql://flight:@db/flight', { dbname: 'postgresql://flight@db/flight', env: {} }],
   ['a URI whose empty query password overrides the user info', 'postgresql://flight:old@db/flight?password=', { dbname: 'postgresql://flight@db/flight', env: {} }],
@@ -107,6 +108,14 @@ const refusals = [
   // Codex 4161235818: an unencoded / cuts the user info short (libpq looks for the @ only before the first /), so the
   // password would land in the host or database name; that is refused, not passed on.
   ['user info cut short by an unencoded /', 'postgresql://flight:Hidden-1/Tail@db/flight', {}, /cut-off password/],
+  // Cursor 4170469991: node-pg accepts other schemes that libpq reads as a bare name, and a doubled scheme has no user info.
+  ['a pg:// URI with a password', 'pg://flight:Hidden-1@db/flight', {}, /scheme other than postgresql/],
+  ['a socket:// URI with a password', 'socket://flight:Hidden-1@/run/postgresql', {}, /scheme other than postgresql/],
+  ['a doubled postgresql:// scheme', 'postgresql://postgresql://flight:Hidden-1@db/flight', {}, /scheme other than postgresql/],
+  ['a keyword string holding another URI', "host=db dbname='pg://flight:Hidden-1@db/flight'", {}, /scheme other than postgresql/],
+  // Codex 4170446394: an all-digit password cut short by an unencoded / reads as a port, and is refused the same way.
+  ['an all-digit password cut short by an unencoded /', 'postgresql://flight:123/Tail@db/flight', {}, /cut-off password/],
+  ['an all-digit password cut short beside a second host', 'postgresql://other:5432,flight:4567/x@db/flight', {}, /cut-off password/],
   // Codex 4161235811: a NUL cannot go into an environment variable; spawn would quote it, so it is refused first.
   ['a URI password with a NUL', 'postgresql://flight:Hidden-1%00tail@db/flight', {}, /NUL character/],
 ];
