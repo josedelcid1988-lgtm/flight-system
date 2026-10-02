@@ -3498,6 +3498,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       // Manifests have stored their signed subject since MANIFEST_SUBJECTS_FROM, the same build that added the build stamp. A FAIR
       // verification signed since then, or carrying a build stamp, must keep its subject, or the content comparison below would be skipped.
       if (plain(fair) && plain(fair.verified) && plain(fair.verified.manifest) && !plain(fair.verified.manifest.subject) && (String(fair.verified.at || '') >= MANIFEST_SUBJECTS_FROM || fair.verified.manifest.build !== undefined)) failures.push({ where: `${order.id} FAIR verification`, reason: 'the verification signature has lost its signed FAIR content' });
+      // A FAIR impact assessment is rebuilt from the stored record and the work order revision log and rechecked.
+      if (plain(fair) && Array.isArray(fair.impactAssessments) && fair.impactAssessments.length) { recomputed += fair.impactAssessments.length; failures.push(...fairImpactProblems(order)); }
       // Box 22 chains to the verified FAIR, and an approval signed since box 22 was bound into it chains to box 22.
       // An approval signed before that carries no reviewed key and is checked as it was signed.
       if (plain(fair) && plain(fair.reviewed) && plain(fair.reviewed.manifest) && plain(fair.verified) && plain(fair.verified.manifest)) { recomputed++; const rm = fair.reviewed.manifest, current = plain(rm.subject) && Object.hasOwn(rm.subject, 'reviewer'); const sub = current ? fairReviewSubject(order, fair, fair.reviewed.by, fair.reviewed.at, rm.override, Object.hasOwn(rm.subject, 'reviewerStamp'), Object.hasOwn(rm.subject, 'verifiedAt')) : { fair: fairId(order), verified: fair.verified.manifest.hash, ...(rm.override ? { override: rm.override } : {}) }; if (sha256(canonical(sub)) !== fair.reviewed.manifest.hash) failures.push({ where: `${order.id} FAIR box 22`, reason: 'box 22 does not chain to the verified FAIR' }); }
@@ -3512,9 +3514,12 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
         if (Object.hasOwn(vs, 'rawReasons')) { if (!same(vs.rawReasons, fair.reasons)) drift.push('reasons'); }
         // A FAIR verified by this build also signs the verifier's inspection stamp (verifierStamp); the recorded stamp must be that one.
         if (Object.hasOwn(vs, 'verifierStamp') && !same(vs.verifierStamp, plain(fair.verified.by) ? (fair.verified.by.stamp ?? null) : null)) drift.push('verifier stamp');
+        // A FAIR verified by this build signs the work order revision it was verified at (woRev); the recorded revision must be that one.
+        if (Object.hasOwn(vs, 'woRev') ? !same(vs.woRev, fair.verified.woRev) : fair.verified.woRev !== undefined) drift.push('work order revision');
         if (Object.hasOwn(vs, 'signedAt') && !same({ signer: vs.signer, signedAt: vs.signedAt }, signedBy(fair.verified.by, fair.verified.at))) drift.push('verifier or verification time');
         else if (!same(vs.form1.reasons, fairSnapshot(state, order).form1.reasons) && !same(vs.form1.reasons, fair.reasons)) drift.push('reasons');
         if (drift.length) failures.push({ where: `${order.id} FAIR verification`, reason: `FAIR content changed after verification: ${drift.join(', ')}` });
+        if (typeof fair.verified.woRev === 'string' && !revisionEntries(order).some(e => plain(e) && e.rev === fair.verified.woRev)) failures.push({ where: `${order.id} FAIR verification`, reason: `the FAIR was signed at WO Rev ${fair.verified.woRev}, which is not in the work order revision log` });
       }
       // 8130-9: the completed form, the AQI signature and the DAR acceptance are recomputed from the package,
       // so an edit to the form, the AQI record or the DAR record after signing fails here.
@@ -3742,6 +3747,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
 
   function orderValid(order, version = 3) {
     if (order && (!fairValid(order.fair) || !confValid(order.conformity))) return false;
+    if (plain(order) && plain(order.fair) && fairImpactProblems(order).length) return false;
     if (order && order.fai !== undefined && !(plain(order.fai) && typeof order.fai.required === 'boolean' && str(order.fai.reason, 340) && str(order.fai.wi, 40) && timestamp(order.fai.at) && snapshotValid(order.fai.by))) return false;
     if (!plain(order) || !str(order.id, 24) || !/^WO-\d{5,8}(?:-Split-\d{1,2})?$/.test(order.id) || !str(order.title, 120) || !str(order.partNumber, 50) || !str(order.serial, 60) || !str(order.revision, 24) || !PEDIGREES.includes(order.pedigree) || !PRIORITIES.includes(order.priority) || !count(order.quantity) || !STATUSES.includes(order.status) || !str(order.owner, 80) || !str(order.due, 10) || !/^\d{4}-\d{2}-\d{2}$/.test(order.due) || !Number.isFinite(Date.parse(order.due)) || new Date(order.due).toISOString().slice(0, 10) !== order.due) return false;
     if (Object.hasOwn(order, 'start') && !(str(order.start, 10) && /^\d{4}-\d{2}-\d{2}$/.test(order.start) && Number.isFinite(Date.parse(order.start)) && order.start <= order.due)) return false;
@@ -4594,6 +4600,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (req.reason === 'Scrap' && order.pedigree !== 'Development NFF' && !req.ticket) return fail('Scrap requires a linked NC ticket. Reject this request and resubmit it with the ticket.');
     if (engineeringChange(order)) return fail('Resolve or withdraw the pending engineering change before closing this order.');
     if (pendingSequenceChange(order)) return fail('Release or withdraw the pending sequence change before closing this order.');
+    { const gap = fairRevisionGap(order); if (gap) return fail(gap); }
     ensureInventory(state);
     const at = new Date().toISOString();
     const voided = state.serialLog.filter(e => e.orderId === order.id && e.status === 'Assigned');
@@ -5317,6 +5324,7 @@ const OP_BOM_MAX = 12;
   let STD_ADDING = null;
   function addStandardRework(state, orderId, input) {
     { const d = denied('adjust-wo', 'add an operation'); if (d) return d; }
+    { const o0 = state.orders.find(x => x.id === orderId), locked = o0 ? fairLockRefusal(state, o0) : null; if (locked) return locked; }
     const t = reworkLibrary(state).find(x => x.id === input?.templateId);
     if (!t) return fail('Choose a standard rework from the library.');
     if (t.status !== 'Approved') return fail(`${t.id} is a Draft. Only a QA-approved standard rework can be added to a work order.`);
@@ -5361,6 +5369,7 @@ const OP_BOM_MAX = 12;
     { const d = denied('adjust-wo', 'add an operation'); if (d) return d; }
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
+    { const locked = fairLockRefusal(state, order); if (locked) return locked; }
     if (!['Draft', 'Kitting', 'Building'].includes(order.status)) return fail('Operations can only be added before the work order reaches Quality.');
     if (!pendingSequenceChange(order)) order.sequenceBaseline = JSON.parse(JSON.stringify(order.operations));
     if (engineeringChange(order)) return fail(engineeringHoldMessage);
@@ -5461,6 +5470,7 @@ const OP_BOM_MAX = 12;
     { const d = denied('adjust-wo', 'remove an operation'); if (d) return d; }
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
+    { const locked = fairLockRefusal(state, order); if (locked) return locked; }
     if (!['Draft', 'Kitting', 'Building'].includes(order.status)) return fail('Operations can only be removed before the work order reaches Quality.');
     if (!pendingSequenceChange(order)) order.sequenceBaseline = JSON.parse(JSON.stringify(order.operations));
     if (engineeringChange(order)) return fail(engineeringHoldMessage);
@@ -5489,6 +5499,7 @@ const OP_BOM_MAX = 12;
     { const d = denied('adjust-wo', 'edit an operation'); if (d) return d; }
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
+    { const locked = fairLockRefusal(state, order); if (locked) return locked; }
     if (!['Draft', 'Kitting', 'Building'].includes(order.status)) return fail('Operations can only be edited before the work order reaches Quality.');
     if (!pendingSequenceChange(order)) order.sequenceBaseline = JSON.parse(JSON.stringify(order.operations));
     if (engineeringChange(order)) return fail(engineeringHoldMessage);
@@ -5620,6 +5631,7 @@ const OP_BOM_MAX = 12;
     const pending = pendingSequenceChange(order);
     if (!pending) return fail('There is no sequence change waiting for QA.');
     { const d = denied('approve-wo', 'release an operation change'); if (d) return d; }
+    { const locked = fairLockRefusal(state, order); if (locked) return locked; }
     if (pending.entries.some(entry => entry.by?.credentialId === '__demo_never_matches__' /* DEMO D-20 */)) return fail('The person who changed the sequence can’t release it. A different Quality Engineering or QA Manager account must release it.');
     const at = new Date().toISOString();
     order.sequenceChanges = [...(Array.isArray(order.sequenceChanges) ? order.sequenceChanges: []), { ...pending, status: 'Released', approvedBy: actor(state), approvedAt: at }].slice(-50);
@@ -5702,6 +5714,7 @@ const OP_BOM_MAX = 12;
     { const d = denied('operate', 'assign serial numbers'); if (d) return d; }
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
+    { const locked = fairLockRefusal(state, order); if (locked) return locked; }
     ensureInventory(state);
     if (order.inventory) return fail('Serial numbers are locked after the work order is stocked.');
     if (!isSerialized(order.partNumber)) return fail(`${order.partNumber} is not a serialized part. It is tracked by lot.`);
@@ -5724,6 +5737,7 @@ const OP_BOM_MAX = 12;
     { const d = denied('operate', 'void serial numbers'); if (d) return d; }
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
+    { const locked = fairLockRefusal(state, order); if (locked) return locked; }
     ensureInventory(state);
     if (order.inventory) return fail('Serial numbers are locked after the work order is stocked.');
     const entry = state.serialLog.find(item => item.orderId === order.id && item.serial === serial && item.status === 'Assigned');
@@ -5892,8 +5906,8 @@ const OP_BOM_MAX = 12;
   const faiFirstFor = (state, wiId, revision) => !state.orders.some(o => o.masterWI && o.masterWI.id === wiId && o.masterWI.revision === revision && o.pedigree !== NFF);
   // ---- Inspector identity for FAIR and 8130-9 signatures ----
   // The signer must hold an active stamp of an allowed type on their own account and pass the PIN step-up.
-  function inspectorSign(state, types, execution) {
-    const override = masterOverride(types);
+  function inspectorSign(state, types, execution, allowOverride = true) {
+    const override = allowOverride ? masterOverride(types) : null;
     if (override) return { ok: true, override };
     const acct = accountActor();
     const stamp = (state.stamps || []).find(s => s.status === 'Active' && types.includes(s.buyoffType) && acct && s.account === acct.account);
@@ -5919,7 +5933,7 @@ const OP_BOM_MAX = 12;
     && Array.isArray(f.tests) && f.tests.length <= 40 && f.tests.every(x => plain(x) && str(x.procedure, 80) && s0(x.report, 80) && s0(x.software, 40))
     && Array.isArray(f.chars) && f.chars.length <= 400 && f.chars.every(fairCharValid) && unique(f.chars.map(c => c.id))
     && (f.sampleSize === null || (Number.isInteger(f.sampleSize) && f.sampleSize >= 1)) && ['Open', 'Verified', 'Approved'].includes(f.status)
-    && (f.verified === null || (plain(f.verified) && snapshotValid(f.verified.by) && timestamp(f.verified.at))) && (f.approved === null || (plain(f.approved) && snapshotValid(f.approved.by) && timestamp(f.approved.at)))
+    && (f.verified === null || (plain(f.verified) && snapshotValid(f.verified.by) && timestamp(f.verified.at) && (f.verified.woRev === undefined || (typeof f.verified.woRev === 'string' && /^(Baseline|[A-Z]{1,4})$/.test(f.verified.woRev))))) && (f.approved === null || (plain(f.approved) && snapshotValid(f.approved.by) && timestamp(f.approved.at)))
     // Box 22 is signed only on a verified FAIR, by a named signer, at a time, with its signature manifest.
     && (f.reviewed === undefined || f.reviewed === null || (plain(f.reviewed) && plain(f.verified) && ['Verified', 'Approved'].includes(f.status) && snapshotValid(f.reviewed.by) && timestamp(f.reviewed.at) && plain(f.reviewed.manifest) && typeof f.reviewed.manifest.meaning === 'string' && !!f.reviewed.manifest.meaning && f.reviewed.manifest.at === f.reviewed.at && plain(f.reviewed.manifest.signer) && typeof f.reviewed.manifest.signer.credentialId === 'string' && f.reviewed.manifest.signer.credentialId === f.reviewed.by.credentialId && f.reviewed.manifest.signer.name === f.reviewed.by.name && f.reviewed.manifest.algorithm === 'SHA-256' && /^[0-9a-f]{64}$/.test(String(f.reviewed.manifest.hash)) && !fairSelfReview(f, f.reviewed.by))));
   // Prefill from the work order: the index from the kit (sub-assemblies carry their own FAIR or lot), tests from ATP operations.
@@ -6060,7 +6074,10 @@ const OP_BOM_MAX = 12;
     const gaps = fairReview(state, order); if (gaps.length) return fail(gaps.join(' '));
     const v = inspectorSign(state, INSPECTION_BUYOFF_TYPES, execution); if (!v.ok) return v;
     const at = new Date().toISOString(), snap = fairSnapshot(state, order), by = signerOf(state, v);
-    fair.verified = { by, at, manifest: signManifest(state, 'AS9102 FAIR verified (blocks 20 and 21)', { ...snap, rawReasons: [...fair.reasons], verifierStamp: by.stamp ?? null, ...signedBy(by, at), ...(v.override ? { override: v.override } : {}) }, at) };
+    ensureRevisions(state);
+    // The FAIR binds the work order revision it was verified at (woRev), inside the signed subject.
+    const woRev = order.woRev;
+    fair.verified = { by, at, woRev, manifest: signManifest(state, 'AS9102 FAIR verified (blocks 20 and 21)', { ...snap, rawReasons: [...fair.reasons], woRev, verifierStamp: by.stamp ?? null, ...signedBy(by, at), ...(v.override ? { override: v.override } : {}) }, at) };
     fair.status = 'Verified';
     record(state, order, `AS9102 FAIR ${fairId(order)} verified (blocks 20 and 21): ${fair.type} FAI, ${fair.chars.length} characteristics, nonconformance ${snap.form1.nonconformance}.`);
     return { ok: true, message: 'FAIR verified. A second person reviews and approves it in box 22 next.' };
@@ -6107,11 +6124,114 @@ const OP_BOM_MAX = 12;
     { const d = denied('approve-wo', 'reopen the FAIR'); if (d) return d; }
     const { order, error } = target(state, id); if (error) return fail(error);
     if (!order.fair || order.fair.status === 'Open') return fail('The FAIR is not signed.');
+    if (!qaManagerSignedIn(state)) return fail('This FAIR is signed. Only a QA Manager can reopen it.');
     if (order.status === 'Closed') return fail('The work order is closed; a correction needs a new FAI order.');
     reason = String(reason ?? '').trim(); if (!str(reason, 300)) return fail('Say why the FAIR is being reopened.');
-    order.fair.status = 'Open'; order.fair.verified = null; order.fair.approved = null; delete order.fair.reviewed;
+    order.fair.status = 'Open'; order.fair.verified = null; order.fair.approved = null; delete order.fair.reviewed; delete order.fair.impactAssessments;
     record(state, order, `FAIR reopened: ${reason}`);
     return { ok: true, message: 'FAIR reopened.' };
+  }
+
+  // ---- FAIR configuration lock and FAIR impact assessment (QA Manager decision on #238) ----
+  // The FAIR binds the work order revision it was verified at. Once the FAIR is Verified or Approved, configuration changes
+  // to that work order are QA Manager only (Master Access does not count): engineering change submit and approval, adding or
+  // removing operations (rework included), operation instruction edits, sequence release and serial assign and void. Raising
+  // an NC, the Part Conformity buy-off, notes and closure requests stay open to the floor. When a QA Manager rolls the work
+  // order revision, closure waits until a QA Manager signs a FAIR impact assessment at the current revision or reopens the FAIR.
+  const FAIR_LOCK_MESSAGE = "This work order's FAIR is signed. Only a QA Manager can change it.";
+  const fairSigned = order => !!(order && plain(order.fair) && ['Verified', 'Approved'].includes(order.fair.status));
+  // The signed-in account holds the QA Manager role. Master Access is a different role and does not count. With no signed-in
+  // account (engine harnesses, profile mode) the chosen profile decides, as every other role gate does there.
+  const qaManagerSignedIn = state => {
+    const acct = accountActor();
+    if (!acct) return !!(state && plain(state.profile) && state.profile.role === 'Quality Manager');
+    const roles = Array.isArray(acct.accountRoles) ? acct.accountRoles : Array.isArray(acct.roles) ? acct.roles : [acct.accountRole];
+    return roles.includes('qm');
+  };
+  const fairLockRefusal = (state, order) => fairSigned(order) && !qaManagerSignedIn(state) ? fail(FAIR_LOCK_MESSAGE) : null;
+  // The work order revision the FAIR was signed at. A FAIR verified before the revision was bound takes the revision in
+  // force at its verification time from the revision log.
+  function fairWoRev(order) {
+    const v = order && plain(order.fair) ? order.fair.verified : null;
+    if (!plain(v)) return null;
+    if (typeof v.woRev === 'string') return v.woRev;
+    const list = revisionEntries(order), at = String(v.at || '');
+    const before = list.filter(e => plain(e) && String(e.at || '') <= at);
+    return before.length ? before[before.length - 1].rev : (plain(list[0]) ? list[0].rev : 'Baseline');
+  }
+  const FAIR_IMPACT_MAX = 50;
+  const FAIR_IMPACT_MEANING = 'AS9102 FAIR impact assessment (QA Manager)';
+  const fairImpactList = fair => plain(fair) && Array.isArray(fair.impactAssessments) ? fair.impactAssessments : [];
+  // The revision entries rolled after the FAIR's revision, up to and including the assessed one. Null when either is not in the log.
+  function fairImpactChanges(order, from, to) {
+    const list = revisionEntries(order), i = list.findIndex(e => plain(e) && e.rev === from), j = list.findIndex(e => plain(e) && e.rev === to);
+    if (i < 0 || j <= i) return null;
+    return list.slice(i + 1, j + 1).map(e => ({ rev: e.rev, summary: String(e.summary ?? ''), changes: Array.isArray(e.changes) ? e.changes.map(String) : [] }));
+  }
+  const fairImpactDrawing = (order, to) => { const e = revisionEntries(order).find(x => plain(x) && x.rev === to); return { partNumber: order.partNumber, revision: e ? (e.drawingRev ?? null) : null }; };
+  const fairImpactStatements = drawing => ['The existing FAIR remains valid.', 'The change has no impact on completed operations or their buy-offs.', `The work order has not deviated from drawing ${drawing.partNumber} Rev ${drawing.revision}.`];
+  // The signed subject: the FAIR verification hash, the old and new work order revisions, the rev-roll change list, the drawing
+  // and its revision, the three statements, the rationale, the signer's stamp, who signed and when.
+  const fairImpactSubject = (order, fair, a) => ({ fair: fairId(order), verified: plain(fair.verified) && plain(fair.verified.manifest) ? fair.verified.manifest.hash : null, fromWoRev: a.fromWoRev, toWoRev: a.toWoRev, changes: a.changes, drawing: a.drawing, statements: a.statements, rationale: a.rationale, stamp: plain(a.by) ? (a.by.stamp ?? null) : null, ...signedBy(a.by, a.at) });
+  const fairImpactCurrent = order => fairSigned(order) && fairImpactList(order.fair).some(a => plain(a) && a.toWoRev === order.woRev && a.fromWoRev === fairWoRev(order));
+  // Closure refusal while the FAIR's revision differs from the work order's and no impact assessment covers the current one.
+  function fairRevisionGap(order) {
+    if (!fairSigned(order)) return null;
+    const from = fairWoRev(order), to = order.woRev || 'Baseline';
+    if (from === to || fairImpactCurrent(order)) return null;
+    return `This work order's FAIR was signed at WO Rev ${from} and the work order is now Rev ${to}. A QA Manager signs a FAIR impact assessment at Rev ${to} or reopens the FAIR before the work order can close.`;
+  }
+  // Every problem with the impact assessments on one work order, for verifyManifests and MES.validate.
+  function fairImpactProblems(order) {
+    const fair = order && plain(order.fair) ? order.fair : null, out = [];
+    if (!fair || fair.impactAssessments === undefined) return out;
+    const where = a => `${order.id} FAIR impact assessment${plain(a) && typeof a.id === 'string' ? ` ${a.id}` : ''}`;
+    if (!Array.isArray(fair.impactAssessments) || fair.impactAssessments.length > FAIR_IMPACT_MAX) return [{ where: where(null), reason: 'the impact assessment list is malformed' }];
+    if (fair.impactAssessments.length && !fairSigned(order)) out.push({ where: where(null), reason: 'an impact assessment is recorded on a FAIR that is not signed' });
+    const from = fairWoRev(order), same = (x, y) => canonical(x === undefined ? null : x) === canonical(y === undefined ? null : y);
+    fair.impactAssessments.forEach((a, i) => {
+      if (!plain(a) || a.id !== `FIA-${i + 1}` || !snapshotValid(a.by) || !timestamp(a.at) || typeof a.rationale !== 'string' || !a.rationale.trim() || a.rationale.length > 300 || typeof a.fromWoRev !== 'string' || typeof a.toWoRev !== 'string' || !Array.isArray(a.changes) || !plain(a.drawing) || !Array.isArray(a.statements)) { out.push({ where: where(a), reason: 'the impact assessment record is incomplete' }); return; }
+      const m = a.manifest;
+      if (!plain(m) || m.algorithm !== 'SHA-256' || !/^[0-9a-f]{64}$/.test(String(m.hash)) || !plain(m.subject)) { out.push({ where: where(a), reason: 'the impact assessment has no complete signature manifest' }); return; }
+      if (m.meaning !== FAIR_IMPACT_MEANING) out.push({ where: where(a), reason: 'the signature meaning is not a FAIR impact assessment' });
+      if (signerMismatch(a, m)) out.push({ where: where(a), reason: 'the recorded signer or time does not match the signature' });
+      if (a.fromWoRev !== from) out.push({ where: where(a), reason: `the assessment starts at WO Rev ${a.fromWoRev}, but the FAIR was signed at WO Rev ${from}` });
+      if (!same(a.changes, fairImpactChanges(order, a.fromWoRev, a.toWoRev))) out.push({ where: where(a), reason: 'the assessed change list does not match the work order revision log' });
+      if (!same(a.drawing, fairImpactDrawing(order, a.toWoRev))) out.push({ where: where(a), reason: 'the assessed drawing revision does not match the work order revision log' });
+      if (!same(a.statements, fairImpactStatements(a.drawing))) out.push({ where: where(a), reason: 'the assessed statements are not the three required statements' });
+      if (sha256(canonical(fairImpactSubject(order, fair, a))) !== m.hash) out.push({ where: where(a), reason: 'the impact assessment does not match its signature' });
+    });
+    return out;
+  }
+  const yes = v => v === true || v === 'on' || v === 'yes';
+  // FAIR impact assessment: a QA Manager attests, with stamp and PIN, that a work order revision rolled after the FAIR was
+  // signed leaves the FAIR valid. The alternative is to reopen the FAIR.
+  function signFairImpactAssessment(state, id, input, execution) {
+    { const d = denied('approve-wo', 'sign a FAIR impact assessment'); if (d) return d; }
+    if (!qaManagerSignedIn(state)) return fail('Only a QA Manager can sign a FAIR impact assessment.');
+    const { order, error } = target(state, id); if (error) return fail(error);
+    if (order.status === 'Closed') return fail('The work order is closed.');
+    const fair = order.fair;
+    if (!fairSigned(order) || !plain(fair.verified) || !plain(fair.verified.manifest)) return fail('The FAIR is not signed. An impact assessment is only for a signed FAIR.');
+    ensureRevisions(state);
+    const from = fairWoRev(order), to = order.woRev;
+    if (from === to) return fail(`The FAIR was signed at WO Rev ${from}, the current revision. There is no change to assess.`);
+    if (fairImpactCurrent(order)) return fail(`A FAIR impact assessment is already signed at WO Rev ${to}.`);
+    const changes = fairImpactChanges(order, from, to);
+    if (!changes) return fail(`WO Rev ${from} or Rev ${to} is not in the work order revision log. Reopen the FAIR instead.`);
+    const input0 = plain(input) ? input : {};
+    if (!(yes(input0.fairValid) && yes(input0.noOperationImpact) && yes(input0.noDrawingDeviation))) return fail('Confirm all three statements: the FAIR remains valid, the change has no impact on completed operations or their buy-offs, and the work order has not deviated from the drawing.');
+    const rationale = String(input0.rationale ?? '').trim();
+    if (!rationale || rationale.length > 300) return fail('Enter a rationale of 1 to 300 characters.');
+    const list = fairImpactList(fair);
+    if (list.length >= FAIR_IMPACT_MAX) return fail(`A FAIR holds up to ${FAIR_IMPACT_MAX} impact assessments. Reopen the FAIR instead.`);
+    const v = inspectorSign(state, ['Quality', '8130-9 Authorized Inspector'], execution, false); if (!v.ok) return v;
+    const at = new Date().toISOString(), by = signerOf(state, v), drawing = fairImpactDrawing(order, to);
+    const a = { id: `FIA-${list.length + 1}`, fromWoRev: from, toWoRev: to, changes, drawing, statements: fairImpactStatements(drawing), rationale, by, at };
+    a.manifest = signManifest(state, FAIR_IMPACT_MEANING, fairImpactSubject(order, fair, a), at);
+    fair.impactAssessments = [...list, a];
+    record(state, order, `FAIR impact assessment ${a.id} signed by ${by.name}: FAIR ${fairId(order)} signed at WO Rev ${from} remains valid at WO Rev ${to}. Rationale: ${rationale}`);
+    return { ok: true, message: `FAIR impact assessment signed. The FAIR signed at WO Rev ${from} covers WO Rev ${to}.`, id: a.id };
   }
 
   // ---- LRU conformity package (SOP-860-002) and FAA Form 8130-9 Statement of Conformity ----
@@ -7131,6 +7251,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const { order, error } = target(state, id);
     if (error) return fail(error);
     { const d = denied('submit-ecr', 'submit an ECR'); if (d) return d; }
+    { const locked = fairLockRefusal(state, order); if (locked) return locked; }
     if (order.status === 'Closed') return fail('Closed records cannot be changed.');
     if (engineeringChange(order)) return fail('Review the pending engineering change before requesting another edit.');
     if ((order.engineeringChanges?.length || 0) >= 20) return fail('This work order has reached its 20-change limit.');
@@ -7163,6 +7284,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const { order, error } = target(state, id);
     if (error) return fail(error);
     { const d = denied('approve-wo', 'approve an ECR'); if (d) return d; }
+    { const locked = fairLockRefusal(state, order); if (locked) return locked; }
     const change = engineeringChange(order);
     if (!change || !change.needsECR || change.status !== 'Awaiting ECR') return fail('There is no submitted ECR awaiting approval on this work order.');
     if (change.requestedBy.credentialId === '__demo_never_matches__' /* DEMO D-20 */) return fail(selfApprovalMessage);
@@ -7176,6 +7298,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const { order, error } = target(state, id);
     if (error) return fail(error);
     { const d = denied('approve-wo', 'QA re-release an engineering change'); if (d) return d; }
+    { const locked = fairLockRefusal(state, order); if (locked) return locked; }
     const change = engineeringChange(order);
     if (!change || change.status !== 'Awaiting QA') return fail('An engineering edit must finish its required ECR approval before QA re-release.');
     if (change.requestedBy.credentialId === '__demo_never_matches__' /* DEMO D-20 */) return fail(selfApprovalMessage);
@@ -7441,6 +7564,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (order.status !== 'Quality') return fail('Only an order in Quality can complete the quality review.');
     if (blockingTickets(order).length) return fail('Resolve every open hold before completing the quality review.');
     if (order.materials.some(item => !item.ready) || order.operations.some(item => !item.done)) return fail('All materials and operations must be recorded before the quality review.');
+    { const gap = fairRevisionGap(order); if (gap) return fail(gap); }
     if (order.fai && order.fai.required && !(order.fair && order.fair.status === 'Approved')) return fail(`${order.id} is an FAI order, so it closes only after Skyryse QA approves its AS9102 FAIR (now: ${order.fair ? order.fair.status : 'not started'}). Open the First Article Inspection Report panel on the Quality tab: ${order.fair ? '' : 'start it, '}complete Forms 1 to 3, then Verify and Approve.`);
     order.status = 'Closed';
     record(state, order, 'Quality review complete. Work order closed.', 'Quality reviewer');
@@ -8911,7 +9035,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   MES.seed = () => { const state = ensurePlanner(seedWithPlanner()); ['audits','certifications','supplierApprovals','qualityValues','qualityVerdicts','controlledDocuments','modelAdapterHistory','aiActionLog','aiSkillDrafts','aiSkillTriggers','aiSkillTriggerHistory','calibrationLog'].forEach(key=>{if(!Array.isArray(state[key]))state[key]=[];}); if(!plain(state.modelAdapter))state.modelAdapter=emptyModelAdapter(); ensureInventoryLedger(state); ensureResources(state); ensureProjects(state); syncPlanningBlockers(state); return state; };
   const upgradeWithPlanner = MES.upgrade;
   MES.upgrade = state => { const upgraded = upgradeWithPlanner(state); if (!upgraded) return null; ensurePlanner(upgraded); if(!Array.isArray(upgraded.controlledDocuments))upgraded.controlledDocuments=[];if(!Array.isArray(upgraded.modelAdapterHistory))upgraded.modelAdapterHistory=[];if(!Array.isArray(upgraded.aiActionLog))upgraded.aiActionLog=[];if(!Array.isArray(upgraded.aiSkillDrafts))upgraded.aiSkillDrafts=[];if(!Array.isArray(upgraded.aiSkillTriggers))upgraded.aiSkillTriggers=[];if(!Array.isArray(upgraded.aiSkillTriggerHistory))upgraded.aiSkillTriggerHistory=[];if(!Array.isArray(upgraded.calibrationLog))upgraded.calibrationLog=[];if(!plain(upgraded.modelAdapter))upgraded.modelAdapter=emptyModelAdapter(); ensureInventoryLedger(upgraded); ensureResources(upgraded); ensureProjects(upgraded); retireOutOfBoundSprints(upgraded); syncPlanningBlockers(upgraded); return upgraded; };
-  Object.assign(MES, { missingSignatures, backfillLegacyEscapes, ncApprovalSubject, mrbDecisionHashOf, legacyEscapeValid, legacyEscapeBackfill, legacyEscapeChanges, carClosureSubject, mrbDecisionSubject, archivable, archiveOrders, archivedOrderValid, ownWorkRefusal, coveredBuildOps, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, verifyManifests, reviewFair, NFF, recordTraining, personTraining, trainingCurrentFor, trainingCertificateValid, ownWorkHit, OWN_WORK_EXEMPT_PEDIGREES, scryptHex, PIN_KDF, saveTraining, trainingCatalog, requiredTrainings, trainingDef, TRAINING_CODE_RE, importStamps, stampRegisterCsv, nextStampNumber, isPlaceholderStamp, STAMP_NUMBER_RE, wiAuthors, wiAuthorRefusal, wiPeerReviewRefusal, buildStamp, buildStampValid, supportActor, supportGrant, logSupport, SUPPORT_RULES, SUPPORT_KINDS, recordSupportAccess, noteDemoBypassRemoved, supportLogValid, recordCalibration, importCalibrations, updateCalibration, calibrationStatus, calibrationChainProblem, calibrationEntryHash, calibrationLegacyHash, calibrationLogChanges, recordCalibrationArchive, calibrationArchivable, calibrationArchiveSummary, calibrationArchivedEntries, calibrationArchiveHeldProblem, calibrationCapacity, CALIBRATION_LOG_LIMIT, calibrationCurrentIds, calibratedToolChecks, toolUseRecords, calibrationEntryValid, CALIBRATION_STATUSES });
+  Object.assign(MES, { signFairImpactAssessment, fairWoRev, fairRevisionGap, fairImpactProblems, fairImpactSubject, fairImpactChanges, fairSigned, holdsQaManagerRole: qaManagerSignedIn, FAIR_LOCK_MESSAGE, missingSignatures, backfillLegacyEscapes, ncApprovalSubject, mrbDecisionHashOf, legacyEscapeValid, legacyEscapeBackfill, legacyEscapeChanges, carClosureSubject, mrbDecisionSubject, archivable, archiveOrders, archivedOrderValid, ownWorkRefusal, coveredBuildOps, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, verifyManifests, reviewFair, NFF, recordTraining, personTraining, trainingCurrentFor, trainingCertificateValid, ownWorkHit, OWN_WORK_EXEMPT_PEDIGREES, scryptHex, PIN_KDF, saveTraining, trainingCatalog, requiredTrainings, trainingDef, TRAINING_CODE_RE, importStamps, stampRegisterCsv, nextStampNumber, isPlaceholderStamp, STAMP_NUMBER_RE, wiAuthors, wiAuthorRefusal, wiPeerReviewRefusal, buildStamp, buildStampValid, supportActor, supportGrant, logSupport, SUPPORT_RULES, SUPPORT_KINDS, recordSupportAccess, noteDemoBypassRemoved, supportLogValid, recordCalibration, importCalibrations, updateCalibration, calibrationStatus, calibrationChainProblem, calibrationEntryHash, calibrationLegacyHash, calibrationLogChanges, recordCalibrationArchive, calibrationArchivable, calibrationArchiveSummary, calibrationArchivedEntries, calibrationArchiveHeldProblem, calibrationCapacity, CALIBRATION_LOG_LIMIT, calibrationCurrentIds, calibratedToolChecks, toolUseRecords, calibrationEntryValid, CALIBRATION_STATUSES });
   Object.assign(MES, { SOURCE_INSPECTION_CLASS, SOURCE_INSPECTION_CODES, CONFORMITY_SUBCODES, TEST_SUBCODES, operationType, migrateOperationTypes, sourceInspectionCodes, conformitySubcodes, testSubcodes, operationSubcodes, operationSubcode, saveSourceInspectionCodes, saveOperationSubcodes, mrbTrainingTiers, saveMrbTrainingTiers, recordSourceInspection, sourceInspectionHolds, sourceInspectionWorkspaceValid });
   MES.roleDeniedMessage = roleDeniedMessage;
   const validateWithSourceInspection = MES.validate;
@@ -12138,7 +12262,7 @@ const serverMutatorExact=new Set(['containNC','effectivenessCheck','pfmeaSafetyB
 const serverMutatorExclude=new Set(['repair','signManifest','verifyManifests','verifyAIActionLog','stampCheck','stampRegister','stampRegisterProblem','stampRegisterCsv','stampCredential','stampHolderFor','ticketAttachments','openProcessECRs','syncAssignments','buyoffCredential','ensure','seedDemoRecords','icalExport','openMaintenanceFor','recordAIAction','logSupport','noteDemoBypassRemoved','releaseWIFromPfmea','quarantineOrder','rollWorkOrderRevision']);
 // The reviewed commands the server accepts (server/mes-host.mjs actionAllow). A function is sent as a command only
 // when it is named here; the prefix rule alone is not enough.
-const serverMutatorAllow=new Set(['MES.addSavedView','MES.removeSavedView','MES.recordCalibration','MES.importCalibrations','MES.updateCalibration','MES.recordCalibrationArchive','MES.addAttachment','MES.addTicketAttachment','MES.removeTicketAttachment','MES.removeAttachment','MES.logAogBroadcast','MES.resolveAog','MES.setSchedule','MES.editOrderOperation','MES.setWIStepImage','MES.selectProfile','MES.assignSerial','MES.voidSerial','MES.moveToInventory','MES.markNetSuitePosted','MES.addKitFile','MES.linkOpToTicket','MES.saveReworkTemplate','MES.removeReworkTemplate','MES.saveOpAsReworkTemplate','MES.approveReworkTemplate','MES.addStandardRework','MES.setWIDrawing','MES.releaseUnreleasedWI','MES.rejectInspection','MES.logTravelerPrint','MES.saveFairHeader','MES.setFairIndex','MES.addFairForm2','MES.setFairTest','MES.addFairChar','MES.updateFairChar','MES.verifyFair','MES.approveFair','MES.reopenFair','MES.startConformity','MES.saveConformity','MES.checkConformity','MES.complete8130_9','MES.void8130_9','MES.aqiSign8130_9','MES.notifyCertification','MES.addDarFinding','MES.acceptDarFinding','MES.recordDarApproval','MES.record8130_3','MES.closeConformity','MES.issueFromOrder','MES.returnIssuedOrder','MES.qaReviewMasterWI','MES.setImpactDecision','MES.linkECO','MES.setWICriticalSafety','MES.addPfmeaRow','MES.updatePfmeaRow','MES.setStampPin','MES.setMsdsBook','MES.tickFodItem','MES.removeKitFile','MES.addMasterWI','MES.importMasterWIs','MES.updateMasterWI','MES.saveWIOperations','MES.releaseMasterWI','MES.reviseMasterWI','MES.setStepCheck','MES.pushATPSoftware','MES.reviewATPPush','MES.linkATPSoftware','MES.addPurchaseOrder','MES.requestOrderClosure','MES.postNotice','MES.acknowledgeNotice','MES.updateNotice','MES.pruneExpiredNotices','MES.requestWorkOrder','MES.decideWORequest','MES.submitECRRequest','MES.reviewFeedbackECR','MES.linkECRJira','MES.incorporateECRs','MES.decideOrderClosure','MES.assignWork','MES.completeAssignment','MES.pingAssignment','MES.addOrderOperation','MES.removeOrderOperation','MES.approveSequenceChange','MES.setMaterialLot','MES.releaseApproval','MES.approveRelease','MES.approveECR','MES.approveEngineeringChange','MES.advance','MES.setMaterial','MES.setPriority','MES.completeOperation','MES.closeOrder','MES.addOrder','MES.importWorkOrders','MES.addAdhocOrder','MES.splitOrder','MES.splitRequestOrder','MES.requestPedigreeChange','MES.approvePedigreeChange','MES.peerReviewMasterWI','MES.dispositionTicket','MES.addNote','MES.createTicket','MES.resolveTicket','MES.returnDisposition','MES.closeSplitRequest','MES.rejectEngineeringChange','MES.rejectSequenceChange','MES.rejectPedigreeChange','MES.returnRelease','MES.returnMasterWI','MES.withdrawClosure','MES.closeECRRequest','MES.updateProfile','MES.attachEvidence','MES.reviewEvidence','MES.rejectEvidence','MES.removeEvidence','MES.issueStamp','MES.updateStamp','MES.addMessage','MES.setSlackThread','MES.createBigThreePlan','MES.decideBigThree','MES.carryBigThree','MES.proposeBigThreeTimeBlock','MES.decideBigThreeTimeBlock','MES.escalateBigThree','MES.setPlanningCalendarSync','MES.icalImport','MES.openAudit','MES.closeAuditFinding','MES.closeAudit','MES.issueCertification','MES.approveSupplier','MES.storeQualityValue','MES.recordQualityVerdict','MES.createControlledDocument','MES.startControlledDocumentRevision','MES.reviewControlledDocument','MES.releaseControlledDocument','MES.configureModelAdapter','MES.setForm3Plan','MES.setSkillTrigger','MES.runSkill','MES.reviewSkillDraft','MES.updateSkillDraft','MES.acceptSkillDraft','MES.addEquipmentArea','MES.addEquipmentUnit','MES.createProject','MES.addProjectObjective','MES.addProjectMilestone','MES.setProjectSensitivity','MES.linkWorkOrderProject','MES.createSprint','MES.recordMaintenance','MES.closeMaintenance','MES.recordExternalReceipt','MES.clockOnOperation','MES.clockOffOperation','MES.postInventoryTransaction','MES.submitEngineeringChange','MES.reviewFair','MES.recordTraining','MES.saveTraining','MES.importStamps','MES.recordSupportAccess','MES.saveSourceInspectionCodes','MES.saveOperationSubcodes','MES.saveMrbTrainingTiers','MES.recordSourceInspection','FlightPlan.addPlannedOrder','FlightPlan.firm','FlightPlan.cancel','FlightPlan.convert','FlightManeuver.raiseCAR','FlightManeuver.recordContainment','FlightManeuver.recordRootCause','FlightManeuver.addAction','FlightManeuver.completeAction','FlightManeuver.verifyCAR','FlightManeuver.effectivenessCheck','FlightManeuver.closeCAR','FlightManeuver.cancelCAR','FlightManeuver.openMRB','FlightManeuver.voteMRB','FlightManeuver.decideMRB','FlightManeuver.linkCAR','FlightManeuver.addRecordFile','FlightManeuver.removeRecordFile','FlightManeuver.raiseNC','FlightManeuver.dispositionNC','FlightManeuver.containNC','FlightManeuver.approveNC','FlightManeuver.linkReworkOrder','FlightManeuver.raiseSPR','FlightManeuver.linkSPRJira','FlightManeuver.closeSPR','FlightManeuver.requestSCAR','FlightManeuver.linkSCARJira','FlightManeuver.closeSCAR','FlightManeuver.openPFMEA','FlightManeuver.setPfmeaScope','FlightManeuver.addPfmeaMode','FlightManeuver.removePfmeaMode','FlightManeuver.markOpNoRisk','FlightManeuver.completePfmeaAnalysis','FlightManeuver.setPfmeaAction','FlightManeuver.closePfmeaAction','FlightManeuver.completePfmeaActions','FlightManeuver.pfmeaSafetyBuyoff']);
+const serverMutatorAllow=new Set(['MES.addSavedView','MES.removeSavedView','MES.recordCalibration','MES.importCalibrations','MES.updateCalibration','MES.recordCalibrationArchive','MES.addAttachment','MES.addTicketAttachment','MES.removeTicketAttachment','MES.removeAttachment','MES.logAogBroadcast','MES.resolveAog','MES.setSchedule','MES.editOrderOperation','MES.setWIStepImage','MES.selectProfile','MES.assignSerial','MES.voidSerial','MES.moveToInventory','MES.markNetSuitePosted','MES.addKitFile','MES.linkOpToTicket','MES.saveReworkTemplate','MES.removeReworkTemplate','MES.saveOpAsReworkTemplate','MES.approveReworkTemplate','MES.addStandardRework','MES.setWIDrawing','MES.releaseUnreleasedWI','MES.rejectInspection','MES.logTravelerPrint','MES.saveFairHeader','MES.setFairIndex','MES.addFairForm2','MES.setFairTest','MES.addFairChar','MES.updateFairChar','MES.verifyFair','MES.approveFair','MES.reopenFair','MES.startConformity','MES.saveConformity','MES.checkConformity','MES.complete8130_9','MES.void8130_9','MES.aqiSign8130_9','MES.notifyCertification','MES.addDarFinding','MES.acceptDarFinding','MES.recordDarApproval','MES.record8130_3','MES.closeConformity','MES.issueFromOrder','MES.returnIssuedOrder','MES.qaReviewMasterWI','MES.setImpactDecision','MES.linkECO','MES.setWICriticalSafety','MES.addPfmeaRow','MES.updatePfmeaRow','MES.setStampPin','MES.setMsdsBook','MES.tickFodItem','MES.removeKitFile','MES.addMasterWI','MES.importMasterWIs','MES.updateMasterWI','MES.saveWIOperations','MES.releaseMasterWI','MES.reviseMasterWI','MES.setStepCheck','MES.pushATPSoftware','MES.reviewATPPush','MES.linkATPSoftware','MES.addPurchaseOrder','MES.requestOrderClosure','MES.postNotice','MES.acknowledgeNotice','MES.updateNotice','MES.pruneExpiredNotices','MES.requestWorkOrder','MES.decideWORequest','MES.submitECRRequest','MES.reviewFeedbackECR','MES.linkECRJira','MES.incorporateECRs','MES.decideOrderClosure','MES.assignWork','MES.completeAssignment','MES.pingAssignment','MES.addOrderOperation','MES.removeOrderOperation','MES.approveSequenceChange','MES.setMaterialLot','MES.releaseApproval','MES.approveRelease','MES.approveECR','MES.approveEngineeringChange','MES.advance','MES.setMaterial','MES.setPriority','MES.completeOperation','MES.closeOrder','MES.addOrder','MES.importWorkOrders','MES.addAdhocOrder','MES.splitOrder','MES.splitRequestOrder','MES.requestPedigreeChange','MES.approvePedigreeChange','MES.peerReviewMasterWI','MES.dispositionTicket','MES.addNote','MES.createTicket','MES.resolveTicket','MES.returnDisposition','MES.closeSplitRequest','MES.rejectEngineeringChange','MES.rejectSequenceChange','MES.rejectPedigreeChange','MES.returnRelease','MES.returnMasterWI','MES.withdrawClosure','MES.closeECRRequest','MES.updateProfile','MES.attachEvidence','MES.reviewEvidence','MES.rejectEvidence','MES.removeEvidence','MES.issueStamp','MES.updateStamp','MES.addMessage','MES.setSlackThread','MES.createBigThreePlan','MES.decideBigThree','MES.carryBigThree','MES.proposeBigThreeTimeBlock','MES.decideBigThreeTimeBlock','MES.escalateBigThree','MES.setPlanningCalendarSync','MES.icalImport','MES.openAudit','MES.closeAuditFinding','MES.closeAudit','MES.issueCertification','MES.approveSupplier','MES.storeQualityValue','MES.recordQualityVerdict','MES.createControlledDocument','MES.startControlledDocumentRevision','MES.reviewControlledDocument','MES.releaseControlledDocument','MES.configureModelAdapter','MES.setForm3Plan','MES.setSkillTrigger','MES.runSkill','MES.reviewSkillDraft','MES.updateSkillDraft','MES.acceptSkillDraft','MES.addEquipmentArea','MES.addEquipmentUnit','MES.createProject','MES.addProjectObjective','MES.addProjectMilestone','MES.setProjectSensitivity','MES.linkWorkOrderProject','MES.createSprint','MES.recordMaintenance','MES.closeMaintenance','MES.recordExternalReceipt','MES.clockOnOperation','MES.clockOffOperation','MES.postInventoryTransaction','MES.submitEngineeringChange','MES.reviewFair','MES.signFairImpactAssessment','MES.recordTraining','MES.saveTraining','MES.importStamps','MES.recordSupportAccess','MES.saveSourceInspectionCodes','MES.saveOperationSubcodes','MES.saveMrbTrainingTiers','MES.recordSourceInspection','FlightPlan.addPlannedOrder','FlightPlan.firm','FlightPlan.cancel','FlightPlan.convert','FlightManeuver.raiseCAR','FlightManeuver.recordContainment','FlightManeuver.recordRootCause','FlightManeuver.addAction','FlightManeuver.completeAction','FlightManeuver.verifyCAR','FlightManeuver.effectivenessCheck','FlightManeuver.closeCAR','FlightManeuver.cancelCAR','FlightManeuver.openMRB','FlightManeuver.voteMRB','FlightManeuver.decideMRB','FlightManeuver.linkCAR','FlightManeuver.addRecordFile','FlightManeuver.removeRecordFile','FlightManeuver.raiseNC','FlightManeuver.dispositionNC','FlightManeuver.containNC','FlightManeuver.approveNC','FlightManeuver.linkReworkOrder','FlightManeuver.raiseSPR','FlightManeuver.linkSPRJira','FlightManeuver.closeSPR','FlightManeuver.requestSCAR','FlightManeuver.linkSCARJira','FlightManeuver.closeSCAR','FlightManeuver.openPFMEA','FlightManeuver.setPfmeaScope','FlightManeuver.addPfmeaMode','FlightManeuver.removePfmeaMode','FlightManeuver.markOpNoRisk','FlightManeuver.completePfmeaAnalysis','FlightManeuver.setPfmeaAction','FlightManeuver.closePfmeaAction','FlightManeuver.completePfmeaActions','FlightManeuver.pfmeaSafetyBuyoff']);
 const serverCommandStates=new WeakSet([state]);
 // Commands are queued as engine calls succeed, before their change is committed. A refused change must not leave
 // its commands behind for the next flush: commits mark what is queued, refusals drop everything unmarked.
@@ -13139,6 +13263,18 @@ function fairGapPage(g){const m=/^Form ([123])\b/.exec(g);return m?m[1]:null;}
 function showFairPage(panel,k,focus){fairPage=k;panel.querySelectorAll('[role=tab][data-fair-page]').forEach(x=>{const on=x.dataset.fairPage===k;x.classList.toggle('on',on);x.setAttribute('aria-selected',String(on));x.tabIndex=on?0:-1;});panel.querySelectorAll('.fair-page').forEach(pg=>{pg.hidden=pg.id!=='fair-page-'+k;});const tab=panel.querySelector(`[role=tab][data-fair-page="${k}"]`);if(focus==='tab'&&tab)tab.focus();if(focus==='panel'){const pg=panel.querySelector('#fair-page-'+k);if(pg){pg.focus({preventScroll:true});panel.querySelector('.fair-pages').scrollIntoView({behavior:'smooth',block:'start'});}}}
 document.addEventListener('click',e=>{const b=e.target.closest&&e.target.closest('[data-fair-page]');if(!b||b.dataset.action==='goto-fair')return;const panel=b.closest('.fair-panel');if(!panel)return;showFairPage(panel,b.dataset.fairPage,b.getAttribute('role')==='tab'?null:'panel');});
 document.addEventListener('keydown',e=>{const t=e.target;if(!t||t.getAttribute&&t.getAttribute('role')!=='tab'||!t.closest||!t.closest('.fair-pages'))return;const tabs=[...t.closest('.fair-pages').querySelectorAll('[role=tab]')],i=tabs.indexOf(t);let j=null;if(e.key==='ArrowRight')j=(i+1)%tabs.length;else if(e.key==='ArrowLeft')j=(i-1+tabs.length)%tabs.length;else if(e.key==='Home')j=0;else if(e.key==='End')j=tabs.length-1;if(j===null)return;e.preventDefault();showFairPage(t.closest('.fair-panel'),tabs[j].dataset.fairPage,'tab');});
+// The work order revision a signed FAIR is bound to, for the screen and the print.
+function fairRevText(o){const f=o.fair;if(!f||!f.verified)return '';const rev=MES.fairWoRev(o),cur=o.woRev||'Baseline',sub=f.verified.manifest&&f.verified.manifest.subject,proc=(sub&&sub.form1&&sub.form1.processReference)||(o.masterWI?`${o.masterWI.id} Rev ${o.masterWI.revision}`:'Ad hoc');
+  return `FAIR signed at WO Rev ${rev} (${proc==='Ad hoc'?'ad hoc, no master WI':proc})${rev!==cur?`. Signed at WO Rev ${rev}; work order is now Rev ${cur}`:''}.`;}
+function fairImpactText(a){return `${a.id}: WO Rev ${a.fromWoRev} to Rev ${a.toWoRev}, signed by ${a.by.name}${a.by.stamp?` (stamp ${a.by.stamp.number})`:''} on ${String(a.at).slice(0,10)}. ${a.statements.join(' ')} Rationale: ${a.rationale}`;}
+function fairImpactBlock(o){const f=o.fair;if(!f||!f.verified)return '';const list=Array.isArray(f.impactAssessments)?f.impactAssessments:[],gap=MES.fairRevisionGap(o),oid=esc(o.id),qm=MES.holdsQaManagerRole(state)&&skCan('approve-wo');
+  const drawing=`${o.partNumber} Rev ${esc((o.revisions||[]).find(e=>e.rev===o.woRev)?.drawingRev??o.drawingRev??o.revision)}`;
+  return `<div class="fair-impact"><p class="small muted">Work order revision</p><p data-fair-rev><strong>${esc(fairRevText(o))}</strong></p>${list.length?`<ul class="fair-impact-list">${list.map(a=>`<li>${esc(fairImpactText(a))}</li>`).join('')}</ul>`:''}
+    ${gap?(qm&&o.status!=='Closed'?`<form data-form="fair-impact" data-order="${oid}"><p class="small muted">FAIR impact assessment (QA Manager). Confirm all three statements, or reopen the FAIR for a delta or full FAI.</p>
+      <label class="check"><input type="checkbox" name="fairValid" required> The existing FAIR remains valid.</label>
+      <label class="check"><input type="checkbox" name="noOperationImpact" required> The change has no impact on completed operations or their buy-offs.</label>
+      <label class="check"><input type="checkbox" name="noDrawingDeviation" required> The work order has not deviated from drawing ${drawing}.</label>
+      <div class="field"><label>Rationale (1 to 300 characters)</label><textarea name="rationale" rows="2" maxlength="300" required></textarea></div><div class="field"><label>Your stamp PIN (a Master Access override cannot sign this)</label><input name="pin" type="password" inputmode="numeric" maxlength="8" autocomplete="off" class="mono"></div><p class="form-error" role="alert"></p><div class="fair-btns"><button class="btn primary" type="submit">Sign impact assessment</button></div></form>`:`<p class="muted" role="status">${esc(gap)}</p>`):''}</div>`;}
 function fairPanel(o){
   if(!(o.fai&&o.fai.required)&&!o.fair)return '';
   const qa=skCan('approve-wo'),oid=esc(o.id);
@@ -13178,7 +13314,7 @@ function fairPanel(o){
   const sigs=`<h3>Signatures</h3><div class="fair-sigs"><div><p class="small muted">Blocks 20 and 21 · FAIR verified by</p>${f.verified?`<p><strong>${esc(f.verified.by.name)}</strong>${f.verified.by.override?' · Master Access override':''}${f.verified.by.stamp?` · stamp ${esc(f.verified.by.stamp.number)}`:''}<br><span class="mono">${esc(f.verified.at.slice(0,10))}</span></p>`:edit?`<form data-form="fair-verify" data-order="${oid}">${fairPin('Your stamp PIN')}<p class="form-error" role="alert"></p><div class="fair-btns"><button class="btn primary" type="submit" ${gaps.length?'disabled title="Clear the review items first"':''}>Verify FAIR</button></div></form>`:'<p class="muted">Not verified</p>'}</div>
     <div><p class="small muted">Blocks 22 and 23 · FAIR reviewed / approved by (a second person)</p>${f.reviewed?`<p><strong>${esc(f.reviewed.by.name)}</strong>${f.reviewed.by.override?' · Master Access override':''}${f.reviewed.by.stamp?` · stamp ${esc(f.reviewed.by.stamp.number)}`:''}<br><span class="mono">${esc(f.reviewed.at.slice(0,10))}</span></p>`:f.status==='Verified'&&qa?`<form data-form="fair-review" data-order="${oid}"><p class="small muted">AS9102 Rev C: someone other than the verifier reviews and approves the FAIR here. The Skyryse QA approval waits for it.</p>${fairPin('Your stamp PIN')}<p class="form-error" role="alert"></p><div class="fair-btns"><button class="btn" type="submit">Sign box 22</button></div></form>`:`<p class="muted">${f.status==='Open'?'After verification':f.status==='Approved'?'Approved before box 22 was required; the verifier covers boxes 22 and 23':'Waiting for a second person'}</p>`}</div>
     <div><p class="small muted">Skyryse QA approval (supplemental; boxes 24 and 25 are left for a customer)</p>${f.approved?`<p><strong>${esc(f.approved.by.name)}</strong>${f.approved.by.override?' · Master Access override':''}${f.approved.by.stamp?` · stamp ${esc(f.approved.by.stamp.number)}`:''}<br><span class="mono">${esc(f.approved.at.slice(0,10))}</span></p>`:f.status==='Verified'&&f.reviewed&&qa?`<form data-form="fair-approve" data-order="${oid}">${fairPin('Your stamp PIN')}<p class="form-error" role="alert"></p><div class="fair-btns"><button class="btn primary" type="submit">Approve FAIR</button></div></form>`:`<p class="muted">${f.status==='Verified'?'Waiting for box 22':'Waiting for verification'}</p>`}</div></div>
-`;
+${fairImpactBlock(o)}`;
   const actions=`<div class="fair-btns"><button class="btn" data-action="fair-print" data-order="${oid}">Print FAIR</button><button class="btn" data-action="fair-download" data-order="${oid}">Download FAIR (Forms 1, 2, 3)</button>${qa&&f.status!=='Open'&&o.status!=='Closed'?`<button class="btn quiet" data-action="fair-reopen" data-order="${oid}">Reopen</button>`:''}</div>`;
   const pages=[['1','Form 1 · Part number',f1],['2','Form 2 · Product',f2],['3','Form 3 · Characteristics',f3],['sign','Review and sign',review+sigs]],cur=pages.some(x=>x[0]===fairPage)?fairPage:'1';
   const openRes=f.chars.filter(c=>!c.result||c.ok===null).length,todo=k=>k==='sign'?gaps.length:gaps.filter(g=>fairGapPage(g)===k&&!/^Form 3 block 9: results missing/.test(g)).length+(k==='3'?openRes:0);
@@ -13200,7 +13336,7 @@ function fairHtml(o){const f=o.fair,box22=f.reviewed||(f.status==='Approved'?f.v
   <p><strong>Index of part numbers or sub-assembly numbers required to make the assembly noted above</strong></p>${tbl(['15. Part number','16. Part name','17. Part type','18. FAIR identifier'],F1.index.map(x=>[x.pn,x.name,x.type,x.fairId]))}
   <table><tr>${box(19,'Does the FAIR contain a documented nonconformance(s)?',`${F1.nonconformance}${F1.ncNumbers.length?` · ${F1.ncNumbers.join(', ')}`:''}`,2)}${box(20,'FAIR verified by',sig(f.verified))}${box(21,'Date',day(f.verified))}</tr>
   <tr>${box(22,'FAIR reviewed / approved by',sig(box22))}${box(23,'Date',day(box22))}${box(24,'Customer approval','')}${box(25,'Date','')}</tr>
-  <tr>${box(26,'Comments',F1.comments,4)}</tr></table></div>
+  <tr>${box(26,'Comments',F1.comments,4)}</tr>${f.verified?`<tr>${box('','Work order revision (Skyryse supplemental)',fairRevText(o),4)}</tr>`:''}${(Array.isArray(f.impactAssessments)?f.impactAssessments:[]).map(a=>`<tr>${box('','FAIR impact assessment (Skyryse supplemental)',fairImpactText(a),4)}</tr>`).join('')}</table></div>
   <div class="page"><h1>AS9102 Form 2: Product Accountability: Materials, Special Processes, and Functional Testing</h1>
   <table><tr>${box(1,'Part number',F1.partNumber)}${box(2,'Part name',F1.partName)}${box(3,'Serial number',F1.serials.join(', '))}${box(4,'FAIR identifier',F1.fairId)}</tr></table>
   ${tbl(['5. Material or process name','6. Specification number','7. Code','8. Supplier (name, address, code)','9. Customer approval verification','10. Certificate of conformance number'],snap.form2.map(x=>[`${x.name} (${x.kind})`,x.spec,x.code,x.supplier,x.approval,x.coc]))}
@@ -13347,6 +13483,7 @@ document.addEventListener('submit',e=>{const f=e.target,k=f&&f.dataset&&f.datase
     case 'fair-review':r=MES.reviewFair(state,id,{pin:d.pin});break;
     case 'fair-approve':r=MES.approveFair(state,id,{pin:d.pin});break;
     case 'fair-reopen':r=MES.reopenFair(state,id,d.reason);break;
+    case 'fair-impact':r=MES.signFairImpactAssessment(state,id,{fairValid:!!d.fairValid,noOperationImpact:!!d.noOperationImpact,noDrawingDeviation:!!d.noDrawingDeviation,rationale:d.rationale||''},{pin:d.pin});break;
     case 'conf-start':r=MES.startConformity(state,id,d);if(r.ok&&save()){render();openConfWizard(id,d.serial,0);notify(r.message);}return;
     case 'conf-check':r=MES.checkConformity(state,id,sn,f.dataset.key,{value:(f.querySelector('[name=value]:checked')||{}).value||'',note:d.note||''});break;
     case 'conf-save':r=MES.saveConformity(state,id,sn,d);break;

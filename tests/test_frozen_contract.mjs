@@ -83,6 +83,22 @@ const SOD=[
   ['a stock NC approval signs the disposition record, the approver and the cited MRB decision',"    const subject = MES.ncApprovalSubject(t, note, who, at, true, MES.mrbDecisionHashOf(state, t));",1],
   ['the FAIR verification, box 22 and Skyryse QA approval sign the recorded inspection stamp',"verifierStamp: by.stamp ?? null,",1],
   ['an unsigned migrated-escape closure is exempt only through the structured record the migration writes',"&& legacyEscapeValid(t.resolution.legacy) &&",1],
+  // QA Manager decision on #238: the FAIR binds the work order revision and locks the work order; tests/test_fair_rev_lock.mjs drives each rule.
+  ['the FAIR verification signs the work order revision it was verified at',"rawReasons: [...fair.reasons], woRev, verifierStamp: by.stamp ?? null,",1],
+  ['verifyManifests refuses a changed or removed FAIR work order revision',"if (Object.hasOwn(vs, 'woRev') ? !same(vs.woRev, fair.verified.woRev) : fair.verified.woRev !== undefined) drift.push('work order revision');",1],
+  ['the FAIR lock refusal text',"const FAIR_LOCK_MESSAGE = \"This work order's FAIR is signed. Only a QA Manager can change it.\";",1],
+  ['only the QA Manager role lifts the FAIR lock; Master Access does not count',"const fairLockRefusal = (state, order) => fairSigned(order) && !qaManagerSignedIn(state) ? fail(FAIR_LOCK_MESSAGE) : null;",1],
+  ['the QA Manager test is the account role list, not Master Access',"    return roles.includes('qm');\n",1],
+  ['the FAIR lock guards engineering change submit, ECR approval, QA re-release, operation add, remove and edit, sequence release and serial assign and void',"    { const locked = fairLockRefusal(state, order); if (locked) return locked; }",9],
+  ['the FAIR lock guards standard rework',"{ const o0 = state.orders.find(x => x.id === orderId), locked = o0 ? fairLockRefusal(state, o0) : null; if (locked) return locked; }",1],
+  ['a signed FAIR is reopened only by a QA Manager',"if (!qaManagerSignedIn(state)) return fail('This FAIR is signed. Only a QA Manager can reopen it.');",1],
+  ['only a QA Manager signs a FAIR impact assessment',"if (!qaManagerSignedIn(state)) return fail('Only a QA Manager can sign a FAIR impact assessment.');",1],
+  ['the FAIR impact assessment needs all three statements',"if (!(yes(input0.fairValid) && yes(input0.noOperationImpact) && yes(input0.noDrawingDeviation))) return fail(",1],
+  ['the FAIR impact assessment is signed with the signer stamp and PIN, never a Master Access override',"const v = inspectorSign(state, ['Quality', '8130-9 Authorized Inspector'], execution, false); if (!v.ok) return v;",1],
+  ['the FAIR impact assessment signs the verification hash, both revisions, the change list, the drawing, the statements and the rationale',"const fairImpactSubject = (order, fair, a) => ({ fair: fairId(order), verified: plain(fair.verified) && plain(fair.verified.manifest) ? fair.verified.manifest.hash : null, fromWoRev: a.fromWoRev, toWoRev: a.toWoRev, changes: a.changes, drawing: a.drawing, statements: a.statements, rationale: a.rationale,",1],
+  ['verifyManifests rechecks every FAIR impact assessment',"failures.push(...fairImpactProblems(order));",1],
+  ['MES.validate refuses a work order whose FAIR impact assessment fails',"if (plain(order) && plain(order.fair) && fairImpactProblems(order).length) return false;",1],
+  ['closeOrder and decideOrderClosure refuse a FAIR revision mismatch with no impact assessment at the current revision',"    { const gap = fairRevisionGap(order); if (gap) return fail(gap); }",2],
   ['the recorded signer and time of a signed record must be the manifest signer and time',"const signerMismatch = (rec, m) => !plain(rec.by) || !plain(m.signer) || rec.by.credentialId !== m.signer.credentialId || rec.by.name !== m.signer.name || rec.at !== m.at;",1],
 ];
 for(const [label,text,count] of SOD) has(label,text,count);
