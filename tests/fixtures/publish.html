@@ -3454,7 +3454,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // approvals and order closures are recomputed from the stored record; FAIR and 8130-9 chains are
   // checked link by link. Any edit to a signed field after signing shows up as a failure.
   function verifyManifests(state) {
-    const failures = []; let checked = 0, recomputed = 0, legacy = 0; const manifestSubjects = [];
+    const failures = []; let checked = 0, recomputed = 0, legacy = 0; const manifestSubjects = [], unsignedLegacy = [];
     const shapeOk = m => plain(m) && typeof m.meaning === 'string' && !!m.meaning && typeof m.at === 'string' && !Number.isNaN(Date.parse(m.at)) && plain(m.signer) && typeof m.signer.name === 'string' && !!m.signer.name.trim() && typeof m.signer.credentialId === 'string' && !!m.signer.credentialId.trim() && m.algorithm === 'SHA-256' && /^[0-9a-f]{64}$/.test(m.hash);
     const walk = (node, path) => {
       if (Array.isArray(node)) { node.forEach((x, i) => walk(x, `${path}[${i}]`)); return; }
@@ -3489,13 +3489,24 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
         const carried = order.splitFrom && plain(b.carriedFrom) ? b.carriedFrom : null;
         recheck(`${order.id} ${op.id} buy-off`, b.manifest, carried ? { ...buyoffSubject(order, op, note), orderId: carried.orderId, evidenceIds: carried.evidenceIds } : buyoffSubject(order, op, note));
       });
-      (order.tickets || []).forEach(t => { if (!plain(t.manifest) || t.status !== 'Resolved') return; const carried = order.splitFrom && plain(t.carriedFrom) ? t.carriedFrom : null; recheck(`${order.id} ${t.id} approval`, t.manifest, carried ? { ...ticketSubject(order, t), orderId: carried.orderId } : ticketSubject(order, t)); });
+      (order.tickets || []).forEach(t => {
+        // #581: a Rework or Repair plan carries its own approval signature and closes with a signed release.
+        if (!plain(t.reworkPlan)) return;
+        const p = t.reworkPlan;
+        if (plain(p.manifest)) recheck(`${order.id} ${t.id} rework approval`, p.manifest, reworkApprovalSubject(order, t));
+        else unsignedLegacy.push(`${order.id} ${t.id} rework approval`);
+        if (t.status !== 'Resolved') return;
+        if (plain(t.manifest)) { if (t.manifest.meaning !== REWORK_RELEASE_MEANING) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the ticket was closed with a signature that is not a QA release' }); else recheck(`${order.id} ${t.id} rework release`, t.manifest, reworkReleaseSubject(order, t)); }
+        else if (plain(p.manifest)) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the QA release that closed the ticket is not signed' });
+        else unsignedLegacy.push(`${order.id} ${t.id} rework release`);
+      });
+      (order.tickets || []).forEach(t => { if (!plain(t.manifest) || t.status !== 'Resolved' || plain(t.reworkPlan)) return; const carried = order.splitFrom && plain(t.carriedFrom) ? t.carriedFrom : null; recheck(`${order.id} ${t.id} approval`, t.manifest, carried ? { ...ticketSubject(order, t), orderId: carried.orderId } : ticketSubject(order, t)); });
       if (plain(order.closure) && plain(order.closure.manifest)) recheck(`${order.id} closure`, order.closure.manifest, closureSubject(state, order));
       (Array.isArray(order.sendBacks) ? order.sendBacks : []).forEach(e => { if (!plain(e) || !plain(e.manifest)) { failures.push({ where: `${order.id} send back`, reason: 'send back to Building is not signed' }); return; } recheck(`${order.id} ${e.id} send back`, e.manifest, sendBackSubject(order, e)); });
       const fair = order.fair;
       if (plain(fair) && plain(fair.approved) && plain(fair.approved.manifest) && plain(fair.verified) && plain(fair.verified.manifest)) { recomputed++; const sub = { fair: fairId(order), verified: fair.verified.manifest.hash, ...(fair.approved.manifest.override ? { override: fair.approved.manifest.override } : {}) }; if (sha256(canonical(sub)) !== fair.approved.manifest.hash) failures.push({ where: `${order.id} FAIR approval`, reason: 'approval does not chain to the verified FAIR' }); }
     });
-    return { ok: failures.length === 0, complete: legacy === 0, legacy, checked, recomputed, failures };
+    return { ok: failures.length === 0, complete: legacy === 0 && unsignedLegacy.length === 0, legacy, unsignedLegacy, checked, recomputed, failures };
   }
   const actor = state => { const acct = accountActor(); return acct ? { name: acct.name, role: acct.role, credentialId: acct.credentialId } : profileSnapshot(state.profile); };
   const accountRole = () => { const acct = accountActor(); return acct ? acct.accountRole : null; };
@@ -3692,8 +3703,53 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     return true;
   }
 
+  // #581: a Rework or Repair disposition is signed twice. The Quality approval signs the approved rework plan when
+  // reworkPlan is created; the QA sequence release that closes the ticket signs the release, the linked operation and
+  // the approval signature's hash. A plan approved before these signatures existed has no reworkPlan.manifest: it is
+  // grandfathered as recorded, not signature-verified (like a calibration entry without signerRole), and
+  // verifyManifests lists it under unsignedLegacy. Every plan this build approves is signed, and a signed plan must
+  // carry a signed release once its ticket is Resolved. validate and verifyManifests recompute both from the record.
+  const REWORK_APPROVAL_MEANING = 'Quality approval of ME rework or repair disposition';
+  const REWORK_RELEASE_MEANING = 'QA release of ME rework or repair operation';
+  // A plan moved by an NC split keeps the order id it was approved on (reworkPlan.carriedFrom), as a carried ticket does.
+  const reworkApprovalSubject = (order, ticket) => { const p = ticket.reworkPlan; return { orderId: plain(p.carriedFrom) ? p.carriedFrom.orderId : order.id, ticketId: ticket.id, operationId: ticket.operationId, dispo: ticket.dispo, decision: p.decision, approval: p.approval, approvedBy: p.approvedBy, approvedAt: p.approvedAt, defect: ticket.defect || null, affected: ticket.affected || null }; };
+  const reworkReleaseSubject = (order, ticket) => { const p = ticket.reworkPlan; return { ...ticketSubject(order, ticket), orderId: plain(ticket.carriedFrom) ? ticket.carriedFrom.orderId : order.id, decision: p.decision, approvalHash: plain(p.manifest) ? p.manifest.hash : null, opId: p.opId, opAddedBy: p.opAddedBy || null, releasedBy: p.releasedBy, releasedAt: p.releasedAt, resolvedBy: ticket.resolvedBy, resolvedAt: ticket.resolvedAt }; };
+  const reworkManifestOk = (m, meaning, at, signer, subject) => plain(m) && m.meaning === meaning && m.at === at && m.algorithm === 'SHA-256' && plain(m.signer) && plain(signer) && m.signer.credentialId === signer.credentialId && m.hash === sha256(canonical(subject));
+  // The plans that predate signing are named once, in state.reworkLegacySeal = { tickets, sealedAt }: MES.upgrade
+  // writes it for a workspace that holds unsigned plans and no signed one, and the first signed approval writes it if
+  // it is missing. From then on an unsigned plan that the seal does not list had its signatures removed, and validate
+  // refuses it. Like the calibration seal, this catches a removed signature; it does not stop someone who also edits
+  // the seal (the hashes are unkeyed), and it is never rewritten once present. The seal needs no write-back on load:
+  // a signed plan only comes from a write by this build, and that write saves the seal with it.
+  const REWORK_SEAL_MAX = 10000;
+  const reworkTickets = state => (plain(state) && Array.isArray(state.orders) ? state.orders : []).flatMap(o => plain(o) && Array.isArray(o.tickets) ? o.tickets.filter(t => plain(t) && plain(t.reworkPlan)) : []);
+  const unsignedReworkIds = state => reworkTickets(state).filter(t => t.reworkPlan.manifest === undefined).map(t => t.id);
+  const signedReworkExists = state => reworkTickets(state).some(t => t.reworkPlan.manifest !== undefined);
+  const reworkSealFor = state => ({ tickets: unsignedReworkIds(state), sealedAt: new Date().toISOString() });
+  const reworkSealValid = seal => plain(seal) && Object.keys(seal).length === 2 && Array.isArray(seal.tickets) && seal.tickets.length <= REWORK_SEAL_MAX && seal.tickets.every(id => typeof id === 'string' && /^(IDR|NC)-\d{4,8}$/.test(id)) && unique(seal.tickets) && timestamp(seal.sealedAt);
+  const sealReworkLegacy = state => { if (plain(state) && state.reworkLegacySeal === undefined && !signedReworkExists(state) && unsignedReworkIds(state).length) state.reworkLegacySeal = reworkSealFor(state); };
+  function reworkSealProblem(state) {
+    if (!plain(state)) return null;
+    const seal = state.reworkLegacySeal;
+    if (seal === undefined) return signedReworkExists(state) ? 'This workspace holds signed Rework or Repair approvals but has no record of the unsigned approvals that predate signing, so a removed signature cannot be ruled out.' : null;
+    if (!reworkSealValid(seal)) return 'The record of Rework or Repair approvals that predate signing is malformed.';
+    const listed = new Set(seal.tickets), stray = unsignedReworkIds(state).find(id => !listed.has(id));
+    return stray ? `${stray} has an unsigned Rework or Repair approval, but it was not approved before approvals were signed: its signatures were removed.` : null;
+  }
+  // What is wrong with a ticket's rework signatures, in plain words, or null.
+  function reworkSignatureProblem(ticket, order) {
+    const p = ticket.reworkPlan;
+    if (p === undefined) return null;
+    if (!plain(p) || !['Rework', 'Repair'].includes(p.decision) || !snapshotValid(p.approvedBy) || !timestamp(p.approvedAt)) return `${ticket.id} rework plan is malformed.`;
+    if (p.manifest !== undefined && !reworkManifestOk(p.manifest, REWORK_APPROVAL_MEANING, p.approvedAt, p.approvedBy, reworkApprovalSubject(order, ticket))) return `${ticket.id} Quality approval signature does not match the approved ${p.decision.toLowerCase()} plan: the rationale, approver, disposition or affected units changed after signing.`;
+    if (ticket.status !== 'Resolved') return null;
+    if (ticket.manifest === undefined) return p.manifest === undefined ? null : `${ticket.id} is closed, but the QA release that closed it is not signed.`;
+    if (!snapshotValid(p.releasedBy) || !reworkManifestOk(ticket.manifest, REWORK_RELEASE_MEANING, p.releasedAt, p.releasedBy, reworkReleaseSubject(order, ticket))) return `${ticket.id} QA release signature does not match the release record: the released operation, releaser or approval changed after signing.`;
+    return null;
+  }
   function ticketValid(ticket, order) {
     if (!plain(ticket) || !str(ticket.id, 24) || !/^(IDR|NC)-\d{4,8}$/.test(ticket.id) || !['IDR', 'NC'].includes(ticket.type) || !order.operations.some(operation => operation.id === ticket.operationId) || !str(ticket.title, 120) || !ticket.title.trim() || !str(ticket.description, 1000) || !ticket.description.trim() || !['Open', 'Resolved'].includes(ticket.status) || typeof ticket.hold !== 'boolean' || !timestamp(ticket.createdAt) || ticket.reportedBy !== 'Assembly operator' || !str(ticket.resolution, 500, 0) || !(ticket.dispo === undefined || dispoValid(ticket.dispo)) || !(ticket.resolvedBy === undefined || snapshotValid(ticket.resolvedBy)) || !(ticket.attachments === undefined || (Array.isArray(ticket.attachments) && ticket.attachments.length <= 10 && ticket.attachments.every(attachmentValid))) || !(ticket.detected === undefined || (plain(ticket.detected) && order.operations.some(operation => operation.id === ticket.detected.operationId) && timestamp(ticket.detected.at) && snapshotValid(ticket.detected.by) && str(ticket.detected.requirement, 300) && Array.isArray(ticket.detected.serials) && ticket.detected.serials.length <= 50))) return false;
+    if (reworkSignatureProblem(ticket, order)) return false;
     return ticket.status === 'Open' ? ticket.resolution === '' && ticket.resolvedAt === null: !!ticket.resolution.trim() && timestamp(ticket.resolvedAt) && ticket.resolvedAt >= ticket.createdAt;
   }
 
@@ -4145,7 +4201,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     return version < 3 || (unique(state.orders.flatMap(order => order.operations.flatMap(operation => operation.evidence.map(item => item.id)))) && state.orders.every(order => !order.sourceTicket || state.orders.some(source => source.id === order.sourceTicket.orderId && source.tickets.some(ticket => ticket.id === order.sourceTicket.ticketId))));
   }
 
-  const validate = state => !hasProtoKey(state) && validateVersion(state, 3) && (!Object.hasOwn(state, 'masterWIs') || masterWIsValid(state.masterWIs));
+  const validate = state => !hasProtoKey(state) && validateVersion(state, 3) && (!Object.hasOwn(state, 'masterWIs') || masterWIsValid(state.masterWIs)) && !reworkSealProblem(state);
 
   // Buy-off types, inspection points, operation sequence changes, and master WIs (master work orders).
   const BUYOFF_TYPES = Object.freeze(['Technician', 'Quality', 'A&P', 'Engineering', '8130-9 Authorized Inspector', 'Conformity Inspector']);
@@ -5586,6 +5642,7 @@ const OP_BOM_MAX = 12;
     order.tickets.filter(t => t.status === 'Open' && plain(t.reworkPlan) && t.reworkPlan.stage === 'Awaiting QA release' && order.operations.some(item => item.id === t.reworkPlan.opId)).forEach(t => {
       t.reworkPlan = { ...t.reworkPlan, stage: 'Released', releasedBy: actor(state), releasedAt: at };
       t.status = 'Resolved'; t.resolution = t.reworkPlan.approval; t.resolvedBy = t.reworkPlan.approvedBy; t.resolvedAt = at;
+      t.manifest = signManifest(state, REWORK_RELEASE_MEANING, reworkReleaseSubject(order, t), at);
       record(state, order, `${t.id} closed: QA released the ${t.reworkPlan.decision} operation Op ${opNumber(order, t.reworkPlan.opId)}. Hold lifted.`, 'Quality reviewer');
     });
     const approver = actor(state);
@@ -6823,7 +6880,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     try {
       state = renameKitOp(migrateEngineeringChanges(migrateSplitIds(state)));
       try { migrateChangeIds(state); } catch (e) {}
-      if (plain(state)) { sealCalibrationLog(state); markCalibrationStart(state); }
+      if (plain(state)) { sealCalibrationLog(state); markCalibrationStart(state); sealReworkLegacy(state); }
       if (validate(state)) { const migrated = JSON.parse(JSON.stringify(state)); ['audits','certifications','supplierApprovals','qualityValues','qualityVerdicts'].forEach(key=>{if(!Array.isArray(migrated[key]))migrated[key]=[];}); migrateOperationTypes(migrated); return validate(migrated) ? migrated : JSON.parse(JSON.stringify(state)); }
       if (!validateVersion(state, 1) && !validateVersion(state, 2)) return null;
       const upgraded = JSON.parse(JSON.stringify(state));
@@ -7642,6 +7699,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (ticket) {
       child.tickets = [JSON.parse(JSON.stringify(ticket))];
       if (plain(child.tickets[0].manifest) && !plain(child.tickets[0].carriedFrom)) child.tickets[0].carriedFrom = { orderId: order.id };
+      { const p = child.tickets[0].reworkPlan; if (plain(p) && plain(p.manifest) && !plain(p.carriedFrom)) p.carriedFrom = { orderId: order.id }; }
       order.tickets = order.tickets.filter(item => item.id !== ticket.id);
     }
     order.quantity -= qty;
@@ -8000,7 +8058,9 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
       record(state, order, `Split request ${sr.id} raised by Quality for ${ticket.id}: move ${qty} affected unit${qty === 1 ? '' : 's'}${serials.length ? ` (${serials.join(', ')})` : ''} onto their own work order.`, 'Quality reviewer');
     }
     if (['Rework', 'Repair'].includes(ticket.dispo.decision)) {
+      if (state.reworkLegacySeal === undefined) state.reworkLegacySeal = reworkSealFor(state);
       ticket.reworkPlan = { decision: ticket.dispo.decision, stage: 'Awaiting ME operation', approval: resolution.trim(), approvedBy: reviewer, approvedAt: reviewedAt, opId: null };
+      ticket.reworkPlan.manifest = signManifest(state, REWORK_APPROVAL_MEANING, reworkApprovalSubject(order, ticket), reviewedAt);
       const linkedNow = linkReworkOperation(state, order, ticket);
       if (linkedNow) return { ok: true, message: `${ticket.id} approved for ${ticket.dispo.decision}. The ${ticket.dispo.decision.toLowerCase()} operation already in the sequence was linked to it, so the hold lifts once QA releases the sequence.${ticket.splitRequestId ? ` Split request ${ticket.splitRequestId} sent to ME.` : ''}` };
       record(state, order, `${ticket.id}: Quality approved the ME disposition "${ticket.dispo.decision}" (${defectLabel}; ${qty} of ${order.quantity} affected${serials.length ? `: ${serials.join(', ')}` : ''}). Hold remains until ME adds a ${ticket.dispo.decision} operation and QA releases it. Approval rationale: ${resolution.trim()}`, 'Quality reviewer');
@@ -8232,6 +8292,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
         }
       }
       if (Object.hasOwn(o, 'start') && typeof o.start === 'string' && typeof o.due === 'string' && o.start > o.due) return { where: id, detail: `${id} planned start ${o.start} is after its finish ${o.due}.`, fix: s => { s.orders[oi].start = s.orders[oi].due; } };
+      if (Array.isArray(o.tickets) && Array.isArray(o.operations)) for (const t of o.tickets) { const why = plain(t) ? reworkSignatureProblem(t, o) : null; if (why) return { where: id, detail: `${id}: ${why} The saved work order was not changed; a QA Manager must review it.`, fix: null }; }
       if (Array.isArray(o.tickets)) for (let i = 0; i < o.tickets.length; i += 1) if (!ticketValid(o.tickets[i], o)) return { where: id, detail: `${id} ticket ${o.tickets[i] && o.tickets[i].id ? o.tickets[i].id : i} is malformed.`, fix: null };
       if (Array.isArray(o.reports)) for (let i = 0; i < o.reports.length; i += 1) if (!reportValid(o.reports[i], o)) return { where: id, detail: `${id} report ${o.reports[i] && o.reports[i].id ? o.reports[i].id : i} is malformed.`, fix: null };
       if (Array.isArray(o.operations)) for (let i = 0; i < o.operations.length; i += 1) { const op = o.operations[i]; if (!(plain(op) && str(op.id, 40) && str(op.title, 120) && str(op.description, 400) && typeof op.done === 'boolean' && str(op.note, 500, op.done ? 1 : 0) && calloutsValid(op) && operationDiscussionValid(op) && buyoffValid(op.buyoff, op.done) && operationEvidenceValid(op))) return { where: id, detail: `${id} operation ${op && op.id ? op.id : i} is malformed (${!plain(op) ? 'shape' : !str(op.description, 400) ? 'description' : typeof op.done !== 'boolean' ? 'done flag' : !str(op.note, 500, op.done ? 1 : 0) ? 'note' : !calloutsValid(op) ? 'callouts' : !operationDiscussionValid(op) ? 'discussion' : !buyoffValid(op.buyoff, op.done) ? 'buy-off' : 'evidence'}).`, fix: null }; }
@@ -8253,6 +8314,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     }
     const tix = state.orders.flatMap(o => o.tickets.map(t => t.id)); const dupT = tix.find((t, i) => tix.indexOf(t) !== i);
     if (dupT) return { where: dupT, detail: `Ticket id ${dupT} appears on more than one work order.`, fix: null };
+    { const why = reworkSealProblem(state); if (why) return { where: 'reworkLegacySeal', detail: `${why} The saved workspace was not changed; a QA Manager must review it.`, fix: null }; }
     const ev = state.orders.flatMap(o => o.operations.flatMap(op => op.evidence.map(e => e.id))); const dupE = ev.find((t, i) => ev.indexOf(t) !== i);
     if (dupE) return { where: dupE, detail: `Evidence id ${dupE} appears twice.`, fix: null };
     const orphanSrc = state.orders.find(o => o.sourceTicket && !state.orders.some(src => src.id === o.sourceTicket.orderId && src.tickets.some(t => t.id === o.sourceTicket.ticketId)));
