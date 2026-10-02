@@ -51,7 +51,7 @@ const nine=await run(({ten,parent})=>MES.issueFromOrder(structuredClone(state),p
 ok('9 of 10 is refused too, naming the 1 still needed',!nine.ok&&/9 chosen\. Choose 1 more serial from /.test(nine.message||''),JSON.stringify(nine));
 
 const few=await run(({three,parent})=>MES.issueFromOrder(structuredClone(state),parent,three,{serials:['SB546-1','SB546-2','SB546-3'],materialId:'m546-a'}),ids);
-ok('a child without enough stock says it cannot fill the line',!few.ok&&/has only 3 units left, so it cannot fill this line\. Fill it from an order with 10 in stock\./.test(few.message||''),JSON.stringify(few));
+ok('a child without enough stock says it cannot fill the line',!few.ok&&/has only 3 units left, so it cannot fill this line\. A kit line is filled by one issue from one order: stock all 10 on one work order, then issue them together\./.test(few.message||''),JSON.stringify(few));
 
 const plainShort=await run(({plain,parent})=>MES.issueFromOrder(structuredClone(state),parent,plain,{quantity:1,materialId:'m546-b'}),ids);
 ok('a plain lot quantity short of the line is refused, in units',!plainShort.ok&&/needs 2 of .*, 1 chosen\. Choose 1 more unit from /.test(plainShort.message||''),JSON.stringify(plainShort));
@@ -77,7 +77,22 @@ ok('a saved short line still loads as a valid workspace',legacy.valid,JSON.strin
 ok('the saved short line is an open shortage of 9',legacy.shortfall===9,String(legacy.shortfall));
 ok('the saved short line blocks the build and says how to clear it',!legacy.gate.allowed&&/Old sub-assembly line needs 10 but 1 serial was issued from .*\. Return it and issue all 10 before starting the build\./.test(legacy.gate.reason)&&!legacy.adv.ok&&legacy.status==='Kitting',JSON.stringify(legacy.gate));
 
-ok('no em dashes in the new messages',![over.r.message,short.r.message,few.message,plainShort.message,legacy.gate.reason].some(m=>/—/.test(m||'')));
+// ---- the page shows a saved short line as not ready ----
+// The kit row, the panel badge, the Kit tab count and the handoff all treat a short line as open, and the handoff
+// names the shortage instead of offering Start build.
+const page=await run(({ten,part})=>{const wi=state.masterWIs.find(x=>x.status==='Released');const r=MES.addOrder(state,{masterWI:wi.id+'|'+wi.revision,pedigree:'Production',subcategory:'Mfg.',fai:false,faiWaiver:'FAI covered on an earlier order.',quantity:1,aircraft:MES.AIRCRAFT[0],site:MES.SITES[0]});MES.advance(state,r.id);const o=MES.getOrder(state,r.id);o.materials.forEach(m=>{m.ready=true;m.lot=m.lot||'LOT-ANY';});o.materials=o.materials.slice(0,19);
+  o.materials.push({id:'m546-ui',name:'Saved short line',partNumber:part,required:10,ready:true,lot:'LOT-546-TEN',source:{orderId:ten,lotNumber:'LOT-546-TEN',serials:['SA546-01'],revision:MES.getOrder(state,ten).revision,issuedAt:new Date().toISOString(),issuedBy:{name:'Jordan Doe',role:'Master Access',credentialId:'ACCT-jdoe'}}});
+  MES.addKitFile(state,r.id,{name:'kit-ui.pdf'});save();selectedId=r.id;view='order';tab='materials';render();
+  const main=document.querySelector('#main'),panel=[...main.querySelectorAll('.panel')].find(x=>/Issued material kit/.test(x.textContent));const row=[...panel.querySelectorAll('tbody tr')].find(tr=>/Saved short line/.test(tr.textContent));
+  const tabBadge=(main.querySelector('[data-tab="materials"] .badge')||{}).textContent||'';const act=panel.querySelector('.task-actions');
+  return {valid:MES.validate(state),n:o.materials.length,rowBadge:row?row.querySelector('td:last-child').textContent.trim():null,panelBadge:panel.querySelector('.panel-head .pill').textContent.trim(),tabBadge,handoff:act?act.querySelector('p').textContent:'',button:act?act.querySelector('button').textContent.trim():'',action:act?act.querySelector('button').dataset.action:''};},ids);
+ok('the kit row shows the saved short line as Short',page.rowBadge==='Short',JSON.stringify(page));
+ok('the kit panel badge does not say Ready while a line is short',page.panelBadge==='Kitting',JSON.stringify(page));
+ok('the Kit tab count leaves the short line out',page.tabBadge===`${page.n-1}/${page.n}`,JSON.stringify(page));
+ok('the handoff names the shortage and offers no Start build',/Saved short line needs 10 but 1 serial was issued from .*\. Return it and issue all 10 before starting the build\./.test(page.handoff)&&page.action!=='advance'&&!/Start build/.test(page.button),JSON.stringify(page));
+ok('the workspace is valid with the saved short line in it',page.valid);
+
+ok('no em dashes in the new messages',![page.handoff,over.r.message,short.r.message,few.message,plainShort.message,legacy.gate.reason].some(m=>/—/.test(m||'')));
 ok('state valid at the end',await run(()=>MES.validate(state)));
 ok('no page errors',errs.length===0,JSON.stringify(errs));
 await b.close();
