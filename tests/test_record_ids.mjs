@@ -151,6 +151,42 @@ await check('releasing the removal closes the assignment, and an operation reusi
   assert.notEqual(status(), 'Open', 'once released, the review closes even though a new operation holds a pending PUSH-1 under the same id');
 });
 
+await check('an added operation never takes an id a pending removal or an open assignment still holds', async () => {
+  // Codex review on #629: addOrderOperation handed out the first free op-add-N, so a replacement added while a removal
+  // waited for QA took the removed operation's id and inherited its open work assignment.
+  const state = fresh();
+  const order = state.orders.find(o => ['Draft', 'Kitting', 'Building'].includes(o.status) && o.operations.length > 1 && !o.sequenceChange);
+  const input = { title: 'Added step', description: 'Added for the record id regression.', classification: 'Manufacturing', buyoffType: 'Technician', steps: 'Do the added step.' };
+  const added = as(admin, state, s => MES.addOrderOperation(s, order.id, { ...input, position: order.operations.length }));
+  assert.equal(added.ok, true, added.message);
+  assert.equal(as(reviewer, state, s => MES.approveSequenceChange(s, order.id)).ok, true, 'QA releases the added operation');
+  const first = order.operations.find(op => /^op-add-/.test(op.id));
+  const work = as(admin, state, s => MES.assignWork(s, { type: 'op', orderId: order.id, opId: first.id, assigneeUsername: 'tech-a', assigneeName: 'Tech A' }));
+  assert.equal(work.ok, true, work.message);
+  assert.equal(as(admin, state, s => MES.removeOrderOperation(s, order.id, first.id, 'Replace this step.')).ok, true);
+  const replacement = as(admin, state, s => MES.addOrderOperation(s, order.id, { ...input, title: 'Replacement step', position: order.operations.length }));
+  assert.equal(replacement.ok, true, replacement.message);
+  const newOp = order.operations.find(op => op.title === 'Replacement step');
+  assert.notEqual(newOp.id, first.id, 'the replacement gets a new id');
+  MES.syncAssignments(state);
+  assert.equal(state.assignments.find(a => a.id === work.id).status, 'Open', 'the removed operation keeps its open assignment while QA has not released');
+  assert.equal(MES.validate(state), true);
+});
+
+await check('assigning a reused push id on a replacement operation does not reassign the held original review', async () => {
+  // Codex review on #629: the duplicate-assignment key left out pushAt, so assigning the replacement's PUSH-1 (same order,
+  // operation and push id) marked the held original's review Reassigned, and a rejection would bring the operation back
+  // without it.
+  const { state, order, op, status } = removalSetup();
+  const original = state.assignments.find(a => a.type === 'review-push' && a.opId === op.id && a.status === 'Open');
+  const replacement = { ...structuredClone(op), atp: { ...structuredClone(op.atp), pushes: [{ ...structuredClone(op.atp.pushes[0]), at: new Date(Date.parse(op.atp.pushes[0].at) + 60000).toISOString(), sha: 'abc0009', version: 'v9.9' }] } };
+  order.operations.push(replacement);
+  const later = as(admin, state, s => MES.assignWork(s, { type: 'review-push', orderId: order.id, opId: op.id, pushId: 'PUSH-1', assigneeUsername: 'id-reviewer', assigneeName: 'Id Reviewer' }));
+  assert.equal(later.ok, true, later.message);
+  assert.equal(status(), 'Open', 'the held original review stays open');
+  assert.equal(state.assignments.find(a => a.id === original.id).status, 'Open');
+});
+
 await check('validation refuses a repeated id in any of the four lists and a mark below an id it holds', async () => {
   const base = fresh();
   for (let n = 0; n < 3; n += 1) notice(base, n);
