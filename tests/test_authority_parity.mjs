@@ -37,23 +37,26 @@ const pacificDay = ms => new Date(ms).toLocaleDateString('en-CA', { timeZone: 'A
 const day = offset => pacificDay(Date.now() + offset * 86400000);
 
 // ---------------------------------------------------------------- known disagreements
-// Each entry names one fixture and one question. Remove an entry in the pull request that fixes its issue.
+// Each entry names one fixture, one question and the exact answers it gives today (browser or first rule, server or
+// second rule). A different disagreement on the same question is not masked. Remove an entry in the pull request
+// that fixes its issue.
 const KNOWN = [
-  { issue: 579, fixture: 'stamp-expired', check: 'browser: FAIR box 20 signature vs inspection stamp gate' },
-  { issue: 579, fixture: 'stamp-expired', check: 'server host: FAIR box 20 signature vs inspection stamp gate' },
-  { issue: 579, fixture: 'stamp-not-yet-issued', check: 'browser: FAIR box 20 signature vs inspection stamp gate' },
-  { issue: 579, fixture: 'stamp-not-yet-issued', check: 'server host: FAIR box 20 signature vs inspection stamp gate' },
-  { issue: 579, fixture: 'stamp-expansion-lapsed', check: 'browser: FAIR box 20 signature vs inspection stamp gate' },
-  { issue: 579, fixture: 'stamp-expansion-lapsed', check: 'server host: FAIR box 20 signature vs inspection stamp gate' },
-  { issue: 580, fixture: 'extra-qm-lapsed', check: 'manager route GET /audit' },
-  { issue: 580, fixture: 'extra-qm-missing-record', check: 'manager route GET /audit' },
-  { issue: 580, fixture: 'extra-qm-no-role-training', check: 'manager route GET /audit' },
+  { issue: 579, fixture: 'stamp-expired', check: 'browser: FAIR box 20 signature vs inspection stamp gate', browser: 'true', server: 'false' },
+  { issue: 579, fixture: 'stamp-expired', check: 'server host: FAIR box 20 signature vs inspection stamp gate', browser: 'true', server: 'false' },
+  { issue: 579, fixture: 'stamp-not-yet-issued', check: 'browser: FAIR box 20 signature vs inspection stamp gate', browser: 'true', server: 'false' },
+  { issue: 579, fixture: 'stamp-not-yet-issued', check: 'server host: FAIR box 20 signature vs inspection stamp gate', browser: 'true', server: 'false' },
+  { issue: 579, fixture: 'stamp-expansion-lapsed', check: 'browser: FAIR box 20 signature vs inspection stamp gate', browser: 'true', server: 'false' },
+  { issue: 579, fixture: 'stamp-expansion-lapsed', check: 'server host: FAIR box 20 signature vs inspection stamp gate', browser: 'true', server: 'false' },
+  { issue: 580, fixture: 'extra-qm-lapsed', check: 'manager route GET /audit', browser: 'false', server: 'true' },
+  { issue: 580, fixture: 'extra-qm-missing-record', check: 'manager route GET /audit', browser: 'false', server: 'true' },
+  { issue: 580, fixture: 'extra-qm-no-role-training', check: 'manager route GET /audit', browser: 'false', server: 'true' },
   // The same #580 gap seen inside the server: its engine host pauses the role, its route gate does not.
-  { issue: 580, fixture: 'extra-qm-lapsed', check: 'manager route (server host roleOf vs route)' },
-  { issue: 580, fixture: 'extra-qm-missing-record', check: 'manager route (server host roleOf vs route)' },
-  { issue: 580, fixture: 'extra-qm-no-role-training', check: 'manager route (server host roleOf vs route)' }
+  { issue: 580, fixture: 'extra-qm-lapsed', check: 'manager route (server host roleOf vs route)', browser: 'false', server: 'true' },
+  { issue: 580, fixture: 'extra-qm-missing-record', check: 'manager route (server host roleOf vs route)', browser: 'false', server: 'true' },
+  { issue: 580, fixture: 'extra-qm-no-role-training', check: 'manager route (server host roleOf vs route)', browser: 'false', server: 'true' }
 ];
 const knownKey = (fixture, check) => `${fixture} | ${check}`;
+ok('KNOWN has no repeated entry', new Set(KNOWN.map(k => knownKey(k.fixture, k.check))).size === KNOWN.length);
 
 // ---------------------------------------------------------------- the server engine host and the base workspace
 const host = createHost(path.join(ROOT, 'index.html'));
@@ -161,6 +164,16 @@ const api = async (method, route, { token, body } = {}) => {
 const hash = await makeHash(PASSWORD);
 const storeAccount = acc => server.store.upsertAccount({ ...acc, salt: '', hash, createdAt: new Date().toISOString(), createdBy: 'parity test' });
 for (const acc of [GRANTOR, OTHER, ...fixtures.map(f => f.subject)]) await storeAccount(acc);
+// The server holds one workspace for every account. Each fixture's subject has its own username, so one workspace
+// carries every fixture's training records and a route gate that reads training sees the same records the browser
+// and the engine host saw. Records are renumbered to stay unique; the renumbered copies are kept as unsigned
+// imported rows (the signature binds the id), which count the same for training currency.
+const serverWorkspace = structuredClone(base);
+serverWorkspace.trainingRecords = fixtures.flatMap(f => (f.state.trainingRecords || []).filter(rec => rec.account === f.subject.username))
+  .map((rec, i) => { const copy = { ...rec, id: `TRN-${String(i + 1).padStart(5, '0')}` }; delete copy.trainerSignature; return copy; });
+ok('the server workspace with every fixture\'s training records validates', MES.validate(serverWorkspace), JSON.stringify(MES.diagnose ? MES.diagnose(serverWorkspace) : null));
+ok('the server workspace is stored before the questions are asked', !!(await server.store.putDoc('default', JSON.stringify(serverWorkspace), null, 'parity test')));
+for (const f of fixtures.filter(f => f.subject.extraRoles)) ok(`server workspace: ${f.id} reads the same roles as its own fixture`, JSON.stringify(host.rolesOf(f.subject, serverWorkspace)) === JSON.stringify(host.rolesOf(f.subject, f.state)));
 const signIn = async username => { const r = await api('POST', '/auth/session', { body: { username, password: PASSWORD } }); if (r.status !== 200) throw new Error(`server sign-in ${username}: ${r.status} ${JSON.stringify(r.json)}`); return r.json; };
 
 // ---------------------------------------------------------------- the browser
@@ -217,7 +230,7 @@ for (const f of fixtures) {
   compare(f.id, 'manager route GET /audit', ['qm', 'admin'].includes(b.role), r.audit === 200);
   compare(f.id, 'manager route (server host roleOf vs route)', ['qm', 'admin'].includes(h.role), r.audit === 200);
   compare(f.id, 'Support Access flag', b.supportAccess, r.supportAccess);
-  compare(f.id, 'FAIR box 20 signature', b.signature.ok, h.signature.ok);
+  compare(f.id, 'FAIR box 20 signature', b.signature, h.signature);
   // One engine, two stamp rules: an account whose Quality stamp may not inspect may not sign the FAIR either.
   // Asked only of accounts the FAIR gate admits (approve-wo); for anyone else the role refusal answers first.
   // Master Access signs through its recorded override without a stamp (AGENTS.md), so it is not asked.
@@ -244,7 +257,8 @@ if (disagreements.length) {
 }
 for (const row of disagreements) {
   const k = knownKeys.get(knownKey(row.fixture, row.check));
-  ok(`${row.fixture}: ${row.check} agrees${k ? ` (known disagreement #${k.issue})` : ''}`, !!k, `browser ${row.browser}, server ${row.server}; not in KNOWN`);
+  const same = k && k.browser === row.browser && k.server === row.server;
+  ok(`${row.fixture}: ${row.check} agrees${same ? ` (known disagreement #${k.issue})` : ''}`, same, k ? `browser ${row.browser}, server ${row.server}; KNOWN #${k.issue} expects browser ${k.browser}, server ${k.server}` : `browser ${row.browser}, server ${row.server}; not in KNOWN`);
 }
 for (const k of KNOWN) {
   const row = rows.find(r => r.fixture === k.fixture && r.check === k.check);
