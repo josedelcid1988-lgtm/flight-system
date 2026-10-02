@@ -27,9 +27,13 @@ page and print says DEMO, NOT FOR ACCEPTANCE.
 Without server mode, the workspace and accounts live in browser storage. With server mode, the app
 hydrates a shared workspace from the authenticated Node server and mirrors accepted writes to local
 storage for recovery. The MES engine validates browser changes; the server also validates workspace
-shape and evidence and exposes role-gated action endpoints. **Known release blocker:** the browser
-still sends whole-workspace writes, and that route does not yet authorize each changed record by role.
-Do not use the authenticated server as the production system of record until all mutating screens use
+shape and evidence and exposes role-gated action endpoints. Whole-workspace snapshots only
+initialize an empty server (QA Manager or Master Access); once initialized, the server refuses every
+changed snapshot, so shared records change only through server-side engine writes (the MES action
+route, and the Jira record link when that connector is enabled). **Known release blocker:** some
+direct field edits and legacy workflows are not yet bridged to a server action. The server refuses
+them rather than saving them, so this is an availability gap, not an authorization bypass. Do not use
+the authenticated server as the production system of record until all mutating screens use
 server-side MES actions. Details are in [`SECURITY_REVIEW-v82.md`](SECURITY_REVIEW-v82.md).
 
 ## 2. The rules and why they exist
@@ -38,6 +42,30 @@ These are enforced in the engine, not only in the screens, so no screen, import 
 around them. The production build must keep every one; only the demo build relaxes them, and each
 relaxation is listed in `docs/DEMO_DEVIATIONS.md`. `tests/test_frozen_contract.mjs` fails if any of the
 separation-of-duties rules is removed or reworded.
+
+Demo builds made before the demo had its own storage keys (D-38 to D-41) shared the account list,
+session, security log, drafts, saved table filters and mirror queue with production in the same browser. On first open,
+production removes what such a demo left (its accounts and every account they created, its queued
+records, its security events, and the drafts and mirror sent index it could have touched). The accounts the
+older demo made move to the demo's own account store, so they still work in the demo; a name the demo already
+holds keeps the demo's account and the older one is set aside under `skyryse-mes-legacy-demo-accounts-v1`.
+That demo let anyone create, change or reset accounts with relaxed rules, so an account it created or changed under a
+production name, or a password it reset, cannot be told apart from production, and no account on that browser can be
+trusted to sign in or to review the others. A standalone page therefore closes to production use: any session is ended,
+switching account is refused, nothing can be signed or changed, and the page says to move the workspace to the server
+without the browser's accounts (`docs/MIGRATION.md`) and then clear the browser's site data. A tab already open when
+the leftovers are found closes too. The review record is saved before anything is removed; if storage refuses it,
+nothing is removed, so every page finds the leftovers and closes, and the mirror sends nothing until storage is freed.
+The queue is rewritten once without the older demo's records and without any account record (those wait under
+`skyryse-mes-legacy-demo-account-queue-v1`); if that rewrite is refused, the page's mirror sends nothing and the next
+load retries. From the first finding on, the browser's local accounts are never mirrored again
+(`skyryse-mes-legacy-demo-account-hold-v1`, cleared only with the site data), also after the server notice is cleared. With the server, sign-in and accounts are the server's, so a
+notice stays on every page until a QA Manager or Master Access account signed in to the server marks the review done,
+only once that is logged. A tab of an older production build that was already open with a queue in memory is outside
+this cleanup; the server-side guard is issue #514. Drafts and partial sign-in failure
+counts the older demo could have written are set
+aside under `skyryse-mes-legacy-demo-*` keys (drafts storage refuses to set aside are discarded, never left live); a lockout in force is kept. Every account creation is now written to
+the security log (`account-create`), so this cannot recur unnoticed.
 
 | Rule | What the engine does | Why |
 | --- | --- | --- |
