@@ -287,6 +287,15 @@ try {
           assert.match(await card.locator('.fr-wo-card-next dd').innerText(), /^Resolve holds before continuing: .*QA release of the updated operation sequence/, `${route}: the card asks for the QA release, not the QA handoff`);
           if (route === 'orders') assert.ok((await blockedFilterCards(page)).includes(id), 'the Blocked filter keeps a card blocked by a sequence change');
         }
+        // The legacy order table, used when the React interface is not loaded, marks the same hold.
+        const legacy = await page.evaluate(orderId => {
+          const doc = new DOMParser().parseFromString(`<table>${renderOrders()}</table>`, 'text/html');
+          const rowClass = oid => doc.querySelector(`tr[data-order-row="${oid}"]`)?.className ?? null;
+          const clear = state.orders.find(o => o.id !== orderId && !orderBlocked(o));
+          return { held: rowClass(orderId), clearId: clear?.id, clear: clear ? rowClass(clear.id) : null };
+        }, id);
+        assert.ok(legacy.held && /\bhold-row\b/.test(legacy.held), `legacy table: the row blocked by a sequence change is a hold row (${JSON.stringify(legacy)})`);
+        assert.ok(legacy.clear !== null && !/\bhold-row\b/.test(legacy.clear), `legacy table: an unblocked order is not a hold row (${JSON.stringify(legacy)})`);
       } finally {
         await page.evaluate(() => { const [order, status, change] = window.__seq; order.status = status; if (change === undefined) delete order.sequenceChange; else order.sequenceChange = change; render(); });
       }
