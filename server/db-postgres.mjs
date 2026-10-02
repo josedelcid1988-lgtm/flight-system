@@ -215,10 +215,10 @@ export function pgRestoreTarget(connectionString, env = process.env) {
     const firstAt = rest.indexOf('@'), firstSlash = rest.indexOf('/');
     if (firstAt >= 0 && (firstSlash < 0 || firstAt < firstSlash)) { userinfo = rest.slice(0, firstAt); rest = rest.slice(firstAt + 1); }
     const [, hosts, path, query] = rest.match(/^([^/?]*)([^?]*)(?:\?(.*))?$/s);
-    // With no user info, a host:port whose port is not a number, or an @ in the database name, means an unencoded / cut
-    // the user info short and part of a password would land in --dbname. libpq cannot connect to that either, so it is
-    // refused. An @ in a query value is ordinary data (Codex 4161788877).
-    if (userinfo === null && (hosts.split(',').some(h => /:[^:\]]*$/.test(h) && !/:\d*$/.test(h)) || path.includes('@'))) refuse('has text libpq would read as a host or database name but that looks like a cut-off password; percent-encode any / ? or @ in the user name and password');
+    // With no user info, a host:port whose port is not a number means an unencoded / cut the user info short and part of
+    // a password would land in --dbname as the "port". libpq cannot connect to that either, so it is refused. An @ in
+    // the database name or a query value is ordinary data to libpq (Codex 4161788877, Jinx review 5387290877).
+    if (userinfo === null && hosts.split(',').some(h => /:[^:\]]*$/.test(h) && !/:\d*$/.test(h))) refuse('has text libpq would read as a host or database name but that looks like a cut-off password; percent-encode any / ? or @ in the user name and password');
     if (userinfo !== null && userinfo.includes(':')) {
       found = true;
       password = pct(userinfo.slice(userinfo.indexOf(':') + 1));

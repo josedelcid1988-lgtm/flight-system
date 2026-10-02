@@ -47,6 +47,9 @@ const cases = [
   ['a URI whose host starts with @', 'postgresql://flight:Secret-9@@flight-socket/flight', { dbname: 'postgresql://flight@@flight-socket/flight', env: { PGPASSWORD: 'Secret-9' } }],
   // Codex 4161788877: an @ in a query value is ordinary data.
   ['a URI query password with an @', 'postgresql://flight@db/flight?password=p@q', { dbname: 'postgresql://flight@db/flight', env: { PGPASSWORD: 'p@q' } }],
+  // Jinx review 5387290877 (P3): an @ in the database name is ordinary data, with or without user info.
+  ['a URI database name with an @', 'postgresql://flight:pw@db/my@db', { dbname: 'postgresql://flight@db/my@db', env: { PGPASSWORD: 'pw' } }],
+  ['a URI database name with an @ and no user info', 'postgresql://db/my@db', { dbname: 'postgresql://db/my@db', env: {} }],
   // Codex 4161788875: an empty password is no password to libpq, so the inherited PGPASSWORD is left alone.
   ['a URI with an empty user-info password', 'postgresql://flight:@db/flight', { dbname: 'postgresql://flight@db/flight', env: {} }],
   ['a URI whose empty query password overrides the user info', 'postgresql://flight:old@db/flight?password=', { dbname: 'postgresql://flight@db/flight', env: {} }],
