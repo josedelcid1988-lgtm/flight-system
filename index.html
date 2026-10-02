@@ -3520,12 +3520,16 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   function verifyImportProvenance(state) {
     const failures = []; const fm = plain(state) && plain(state.maneuver) ? state.maneuver : {};
     const time = v => { const n = Date.parse(v); return Number.isFinite(n) ? n : null; };
+    // The first time this workspace shows a v82 or later build at work: a stored subject, or a v82+ build stamp on a
+    // manifest, an order history event or a Support Overrides entry. No v81 signature can follow it in the same workspace.
+    let era = null; const seen = (at, yes) => { const n = time(at); if (yes && n !== null && (era === null || n < era)) era = n; };
     const subjectless = [];
     const walk = (node, path) => {
       if (Array.isArray(node)) { node.forEach((x, i) => walk(x, `${path}[${i}]`)); return; }
       if (!plain(node)) return;
+      if (typeof node.at === 'string' && plain(node.build) && !plain(node.signer)) seen(node.at, subjectEraBuild(node.build));
       Object.keys(node).forEach(k => {
-        if (k === 'manifest' && plain(node[k])) { if (!plain(node[k].subject)) subjectless.push([`${path}.manifest`, node[k]]); }
+        if (k === 'manifest' && plain(node[k])) { const m = node[k]; if (plain(m.subject)) seen(m.at, true); else { seen(m.at, subjectEraBuild(m.build)); subjectless.push([`${path}.manifest`, m]); } }
         else if (k === 'body' && /^state\.aiSkillDrafts\[\d+\]$/.test(path)) return;
         else if (k !== 'manifest') walk(node[k], `${path}.${k}`);
       });
@@ -3534,17 +3538,23 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     subjectless.forEach(([where, m]) => {
       if (subjectEraBuild(m.build)) failures.push({ where, reason: `it was signed by build ${m.build.version}, which stores the signed subject, but the subject is missing` });
       else if (time(m.at) !== null && time(m.at) >= V82_RELEASED_AT && !(plain(m.build) && /^v\d+/.test(String(m.build.version || '')))) failures.push({ where, reason: 'it has no signed subject and no build stamp, but it is dated after v82, which stores the subject, replaced v81 on 2026-09-28' });
+      else if (era !== null && time(m.at) !== null && time(m.at) >= era) failures.push({ where, reason: 'it has no signed subject, but it is dated after this workspace was already signed by a build that stores one' });
     });
     const refuse = (where, reason) => failures.push({ where, reason });
     // A v81 signature cannot predate the steps it signs.
     const before = (m, times) => { const t = time(m.at); return t !== null && times.map(time).some(x => x !== null && x > t); };
     const escaped = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     // A signed step keeps its manifest: removing it would leave the record readable as signed with nothing to check.
-    const unsigned = (record, where) => { if (plain(record) && !plain(record.manifest)) refuse(where, 'the record says it was signed, but its signature manifest is missing'); };
+    // Builds before v80 wrote some signed steps without a manifest; every build since signs them, so a step signed on or
+    // after v82 shipped, or with no readable time, must carry one.
+    const recent = at => !(time(at) !== null && time(at) < V82_RELEASED_AT);
+    const unsigned = (record, where, at = record && record.at) => { if (plain(record) && !plain(record.manifest) && recent(at)) refuse(where, 'the record says it was signed, but its signature manifest is missing'); };
     (state.orders || []).forEach(order => {
-      // Builds before v80 wrote buy-offs without a manifest; every build since signs them, so only an undated or recent one must.
-      (order.operations || []).forEach(op => { if (plain(op) && plain(op.buyoff) && !(time(op.buyoff.at) !== null && time(op.buyoff.at) < V82_RELEASED_AT)) unsigned(op.buyoff, `${order.id} ${op.id} buy-off`); });
-      if (plain(order.closure) && order.closure.approvedAt) unsigned(order.closure, `${order.id} closure`);
+      (order.operations || []).forEach(op => { if (plain(op) && plain(op.buyoff)) unsigned(op.buyoff, `${order.id} ${op.id} buy-off`); });
+      if (plain(order.closure) && order.closure.approvedAt) unsigned(order.closure, `${order.id} closure`, order.closure.approvedAt);
+      // A rework or repair ticket is resolved by its approved plan, which signs nothing at resolution. Pre-release QA
+      // approvals are not checked here: engineering changes and disposition approvals re-apply them unsigned.
+      (order.tickets || []).forEach(t => { if (plain(t) && t.status === 'Resolved' && !(plain(t.reworkPlan) && t.resolution === t.reworkPlan.approval)) unsigned({ manifest: t.manifest }, `${order.id} ${t.id} disposition approval`, t.resolvedAt); });
       if (plain(order.fair)) [['verified', 'FAIR verification'], ['reviewed', 'FAIR review (box 22)'], ['approved', 'FAIR QA approval']].forEach(([k, label]) => unsigned(order.fair[k], `${order.id} ${label}`));
     });
     (fm.mrb || []).forEach(b => { if (plain(b) && plain(b.decision)) unsigned(b.decision, `${b.id} MRB decision`); });

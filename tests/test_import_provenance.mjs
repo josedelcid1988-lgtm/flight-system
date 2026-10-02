@@ -24,6 +24,7 @@ const check = async (name, fn) => {
 const host = createHost(fileURLToPath(new URL('../index.html', import.meta.url)));
 const { MES, FlightManeuver: FM } = host;
 const curated = () => JSON.parse(fs.readFileSync(FIXTURES + 'demo_publish.html', 'utf8').match(/window\.__DEMO_SEED=(\{[\s\S]*?\});/)[1]);
+const qaSample = () => JSON.parse(fs.readFileSync(FIXTURES + 'demo_qa150.html', 'utf8').match(/window\.__DEMO_SEED=(\{[\s\S]*?\});/)[1]);
 const account = (role, name) => ({ username: `prov-${role}`, displayName: name, role });
 const qe = account('qe', 'Quinn Quality'), me = account('me', 'Morgan Engineer'), swe = account('swe', 'Erin Design'), qm = account('qm', 'Quincy Manager'), admin = account('admin', 'Ada Master');
 const BACKDATED = '2026-09-20T15:00:00.000Z';
@@ -204,7 +205,7 @@ await check('stripping every subject and build stamp in the workspace does not h
 await check('a FAIR verification, a FAIR QA approval, a buy-off or a stock NC approval with its manifest deleted is refused', async () => {
   const cases = [
     [s => { delete fairOf(s).verified.manifest; }, 'WO-10004 FAIR verification'],
-    [s => { delete MES.getOrder(s, 'WO-10002').fair.approved.manifest; }, 'WO-10002 FAIR QA approval'],
+    [s => { const f = MES.getOrder(s, 'WO-10002').fair; delete f.approved.manifest; f.approved.at = '2026-10-01T16:00:00.000Z'; }, 'WO-10002 FAIR QA approval'],
     [s => { const op = MES.getOrder(s, 'WO-10004').operations.find(o => o.buyoff); delete op.buyoff.manifest; op.buyoff.at = '2026-10-01T16:00:00.000Z'; return `WO-10004 ${op.id} buy-off`; }, null],
     [s => { delete ncOf(s).resolution.manifest; }, `${current.ncId} disposition approval`]
   ];
@@ -253,6 +254,30 @@ await check('a verified FAIR whose order identity changed after verification is 
     const doc = exported(); edit(MES.getOrder(doc, 'WO-10004'));
     assert.match((await refused(doc, 'WO-10004 FAIR verification')).json.error, /Forms 1 to 3 no longer match what was verified/);
   }
+});
+
+// Codex review on #631 (39a84e5): a fake v81 stamp on a stripped v82 signature, and a deleted work order ticket approval.
+await check('a stripped v82 signature given a fake v81 build stamp is refused', async () => {
+  const doc = exported(), m = carOf(doc).closure.manifest;
+  carOf(doc).closure.note = 'Closed without verification.';
+  delete m.subject; m.build = { version: 'v81', sha256: 'a'.repeat(64) }; m.hash = MES.sha256(MES.canonical({}));
+  assert.ok(MES.validate(doc) && MES.verifyManifests(doc).ok, 'the forgery passes validation and manifest verification on their own');
+  assert.match((await refused(doc, 'closure.manifest')).json.error, /dated after this workspace was already signed by a build that stores one/);
+});
+// The QA sample holds 150 work orders, over the server's 100 open-order initialization limit, so these call the check
+// the server runs directly.
+await check('a larger genuine legacy workspace (the QA sample, 104 subjectless manifests) passes the check', async () => {
+  const doc = qaSample();
+  assert.equal(MES.verifyManifests(doc).legacy, 104);
+  const r = MES.verifyImportProvenance(doc);
+  assert.equal(r.ok, true, JSON.stringify(r.failures));
+});
+await check('a recent work order disposition approval with its manifest deleted is refused', async () => {
+  const ticket = qaSample(), wo = ticket.orders.find(o => o.tickets.some(t => t.status === 'Resolved' && !t.reworkPlan)), t = wo.tickets.find(x => x.status === 'Resolved' && !x.reworkPlan);
+  assert.equal(MES.verifyImportProvenance(ticket).ok, true, 'the same unsigned approval from before v82 is the pre-v80 shape and loads');
+  t.resolvedAt = '2026-10-01T16:00:00.000Z';
+  const r = MES.verifyImportProvenance(ticket);
+  assert.ok(r.failures.some(f => f.where === `${wo.id} ${t.id} disposition approval` && /signature manifest is missing/.test(f.reason)), JSON.stringify(r.failures));
 });
 
 await check('the browser migration dry run refuses the #481 forgery and accepts the unedited export', async () => {

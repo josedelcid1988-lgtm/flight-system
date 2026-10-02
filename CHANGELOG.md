@@ -23,14 +23,17 @@ A workspace from outside becomes the shared record in two places: the first `PUT
 - **No downgrade to the v81 shape.** v81 manifests store no subject; v82, which replaced v81 on main on 2026-09-28,
   always stores one. A manifest without a subject is refused when it carries a v82 or later build stamp, when it is
   dated on or after 2026-09-28T22:38:38Z with no build stamp (every v81 manifest carries its v81 stamp, so a browser
-  still running v81 after that date keeps working), when it is dated before the steps it signs (FAIR characteristic result dates,
+  still running v81 after that date keeps working), when it is dated after the first sign in the workspace of a v82
+  build at work (a stored subject, or a v82 build stamp on a manifest, order history event or Support Overrides entry),
+  which also stops a fake v81 stamp, when it is dated before the steps it signs (FAIR characteristic result dates,
   MRB convening and votes, CAR steps, NC creation and disposition), or when the order history records the FAIR
   verification by a v82 build.
-- **No deleted signatures.** A buy-off dated on or after 2026-09-28 or undated (builds before v80 wrote buy-offs
-  without a manifest, and those still load), an approved order closure, a FAIR verification, box 22 review or QA approval,
-  an MRB decision, a CAR closure or a stock NC approval that has lost its manifest is refused; `MES.validate` alone
-  accepted several of these. A closed escape migrated from before the ticket restructure, a resolved NC carrying its
-  old closure with no disposition, is not a signed approval and still loads.
+- **No deleted signatures.** A buy-off, an approved order closure, a work order disposition approval, a FAIR
+  verification, box 22 review or QA approval, an MRB decision, a CAR closure or a stock NC approval that was signed on
+  or after 2026-09-28, or has no readable time, and has lost its manifest is refused; `MES.validate` alone accepted
+  several of these. Builds before v80 wrote some of these steps unsigned, and those still load, as do a rework or
+  repair ticket resolved by its plan and a closed escape migrated from before the ticket restructure. Pre-release QA
+  approvals are not in this list: engineering changes and disposition approvals re-apply them unsigned.
 - **Refusal.** The server answers 422 with code `SIGNATURE_PROVENANCE`, names the record, stores nothing and writes a
   `workspace-put-refused` audit row. The migration dry run stops with the same finding.
 - **Still loads.** Workspaces whose signatures are all genuinely v81 (the curated sample: 45 manifests, no subject, no
