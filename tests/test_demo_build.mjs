@@ -276,6 +276,9 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  // The accounts are seeded once, by a page that closes once another page has seen them. A seed written from every page's init script could land
  // late from one tab and replace the account list after the leftovers were added.
  const s=await ctx.newPage();s.on('pageerror',e=>errs.push(e.message));
+  // It opens the blank page before its seeding script is added, so the seed is written by its second page, not by the
+  // first page of a fresh tab, whose writes can stay unseen by other pages for over a minute under load (#556).
+  await s.goto('file://'+FIXTURES+BLANK);
   await s.addInitScript(H=>{if(localStorage.getItem('seeded'))return;localStorage.setItem('seeded','1');
    localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify({users:[{username:'ops9',displayName:'Ops Nine',...H,role:'ops',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'mlee',displayName:'Morgan Lee',...H,role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'}]}));},H);
   await s.goto('file://'+FIXTURES+'publish.html');await s.waitForFunction(()=>!document.getElementById('sk-login').hidden,null,{timeout:20000});
