@@ -16,8 +16,8 @@ numbers and record number formats have not changed in any entry below.
 A workspace from outside becomes the shared record in two places: the first `PUT /workspace` on an empty server and
 `tools/migrate-browser.mjs`. Both now run `MES.verifyImportProvenance` after `MES.validate` and `verifyManifests`.
 
-- **Signed content is compared with the live record.** A FAIR verification (the Form 1 fields the FAIR owns and Forms 2
-  and 3), an MRB decision, a CAR closure and a stock NC disposition approval that store their signed subject must still
+- **Signed content is compared with the live record.** A FAIR verification (everything it signed, recomputed from the
+  order, except the FAIR identifier, which gains the lot number at inventory), an MRB decision, a CAR closure and a stock NC disposition approval that store their signed subject must still
   say what was signed. Before this, `verifyManifests` only rehashed the stored subject, so editing the live Form 3 of a
   verified FAIR, or an MRB, CAR or NC after signing, initialized an empty server unchallenged.
 - **No downgrade to the v81 shape.** v81 manifests store no subject; v82, which replaced v81 on main on 2026-09-28,
@@ -26,7 +26,8 @@ A workspace from outside becomes the shared record in two places: the first `PUT
   still running v81 after that date keeps working), when it is dated before the steps it signs (FAIR characteristic result dates,
   MRB convening and votes, CAR steps, NC creation and disposition), or when the order history records the FAIR
   verification by a v82 build.
-- **No deleted signatures.** A buy-off, an approved order closure, a FAIR verification, box 22 review or QA approval,
+- **No deleted signatures.** A buy-off dated on or after 2026-09-28 or undated (builds before v80 wrote buy-offs
+  without a manifest, and those still load), an approved order closure, a FAIR verification, box 22 review or QA approval,
   an MRB decision, a CAR closure or a stock NC approval that has lost its manifest is refused; `MES.validate` alone
   accepted several of these. A closed escape migrated from before the ticket restructure, a resolved NC carrying its
   old closure with no disposition, is not a signed approval and still loads.

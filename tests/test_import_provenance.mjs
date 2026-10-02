@@ -205,7 +205,7 @@ await check('a FAIR verification, a FAIR QA approval, a buy-off or a stock NC ap
   const cases = [
     [s => { delete fairOf(s).verified.manifest; }, 'WO-10004 FAIR verification'],
     [s => { delete MES.getOrder(s, 'WO-10002').fair.approved.manifest; }, 'WO-10002 FAIR QA approval'],
-    [s => { const op = MES.getOrder(s, 'WO-10004').operations.find(o => o.buyoff); delete op.buyoff.manifest; return `WO-10004 ${op.id} buy-off`; }, null],
+    [s => { const op = MES.getOrder(s, 'WO-10004').operations.find(o => o.buyoff); delete op.buyoff.manifest; op.buyoff.at = '2026-10-01T16:00:00.000Z'; return `WO-10004 ${op.id} buy-off`; }, null],
     [s => { delete ncOf(s).resolution.manifest; }, `${current.ncId} disposition approval`]
   ];
   for (const [edit, named] of cases) {
@@ -239,6 +239,20 @@ await check('a closed escape from before the ticket restructure still initialize
   assert.ok(nc && !nc.resolution.manifest && nc.dispo === null, 'the escape became a resolved NC carrying its old closure');
   const forged = exported(); delete ncOf(forged).resolution.manifest; ncOf(forged).history.push({ at: '2026-09-12T16:00:00.000Z', action: 'Migrated from escape ESC-9.', actor: 'system' });
   assert.match((await refused(forged, `${current.ncId} disposition approval`)).json.error, /signature manifest is missing/);
+});
+
+await check('a buy-off from before v80, which carries no manifest, still initializes', async () => {
+  const doc = curated(), op = doc.orders.flatMap(o => o.operations).find(o => o.buyoff && o.buyoff.manifest);
+  delete op.buyoff.manifest;
+  assert.ok(Date.parse(op.buyoff.at) < Date.parse('2026-09-28T22:38:38Z'), 'the buy-off predates v82');
+  const r = await initialize(doc);
+  assert.equal(r.status, 204, JSON.stringify(r.json));
+});
+await check('a verified FAIR whose order identity changed after verification is refused', async () => {
+  for (const edit of [o => { o.quantity += 1; }, o => { o.drawingRev = 'Z'; }]) {
+    const doc = exported(); edit(MES.getOrder(doc, 'WO-10004'));
+    assert.match((await refused(doc, 'WO-10004 FAIR verification')).json.error, /Forms 1 to 3 no longer match what was verified/);
+  }
 });
 
 await check('the browser migration dry run refuses the #481 forgery and accepts the unedited export', async () => {

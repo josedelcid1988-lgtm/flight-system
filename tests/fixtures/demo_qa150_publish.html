@@ -3576,9 +3576,9 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // without a subject, and every v81 manifest carries its v81 build stamp, so a later one must show it.
   const SUBJECT_BUILD_MAJOR = 82, V82_RELEASED_AT = Date.parse('2026-09-28T22:38:38Z');
   const subjectEraBuild = b => plain(b) && /^v(\d+)/.test(String(b.version || '')) && Number(/^v(\d+)/.exec(b.version)[1]) >= SUBJECT_BUILD_MAJOR;
-  // The FAIR content a verification signs that stays fixed after it is signed: the Form 1 fields the FAIR owns and Forms 2 and 3.
-  const FAIR_BOUND_FORM1 = ['additionalChanges', 'supplierCode', 'po', 'type', 'reasons', 'baselinePart', 'baselineFair', 'reason', 'index', 'nonconformance', 'ncNumbers', 'comments', 'sampleSize'];
-  const fairBound = snap => plain(snap) && plain(snap.form1) ? { form1: FAIR_BOUND_FORM1.reduce((o, k) => { o[k] = snap.form1[k]; return o; }, {}), form2: snap.form2, tests: snap.tests, chars: snap.chars } : null;
+  // Everything a FAIR verification signs is recomputable from the order. The FAIR identifier is left out: it gains the
+  // inventory lot number when the order moves to inventory after the FAIR is signed.
+  const fairBound = snap => plain(snap) && plain(snap.form1) ? { ...snap, form1: { ...snap.form1, fairId: undefined } } : null;
   const sameSigned = (a, b) => canonical(JSON.parse(JSON.stringify(a ?? null))) === canonical(JSON.parse(JSON.stringify(b ?? null)));
   // Run before a workspace from outside becomes the authoritative copy (an empty-server initialization or a browser
   // migration). verifyManifests proves each stored subject matches its hash; this also proves that a FAIR verification,
@@ -3610,7 +3610,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     // A signed step keeps its manifest: removing it would leave the record readable as signed with nothing to check.
     const unsigned = (record, where) => { if (plain(record) && !plain(record.manifest)) refuse(where, 'the record says it was signed, but its signature manifest is missing'); };
     (state.orders || []).forEach(order => {
-      (order.operations || []).forEach(op => { if (plain(op) && plain(op.buyoff)) unsigned(op.buyoff, `${order.id} ${op.id} buy-off`); });
+      // Builds before v80 wrote buy-offs without a manifest; every build since signs them, so only an undated or recent one must.
+      (order.operations || []).forEach(op => { if (plain(op) && plain(op.buyoff) && !(time(op.buyoff.at) !== null && time(op.buyoff.at) < V82_RELEASED_AT)) unsigned(op.buyoff, `${order.id} ${op.id} buy-off`); });
       if (plain(order.closure) && order.closure.approvedAt) unsigned(order.closure, `${order.id} closure`);
       if (plain(order.fair)) [['verified', 'FAIR verification'], ['reviewed', 'FAIR review (box 22)'], ['approved', 'FAIR QA approval']].forEach(([k, label]) => unsigned(order.fair[k], `${order.id} ${label}`));
     });
@@ -3623,7 +3624,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     (state.orders || []).forEach(order => {
       const f = order.fair; if (!plain(f) || !plain(f.verified) || !plain(f.verified.manifest)) return;
       const m = f.verified.manifest, where = `${order.id} FAIR verification`;
-      if (plain(m.subject)) { const live = fairBound(fairSnapshot(state, order)); if (!live || !sameSigned(fairBound(m.subject), live)) refuse(where, 'Forms 1 to 3 no longer match what was verified'); return; }
+      if (plain(m.subject)) { const by = plain(f.verified.by) ? f.verified.by : {}, live = fairBound({ ...fairSnapshot(state, order), ...(by.override ? { override: by.override } : {}) }); if (!live || !sameSigned(fairBound(m.subject), live)) refuse(where, 'Forms 1 to 3 no longer match what was verified'); return; }
       const days = (f.chars || []).map(c => plain(c) && /^\d{4}-\d{2}-\d{2}$/.test(c.date || '') ? c.date : null).filter(Boolean);
       const verifiedEvent = new RegExp(`^AS9102 FAIR ${escaped(order.id)}\\b.* verified`);
       if (days.some(d => d > String(m.at).slice(0, 10))) refuse(where, 'it is dated before characteristic results it verifies');
