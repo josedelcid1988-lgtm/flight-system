@@ -31,7 +31,9 @@ spaces, for example `FLIGHT_CSP_CONNECT_SRC="https://skyryse.okta.com"`. The ser
 if an entry is not an origin. See `server/security-headers.mjs` for the full policy and why each
 part is there.
 
-PostgreSQL is selected with `FLIGHT_DATABASE_URL`. See
+PostgreSQL is selected with `FLIGHT_DATABASE_URL`, not on the command line: a
+`--database-url` that carries a password is refused, because anyone who can list
+processes can read a command line. See
 [`docs/DATABASES.md`](docs/DATABASES.md) for server setup, backups, and the
 PostgreSQL integration check. The optional append-only browser mirror in
 `server/mirror/` is separate from the authenticated server.

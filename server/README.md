@@ -4,21 +4,26 @@ The main authenticated MES server is `server/server.mjs`; SQLite and PostgreSQL 
 
 ## PostgreSQL backup and restore
 
-The PostgreSQL target (selected with `--database-url` / `FLIGHT_DATABASE_URL`) backs up with
+The PostgreSQL target (selected with `FLIGHT_DATABASE_URL`) backs up with
 `pg_dump` in custom format and restores with `pg_restore`. The PostgreSQL client tools must be
 installed wherever these commands run.
+
+Give the connection string in the `FLIGHT_DATABASE_URL` environment variable, not on the command
+line: anyone who can list processes on the machine can read a command line. `--database-url` is
+accepted only without a password (the password can then come from `PGPASSWORD`); one that carries a
+password is refused before anything connects.
 
 Online backup while the server runs:
 
 ```bash
-node server/server.mjs --database-url "$FLIGHT_DATABASE_URL" --backup /backups/flight-2026-09-28.dump
+node server/server.mjs --backup /backups/flight-2026-09-28.dump
 ```
 
 Offline restore. Stop the server first when restoring into its database, or restore into an empty
 database and point the server at it afterwards:
 
 ```bash
-node server/server.mjs --database-url "$FLIGHT_DATABASE_URL" --restore /backups/flight-2026-09-28.dump
+node server/server.mjs --restore /backups/flight-2026-09-28.dump
 ```
 
 The restore expects an empty database by default. It runs as one transaction: if any step fails,

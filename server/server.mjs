@@ -1186,19 +1186,42 @@ export function createServer(options = {}) {
   return server;
 }
 
+// Whether a PostgreSQL connection string carries a password or another secret (#584). It reads the string the way
+// libpq does where that matters and errs toward yes: a URI's user info runs to the first @ before any /, and a
+// host:port whose port is not a number is a password cut short by an unencoded /. A ?password= parameter or a
+// password=, sslpassword= or other secret keyword counts too. An empty password is none.
+const SECRET_SETTING = /^\s*(?:[a-z_]*password|oauth_client_secret|scram_(?:client|server)_key)\s*$/i;
+export function connectionStringHasPassword(value) {
+  const text = String(value || '').trim();
+  const uri = /^[a-z][a-z0-9+.-]*:\/\//i.exec(text);
+  if (!uri) return text.split(/\s+/).some(pair => { const eq = pair.indexOf('='); return eq > 0 && SECRET_SETTING.test(pair.slice(0, eq)) && pair.slice(eq + 1) !== '' && pair.slice(eq + 1) !== "''"; });
+  const rest = text.slice(uri[0].length), at = rest.indexOf('@'), slash = rest.indexOf('/');
+  if (at >= 0 && (slash < 0 || at < slash)) { const userinfo = rest.slice(0, at); if (userinfo.includes(':') && userinfo.slice(userinfo.indexOf(':') + 1) !== '') return true; }
+  else if (at >= 0 && rest.slice(0, slash).split(',').some(host => /:[^:\]]*$/.test(host) && !/:\d*$/.test(host))) return true;
+  const query = rest.includes('?') ? rest.slice(rest.indexOf('?') + 1) : '';
+  return query.split('&').some(part => { const eq = part.indexOf('='); let key = eq >= 0 ? part.slice(0, eq) : part; try { key = decodeURIComponent(key); } catch {} return SECRET_SETTING.test(key) && (eq < 0 || part.slice(eq + 1) !== ''); });
+}
+export const DATABASE_URL_PASSWORD_REFUSAL = 'The --database-url connection string carries a password. Anyone who can list processes on this machine can read a command line, so the server did not start and connected to nothing. Set the connection string in the FLIGHT_DATABASE_URL environment variable instead and leave out --database-url, or give --database-url without the password and set it in PGPASSWORD.';
+
 // The store a command line names: --db picks SQLite; otherwise --database-url or FLIGHT_DATABASE_URL picks
 // PostgreSQL; otherwise FLIGHT_DB or data/flight.sqlite. Operator tools use this so they open the same store.
+// FLIGHT_DATABASE_URL is the way to give a password. A --database-url that carries one is refused (#584): the
+// command line of a running process is readable from the process list for its whole life. The refusal never
+// repeats the string.
 export function storeSettings(arg, env = process.env) {
-  const dbOverride = arg('db', null);
+  const dbOverride = arg('db', null), cliUrl = arg('database-url', null);
+  if (cliUrl && connectionStringHasPassword(cliUrl)) throw Object.assign(new Error(DATABASE_URL_PASSWORD_REFUSAL), { code: 'DATABASE_URL_PASSWORD' });
   return {
     dbPath: dbOverride || env.FLIGHT_DB || path.join(ROOT, 'data', 'flight.sqlite'),
-    databaseUrl: arg('database-url', dbOverride ? null : env.FLIGHT_DATABASE_URL || null)
+    databaseUrl: cliUrl || (dbOverride ? null : env.FLIGHT_DATABASE_URL || null)
   };
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   const arg = (name, fallback) => { const i = process.argv.indexOf(`--${name}`); return i > 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback; };
-  const { dbPath, databaseUrl } = storeSettings(arg);
+  let settings;
+  try { settings = storeSettings(arg); } catch (e) { console.error(e.message); process.exit(1); }
+  const { dbPath, databaseUrl } = settings;
   const openCliStore = async () => databaseUrl ? openPostgres(databaseUrl) : openDb(dbPath);
   const backupTo = arg('backup', null), restoreFrom = arg('restore', null), unlockUser = arg('unlock', null);
   if (unlockUser) {
@@ -1216,7 +1239,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   } else if (restoreFrom) {
     // Offline restore of a pg_dump custom-format archive into the PostgreSQL target.
     // Stop the server first when restoring into its database.
-    if (!databaseUrl) { console.error('Restore targets PostgreSQL only: pass --database-url <connection string>.'); process.exit(1); }
+    if (!databaseUrl) { console.error('Restore targets PostgreSQL only: set FLIGHT_DATABASE_URL to its connection string.'); process.exit(1); }
     const { restorePostgres } = await import('./db-postgres.mjs');
     try { await restorePostgres(databaseUrl, restoreFrom); console.log(`Restored ${restoreFrom} into the PostgreSQL database. Every session in the backup was ended, so everyone signs in again. Start the server normally; it verifies the audit chain on startup and refuses a tampered restore.`); }
     catch (e) { console.error(`Restore failed: ${e.message} The restore runs as one transaction, so it left the database unchanged.`); process.exit(1); }

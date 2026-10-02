@@ -4,7 +4,9 @@
 //   node tools/scan-archive-proto.mjs                          the store the server uses (FLIGHT_DATABASE_URL, else
 //                                                              FLIGHT_DB, else data/flight.sqlite)
 //   node tools/scan-archive-proto.mjs --db <file.sqlite>       a SQLite database, for example a backup copy
-//   node tools/scan-archive-proto.mjs --database-url <url>     a PostgreSQL database
+//   node tools/scan-archive-proto.mjs --database-url <url>     a PostgreSQL database, named without its password
+//                                                              (a URL with one is refused, #584: give it in
+//                                                              FLIGHT_DATABASE_URL instead)
 //
 // Since #168 the engine refuses such a key before an order enters the archive, but rows archived earlier are served
 // as stored. Content under an own "__proto__" key sits outside the record's signatures, so this lists every stored
