@@ -150,6 +150,23 @@ try {
     await context.close();
   }
 
+  // A Technician (operate-steps, not operate) sees both ways to add the required recording, on the demo's real
+  // tech pilot account, which keeps its production role.
+  {
+    const { context, page } = await openOperation();
+    const switched = await page.evaluate(async opId => {
+      const result = await window.skAuth.switchAccount('tech', 'demo1234');
+      selectedOp = opId; render();
+      return { ok: result.ok, role: document.body.dataset.role, operate: document.body.getAttribute('data-can-operate'), steps: document.body.getAttribute('data-can-operate-steps') };
+    }, OP);
+    assert.deepEqual(switched, { ok: true, role: 'technician', operate: 'no', steps: 'yes' }, 'the tech account is a Technician with operate-steps and without operate');
+    const section = page.locator('section.installation-evidence');
+    await section.waitFor();
+    assert.equal(await section.locator('[data-action="record-media"]').isVisible(), true, 'a Technician sees Record video');
+    assert.equal(await section.locator('[data-action="upload-media"]').isVisible(), true, 'a Technician sees Upload recording');
+    await context.close();
+  }
+
   // Installation orders keep the Installation wording, with their own pedigree in the dialog context.
   {
     const { context, page } = await openOperation();

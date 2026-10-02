@@ -1038,7 +1038,9 @@ body[data-can-adjust-wo="no"] [data-action="seq-add"],body[data-can-adjust-wo="n
 body[data-can-split="no"] [data-action="split-order"],
 body[data-can-approve-wo="no"] [data-action="review-release"],body[data-can-approve-wo="no"] [data-action="seq-approve"],body[data-can-approve-wo="no"] [data-action="review"],
 body[data-can-request-pedigree="no"] [data-action="pedigree-change"],
-body[data-can-operate="no"] [data-action="schedule"],body[data-can-operate="no"] [data-action="advance"],body[data-can-operate="no"] [data-action="aog-resolve"],body[data-can-operate="no"] [data-action="open-inventory"],body[data-can-operate="no"] [data-action="serial-next"],body[data-can-operate="no"] [data-action="serial-void"],body[data-can-operate="no"] [data-action="record-media"],body[data-can-operate="no"] .att-btn,body[data-can-operate="no"] [data-material],body[data-can-operate="no"] [data-material-lot],body[data-can-operate="no"] [data-priority-order],body[data-can-operate="no"] .step-check{display:none!important}
+body[data-can-operate="no"] [data-action="schedule"],body[data-can-operate="no"] [data-action="advance"],body[data-can-operate="no"] [data-action="aog-resolve"],body[data-can-operate="no"] [data-action="open-inventory"],body[data-can-operate="no"] [data-action="serial-next"],body[data-can-operate="no"] [data-action="serial-void"],body[data-can-operate="no"] .att-btn,body[data-can-operate="no"] [data-material],body[data-can-operate="no"] [data-material-lot],body[data-can-operate="no"] [data-priority-order],body[data-can-operate="no"] .step-check{display:none!important}
+/* Recording evidence follows its action gate: record-media needs operate-steps, so a Technician sees it. */
+body[data-can-operate-steps="no"] [data-action="record-media"]{display:none!important}
 .access-panel{margin:16px 0 0;border:1px solid var(--line);border-radius:8px;padding:8px 16px}
 .access-panel summary{cursor:pointer;font-weight:600;font-size:14px;min-height:32px;display:flex;align-items:center;line-height:20px}
 .access-table th[scope=row]{font-weight:600;white-space:nowrap}
