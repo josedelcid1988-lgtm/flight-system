@@ -187,7 +187,9 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  let g=await closedState();
  ok('after a reload the browser is still closed, with no sign-in form and nothing to press',g.gate&&g.boot&&!g.login&&g.inputs===0,JSON.stringify(g));
  for(const who of ['ops1','mlee','qa2']){
-  await p.evaluate(u=>sessionStorage.setItem('skyryse-mes-session-v1',u),who);await p.reload();await p.waitForTimeout(800);
+  await p.evaluate(u=>sessionStorage.setItem('skyryse-mes-session-v1',u),who);await p.reload();
+  // The ended session is logged once the page has loaded; wait for that entry, not a fixed time, before the next reload.
+  await p.waitForFunction(u=>!!document.getElementById('sk-legacy-review')&&JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').some(e=>e.type==='signout'&&e.username===u&&/older demo build/.test(e.reason||'')),who,{timeout:15000}).catch(()=>{});
   g=await closedState();
   ok(`a session of ${who} is ended on a closed browser, a QA Manager or Master Access account included`,g.gate&&g.session===null&&g.user===null,JSON.stringify(g));}
  {const ends=await p.evaluate(()=>JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').filter(e=>e.type==='signout'&&/older demo build/.test(e.reason||'')).map(e=>e.username));
@@ -243,7 +245,7 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  // can lose a write made milliseconds before the same page reloads, which a write from another tab never is.)
  await p.waitForTimeout(6000);
  await p.evaluate(v=>{if(!localStorage.getItem('skyryse-mes-legacy-demo-review-v1'))localStorage.setItem('skyryse-mes-legacy-demo-review-v1',v);},v);await p.waitForTimeout(3000);
- await p.reload();await p.waitForTimeout(900);
+ await p.reload();await p.waitForFunction(()=>!!document.getElementById('sk-legacy-review'),null,{timeout:15000}).catch(()=>{});
  const open=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),user:window.skAuth&&skAuth.user()&&skAuth.user().username}));
  ok('that tab is then closed and its Operations session ends',open.gate&&!open.user,JSON.stringify(open));
  await ctx.close();}
@@ -278,7 +280,7 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  const o=await open.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),login:!document.getElementById('sk-login').hidden}));
  ok('review record refused: a tab already open is told and closes, its sign-in form gone',o.gate&&!o.login,JSON.stringify(o));
  // Every later load finds the same leftovers, since nothing was removed, and closes again.
- await p.reload();await p.waitForTimeout(900);
+ await p.reload();await p.waitForFunction(()=>!!document.getElementById('sk-legacy-review'),null,{timeout:15000}).catch(()=>{});
  {const l=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),users:JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.map(u=>u.username)}));
  ok('review record refused: a later load finds the leftovers again and closes',l.gate&&l.users.includes('master'),JSON.stringify(l));}
  await ctx.close();}
