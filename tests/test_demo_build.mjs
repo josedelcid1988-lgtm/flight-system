@@ -292,15 +292,23 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
   await s.goto('file://'+FIXTURES+'publish.html');await s.waitForFunction(()=>!document.getElementById('sk-login').hidden,null,{timeout:20000});
  // A page already open on the sign-in screen (an active signed-in tab would rewrite shared storage from its own copy).
  // The seeding page stays open until this page sees the seed: a page closed just after its write can lose it (#556).
+ // Even then the seed can miss a tab entirely, so each tab that needs it writes the same accounts itself when they have
+ // not arrived and loads again. Nothing else has been written yet, so this cannot replace the leftovers added below.
+ const accounts=JSON.stringify({users:[{username:'ops9',displayName:'Ops Nine',...H,role:'ops',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'mlee',displayName:'Morgan Lee',...H,role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'}]});
+ const seedIfMissing=pg=>pg.evaluate(a=>{if(!/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||''))localStorage.setItem('skyryse-mes-auth-v1',a);},accounts);
  const open=await ctx.newPage();open.on('pageerror',e=>errs.push(e.message));
- await open.goto('file://'+FIXTURES+'publish.html');await open.waitForFunction(()=>!document.getElementById('sk-login').hidden&&/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||''),null,{timeout:60000});
+ for(let i=0;;i++){await open.goto('file://'+FIXTURES+'publish.html');
+  if(await open.waitForFunction(()=>!document.getElementById('sk-login').hidden&&/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||''),null,{timeout:15000}).then(()=>true,()=>false))break;
+  if(i>=4)throw new Error('the seeded accounts never reached the open tab');await seedIfMissing(open);await open.waitForTimeout(500);}
  await s.close();
  // The leftovers are written by the finding page itself before it loads (a write from another tab arrives asynchronously).
  const leftovers=()=>{if(sessionStorage.getItem('left'))return;sessionStorage.setItem('left','1');const a=JSON.parse(localStorage.getItem('skyryse-mes-auth-v1'));if(!a.users.some(u=>u.username==='master')){a.users.push({username:'master',displayName:'Master Access',salt:'00',hash:'f'.repeat(64),role:'admin',createdAt:'2026-09-17T00:00:00.000Z',createdBy:'demo build'});localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify(a));localStorage.setItem('skyryse-mes-sync-queue-v1',JSON.stringify([{clientWriteId:'old-demo-w',storeKey:'skyryse-mes-work-order-qa100-v1',entityType:'order',entityId:'WO-10009',operation:'upsert',payloadJson:'{}'},{clientWriteId:'prod-w',storeKey:'skyryse-mes-work-order-v1',entityType:'order',entityId:'WO-1',operation:'upsert',payloadJson:'{}'}]));}};
  // The finding page waits on a blank page of the origin until the seed has reached it, so its leftovers are added to
  // the seeded accounts, not to an empty list (#556).
  const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));
- await p.goto('file://'+FIXTURES+BLANK);await p.waitForFunction(()=>/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||''),null,{timeout:60000});
+ await p.goto('file://'+FIXTURES+BLANK);
+ if(!await p.waitForFunction(()=>/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||''),null,{timeout:15000}).then(()=>true,()=>false)){
+  await seedIfMissing(p);await p.waitForFunction(()=>/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||''),null,{timeout:15000});}
  await p.addInitScript(leftovers);
  await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(2500);
  const f1=await p.evaluate(()=>({gate:(document.getElementById('sk-legacy-review')||{}).textContent||null,stored:localStorage.getItem('skyryse-mes-legacy-demo-review-v1'),users:JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.map(u=>u.username),queue:JSON.parse(localStorage.getItem('skyryse-mes-sync-queue-v1')||'[]').map(x=>x.clientWriteId),ev:JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').filter(e=>/^legacy-demo-/.test(e.type))}));
