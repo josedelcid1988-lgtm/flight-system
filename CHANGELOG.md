@@ -21,14 +21,17 @@ numbers and record number formats have not changed in any entry below.
   date recorded on a FAIR characteristic result (Form 3 block 9B), the default planned start of a new or ad hoc
   work order, the start of a work order converted from a planned order, the CAR due date ("cannot be in the
   past") and the problem report date ("cannot be in the future"). The source-inspection dialog's date limit
-  follows the same day.
+  follows the same day, and so do the defaults of Raise SPR, Create work order and Ad hoc work order (planned
+  start the site day, planned finish a week later).
 - **One torque rule (#589).** `MES.stepRecordsTorque` decides whether a step records a torque value. Adding and
   editing an operation, default steps and the upgrade of older steps all use it, so "Apply torque stripe",
-  torque seal, paint and mark steps no longer ask for a torque reading after an edit. An unchanged step keeps its
-  saved setting.
+  torque seal, paint and mark steps no longer ask for a torque reading after an edit. A torque action on marked,
+  paint-marked or sealed parts ("Torque marked fasteners to 35 in-lb") still records the value, tool and unit. An
+  unchanged step keeps its saved setting.
 - **Inspection buy-off on edit (#590).** Two checks that could never fail were removed. Editing an Inspection or
   Source Inspection operation to a buy-off that is not an inspection buy-off is refused before anything changes
-  (the edit already refused it for Inspection, later in the function; Source Inspection was not covered).
+  (the edit already refused it for Inspection, later in the function; Source Inspection was not covered). The
+  Edit operation dialog now offers only inspection buy-offs for a Source Inspection operation too.
 - **Print note (#592).** The Team discussion print note again reads "Internal prints include this discussion.
   External prints omit all messages and Slack links." in the legacy page and the React work order, instead of a
   lone lock icon.

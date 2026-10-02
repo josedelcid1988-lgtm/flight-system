@@ -133,8 +133,11 @@ realm('globalThis.Date = globalThis.__RealDate;')();
 
 // ---- #589: one torque rule for adding and editing an operation -----------------------------------------------------
 {
-  check('MES.stepRecordsTorque: a torque stripe, seal, paint or mark step records no torque', ['Apply torque stripe', 'Apply torque seal to B-nut', 'Torque paint the jam nut', 'Torque mark each fastener'].every(t => MES.stepRecordsTorque(t) === false));
-  check('MES.stepRecordsTorque: a torque step records a torque value', ['Torque to 35 in-lb', 'Re-torque fastener(s) to drawing value'].every(t => MES.stepRecordsTorque(t) === true));
+  const stripes = ['Apply torque stripe', 'Inspect torque stripes', 'Apply torque striping', 'Apply torque seal to B-nut', 'Apply torque sealant', 'Torque paint the jam nut', 'Torque mark each fastener'];
+  check('MES.stepRecordsTorque: a torque stripe, seal, paint or mark step records no torque', stripes.every(t => MES.stepRecordsTorque(t) === false), stripes.filter(t => MES.stepRecordsTorque(t)).join(', '));
+  // Review of PR #605: a torque action on marked or sealed parts still records the value, tool and unit.
+  const actions = ['Torque to 35 in-lb', 'Re-torque fastener(s) to drawing value', 'Torque marked fasteners to 35 in-lb', 'Torque paint-marked bolts to the drawing value', 'Torque sealed fitting to 40 in-lb', 'Torque to 35 in-lb, then apply torque stripe'];
+  check('MES.stepRecordsTorque: a torque step records a torque value, also on marked, paint-marked or sealed parts', actions.every(t => MES.stepRecordsTorque(t) === true), actions.filter(t => !MES.stepRecordsTorque(t)).join(', '));
   const state = fresh(), order = state.orders.find(o => o.status === 'Draft' && o.operations.length), op = order.operations[0];
   op.steps = [{ id: 'step-1', title: 'Install bracket', instruction: 'Install bracket', recordsTorque: true }];
   const base = { title: op.title, description: op.description, buyoffType: op.buyoffType, requiresTooling: op.requiresTooling, reason: 'Reword the torque steps (#589)' };
