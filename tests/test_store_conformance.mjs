@@ -11,7 +11,8 @@
 // leaves the shared database as it found it.
 //
 // A divergence the suite finds is filed as an issue and listed in KNOWN_DIVERGENCES with that issue number. A
-// listed check that fails on its store is reported as known; one that passes fails the run, so the entry is
+// listed check that fails on its store, at the listed assertion with the listed value, is reported as known; a
+// failure anywhere else in that check fails the run, and so does a listed check that passes, so the entry is
 // removed in the change that fixes it.
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
@@ -22,8 +23,12 @@ import { openDb } from '../server/db.mjs';
 import { openPostgres } from '../server/db-postgres.mjs';
 
 const KNOWN_DIVERGENCES = [
-  { backend: 'sqlite', check: 'export jobs: a retry of a job that is not failed is refused and changes nothing', issue: 596 },
-  { backend: 'postgres', check: 'evidence: the metadata of a recording the store does not hold reads as null', issue: 597 },
+  // Each entry names the one assertion that fails and the value the store returns there. Any other failure in the
+  // same check (a different assertion, a thrown error, a lost connection) is not the known divergence and fails.
+  { backend: 'sqlite', check: 'export jobs: a retry of a job that is not failed is refused and changes nothing', issue: 596,
+    assertion: 'a delivered job is not queued again', actual: value => value?.id === 'JOB-C0S' && value.status === 'pending' && value.attempts === 0 },
+  { backend: 'postgres', check: 'evidence: the metadata of a recording the store does not hold reads as null', issue: 597,
+    assertion: 'a missing recording reads as null', actual: value => value === undefined },
 ];
 
 const postgresOnly = process.argv.includes('--postgres');
@@ -353,7 +358,7 @@ const CONTRACT = [
   }],
 
   ['evidence: the metadata of a recording the store does not hold reads as null', ['evidenceMeta'], async ({ store }) => {
-    assert.equal(await store.evidenceMeta('EV-CONF-NONE'), null);
+    assert.equal(await store.evidenceMeta('EV-CONF-NONE'), null, 'a missing recording reads as null');
   }],
 
   ['audit: an append-only hash chain, newest first, that verifies and refuses to reopen once tampered', ['audit', 'auditRows', 'verifyAudit', 'close'], async ({ store, raw, reopen }) => {
@@ -405,7 +410,7 @@ async function runBackend(open) {
         assert.deepEqual(missing, [], `the store has ${missing.join(', ')}`);
         await fn({ store: backend.store, raw: backend.raw, reopen: backend.reopen, dir: backend.dir });
         results.push({ backend: backend.name, check: name, ok: true });
-      } catch (error) { results.push({ backend: backend.name, check: name, ok: false, error: error.message.split('\n')[0] }); }
+      } catch (error) { results.push({ backend: backend.name, check: name, ok: false, error: error.message.split('\n')[0], assertion: error instanceof assert.AssertionError ? error.message.split('\n')[0] : null, actual: error.actual }); }
     }
   } finally { await backend.close(); }
 }
@@ -425,6 +430,7 @@ for (const listed of KNOWN_DIVERGENCES) {
 let pass = 0, known = 0;
 for (const r of results) {
   const listed = KNOWN_DIVERGENCES.find(k => k.backend === r.backend && k.check === r.check);
+  if (listed && !r.ok && (r.assertion !== listed.assertion || !listed.actual(r.actual))) { FAILS.push(`${r.backend}: ${r.check}: ${r.error} (not the known divergence #${listed.issue}, which fails only at "${listed.assertion}")`); console.log(`  FAIL   ${r.backend.padEnd(8)} ${r.check}: ${r.error} (not the known divergence #${listed.issue})`); continue; }
   if (listed && !r.ok) { known += 1; console.log(`  known  ${r.backend.padEnd(8)} ${r.check} (#${listed.issue}): ${r.error}`); continue; }
   if (listed && r.ok) { FAILS.push(`${r.backend}: "${r.check}" now passes; the divergence in #${listed.issue} is gone, so remove it from KNOWN_DIVERGENCES`); console.log(`  FAIL   ${r.backend.padEnd(8)} ${r.check}: passes but is listed as known (#${listed.issue})`); continue; }
   if (r.ok) { pass += 1; console.log(`  ok     ${r.backend.padEnd(8)} ${r.check}`); }
