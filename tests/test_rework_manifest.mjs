@@ -101,6 +101,15 @@ const repair = walk('seed-curated', 'WO-10003', 'Repair', {}, state => { MES.get
   ok('Tamper: diagnose names the changed release', /QA release signature does not match the release record/.test(detail(op)), detail(op));
   tamper('changing the releaser', t => { t.reworkPlan.releasedBy = { ...t.reworkPlan.releasedBy, name: 'Someone Else' }; }, 'release');
   tamper('changing the resolver', t => { t.resolvedBy = { ...t.resolvedBy, name: 'Someone Else' }; }, 'release');
+  // Codex P1 on #602: the signer on the manifest is the whole identity, not the credential alone.
+  tamper('changing the approval signer name', t => { t.reworkPlan.manifest.signer.name = 'Impostor'; }, 'approval');
+  tamper('changing the approval signer role', t => { t.reworkPlan.manifest.signer.role = 'Quality Manager'; }, 'approval');
+  tamper('changing the release signer name', t => { t.manifest.signer.name = 'Impostor'; }, 'release');
+  tamper('changing the release signer role', t => { t.manifest.signer.role = 'Quality Manager'; }, 'release');
+  // Codex P1 on #602: a released ticket set back to Open is still checked; the release cannot be undone.
+  const reopened = tamper('reopening a released ticket', t => { t.status = 'Open'; t.resolution = ''; t.resolvedAt = null; delete t.resolvedBy; }, 'release');
+  ok('Tamper: diagnose names the reopened ticket', /carries a QA release but is open again/.test(detail(reopened)), detail(reopened));
+  tamper('reopening a released ticket and removing its release signature', t => { t.status = 'Open'; t.resolution = ''; t.resolvedAt = null; delete t.resolvedBy; delete t.manifest; }, 'release');
   tamper('changing the closing rationale', t => { t.resolution = 'Closed.'; }, 'release');
   tamper('swapping in a re-signed approval under the old release', t => { t.reworkPlan.approval = 'Use as is.'; t.reworkPlan.manifest = host.withAccount(qe, () => MES.signManifest(rework.state, APPROVAL, { ...t.reworkPlan.manifest.subject, approval: 'Use as is.' }, t.reworkPlan.approvedAt)); }, 'release');
 }
@@ -186,9 +195,10 @@ const repair = walk('seed-curated', 'WO-10003', 'Repair', {}, state => { MES.get
 // ---- Seal: which unsigned plans predate signing is recorded once, so a later strip of both signatures is refused ----
 {
   const raw = seed('seed-curated');
+  const legacyCreated = raw.orders.find(o => o.id === 'WO-10005').tickets.find(t => t.id === 'NC-0001').createdAt;
   ok('Seal: the raw pre-#581 sample has no seal', raw.reworkLegacySeal === undefined);
   const state = MES.upgrade(structuredClone(raw));
-  ok('Seal: MES.upgrade seals the unsigned plans present at upgrade', plain(state.reworkLegacySeal) && JSON.stringify(state.reworkLegacySeal.tickets) === JSON.stringify(['NC-0001']) && !Number.isNaN(Date.parse(state.reworkLegacySeal.sealedAt)), JSON.stringify(state.reworkLegacySeal));
+  ok('Seal: MES.upgrade seals the unsigned plans present at upgrade', plain(state.reworkLegacySeal) && JSON.stringify(state.reworkLegacySeal.tickets) === JSON.stringify([`NC-0001@${legacyCreated}`]) && !Number.isNaN(Date.parse(state.reworkLegacySeal.sealedAt)), JSON.stringify(state.reworkLegacySeal));
   const again = MES.upgrade(structuredClone(state));
   ok('Seal: a second upgrade never rewrites the seal', JSON.stringify(again.reworkLegacySeal) === JSON.stringify(state.reworkLegacySeal));
   ok('Seal: the signed Rework workspace carries the seal, and the new plan is not listed', plain(rework.state.reworkLegacySeal) && !rework.state.reworkLegacySeal.tickets.includes(rework.ticketId));
@@ -197,11 +207,16 @@ const repair = walk('seed-curated', 'WO-10003', 'Repair', {}, state => { MES.get
   ok('Seal: removing both signatures of a signed plan is refused by validate', MES.validate(both) === false);
   ok('Seal: diagnose names the plan whose signatures were removed', new RegExp(`${rework.ticketId} has an unsigned Rework or Repair approval, but it was not approved before approvals were signed`).test(detail(both)), detail(both));
   ok('Seal: MES.upgrade does not accept the stripped plan', MES.upgrade(structuredClone(both)) === null);
-  const listed = structuredClone(both); listed.reworkLegacySeal.tickets.push(rework.ticketId);
+  const listed = structuredClone(both); listed.reworkLegacySeal.tickets.push(`${rework.ticketId}@${MES.getOrder(listed, 'WO-10006').tickets.find(x => x.id === rework.ticketId).createdAt}`);
   ok('Seal: the stripped plan passes only if the seal is edited too (outside what the seal can catch)', MES.validate(listed) === true);
   const noSeal = structuredClone(rework.state); delete noSeal.reworkLegacySeal;
   ok('Seal: a workspace with signed plans and no seal is refused', MES.validate(noSeal) === false && /no record of the unsigned approvals that predate signing/.test(detail(noSeal)), detail(noSeal));
   ok('Seal: MES.upgrade does not reseal a workspace that already holds signed plans', MES.upgrade(structuredClone(noSeal)) === null);
+  // Codex P2 on #602: a ticket number freed by archiving can be issued again. A new ticket that reuses a sealed number
+  // does not inherit the seal, because the entry names the ticket's creation time as well.
+  const reused = structuredClone(both);
+  { const t = MES.getOrder(reused, 'WO-10006').tickets.find(x => x.id === rework.ticketId); reused.reworkLegacySeal.tickets.push(`${rework.ticketId}@2026-01-01T00:00:00.000Z`); ok('Seal: the stripped ticket was created at another time than the reused entry', t.createdAt !== '2026-01-01T00:00:00.000Z'); }
+  ok('Seal: an unsigned plan on a reused ticket number is refused', MES.validate(reused) === false && new RegExp(`${rework.ticketId} has an unsigned Rework or Repair approval`).test(detail(reused)), detail(reused));
   const bad = structuredClone(rework.state); bad.reworkLegacySeal = { tickets: 'NC-0001', sealedAt: 'yesterday' };
   ok('Seal: a malformed seal is refused', MES.validate(bad) === false && /is malformed/.test(detail(bad)), detail(bad));
   // A workspace with no rework plans at all gets no seal on upgrade; the first signed approval writes it.

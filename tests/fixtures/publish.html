@@ -3493,10 +3493,10 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
         // #581: a Rework or Repair plan carries its own approval signature and closes with a signed release.
         if (!plain(t.reworkPlan)) return;
         const p = t.reworkPlan;
-        if (plain(p.manifest)) recheck(`${order.id} ${t.id} rework approval`, p.manifest, reworkApprovalSubject(order, t));
+        if (plain(p.manifest)) { recheck(`${order.id} ${t.id} rework approval`, p.manifest, reworkApprovalSubject(order, t)); if (!reworkSignerOk(p.manifest, p.approvedBy)) failures.push({ where: `${order.id} ${t.id} rework approval`, reason: 'the signer is not the approver on the record' }); }
         else unsignedLegacy.push(`${order.id} ${t.id} rework approval`);
-        if (t.status !== 'Resolved') return;
-        if (plain(t.manifest)) { if (t.manifest.meaning !== REWORK_RELEASE_MEANING) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the ticket was closed with a signature that is not a QA release' }); else recheck(`${order.id} ${t.id} rework release`, t.manifest, reworkReleaseSubject(order, t)); }
+        if (t.status !== 'Resolved') { if (t.manifest !== undefined || p.stage === 'Released' || p.releasedAt !== undefined || p.releasedBy !== undefined) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the ticket carries a QA release but is open again' }); return; }
+        if (plain(t.manifest)) { if (t.manifest.meaning !== REWORK_RELEASE_MEANING) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the ticket was closed with a signature that is not a QA release' }); else { recheck(`${order.id} ${t.id} rework release`, t.manifest, reworkReleaseSubject(order, t)); if (!reworkSignerOk(t.manifest, p.releasedBy)) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the signer is not the releaser on the record' }); } }
         else if (plain(p.manifest)) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the QA release that closed the ticket is not signed' });
         else unsignedLegacy.push(`${order.id} ${t.id} rework release`);
       });
@@ -3714,7 +3714,9 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // A plan moved by an NC split keeps the order id it was approved on (reworkPlan.carriedFrom), as a carried ticket does.
   const reworkApprovalSubject = (order, ticket) => { const p = ticket.reworkPlan; return { orderId: plain(p.carriedFrom) ? p.carriedFrom.orderId : order.id, ticketId: ticket.id, operationId: ticket.operationId, dispo: ticket.dispo, decision: p.decision, approval: p.approval, approvedBy: p.approvedBy, approvedAt: p.approvedAt, defect: ticket.defect || null, affected: ticket.affected || null }; };
   const reworkReleaseSubject = (order, ticket) => { const p = ticket.reworkPlan; return { ...ticketSubject(order, ticket), orderId: plain(ticket.carriedFrom) ? ticket.carriedFrom.orderId : order.id, decision: p.decision, approvalHash: plain(p.manifest) ? p.manifest.hash : null, opId: p.opId, opAddedBy: p.opAddedBy || null, releasedBy: p.releasedBy, releasedAt: p.releasedAt, resolvedBy: ticket.resolvedBy, resolvedAt: ticket.resolvedAt }; };
-  const reworkManifestOk = (m, meaning, at, signer, subject) => plain(m) && m.meaning === meaning && m.at === at && m.algorithm === 'SHA-256' && plain(m.signer) && plain(signer) && m.signer.credentialId === signer.credentialId && m.hash === sha256(canonical(subject));
+  // The signer must be the person on the record: name, role and credential, not the credential alone.
+  const reworkSignerOk = (m, signer) => plain(m) && plain(m.signer) && plain(signer) && m.signer.credentialId === signer.credentialId && m.signer.name === signer.name && m.signer.role === signer.role;
+  const reworkManifestOk = (m, meaning, at, signer, subject) => plain(m) && m.meaning === meaning && m.at === at && m.algorithm === 'SHA-256' && reworkSignerOk(m, signer) && m.hash === sha256(canonical(subject));
   // The plans that predate signing are named once, in state.reworkLegacySeal = { tickets, sealedAt }: MES.upgrade
   // writes it for a workspace that holds unsigned plans and no signed one, and the first signed approval writes it if
   // it is missing. From then on an unsigned plan that the seal does not list had its signatures removed, and validate
@@ -3723,18 +3725,22 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // a signed plan only comes from a write by this build, and that write saves the seal with it.
   const REWORK_SEAL_MAX = 10000;
   const reworkTickets = state => (plain(state) && Array.isArray(state.orders) ? state.orders : []).flatMap(o => plain(o) && Array.isArray(o.tickets) ? o.tickets.filter(t => plain(t) && plain(t.reworkPlan)) : []);
-  const unsignedReworkIds = state => reworkTickets(state).filter(t => t.reworkPlan.manifest === undefined).map(t => t.id);
+  // A seal entry is the ticket id and its creation time: a ticket number freed by archiving can be issued again, and
+  // the new ticket must not inherit the old one's place on the seal. Both survive an NC split unchanged.
+  const reworkSealKey = t => `${t.id}@${t.createdAt}`;
+  const unsignedReworkTickets = state => reworkTickets(state).filter(t => t.reworkPlan.manifest === undefined);
+  const unsignedReworkIds = state => unsignedReworkTickets(state).map(reworkSealKey);
   const signedReworkExists = state => reworkTickets(state).some(t => t.reworkPlan.manifest !== undefined);
   const reworkSealFor = state => ({ tickets: unsignedReworkIds(state), sealedAt: new Date().toISOString() });
-  const reworkSealValid = seal => plain(seal) && Object.keys(seal).length === 2 && Array.isArray(seal.tickets) && seal.tickets.length <= REWORK_SEAL_MAX && seal.tickets.every(id => typeof id === 'string' && /^(IDR|NC)-\d{4,8}$/.test(id)) && unique(seal.tickets) && timestamp(seal.sealedAt);
+  const reworkSealValid = seal => plain(seal) && Object.keys(seal).length === 2 && Array.isArray(seal.tickets) && seal.tickets.length <= REWORK_SEAL_MAX && seal.tickets.every(key => typeof key === 'string' && /^(IDR|NC)-\d{4,8}@/.test(key) && timestamp(key.slice(key.indexOf('@') + 1))) && unique(seal.tickets) && timestamp(seal.sealedAt);
   const sealReworkLegacy = state => { if (plain(state) && state.reworkLegacySeal === undefined && !signedReworkExists(state) && unsignedReworkIds(state).length) state.reworkLegacySeal = reworkSealFor(state); };
   function reworkSealProblem(state) {
     if (!plain(state)) return null;
     const seal = state.reworkLegacySeal;
     if (seal === undefined) return signedReworkExists(state) ? 'This workspace holds signed Rework or Repair approvals but has no record of the unsigned approvals that predate signing, so a removed signature cannot be ruled out.' : null;
     if (!reworkSealValid(seal)) return 'The record of Rework or Repair approvals that predate signing is malformed.';
-    const listed = new Set(seal.tickets), stray = unsignedReworkIds(state).find(id => !listed.has(id));
-    return stray ? `${stray} has an unsigned Rework or Repair approval, but it was not approved before approvals were signed: its signatures were removed.` : null;
+    const listed = new Set(seal.tickets), stray = unsignedReworkTickets(state).find(t => !listed.has(reworkSealKey(t)));
+    return stray ? `${stray.id} has an unsigned Rework or Repair approval, but it was not approved before approvals were signed: its signatures were removed.` : null;
   }
   // What is wrong with a ticket's rework signatures, in plain words, or null.
   function reworkSignatureProblem(ticket, order) {
@@ -3742,7 +3748,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (p === undefined) return null;
     if (!plain(p) || !['Rework', 'Repair'].includes(p.decision) || !snapshotValid(p.approvedBy) || !timestamp(p.approvedAt)) return `${ticket.id} rework plan is malformed.`;
     if (p.manifest !== undefined && !reworkManifestOk(p.manifest, REWORK_APPROVAL_MEANING, p.approvedAt, p.approvedBy, reworkApprovalSubject(order, ticket))) return `${ticket.id} Quality approval signature does not match the approved ${p.decision.toLowerCase()} plan: the rationale, approver, disposition or affected units changed after signing.`;
-    if (ticket.status !== 'Resolved') return null;
+    // A QA release closes the ticket for good: an open ticket that carries one was reopened outside the application.
+    if (ticket.status !== 'Resolved') return ticket.manifest !== undefined || p.stage === 'Released' || p.releasedAt !== undefined || p.releasedBy !== undefined ? `${ticket.id} carries a QA release but is open again: the closure was undone outside the application.` : null;
     if (ticket.manifest === undefined) return p.manifest === undefined ? null : `${ticket.id} is closed, but the QA release that closed it is not signed.`;
     if (!snapshotValid(p.releasedBy) || !reworkManifestOk(ticket.manifest, REWORK_RELEASE_MEANING, p.releasedAt, p.releasedBy, reworkReleaseSubject(order, ticket))) return `${ticket.id} QA release signature does not match the release record: the released operation, releaser or approval changed after signing.`;
     return null;
