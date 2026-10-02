@@ -359,6 +359,18 @@ check('an archive candidate holding a __proto__ key is refused, while a clean cl
   }
   const atLimit = runHist(() => MES.updateSkillDraft(hist, spc.draftId, nested(64), 'A body nested exactly at the depth limit.'));
   check('a draft body nested exactly 64 deep still saves, and every signature verifies', atLimit.ok && MES.validate(hist) && MES.verifyManifests(hist).ok);
+  // Codex review on #621: the budget is spent before a child is queued, so a wide value (a root list of a million empty
+  // objects, or a flat list of numbers) is refused at 50,000 values instead of after every child has been queued.
+  for (const [label, wide] of [['a list of 1,000,000 empty objects', Array.from({ length: 1000000 }, () => ({}))], ['a list of 60,000 numbers', Array.from({ length: 60000 }, (_, i) => i)], ['an object with 60,000 keys', Object.fromEntries(Array.from({ length: 60000 }, (_, i) => [`k${i}`, i]))]]) {
+    const before = JSON.stringify(draft());
+    let r = null, threw = null;
+    try { r = runHist(() => MES.updateSkillDraft(hist, spc.draftId, { wide }, 'A body wider than the value budget.')); } catch (e) { threw = e; }
+    check(`a draft body holding ${label} is refused with the plain value-count message, never a throw, and the draft is unchanged`, !threw && r && !r.ok && /holds more than 50,000 values\. Keep it under 50 KB/.test(r.message) && JSON.stringify(draft()) === before);
+  }
+  { const draftsBefore = hist.aiSkillDrafts.length;
+    let rw = null, threwWide = null;
+    try { rw = runHist(() => MES.runSkill(hist, { skill: 'spc-chart-builder', values: [10.1, 10.2, 9.9], extra: Array.from({ length: 1000000 }, () => ({})), reason: 'A skill run input wider than the value budget.' })); } catch (e) { threwWide = e; }
+    check('a skill run input holding a list of 1,000,000 empty objects is refused with the value-count message and no draft is added', !threwWide && rw && !rw.ok && /holds more than 50,000 values/.test(rw.message) && hist.aiSkillDrafts.length === draftsBefore); }
   const drafts = hist.aiSkillDrafts.length;
   let rs = null, threwRun = null;
   try { rs = runHist(() => MES.runSkill(hist, { skill: 'spc-chart-builder', values: [10.1, 10.2, 9.9], extra: nested(3000), reason: 'A skill run input nested past the depth limit.' })); } catch (e) { threwRun = e; }
