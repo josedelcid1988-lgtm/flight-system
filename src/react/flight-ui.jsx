@@ -82,8 +82,9 @@ function Hangar({ state, MES, onOpen }) {
   const open = item => setOrder(item);
   return <div className="flight-react">
     <div className="fr-page-heading"><div><span className="fr-eyebrow">FLIGHT CONTROL</span><h1>Hangar<span>.</span></h1></div></div>
-    <section className="fr-top-row" aria-label="Work queue summary and open holds">
+    <section className="fr-top-row fr-hangar-top" aria-label="Work queue summary, today's priorities and open holds">
       <div className="fr-summary"><span className="fr-eyebrow">YOUR WORK QUEUE</span><strong>{rows.length} <small>{filter.toLowerCase()} work orders</small></strong><span>Sorted by due date from the current workspace.</span></div>
+      <BigThree state={state} MES={MES} variant="hangar"/>
       <div className="fr-holds"><div className="fr-section-heading"><h2>Open holds</h2><span className="fr-count">{holds.length}</span></div>
         {holds.length ? holds.map(({ item, reason }) => <button className="fr-hold-row" key={item.id} onClick={() => open(item)}><span className="fr-hold-icon"><Boxes size={18}/></span><span><strong>{item.id} · {titleOf(item)}</strong><small>{reason}</small></span><ChevronRight size={16}/></button>) : <p className="fr-no-holds"><Check size={16}/> No blocking holds in open work orders.</p>}
       </div>
@@ -165,44 +166,89 @@ function WorkOrderQueue({ state, MES, rows: sourceRows, initial, callbacks, onOp
   </div>;
 }
 
-function BigThree({ state, MES }) {
+const big3CollapseKey = username => `flight-system-big3-hangar-v1:${username}`;
+const readBig3Collapsed = username => { try { return localStorage.getItem(big3CollapseKey(username)) === 'collapsed'; } catch { return false; } };
+const writeBig3Collapsed = (username, collapsed) => { try { localStorage.setItem(big3CollapseKey(username), collapsed ? 'collapsed' : 'open'); } catch {} };
+// The Hangar reads the planner from a copy: plannerStatus brings the derived blocker list up to date as it reads, and the
+// landing page must not change the workspace just by being opened. Every Big Three action still runs on the real
+// workspace through the same engine commands (and, with a server, the same server actions) as Flight Plan.
+// The planner read path writes only state.planner (ensurePlanner) and state.blockers (syncPlanningBlockers), so the
+// Hangar copies just those two and shares the rest read-only, instead of cloning the whole workspace on every render.
+const cloneValue = value => { if (value === undefined) return value; try { return structuredClone(value); } catch { return JSON.parse(JSON.stringify(value)); } };
+const plannerReadCopy = state => ({ ...state, planner: cloneValue(state.planner), blockers: cloneValue(state.blockers) });
+
+function BigThreeAccept({ item, index, date }) {
+  return item.status === 'accepted' ? <span className="pill accepted">Accepted</span> : <button className="btn quiet" data-action="big3-decide" data-index={index} data-date={date} data-decision="accept">Accept</button>;
+}
+
+function BigThreeSlotActions({ index, block, date }) {
+  return <>
+    <label className="sr-only" htmlFor={`big3-reason-${index}`}>Reason for declining task {index + 1}</label><input id={`big3-reason-${index}`} className="big3-reason" maxLength="300" placeholder="Reason to decline"/>
+    <button className="btn quiet" data-action="big3-decide" data-index={index} data-date={date} data-decision="decline">Decline</button>
+    {!block ? <><label className="sr-only" htmlFor={`big3-start-${index}`}>Proposed start time for task {index + 1}</label><input id={`big3-start-${index}`} type="time" aria-label="Proposed start time"/><label className="sr-only" htmlFor={`big3-end-${index}`}>Proposed end time for task {index + 1}</label><input id={`big3-end-${index}`} type="time" aria-label="Proposed end time"/><button className="btn quiet" data-action="big3-time-propose" data-index={index} data-date={date}>Propose time</button></> : block.status === 'Proposed' && <><button className="btn quiet" data-action="big3-time-decide" data-id={block.id} data-index={index} data-date={date} data-decision="accept">Accept time</button><label className="sr-only" htmlFor={`big3-time-reason-${index}`}>Reason for declining the proposed time for task {index + 1}</label><input id={`big3-time-reason-${index}`} className="big3-reason" maxLength="300" placeholder="Reason to decline the time"/><button className="btn quiet" data-action="big3-time-decide" data-id={block.id} data-index={index} data-date={date} data-decision="decline">Decline time</button></>}
+    {window.skAuth?.can?.('post-notice') && <><label className="sr-only" htmlFor={`big3-escalation-${index}`}>Escalation reason</label><input id={`big3-escalation-${index}`} className="big3-reason" maxLength="500" placeholder="Escalation reason"/><button className="btn quiet" data-action="big3-escalate" data-index={index} data-date={date}>Escalate to QA</button></>}
+  </>;
+}
+
+function BigThree({ state, MES, variant = 'plan' }) {
+  const hangar = variant === 'hangar';
   const date = new Date().toISOString().slice(0, 10);
-  const snap = MES.plannerStatus(state, date);
+  const source = hangar ? plannerReadCopy(state) : state;
+  const snap = MES.plannerStatus(source, date);
+  const [collapsedBy, setCollapsedBy] = useState({});
   if (!snap) return null;
-  const hasPlan = !!state.planner.days[snap.username]?.[date];
+  const collapsed = hangar && (Object.hasOwn(collapsedBy, snap.username) ? collapsedBy[snap.username] : readBig3Collapsed(snap.username));
+  const hasPlan = !!source.planner.days[snap.username]?.[date];
   const displayDate = value => new Date(`${value}T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+  // A saved slot whose record no longer has an open blocker was resolved in the record; plannerStatus returns the saved
+  // day as stored, so mark it here the same way plannerView does before any action is offered.
+  const openIds = new Set([...(source.blockers || []).filter(row => row.status === 'Open').map(row => row.id), ...snap.candidates.map(candidate => candidate.id)]);
+  const isResolved = slot => !!slot.done || !!(slot.ref && !openIds.has(slot.ref.id));
   const slots = hasPlan ? snap.day.big3 : snap.candidates.slice(0, 3);
-  return <section className="panel big3-panel fr-big3" aria-labelledby="big3-heading">
-    <div className="panel-head"><div><p className="hero-eyebrow">Flight Plan · {snap.username}</p><h2 id="big3-heading">Today's Big Three</h2></div><span className="fr-big3-date">{displayDate(date)}</span></div>
+  const headingId = hangar ? 'hangar-big3-heading' : 'big3-heading';
+  const accepted = hasPlan ? snap.day.big3.filter(slot => slot.t && slot.status === 'accepted').length : 0;
+  const set = hasPlan ? snap.day.big3.filter(slot => slot.t).length : 0;
+  const status = hasPlan ? `${accepted} of ${set} accepted` : snap.candidates.length ? 'Not set for today' : 'Nothing assigned';
+  const toggle = () => { const next = !collapsed; writeBig3Collapsed(snap.username, next); setCollapsedBy(value => ({ ...value, [snap.username]: next })); };
+  const bodyId = 'hangar-big3-body';
+  const canCarry = hasPlan && snap.day.big3.some(slot => slot.status === 'accepted' && !isResolved(slot));
+  const actions = <>{!hasPlan && snap.candidates.length > 0 && <button className="btn primary" data-action="big3-create" data-date={date}>Set today's Big Three</button>}
+    {canCarry && <button className="btn" data-action="big3-carry" data-date={date}>Carry accepted tasks to tomorrow</button>}</>;
+  return <section className={`panel big3-panel fr-big3${hangar ? ' fr-big3-hangar' : ''}${collapsed ? ' is-collapsed' : ''}`} aria-labelledby={headingId} data-big3-variant={variant}>
+    {hangar ? <div className="panel-head"><div className="fr-big3-title"><h2 id={headingId}>Today's Big Three</h2><span className="fr-big3-owner">Your day · {snap.username}</span></div>
+      <div className="fr-big3-head-tools"><span className="fr-big3-date"><span className="fr-big3-day">{displayDate(date)} · </span><span data-big3-status>{status}</span> · {snap.total} open blocker{snap.total === 1 ? '' : 's'}</span>{actions}</div>
+      <button type="button" className="fr-big3-toggle" aria-expanded={!collapsed} aria-controls={collapsed ? undefined : bodyId} onClick={toggle}>{collapsed ? 'Show' : 'Hide'}<span className="sr-only"> Today's Big Three</span></button>
+    </div> : <div className="panel-head"><div><p className="hero-eyebrow">Flight Plan · {snap.username}</p><h2 id={headingId}>Today's Big Three</h2></div><span className="fr-big3-date">{displayDate(date)}</span></div>}
+    {!collapsed && <div id={hangar ? bodyId : undefined}>
     {slots.length ? <ol className="big3-list">{slots.map((slot, index) => {
       const item = hasPlan ? slot : null;
       const task = item ? snap.candidates.find(candidate => candidate.id === item.ref?.id) : slot;
-      const resolved = !!item?.done;
-      const block = item?.ref && state.planner.calendar.blocks.find(record => record.username === snap.username && record.date === date && record.blockerId === item.ref.id && record.status !== 'Declined');
+      const resolved = !!item && isResolved(item);
+      const block = item?.ref && source.planner.calendar.blocks.find(record => record.username === snap.username && record.date === date && record.blockerId === item.ref.id && record.status !== 'Declined');
       const title = item ? item.t : task.title;
-      const why = item ? item.why : `${task.kind.replaceAll('-', ' ')} · ${task.priority}${task.aog ? ' · AOG' : ''}`;
+      const why = item ? item.why : `${task.kind.replaceAll('-', ' ')} · ${task.priority}${task.aog && task.priority !== 'AOG' ? ' · AOG' : ''}`;
       return <li className={`big3-slot${resolved ? ' is-done' : ''}`} key={item?.ref?.id || task?.id || index}>
-        <div className="big3-slot-copy"><strong>{index + 1}. {title || 'Open priority slot'}</strong>{why && <span>{why}</span>}
-          {task?.due && <time dateTime={task.due}>Due {displayDate(task.due)}</time>}{resolved && <span>Resolved in the record</span>}
+        <div className="big3-slot-copy"><strong>{index + 1}. {title || 'Open priority slot'}</strong>{hangar ? (item ? why && <span>{why}</span> : <span>{why} · <time dateTime={task.due}>Due {displayDate(task.due)}</time></span>) : <>{why && <span>{why}</span>}
+          {task?.due && <time dateTime={task.due}>Due {displayDate(task.due)}</time>}</>}{resolved && <span>Resolved in the record</span>}
           {block && <span className={`pill${block.status === 'Accepted' ? ' accepted' : ''}`}>{block.status} time · {block.start} to {block.end}</span>}
         </div>
-        {!hasPlan && task && <span className="fr-big3-priority">Priority {index + 1}</span>}
-        {hasPlan && !resolved && item?.t && <div className="big3-slot-actions">
-          {item.status === 'accepted' ? <span className="pill accepted">Accepted</span> : <button className="btn quiet" data-action="big3-decide" data-index={index} data-decision="accept">Accept</button>}
-          <label className="sr-only" htmlFor={`big3-reason-${index}`}>Reason for declining task {index + 1}</label><input id={`big3-reason-${index}`} className="big3-reason" maxLength="300" placeholder="Reason to decline"/>
-          <button className="btn quiet" data-action="big3-decide" data-index={index} data-decision="decline">Decline</button>
-          {!block ? <><label className="sr-only" htmlFor={`big3-start-${index}`}>Proposed start time for task {index + 1}</label><input id={`big3-start-${index}`} type="time" aria-label="Proposed start time"/><label className="sr-only" htmlFor={`big3-end-${index}`}>Proposed end time for task {index + 1}</label><input id={`big3-end-${index}`} type="time" aria-label="Proposed end time"/><button className="btn quiet" data-action="big3-time-propose" data-index={index}>Propose time</button></> : block.status === 'Proposed' && <><button className="btn quiet" data-action="big3-time-decide" data-id={block.id} data-decision="accept">Accept time</button><button className="btn quiet" data-action="big3-time-decide" data-id={block.id} data-decision="decline">Decline time</button></>}
-          {window.skAuth?.can?.('post-notice') && <><label className="sr-only" htmlFor={`big3-escalation-${index}`}>Escalation reason</label><input id={`big3-escalation-${index}`} className="big3-reason" maxLength="500" placeholder="Escalation reason"/><button className="btn quiet" data-action="big3-escalate" data-index={index}>Escalate to QA</button></>}
-        </div>}
+        {!hasPlan && task && !hangar && <span className="fr-big3-priority">Priority {index + 1}</span>}
+        {hasPlan && !resolved && item?.t && (hangar ? <div className="big3-slot-actions fr-big3-quick">
+          <BigThreeAccept item={item} index={index} date={date}/>
+          <details className="fr-big3-more"><summary>Decline or schedule</summary><div className="fr-big3-more-body"><BigThreeSlotActions index={index} block={block} date={date}/></div></details>
+        </div> : <div className="big3-slot-actions">
+          <BigThreeAccept item={item} index={index} date={date}/>
+          <BigThreeSlotActions index={index} block={block} date={date}/>
+        </div>)}
       </li>;
-    })}</ol> : <p className="muted">No open tasks are assigned to your capabilities.</p>}
-    <div className="big3-footer">{!hasPlan && snap.candidates.length > 0 && <button className="btn primary" data-action="big3-create">Set today's Big Three</button>}
-      {hasPlan && snap.day.big3.some(slot => slot.status === 'accepted' && !slot.done) && <button className="btn" data-action="big3-carry">Carry accepted tasks to tomorrow</button>}
+    })}</ol> : <p className="muted fr-big3-empty">No open tasks are assigned to your capabilities.{hangar && ' Your Big Three fills in when a record needs an action your role can take.'}</p>}
+    {hangar ? null : <div className="big3-footer">{actions}
       <span className="muted">{snap.total} open blocker{snap.total === 1 ? '' : 's'} in your queue</span>
       {state.planner.calendar.connectors.ical && <><button className="btn quiet" data-action="cal-export">Export iCal</button><label className="btn quiet" htmlFor="flight-cal-import">Import iCal<input id="flight-cal-import" className="sr-only" type="file" accept=".ics,text/calendar" data-cal-import/></label></>}
       {window.skAuth?.can?.('configure-org') && <button className="btn quiet" data-action="cal-toggle">{state.planner.calendar.connectors.ical ? 'Disable iCal' : 'Enable iCal'}</button>}
       <span className="muted">{state.planner.calendar.connectors.ical ? 'iCal file sync enabled' : 'iCal is off. Google and Outlook calendars cannot be connected yet.'}</span>
-    </div>
+    </div>}
+    </div>}
   </section>;
 }
 
@@ -1256,7 +1302,7 @@ function QmsRecords({ state, MES }) {
   const suppliers = (state.supplierApprovals || []).slice().reverse().map(row => <li key={row.id}><strong>{asText(row.id)}</strong> · {asText(row.supplier)} · {asText(row.decision)} <span className="muted">Signed by {asText(row.by.name)} · {legacyDateTime(row.at)} · SHA-256</span></li>);
   const values = (state.qualityValues || []).slice().reverse().map(row => <option key={row.id} value={asText(row.id)} data-kind={asText(row.kind)}>{asText(row.id)} · {asText(row.kind)} · {asText(row.value)}{row.name ? ' · ' + asText(row.name) : ''}</option>);
   const verdicts = (state.qualityVerdicts || []).slice().reverse().map(row => <li key={row.id}><strong>{asText(row.id)}</strong> · {asText(row.kind)} {asText(row.value)} · {asText(row.verdict)} <span className="muted">Signed by {asText(row.by.name)} · {legacyDateTime(row.at)} · SHA-256</span></li>);
-  return <section className="qms-config-page"><div className="page-heading"><div><p className="hero-eyebrow">Flight Maneuver · Quality system</p><h1>System QMS records</h1><p className="lede">Audits, controlled documents, supplier approvals, certifications, recorded quality study results, and the calibration log. Signatures and content hashes are checked by the Flight record verifier.</p></div></div><AIGovernance state={state} MES={MES}/><section className="panel"><div className="panel-head"><h2>Audits</h2><span className="pill">{(state.audits || []).length} records</span></div><form data-qms-record="audit"><div className="form-grid"><label className="field">Audit scope<input name="scope" maxLength="200" minLength="3" required placeholder="Internal process audit"/></label><label className="field wide">Findings<textarea name="findings" rows="3" required placeholder="One finding per line"></textarea></label></div><p className="small muted">{asText(MES.AUDIT_FINDING_CLOSE_HELP)}</p><button className="btn primary" type="submit">Open audit</button></form>{audits.length ? audits : <p className="muted">No audits recorded.</p>}</section><ControlledDocumentBlock state={state} MES={MES}/><CalibrationLog state={state} MES={MES}/><div className="form-grid qms-record-columns"><section className="panel"><div className="panel-head"><h2>Certifications</h2><span className="pill">{(state.certifications || []).length}</span></div><form data-qms-record="certification"><label className="field">Certification statement<textarea name="statement" minLength="5" maxLength="300" required rows="3" placeholder="What this certification covers"></textarea></label><button className="btn primary" type="submit">Sign certification</button></form><ul>{certifications.length ? certifications : <li className="muted">No certifications recorded.</li>}</ul></section><section className="panel"><div className="panel-head"><h2>Supplier approvals</h2><span className="pill">{(state.supplierApprovals || []).length}</span></div><form data-qms-record="supplier"><label className="field">Supplier name<input name="supplier" minLength="2" maxLength="120" required/></label><button className="btn primary" type="submit">Sign supplier approval</button></form><ul>{suppliers.length ? suppliers : <li className="muted">No supplier approvals recorded.</li>}</ul></section></div><section className="panel"><div className="panel-head"><h2>Quality study values and verdicts</h2><span className="pill">The app records values; it does not calculate them.</span></div><div className="form-grid qms-record-columns"><form data-qms-record="quality-value"><label className="field">Study type<select name="kind"><option value="gage">Gage</option><option value="capability">Capability</option><option value="sampling">Sampling</option></select></label><label className="field">Computed value<input name="value" type="number" step="any" required/></label><label className="field">Study or characteristic name<input name="name" maxLength="80"/></label><button className="btn" type="submit">Store computed value</button></form><form data-qms-record="quality-verdict"><label className="field">Stored study value<select name="valueId" required><option value="">Choose a value</option>{values}</select></label><label className="field">Verdict<input name="verdict" minLength="2" maxLength="80" required placeholder="Acceptable"/></label><p className="small muted">A verdict cites the stored result and is signed as a separate record.</p><button className="btn primary" type="submit">Sign verdict</button></form></div><ul>{verdicts.length ? verdicts : <li className="muted">No signed verdicts recorded.</li>}</ul></section></section>;
+  return <section className="qms-config-page"><div className="page-heading"><div><p className="hero-eyebrow">Flight Maneuver · Quality system</p><h1>System QMS records</h1><p className="lede">Audits, controlled documents, supplier approvals, certifications, recorded quality study results, and the calibration log. Signatures and content hashes are checked by the Flight record verifier.</p></div></div><AIGovernance state={state} MES={MES}/><section className="panel"><div className="panel-head"><h2>Audits</h2><span className="pill">{(state.audits || []).length} records</span></div><form data-qms-record="audit"><div className="form-grid"><label className="field">Audit scope<input name="scope" maxLength="200" minLength="3" required placeholder="Internal process audit"/></label><label className="field wide">Findings<textarea name="findings" rows="3" required placeholder="One finding per line"></textarea></label></div><p className="small muted">The person who records a finding cannot close it. A different person signs each closure.</p><button className="btn primary" type="submit">Open audit</button></form>{audits.length ? audits : <p className="muted">No audits recorded.</p>}</section><ControlledDocumentBlock state={state} MES={MES}/><CalibrationLog state={state} MES={MES}/><div className="form-grid qms-record-columns"><section className="panel"><div className="panel-head"><h2>Certifications</h2><span className="pill">{(state.certifications || []).length}</span></div><form data-qms-record="certification"><label className="field">Certification statement<textarea name="statement" minLength="5" maxLength="300" required rows="3" placeholder="What this certification covers"></textarea></label><button className="btn primary" type="submit">Sign certification</button></form><ul>{certifications.length ? certifications : <li className="muted">No certifications recorded.</li>}</ul></section><section className="panel"><div className="panel-head"><h2>Supplier approvals</h2><span className="pill">{(state.supplierApprovals || []).length}</span></div><form data-qms-record="supplier"><label className="field">Supplier name<input name="supplier" minLength="2" maxLength="120" required/></label><button className="btn primary" type="submit">Sign supplier approval</button></form><ul>{suppliers.length ? suppliers : <li className="muted">No supplier approvals recorded.</li>}</ul></section></div><section className="panel"><div className="panel-head"><h2>Quality study values and verdicts</h2><span className="pill">The app records values; it does not calculate them.</span></div><div className="form-grid qms-record-columns"><form data-qms-record="quality-value"><label className="field">Study type<select name="kind"><option value="gage">Gage</option><option value="capability">Capability</option><option value="sampling">Sampling</option></select></label><label className="field">Computed value<input name="value" type="number" step="any" required/></label><label className="field">Study or characteristic name<input name="name" maxLength="80"/></label><button className="btn" type="submit">Store computed value</button></form><form data-qms-record="quality-verdict"><label className="field">Stored study value<select name="valueId" required><option value="">Choose a value</option>{values}</select></label><label className="field">Verdict<input name="verdict" minLength="2" maxLength="80" required placeholder="Acceptable"/></label><p className="small muted">A verdict cites the stored result and is signed as a separate record.</p><button className="btn primary" type="submit">Sign verdict</button></form></div><ul>{verdicts.length ? verdicts : <li className="muted">No signed verdicts recorded.</li>}</ul></section></section>;
 }
 
 const slackMark = () => <svg className="slack-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="#E01E5A" d="M5.1 15.2a2.1 2.1 0 1 1-2.1-2.1h2.1v2.1Zm1.1 0a2.1 2.1 0 0 1 4.2 0v5.3a2.1 2.1 0 0 1-4.2 0v-5.3Z"/><path fill="#36C5F0" d="M8.3 6.7a2.1 2.1 0 1 1 2.1-2.1v2.1H8.3Zm0 1.1a2.1 2.1 0 0 1 0 4.2H3a2.1 2.1 0 0 1 0-4.2h5.3Z"/><path fill="#2EB67D" d="M18.9 8.8a2.1 2.1 0 1 1 2.1 2.1h-2.1V8.8Zm-1.1 0a2.1 2.1 0 0 1-4.2 0V3.5a2.1 2.1 0 0 1 4.2 0v5.3Z"/><path fill="#ECB22E" d="M15.7 17.3a2.1 2.1 0 1 1-2.1 2.1v-2.1h2.1Zm0-1.1a2.1 2.1 0 0 1 0-4.2H21a2.1 2.1 0 0 1 0 4.2h-5.3Z"/></svg>;
