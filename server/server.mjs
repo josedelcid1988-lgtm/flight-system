@@ -928,6 +928,7 @@ export function createServer(options = {}) {
         const fn = host.resolveAction(action[1]);
         if (!fn) { await auditRefusal(404, 'no such action'); send(res, 404, { error: `No action named ${action[1]}.` }); return; }
         let body; try { body = await readJson(req); } catch (e) { if (e.status === 400 || e.status === 413) await auditRefusal(e.status, e.status === 413 ? 'request body over the size limit' : 'request body is not JSON'); throw e; }
+        if (!body || typeof body !== 'object' || Array.isArray(body)) { await auditRefusal(400, 'request body is not a JSON object'); send(res, 400, { error: 'Send the action as a JSON object with an args list.' }); return; }
         const args = Array.isArray(body.args) ? body.args : [];
         if (action[1] === 'MES.configureModelAdapter' && args[0]?.enabled === true) {
           const settingName = String(args[0]?.settingName || '');

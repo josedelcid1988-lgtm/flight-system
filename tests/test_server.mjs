@@ -428,6 +428,11 @@ try {
     const notJson = await api('POST', '/workspace/actions/MES.setPriority', { token, raw: true, body: `{"args":["${secret}"`, headers: { 'Content-Type': 'application/json', 'If-Match': before.etag } });
     assert.equal(notJson.status, 400);
     assert.deepEqual(await latest(), { action: 'MES.setPriority', status: 400, reason: 'request body is not JSON' });
+    for (const raw of ['null', '[1,2]', '"text"', '7']) {
+      const notObject = await api('POST', '/workspace/actions/MES.setPriority', { token, raw: true, body: raw, headers: { 'Content-Type': 'application/json', 'If-Match': before.etag } });
+      assert.equal(notObject.status, 400, `a ${raw} body is refused`);
+      assert.deepEqual(await latest(), { action: 'MES.setPriority', status: 400, reason: 'request body is not a JSON object' });
+    }
     const tooLarge = await api('POST', '/workspace/actions/MES.setPriority', { token, headers: { 'Content-Length': String(MAX_REQUEST_BYTES + 1), 'If-Match': before.etag } });
     assert.equal(tooLarge.status, 413);
     assert.deepEqual(await latest(), { action: 'MES.setPriority', status: 413, reason: 'request body over the size limit' });
@@ -466,8 +471,8 @@ try {
     finally { server.host.resolveAction = resolveAction; }
     assert.equal(thrown.status, 500);
     assert.deepEqual(await latest(), { action: 'MES.setPriority', status: 500, reason: 'the engine action failed; the server log holds the detail', reference: thrown.json.reference });
-    assert.equal((await refused()).length, count + 10, 'each refusal adds exactly one audit row');
-    assert.equal(JSON.stringify((await refused()).slice(0, 10)).includes(secret), false, 'no refusal row records the request arguments or the error text');
+    assert.equal((await refused()).length, count + 14, 'each refusal adds exactly one audit row');
+    assert.equal(JSON.stringify((await refused()).slice(0, 14)).includes(secret), false, 'no refusal row records the request arguments or the error text');
     assert.equal(server.store.getDoc('default').etag, before.etag, 'the refused actions leave the shared workspace unchanged');
     assert.equal(server.store.verifyAudit().ok, true, 'the audit chain still verifies');
   });
