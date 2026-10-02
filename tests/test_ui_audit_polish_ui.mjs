@@ -169,6 +169,19 @@ try {
     await page.locator('[data-archive-busy]').waitFor({ state: 'detached' });
     check('archived print and export are enabled again after a failure', await exportButton.isEnabled() && await printButton.isEnabled());
     check('the export failure is shown plainly', /WO-ARCH-1 could not be opened because the server did not answer/.test(await page.locator('.fr-trace').innerText()));
+    // A refused archived print or export names the next step by status, as the search does (#575): a server failure
+    // says to retry later, not to sign in again; an expired session says to sign in again.
+    const refuseExport = async status => {
+      await exportButton.click();
+      await page.locator('[data-archive-busy]').waitFor();
+      await page.evaluate(code => window.__archiveFetch.resolve({ ok: false, status: code, json: async () => ({}) }), status);
+      await page.locator('[data-archive-busy]').waitFor({ state: 'detached' });
+      return page.locator('[data-archive-note]').innerText();
+    };
+    const exportUnavailable = await refuseExport(503);
+    check('a refused archived export names the status and says to retry later, not to sign in', /could not be opened from the archive \(503\)\. The server could not answer\. Retry in a few minutes/.test(exportUnavailable) && !/Sign in again/.test(exportUnavailable), exportUnavailable);
+    const exportExpired = await refuseExport(401);
+    check('an archived export refused for an expired session says to sign in again', /could not be opened from the archive \(401\)\. Sign in again, then retry\./.test(exportExpired), exportExpired);
     // The busy line and a later failure stay visible when the search changes to one with no archived matches.
     await exportButton.click();
     await page.locator('[data-archive-busy]').waitFor();

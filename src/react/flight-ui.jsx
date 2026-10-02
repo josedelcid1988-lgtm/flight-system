@@ -668,7 +668,7 @@ function TraceSearch({ state, MES, initialQuery, onSearch, onReport, onRoute }) 
     setArchiveBusy({ orderId, kind });
     try {
       const response = await fetch(`${server.context.api}/archive/${encodeURIComponent(orderId)}/${kind}`, { headers: { Authorization: `Bearer ${server.token()}` } });
-      if (!response.ok) { tab?.close(); let error = ''; try { error = (await response.json()).error || ''; } catch {} setArchiveNote(`${orderId} could not be opened from the archive${error ? `: ${error}` : ` (${response.status})`}. Sign in again, then retry.`); return; }
+      if (!response.ok) { tab?.close(); let error = ''; try { error = (await response.json()).error || ''; } catch {} setArchiveNote(`${orderId} could not be opened from the archive${error ? `: ${error}` : ` (${response.status})`}. ${[401, 403].includes(response.status) ? 'Sign in again, then retry.' : response.status >= 500 ? 'The server could not answer. Retry in a few minutes; if it keeps failing, tell your Flight System administrator.' : 'Check the work order, then retry.'}`); return; }
       const url = URL.createObjectURL(await response.blob());
       if (tab) tab.location.href = url;
       else { const link = document.createElement('a'); link.href = url; link.download = `${orderId}-archive.json`; document.body.appendChild(link); link.click(); link.remove(); }
