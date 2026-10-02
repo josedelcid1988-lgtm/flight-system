@@ -345,6 +345,24 @@ check('an archive candidate holding a __proto__ key is refused, while a clean cl
   let rp = null, rq = null, threw = null;
   try { rp = runHist(() => MES.updateSkillDraft(hist, spc.draftId, JSON.parse(deepProto), 'A deeply nested body with the forbidden key.')); rq = runHist(() => MES.updateSkillDraft(hist, spc.draftId, JSON.parse(deepPlain), 'A deeply nested body without the forbidden key.')); } catch (e) { threw = e; }
   check('a deeply nested draft body is refused with the __proto__ message, and one without the key with a plain depth message, never a throw', !threw && rp && !rp.ok && /__proto__/.test(rp.message) && rq && !rq.ok && /nested too deeply/.test(rq.message)); }
+// #586: the depth refusal is measured without recursion before the body is hashed or signed. Between the depth plain
+// JSON.stringify accepts and the much smaller depth the recursive canonical hash survives, updateSkillDraft threw a
+// RangeError instead of refusing. Every depth in that band, and well below it, now gets the plain refusal and changes
+// nothing; a body at the 64-level limit still saves and verifies, and a deeply nested skill run input is refused too.
+{ const nested = depth => { let value = { x: 1 }; for (let n = 1; n < depth; n += 1) value = { a: value }; return value; };
+  const draft = () => hist.aiSkillDrafts.find(d => d.id === spc.draftId);
+  for (const depth of [65, 300, 2500, 3000, 3500, 4000]) {
+    const before = JSON.stringify(draft());
+    let r = null, threw = null;
+    try { r = runHist(() => MES.updateSkillDraft(hist, spc.draftId, nested(depth), 'A body nested past the depth limit.')); } catch (e) { threw = e; }
+    check(`a draft body nested ${depth} deep is refused with the plain depth message, never a throw, and the draft is unchanged`, !threw && r && !r.ok && /nested too deeply to save: more than 64 levels\. Flatten it to 64 levels or fewer/.test(r.message) && JSON.stringify(draft()) === before);
+  }
+  const atLimit = runHist(() => MES.updateSkillDraft(hist, spc.draftId, nested(64), 'A body nested exactly at the depth limit.'));
+  check('a draft body nested exactly 64 deep still saves, and every signature verifies', atLimit.ok && MES.validate(hist) && MES.verifyManifests(hist).ok);
+  const drafts = hist.aiSkillDrafts.length;
+  let rs = null, threwRun = null;
+  try { rs = runHist(() => MES.runSkill(hist, { skill: 'spc-chart-builder', values: [10.1, 10.2, 9.9], extra: nested(3000), reason: 'A skill run input nested past the depth limit.' })); } catch (e) { threwRun = e; }
+  check('a skill run input nested 3000 deep is refused with the plain depth message, never a throw, and no draft is added', !threwRun && rs && !rs.ok && /nested too deeply to save/.test(rs.message) && hist.aiSkillDrafts.length === drafts); }
 // #64: the calibration log is append-only. Retirement, not deletion, removes a tool from use: a retired
 // tool reads unusable at point of use and its entries stay in the signed log.
 check('there is no calibration delete command', MES.deleteCalibration === undefined && MES.removeCalibration === undefined && host.resolveAction('MES.deleteCalibration') === null);
