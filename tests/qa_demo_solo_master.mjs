@@ -182,7 +182,8 @@ async function flow(name, title, fn) {
 }
 
 async function signIn(username) {
-  await page.evaluate(() => { try { sessionStorage.removeItem('skyryse-mes-session-v1'); } catch {} }).catch(() => {});
+  // The demo keeps its session under its own key (D-41); clear both so the sign-in screen shows.
+  await page.evaluate(() => { try { for (const k of ['skyryse-mes-demo-session-v1', 'skyryse-mes-session-v1']) sessionStorage.removeItem(k); } catch {} }).catch(() => {});
   await page.goto(DEMO_URL, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#sk-username', { timeout: 15000 });
   check(`the sign-in screen for ${username} says DEMO, NOT FOR ACCEPTANCE`, await page.evaluate(() => document.body.innerText.includes('DEMO, NOT FOR ACCEPTANCE')));

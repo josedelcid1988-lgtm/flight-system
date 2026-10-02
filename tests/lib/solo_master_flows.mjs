@@ -822,7 +822,7 @@ const orderChanges = {
         await u.click('[data-action=pedigree-approve]');
         if (await u.dialogOpen()) { if (await u.page.locator('#dialog[open] [name=acknowledge]').count()) await u.fill('#dialog[open]', { acknowledge: true }); await u.submitDialog(); }
         if (i === 0 && (await u.order(id)).pedigreeChange) {
-          // D-46: after the first approval the demo tells one person they may give the second, not to find another discipline.
+          // D-55: after the first approval the demo tells one person they may give the second, not to find another discipline.
           const said = await u.toast(), panel = await u.page.locator('#main').innerText().catch(() => '');
           u.check('after the first pedigree approval the demo does not send the solo user to another discipline', !/different discipline/i.test(said + panel) && /in this demo the same person may give it/.test(said), said);
         }
@@ -842,7 +842,7 @@ const orderChanges = {
       for (const t of ['record', 'operations']) { if (await u.page.locator('#main [data-action=closure-decide]').count()) break; await u.orderTab(t); }
       const review = u.page.locator('#main [data-action=closure-decide]').first();
       if (!await review.count()) throw new Error('no Review closure control for the requester: ' + (await u.page.locator('#main .closure-pending').innerText().catch(() => '')).slice(0, 200));
-      // D-47: the banner next to Review closure does not tell the requester to find a different person.
+      // D-56: the banner next to Review closure does not tell the requester to find a different person.
       const banner = await u.page.locator('#main').innerText().catch(() => '');
       u.check('the pending closure banner gives the requester the solo next step', !/approval from a different person/i.test(banner) && /in this demo the requester may review it/.test(banner), banner.slice(0, 200));
       await review.click(); await u.settle();
@@ -957,7 +957,7 @@ const qms = {
     u.check('the calibration entry is signed by master with a SHA-256 hash', JSON.stringify(entry).includes('ACCT-master') && /"[a-f0-9]{64}"/.test(JSON.stringify(entry)), JSON.stringify(entry).slice(0, 400));
     await u.step('open an audit with a finding', async () => {
       const f = qmsForm(u, 'scope');
-      // D-49: the help text under the form does not tell the writer another person must close the finding.
+      // D-58: the help text under the form does not tell the writer another person must close the finding.
       const help = await f.innerText().catch(() => '');
       u.check('the audit form tells the solo writer they may close the finding', !/A different person signs/.test(help) && /may also sign it closed/.test(help), help.slice(-200));
       await f.locator('[name=scope]').fill('Receiving inspection process audit');
