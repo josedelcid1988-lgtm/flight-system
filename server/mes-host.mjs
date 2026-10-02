@@ -154,7 +154,7 @@ export function createHost(indexPath, html = fs.readFileSync(indexPath, 'utf8'))
     'MES.completeAssignment', 'MES.pingAssignment', 'MES.addOrderOperation', 'MES.removeOrderOperation',
     'MES.approveSequenceChange', 'MES.setMaterialLot', 'MES.releaseApproval', 'MES.approveRelease', 'MES.approveECR',
     'MES.approveEngineeringChange', 'MES.advance', 'MES.setMaterial', 'MES.setPriority', 'MES.completeOperation',
-    'MES.closeOrder', 'MES.addOrder', 'MES.importWorkOrders', 'MES.addAdhocOrder', 'MES.splitOrder', 'MES.splitRequestOrder',
+    'MES.closeOrder', 'MES.sendBackToBuilding', 'MES.addOrder', 'MES.importWorkOrders', 'MES.addAdhocOrder', 'MES.splitOrder', 'MES.splitRequestOrder',
     'MES.requestPedigreeChange', 'MES.approvePedigreeChange', 'MES.peerReviewMasterWI', 'MES.dispositionTicket',
     'MES.addNote', 'MES.createTicket', 'MES.resolveTicket', 'MES.returnDisposition', 'MES.closeSplitRequest',
     'MES.rejectEngineeringChange', 'MES.rejectSequenceChange', 'MES.rejectPedigreeChange', 'MES.returnRelease',

@@ -72,15 +72,15 @@ ok('relabeling the box 22 signature meaning fails verification (Codex r416191278
 // Each case runs on a fresh copy (window.__C). prepare() puts the copy in the state the action needs, as the QA Manager.
 const CASES=[
   {name:'engineering change submit',cap:'submit-ecr',act:"MES.submitEngineeringChange(c,id,{quantity:3,reason:'More units'})"},
-  {name:'ECR approval',cap:'approve-wo',prep:'building',prepEc:true,act:'MES.approveECR(c,id)'},
-  {name:'engineering change QA re-release',cap:'approve-wo',prep:'building',prepEc:true,ecrDone:true,act:'MES.approveEngineeringChange(c,id)'},
+  {name:'ECR approval',cap:'approve-wo',prepEc:true,act:'MES.approveECR(c,id)'},
+  {name:'engineering change QA re-release',cap:'approve-wo',prepEc:true,ecrDone:true,act:'MES.approveEngineeringChange(c,id)'},
   {name:'add an operation',cap:'adjust-wo',act:"MES.addOrderOperation(c,id,{classification:'Manufacturing',title:'Added after FAIR',description:'Added.',buyoffType:'Technician',stepList:[{title:'Step',instruction:'Do it.'}],position:1})"},
   {name:'add a rework operation',cap:'adjust-wo',act:"MES.addOrderOperation(c,id,{classification:'Rework',title:'Rework after FAIR',description:'Rework.',buyoffType:'Technician',stepList:[{title:'Step',instruction:'Rework it.'}],position:1})"},
   {name:'add a standard rework',cap:'adjust-wo',act:"MES.addStandardRework(c,id,{templateId:(MES.reworkLibrary(c).find(t=>t.status==='Approved')||{id:'none'}).id,position:1})"},
   {name:'remove an operation',cap:'adjust-wo',act:"MES.removeOrderOperation(c,id,o.operations[0].id,'Not needed')"},
   {name:'edit an operation instruction',cap:'adjust-wo',act:"MES.editOrderOperation(c,id,o.operations[0].id,{description:'Edited after the FAIR.'})"},
-  {name:'release a sequence change',cap:'approve-wo',prep:'building',prepSeq:true,act:'MES.approveSequenceChange(c,id)'},
-  {name:'reject a sequence change',cap:'approve-wo',prep:'building',prepSeq:true,act:"MES.rejectSequenceChange(c,id,'Not needed','reject')"},
+  {name:'release a sequence change',cap:'approve-wo',prepSeq:true,act:'MES.approveSequenceChange(c,id)'},
+  {name:'reject a sequence change',cap:'approve-wo',prepSeq:true,act:"MES.rejectSequenceChange(c,id,'Not needed','reject')"},
   {name:'link an operation to an NC',cap:'adjust-wo',act:"MES.linkOpToTicket(c,id,o.operations[0].id,(o.tickets[0]||{id:'NC-0000'}).id)"},
   {name:'assign a serial number',cap:'operate',prepVoid:true,act:'MES.assignSerial(c,id)'},
   {name:'void a serial number',cap:'operate',act:"MES.voidSerial(c,id,MES.orderSerials(c,o)[0].serial,'Damaged tag')"},
@@ -90,7 +90,9 @@ const LOCK=await run(()=>MES.FAIR_LOCK_MESSAGE);
 ok('the lock refusal says what blocks and who can change it',LOCK==="This work order's FAIR is signed. Only a QA Manager can change it.",LOCK);
 const prepare=async(c,signed=true)=>{await as('uqm');const r=await run(([id,c,signed])=>{const C=structuredClone(window.__S),o=C.orders.find(x=>x.id===id);window.__C=C;
     if(!signed){o.fair.status='Open';o.fair.verified=null;o.fair.approved=null;delete o.fair.reviewed;}
-    if(c.prep==='building')o.status='Building';
+    // WO-10004 waits in QA review, where main's QA freeze (#542) refuses every change first. The lock is about an order
+    // Quality has sent back to Building, so every case starts there.
+    o.status='Building';
     if(c.prepEc){o.operations.push({...structuredClone(o.operations[o.operations.length-1]),id:'op-900',title:'Open op',done:false,buyoff:null,evidence:[],stepChecks:{},stepPerformers:[]});const s=MES.submitEngineeringChange(C,id,{instructions:[{operationId:'op-900',description:'Changed open op.'}],reason:'Clarify'});if(!s.ok)return s;}
     if(c.prepSeq){const s=MES.addOrderOperation(C,id,{classification:'Manufacturing',title:'Seq',description:'Seq.',buyoffType:'Technician',stepList:[{title:'S',instruction:'Do.'}],position:o.operations.length});if(!s.ok)return s;}
     if(c.prepVoid){const s=MES.voidSerial(C,id,MES.orderSerials(C,o)[0].serial,'Prep');if(!s.ok)return s;}
@@ -126,15 +128,15 @@ r=await run(([id])=>MES.requestOrderClosure(window.__C,id,{reason:'Obsolete',not
 ok('a closure request is still open to the floor on a FAIR-locked order',r.ok,JSON.stringify(r));
 
 // ---- separation of duties still applies to a QA Manager ----
-await prepare({prep:'building',prepEc:true});
+await prepare({prepEc:true});
 r=await run(([id])=>{const C=window.__C,ch=C.orders.find(x=>x.id===id).engineeringChanges.at(-1);return {needsECR:ch.status==='Awaiting ECR',ecr:ch.status==='Awaiting ECR'?MES.approveECR(C,id):null,qa:MES.approveEngineeringChange(C,id)};},[ID]);
 ok('a QA Manager cannot approve their own engineering change on a FAIR-locked order',(r.needsECR?!r.ecr.ok&&/cannot approve their own engineering change/.test(r.ecr.message):true)&&!r.qa.ok,JSON.stringify(r));
-await prepare({prep:'building',prepSeq:true});
+await prepare({prepSeq:true});
 r=await run(([id])=>MES.approveSequenceChange(window.__C,id),[ID]);
 ok('a QA Manager cannot release their own sequence change on a FAIR-locked order',!r.ok&&/can’t release it/.test(r.message),JSON.stringify(r));
 
 // ---- Jose's decision: an approved engineering change on a signed FAIR reopens it automatically ----
-await prepare({prep:'building',prepEc:true});
+await prepare({prepEc:true});
 await as('qmb');
 r=await run(([id])=>{const C=window.__C,o=C.orders.find(x=>x.id===id),ch=o.engineeringChanges.at(-1);const ecr=ch.status==='Awaiting ECR'?MES.approveECR(C,id):{ok:true};const a=MES.approveEngineeringChange(C,id);const log=(o.history||o.activity||[]).map(e=>typeof e==='string'?e:(e.action||'')).join('\n');return {ecr,a,st:o.fair.status,verified:o.fair.verified,approved:o.fair.approved,reviewed:o.fair.reviewed===undefined,ia:o.fair.impactAssessments===undefined,woRev:o.woRev,gap:MES.fairRevisionGap(o),logged:/FAIR .* reopened automatically: engineering change .* applied after the FAIR was signed at WO Rev Baseline\. A new FAI is signed against WO Rev A\./.test(log)||JSON.stringify(o).includes('reopened automatically'),valid:MES.validate(C),mv:MES.verifyManifests(C).ok,msg:a.message};},[ID]);
 ok('an approved engineering change on a signed FAIR reopens the FAIR automatically, with a recorded reason',r.ecr.ok&&r.a.ok&&r.st==='Open'&&r.verified===null&&r.approved===null&&r.reviewed&&r.ia&&r.woRev==='A'&&r.logged&&/The FAIR was reopened/.test(r.msg),JSON.stringify(r));
@@ -144,7 +146,7 @@ r=await run(([id])=>MES.addOrderOperation(structuredClone(window.__C),id,{classi
 ok('a reopened FAIR no longer locks the order for the floor',r.message!==LOCK,JSON.stringify(r));
 
 // ---- a second QA Manager rolls the revision; closure waits for the impact assessment ----
-await prepare({prep:'building',prepSeq:true});
+await prepare({prepSeq:true});
 await as('qmb');
 r=await run(([id])=>{const C=window.__C,o=C.orders.find(x=>x.id===id);const a=MES.approveSequenceChange(C,id);return {a,woRev:o.woRev,signedAt:MES.fairWoRev(o),gap:MES.fairRevisionGap(o),valid:MES.validate(C)};},[ID]);
 ok('a second QA Manager releases the sequence change and the work order rolls to Rev A',r.a.ok&&r.woRev==='A'&&r.signedAt==='Baseline'&&r.valid,JSON.stringify(r));
