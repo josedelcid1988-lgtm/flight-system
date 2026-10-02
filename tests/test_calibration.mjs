@@ -574,6 +574,8 @@ const tkRun = host.withAccount(splitAdmin, () => {
   const template = tkState.orders.flatMap(o => o.tickets || [])[0];
   const createdAt = new Date(Date.now() - 3600000).toISOString();
   const tk = { ...structuredClone(template), id: 'NC-9901', operationId: parent.operations[0].id, status: 'Resolved', createdAt, resolution: 'Reworked and reinspected', resolvedAt: new Date().toISOString() };
+  // An ordinary disposition approval: a Rework or Repair plan closes only through a signed QA release (#581).
+  delete tk.reworkPlan;
   tk.manifest = MES.signManifest(tkState, 'NC disposition approval', { orderId: tkOrderId, ticketId: tk.id, operationId: tk.operationId, dispo: tk.dispo, resolution: tk.resolution, defect: tk.defect || null, affected: tk.affected || null }, tk.resolvedAt);
   parent.tickets = [...(parent.tickets || []), tk];
   parent.splitRequests = [{ id: 'SPR-TEST-2', ticketId: tk.id, quantity: 1, of: 3, serials: [], reason: 'Split the affected unit', status: 'Open', requestedBy: { name: 'Flight Master', role: 'Master Access', credentialId: 'MA-1' }, requestedAt: new Date().toISOString() }];
