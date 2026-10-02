@@ -31,7 +31,7 @@ const directives = csp => Object.fromEntries(String(csp || '').split(';').map(pa
   ok('connect origins: a default port and capitals in the host are stored as the origin', JSON.stringify(connectSources('https://Skyryse.Okta.com:443 http://mirror.example:80')) === JSON.stringify(['https://skyryse.okta.com', 'http://mirror.example']));
   ok('page policy: a frame may show only this server and blob: URLs the page made (the training certificate preview)', page['frame-src']?.join(' ') === "'self' blob:");
   ok('connect origins: spaces and commas separate, duplicates and a trailing slash collapse', JSON.stringify(connectSources('https://a.example, https://a.example/ wss://b.example:8443')) === JSON.stringify(['https://a.example', 'wss://b.example:8443']));
-  for (const bad of ['*', 'https:', 'https://a.example/path', 'https://a.example?x=1', 'https://a.example#x', 'https://user:pw@a.example', 'javascript:alert(1)', 'data:', 'a.example', "'unsafe-inline'"]) {
+  for (const bad of ['*', 'https:', 'https://a.example/path', 'https://a.example?x=1', 'https://a.example#x', 'https://user:pw@a.example', 'https://*', 'http://*', 'wss://*', 'https://*:443', 'https://*.okta.com', 'javascript:alert(1)', 'data:', 'a.example', "'unsafe-inline'"]) {
     let error = null; try { connectSources(bad); } catch (e) { error = e; }
     ok(`connect origins: "${bad}" is refused with what to write instead`, !!error && /not an origin/.test(error.message) && /https:\/\/skyryse\.okta\.com/.test(error.message), error?.message);
   }
