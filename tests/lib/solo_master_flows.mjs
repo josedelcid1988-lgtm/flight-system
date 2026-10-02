@@ -157,7 +157,7 @@ async function releaseSequence(u, id) {
 
 // ---------- workflows ----------
 const workOrder = {
-  name: 'wo', title: 'Work order: WI to build, buy-offs, close, stock, NetSuite',
+  name: 'wo', title: 'Work order: WI to build, buy-offs, QA send back, close, stock, NetSuite',
   async run(u) {
     const id = await u.step('create a work order from master WI MWI-0004', () => createOrderFromWI(u, 'MWI-0004|A', { quantity: 2, fai: false }));
     await u.step('issue to kitting', () => issueToKitting(u, id));
@@ -169,6 +169,30 @@ const workOrder = {
     u.check('manufacturing, tooling and inspection buy-offs all recorded', ops.length >= 6 && ops.some(o => o.inspection), JSON.stringify(ops.map(o => o.title)));
     u.check('every buy-off carries a SHA-256 signature manifest', ops.every(o => /^[a-f0-9]{64}$/.test(o.buyoff?.manifest?.hash || '')), JSON.stringify(ops.map(o => o.buyoff?.manifest?.hash)));
     await u.step('send to Quality', () => sendToQuality(u, id));
+    // QA review freezes the order (#542): a change from the work order list is refused with the freeze text and changes
+    // nothing; Quality sends it back to Building with a signed rationale, and the order goes to QA again.
+    await u.step('in QA review a priority change is refused and changes nothing', async () => {
+      await u.nav('orders');
+      const control = u.page.locator(`[data-priority-order="${id}"]`).first();
+      if (!await control.count()) throw new Error('no priority control for ' + id + ' on the work order list');
+      const before = (await u.order(id)).priority, other = before === 'High' ? 'Normal' : 'High';
+      await control.selectOption(other); await u.wait(400);
+      const after = (await u.order(id)).priority, said = await u.toast();
+      if (after !== before || !/in QA review\. Ask Quality to send it back to Building/.test(said)) throw new Error(`priority ${before} -> ${after}; toast: ${said}`);
+    });
+    await u.step('Quality sends it back to Building with a signed rationale', async () => {
+      await u.openOrder(id); await u.orderTab('operations');
+      await u.click('[data-action=send-back]');
+      if (!(await u.dialogOpen())) throw new Error('the send back dialog did not open: ' + await u.toast());
+      await u.fill('#dialog[open]', { rationale: 'Torque stripe missing on the J3 connector. Apply it and resubmit.' });
+      await u.submitDialog('Send back to Building');
+      const o = await u.order(id), back = (o.sendBacks || []).at(-1);
+      if (o.status !== 'Building' || !back) throw new Error(`not sent back: ${o.status}; ` + await u.toast());
+      if (!/^[a-f0-9]{64}$/.test(back.manifest?.hash || '')) throw new Error('the send back has no SHA-256 signature manifest: ' + JSON.stringify(back).slice(0, 200));
+      const banner = await u.page.locator('#main .send-back-banner').first().textContent().catch(() => '');
+      if (!/Sent back by QA: Torque stripe missing on the J3 connector/.test(banner)) throw new Error('no Sent back by QA banner: ' + banner);
+    });
+    await u.step('send to Quality again after the send back', () => sendToQuality(u, id));
     await u.step('quality review and close', () => qualityReviewAndClose(u, id));
     const lot = await u.step('move to inventory', () => stockOrder(u, id, 'FG-SOLO-01'));
     await u.step('NetSuite payload: mark posted', async () => {
