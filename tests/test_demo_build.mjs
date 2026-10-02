@@ -198,7 +198,9 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  let g=await closedState();
  ok('after a reload the browser is still closed, with no sign-in form and nothing to press',g.gate&&g.boot&&!g.login&&g.inputs===0,JSON.stringify(g));
  for(const who of ['ops1','mlee','qa2']){
-  await p.evaluate(u=>sessionStorage.setItem('skyryse-mes-session-v1',u),who);await p.reload();await p.waitForTimeout(800);
+  await p.evaluate(u=>sessionStorage.setItem('skyryse-mes-session-v1',u),who);await p.reload();
+  // The ended session is logged once the page has loaded; wait for that entry, not a fixed time, before the next reload.
+  await p.waitForFunction(u=>!!document.getElementById('sk-legacy-review')&&JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').some(e=>e.type==='signout'&&e.username===u&&/older demo build/.test(e.reason||'')),who,{timeout:15000}).catch(()=>{});
   g=await closedState();
   ok(`a session of ${who} is ended on a closed browser, a QA Manager or Master Access account included`,g.gate&&g.session===null&&g.user===null,JSON.stringify(g));}
  {const ends=await p.evaluate(()=>JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').filter(e=>e.type==='signout'&&/older demo build/.test(e.reason||'')).map(e=>e.username));
@@ -273,21 +275,19 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  const H={salt:'01',hash:'ecad7597c83a96d133e45f9e9d271cbb0d1815dbae29b38b5148be7822799576'};
  const posts=[];await ctx.route(/mirror-full\.test|\/api\/v1\/writes/,route=>{try{posts.push(...(JSON.parse(route.request().postData()||'{}').records||[]));}catch(e){}route.fulfill({status:500,contentType:'application/json',body:'{"ok":false}'});});
  await ctx.addInitScript(H=>{window.SK_MIRROR={url:'http://mirror-full.test',token:'full-token',batchSize:50};const real=Storage.prototype.setItem;
-  Storage.prototype.setItem=function(k,v){if(this===window.localStorage&&k==='skyryse-mes-legacy-demo-review-v1')throw new DOMException('full','QuotaExceededError');return real.call(this,k,v);};
-  },H);
- // The accounts are seeded by a page of their own, closed before any page of the app opens, and every page waits on a
- // plain file of the same origin until the seed has reached it. A page that writes as it starts can have that write
- // reach storage long after a later page's writes, and overwrite them.
- const seed=await ctx.newPage();await seed.goto('file://'+FIXTURES+BLANK);
- await seed.evaluate(H=>localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify({users:[{username:'ops9',displayName:'Ops Nine',...H,role:'ops',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'mlee',displayName:'Morgan Lee',...H,role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'}]})),H);
- await seed.close();
- const seeded=async pg=>{await pg.goto('file://'+FIXTURES+BLANK);await pg.waitForFunction(()=>!!localStorage.getItem('skyryse-mes-auth-v1'),null,{timeout:20000});};
+  Storage.prototype.setItem=function(k,v){if(this===window.localStorage&&k==='skyryse-mes-legacy-demo-review-v1')throw new DOMException('full','QuotaExceededError');return real.call(this,k,v);};},H);
+ // The accounts are seeded once, by a page that then closes. A seed written from every page's init script could land
+ // late from one tab and replace the account list after the leftovers were added.
+ {const s=await ctx.newPage();s.on('pageerror',e=>errs.push(e.message));
+  await s.addInitScript(H=>{if(localStorage.getItem('seeded'))return;localStorage.setItem('seeded','1');
+   localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify({users:[{username:'ops9',displayName:'Ops Nine',...H,role:'ops',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'mlee',displayName:'Morgan Lee',...H,role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'}]}));},H);
+  await s.goto('file://'+FIXTURES+'publish.html');await s.waitForFunction(()=>!document.getElementById('sk-login').hidden,null,{timeout:20000});await s.close();}
  // A page already open on the sign-in screen (an active signed-in tab would rewrite shared storage from its own copy).
- const open=await ctx.newPage();open.on('pageerror',e=>errs.push(e.message));await seeded(open);
- await open.goto('file://'+FIXTURES+'publish.html');await open.waitForFunction(()=>!document.getElementById('sk-login').hidden,null,{timeout:20000});
+ const open=await ctx.newPage();open.on('pageerror',e=>errs.push(e.message));
+ await open.goto('file://'+FIXTURES+'publish.html');await open.waitForFunction(()=>!document.getElementById('sk-login').hidden&&/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||''),null,{timeout:20000});
  // The leftovers are written by the finding page itself before it loads (a write from another tab arrives asynchronously).
  const leftovers=()=>{if(sessionStorage.getItem('left'))return;sessionStorage.setItem('left','1');const a=JSON.parse(localStorage.getItem('skyryse-mes-auth-v1'));if(!a.users.some(u=>u.username==='master')){a.users.push({username:'master',displayName:'Master Access',salt:'00',hash:'f'.repeat(64),role:'admin',createdAt:'2026-09-17T00:00:00.000Z',createdBy:'demo build'});localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify(a));localStorage.setItem('skyryse-mes-sync-queue-v1',JSON.stringify([{clientWriteId:'old-demo-w',storeKey:'skyryse-mes-work-order-qa100-v1',entityType:'order',entityId:'WO-10009',operation:'upsert',payloadJson:'{}'},{clientWriteId:'prod-w',storeKey:'skyryse-mes-work-order-v1',entityType:'order',entityId:'WO-1',operation:'upsert',payloadJson:'{}'}]));}};
- const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));await seeded(p);await p.addInitScript(leftovers);
+ const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));await p.addInitScript(leftovers);
  await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(2500);
  const f1=await p.evaluate(()=>({gate:(document.getElementById('sk-legacy-review')||{}).textContent||null,stored:localStorage.getItem('skyryse-mes-legacy-demo-review-v1'),users:JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.map(u=>u.username),queue:JSON.parse(localStorage.getItem('skyryse-mes-sync-queue-v1')||'[]').map(x=>x.clientWriteId),ev:JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').filter(e=>/^legacy-demo-/.test(e.type))}));
  ok('review record refused: nothing is removed, the page closes and says to free storage, and the finding is logged',!!f1.gate&&/Browser storage is full/.test(f1.gate)&&f1.stored===null&&f1.users.includes('master')&&f1.queue.includes('old-demo-w')&&f1.ev.some(e=>e.type==='legacy-demo-found'&&e.reviewSaved===false)&&!f1.ev.some(e=>e.type==='legacy-demo-removed'),JSON.stringify(f1));
@@ -297,7 +297,7 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  const o=await open.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),login:!document.getElementById('sk-login').hidden}));
  ok('review record refused: a tab already open is told and closes, its sign-in form gone',o.gate&&!o.login,JSON.stringify(o));
  // Every later load finds the same leftovers, since nothing was removed, and closes again.
- await p.reload();await p.waitForTimeout(900);
+ await p.reload();await p.waitForFunction(()=>!!document.getElementById('sk-legacy-review'),null,{timeout:15000}).catch(()=>{});
  {const l=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),users:JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.map(u=>u.username)}));
  ok('review record refused: a later load finds the leftovers again and closes',l.gate&&l.users.includes('master'),JSON.stringify(l));}
  await ctx.close();}
