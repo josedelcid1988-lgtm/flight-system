@@ -256,10 +256,13 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  await p.waitForFunction(()=>sessionStorage.getItem('reloadedForReview')==='1',null,{timeout:10000}).catch(()=>{});
  ok('an already open tab reloads when another tab records the review',await p.evaluate(()=>sessionStorage.getItem('reloadedForReview')==='1').catch(()=>false));
  // Once the record has reached the browser's copy, the tab's next load is closed and its session ends. (This harness
- // can lose a write made milliseconds before the same page reloads, which a write from another tab never is.)
- await p.waitForTimeout(6000);
- await p.evaluate(v=>{if(!localStorage.getItem('skyryse-mes-legacy-demo-review-v1'))localStorage.setItem('skyryse-mes-legacy-demo-review-v1',v);},v);await p.waitForTimeout(3000);
- await p.reload();await p.waitForTimeout(900);
+ // can lose a write made milliseconds before the same page reloads, which a write from another tab never is.) The tab
+ // passes through the blank page of the same origin, which keeps the tab's session, and the record is written there if
+ // it was lost and confirmed in storage before the app loads again (#556). The app is read once it has decided.
+ await p.goto('file://'+FIXTURES+BLANK);
+ await p.evaluate(v=>{if(!localStorage.getItem('skyryse-mes-legacy-demo-review-v1'))localStorage.setItem('skyryse-mes-legacy-demo-review-v1',v);},v);
+ await p.waitForFunction(()=>!!localStorage.getItem('skyryse-mes-legacy-demo-review-v1'),null,{timeout:20000});
+ await p.goto('file://'+FIXTURES+'publish.html');await p.waitForFunction(()=>!!document.getElementById('sk-legacy-review')||!!(window.skAuth&&skAuth.user()),null,{timeout:20000}).catch(()=>{});
  const open=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),user:window.skAuth&&skAuth.user()&&skAuth.user().username}));
  ok('that tab is then closed and its Operations session ends',open.gate&&!open.user,JSON.stringify(open));
  await ctx.close();}
