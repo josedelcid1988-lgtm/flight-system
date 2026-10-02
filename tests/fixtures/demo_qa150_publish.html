@@ -4350,13 +4350,13 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const pushIdsValid = op => !plain(op?.atp) || !Array.isArray(op.atp.pushes) || (recordIdsUnique(op.atp.pushes) && recordCountersValid(op.atp, ['PUSH'], [op.atp.pushes]));
   const recordIdsValid = state => RECORD_ID_LISTS.every(([key]) => !Array.isArray(state[key]) || recordIdsUnique(state[key])) && recordCountersValid(state, RECORD_ID_LISTS.map(([, prefix]) => prefix), RECORD_ID_LISTS.map(([key]) => state[key])) &&
     (Array.isArray(state.orders) ? state.orders : []).every(order => (Array.isArray(order?.operations) ? order.operations : []).every(pushIdsValid));
-  // A workspace saved with repeated ids (#585) keeps its first record under each id; each later repeat gets a new
-  // id from the mark, so every id names one record. Then the marks are set from the highest ids held.
+  // A workspace saved with repeated ids (#585) keeps its first record under each id; each later repeat, whatever its
+  // old form, gets a new id in the list's format from the mark, so every id names one record. Then the marks are set from the highest ids held.
   // Keeps only the prefixes a holder may carry, each a whole number of 0 or more, so repair never leaves a mark that
   // validation refuses.
   const normalizeRecordCounters = (holder, prefixes) => { if (holder.idCounters === undefined) return; const kept = {}; if (plain(holder.idCounters)) for (const prefix of prefixes) { const value = holder.idCounters[prefix]; if (Number.isSafeInteger(value) && value >= 0) kept[prefix] = value; } holder.idCounters = kept; };
   function repairRecordIds(state) {
-    const renumber = (holder, prefix, list, pad) => { if (!Array.isArray(list)) return; markRecordIds(holder, prefix, list); const seen = new Set(); list.forEach(item => { if (!plain(item) || typeof item.id !== 'string') return; if (seen.has(item.id) && recordIdNumber(item.id, prefix)) item.id = nextRecordId(holder, prefix, list, pad); seen.add(item.id); }); };
+    const renumber = (holder, prefix, list, pad) => { if (!Array.isArray(list)) return; markRecordIds(holder, prefix, list); const seen = new Set(); list.forEach(item => { if (!plain(item) || typeof item.id !== 'string') return; if (seen.has(item.id)) item.id = nextRecordId(holder, prefix, list, pad); seen.add(item.id); }); };
     normalizeRecordCounters(state, RECORD_ID_LISTS.map(([, prefix]) => prefix));
     RECORD_ID_LISTS.forEach(([key, prefix]) => renumber(state, prefix, state[key], 4));
     // Every ATP push list with a stored mark, or with a repeated id, is normalized; a list with neither is left

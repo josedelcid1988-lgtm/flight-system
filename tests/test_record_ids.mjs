@@ -124,6 +124,8 @@ await check('validation refuses a repeated id in any of the four lists and a mar
     'two assignments share an id': s => { s.assignments[1].id = s.assignments[0].id; },
     'two work order requests share an id': s => { s.woRequests[1].id = s.woRequests[0].id; },
     'two pushes on one operation share an id': s => { atpOp(s).op.atp.pushes = pushes(['PUSH-1', 'PUSH-1']); },
+    'two notices share an id in an older form': s => { s.notices[0].id = 'legacy'; s.notices[1].id = 'legacy'; },
+    'two pushes share an id in an older form': s => { atpOp(s).op.atp.pushes = pushes(['legacy', 'legacy']); },
     'the notice mark is below a notice id': s => { s.idCounters = { ...s.idCounters, NTC: 1 }; },
     'the push mark is below a push id': s => { const { op } = atpOp(s); op.atp.pushes = pushes(['PUSH-3']); op.atp.idCounters = { PUSH: 2 }; },
     'a mark is negative': s => { s.idCounters = { ...s.idCounters, NTC: -1 }; },
