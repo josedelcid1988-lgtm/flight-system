@@ -9,6 +9,10 @@ import {spawnSync} from 'child_process';
 const TESTS=decodeURI(new URL('.',import.meta.url).pathname);
 const FIXTURES=process.env.FS_FIXTURES_DIR?process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):TESTS+'fixtures/';
 const ROOT=path.resolve(TESTS,'..');
+// A wait that times out ends the run before any check reports; name the line it timed out on so the suite log says
+// which step it was (the runner prints only lines that start with FAIL or name an error).
+process.on('uncaughtException',e=>{const at=String(e&&e.stack||'').split('\n').find(l=>l.includes('test_demo_build.mjs'))||'';
+ console.log('  FAIL uncaught '+(e&&e.name)+': '+String(e&&e.message||e).split('\n')[0]+' at '+at.trim().replace(/^.*\/tests\//,'tests/'));process.exit(1);});
 const {buildDemo,demoLiteralLines,deviationsDoc,OUTPUTS,PRODUCTION_FIXTURE}=await import(path.join(ROOT,'tools/build-demo.mjs'));
 const {DEVIATIONS,PILOT_SEATS}=await import(path.join(ROOT,'tools/demo/deviations.mjs'));
 const fails=[];const ok=(w,c,m='')=>{console.log((c?'  ok   ':'  FAIL ')+w+(c?'':' -> '+m));if(!c)fails.push(w);};
