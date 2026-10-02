@@ -136,6 +136,25 @@ try {
   check(/The day changed\. Today's Big Three is shown now\./.test(await quality.locator('body').innerText()), 'the refusal says the day changed and today is shown');
   check(await panel(quality).locator('[data-action="big3-decide"]').first().getAttribute('data-date') === today(), 'the redrawn panel carries today');
 
+  // Codex review on #360: a click across midnight UTC acts on the day the guard checked, not on a second clock read.
+  // The first ISO read during the click (the guard) sees today; every later one sees tomorrow.
+  const rollover = await quality.evaluate(date => {
+    const tomorrow = new Date(`${date}T00:00:00Z`); tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+    const next = tomorrow.toISOString().slice(0, 10), before = JSON.stringify(state.planner.days.quality[next] || null);
+    const button = document.querySelector('#flight-react-island [data-big3-variant="hangar"] [data-action="big3-decide"][data-index="2"][data-decision="accept"]');
+    if (!button) return { missing: true };
+    const RealDate = Date; let reads = 0;
+    class RolloverDate extends RealDate {
+      constructor(...args) { super(...(args.length ? args : [RealDate.now()])); this.isNow = !args.length; }
+      toISOString() { return this.isNow && ++reads > 1 ? new RealDate(this.getTime() + 86400000).toISOString() : super.toISOString(); }
+      static now() { return RealDate.now(); }
+    }
+    window.Date = RolloverDate;
+    try { button.click(); } finally { window.Date = RealDate; }
+    return { today: state.planner.days.quality[date].big3[2].status, tomorrowUnchanged: JSON.stringify(state.planner.days.quality[next] || null) === before };
+  }, today());
+  check(!rollover.missing && rollover.today === 'accepted' && rollover.tomorrowUnchanged, `an Accept clicked across midnight acts on the day the guard checked and leaves the next day unchanged (${JSON.stringify(rollover)})`);
+
   // Codex review on #360: a saved task whose record was resolved shows as resolved, with no actions offered.
   const resolvedRef = await quality.evaluate(date => { const slot = state.planner.days.quality[date].big3[2], prior = slot.ref.id; slot.ref.id = 'BLK-99999'; view = 'home'; render(); return prior; }, today());
   const resolvedSlot = panel(quality).locator('.big3-slot').nth(2);
