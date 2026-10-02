@@ -3276,8 +3276,11 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const credOf = by => (plain(by) && typeof by.credentialId === 'string') ? by.credentialId : null;
   // The signed form also binds the WI peer review and QA review the buy-off was checked against, and the persistent
   // contributor list with its completeness flag, so the separation-of-duties evidence cannot be rewritten after approval.
+  // A buy-off signed with the signer but before the WI reviews and contributor list were bound (no wiReview in its stored
+  // subject) is rebuilt without them; wi === undefined selects that form.
   const pfmeaSafetySubject = (t, note, signed, wi) => { const who = signed ? snapOf : credOf; return { pfmea: t.id, wi: `${t.wiId} Rev ${t.wiRevision}`, note,
-    ...(signed ? { part: t.partNumber ?? null, title: t.title ?? null, wiReview: plain(wi) ? { peer: snapOf(wi.peerReview), qa: snapOf(wi.qaReview) } : null,
+    ...(signed ? { part: t.partNumber ?? null, title: t.title ?? null } : {}),
+    ...(signed && wi !== undefined ? { wiReview: plain(wi) ? { peer: snapOf(wi.peerReview), qa: snapOf(wi.qaReview) } : null,
       contributors: Array.isArray(t.contributors) ? [...t.contributors].sort() : null, contributorsComplete: t.contributorsComplete === true } : {}),
     ...(signed ? { signedBy: plain(signed.by) ? { credentialId: signed.by.credentialId ?? null, name: signed.by.name ?? null, role: signed.by.role ?? null } : null, signedAt: signed.at ?? null } : {}),
     scope: plain(t.scope) ? { team: t.scope.team, boundaries: t.scope.boundaries ?? '', by: who(t.scope.by), ...(signed ? { at: atOf(t.scope) } : {}) } : null,
@@ -3290,7 +3293,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // The subject a stored Safety Team buy-off must hash to, rebuilt from the live record in the form it was signed in.
   // Shared by verifyManifests and standalone validation so the two can never disagree.
   const pfmeaSafetyWI = (state, t) => (plain(state) && Array.isArray(state.masterWIs) ? state.masterWIs : []).find(w => plain(w) && w.id === t.wiId && w.revision === t.wiRevision) || null;
-  const pfmeaSafetyExpectedSubject = (t, state) => { const s = plain(t.safety) && plain(t.safety.manifest) ? t.safety.manifest.subject : undefined; return plain(s) && Object.hasOwn(s, 'note') ? pfmeaSafetySubject(t, t.safety.note, Object.hasOwn(s, 'signedBy') ? { by: t.safety.by, at: t.safety.at } : null, pfmeaSafetyWI(state, t)) : pfmeaSafetyLegacySubject(t); };
+  const pfmeaSafetyExpectedSubject = (t, state) => { const s = plain(t.safety) && plain(t.safety.manifest) ? t.safety.manifest.subject : undefined; return plain(s) && Object.hasOwn(s, 'note') ? pfmeaSafetySubject(t, t.safety.note, Object.hasOwn(s, 'signedBy') ? { by: t.safety.by, at: t.safety.at } : null, Object.hasOwn(s, 'wiReview') ? pfmeaSafetyWI(state, t) : undefined) : pfmeaSafetyLegacySubject(t); };
   // Everyone whose work the Safety Team buy-off accepts: the person who recorded the scope, failure-mode authors,
   // no-risk reviewers, action closers and the people who completed the analysis and the action step. None of them
   // may give the buy-off.
