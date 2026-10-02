@@ -13,6 +13,7 @@
   hold their buttons while the server answers, and say plainly when it does not. The Hangar holds panel counts every
   held order and links to All work orders filtered to a new On hold status, which lists exactly the orders the Hangar counted. The work order queue footer reads "Work order progress
   and approval rules are unchanged." `test_ui_audit_polish_ui` covers each change.
+- Admin page: accounts and roles, training, the stamp register and the master SDS book moved out of Your credentials onto an Admin page (sidebar), shown only to accounts that manage access; others are refused the page and its deep link. Your credentials keeps your own profile, your own stamps and PIN, the account switch and sign out. Conformity and AQI authorities read in words. The stamp register scrolls sideways at tablet width instead of breaking words. Every self-target refusal is unchanged; `test_admin_page` covers it.
 
 What changed in Flight System, newest first. The build id is set in `VERSION.md`; the release record at
 the end of `VERSION.md` names the exact files and the suite results for the build. Storage keys, form
