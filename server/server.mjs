@@ -15,6 +15,7 @@ import { openPostgres, openPostgresReadOnly } from './db-postgres.mjs';
 import { scanArchiveProto } from './archive-proto-scan.mjs';
 import { createHost } from './mes-host.mjs';
 import { evidenceIdsInWorkspace } from './evidence-refs.mjs';
+import { EVIDENCE_CSP, connectSources, hashSource, inlineScriptHashes, pageCsp, withSecurityHeaders } from './security-headers.mjs';
 import { stamp, verify } from '../tools/stamp-build.mjs';
 
 process.on('warning', w => { if (w.name === 'ExperimentalWarning' && /SQLite/.test(w.message)) return; console.warn(w); });
@@ -163,6 +164,9 @@ export function createServer(options = {}) {
   // demo.html relaxes separation of duties, PINs and the stamp gate. It is a training page, not part of the
   // production server: served only when the operator asks (options.serveDemo, FLIGHT_SERVE_DEMO=1 or --serve-demo).
   const serveDemo = options.serveDemo !== undefined ? options.serveDemo === true : process.env.FLIGHT_SERVE_DEMO === '1';
+  // Origins the page may call besides this server (#583); an entry that is not an origin stops the server at start.
+  const cspConnect = connectSources(options.cspConnectSrc !== undefined ? options.cspConnectSrc : process.env.FLIGHT_CSP_CONNECT_SRC);
+  const htmlHeaders = (html, extraHashes = []) => ({ 'Content-Type': MIME['.html'], 'Cache-Control': 'no-store', 'Content-Security-Policy': pageCsp([...inlineScriptHashes(html), ...extraHashes], cspConnect) });
   const jira = options.jira || {};
   const jiraConfig = {
     baseUrl: String(jira.baseUrl || process.env.FLIGHT_JIRA_BASE_URL || '').replace(/\/$/, ''),
@@ -446,8 +450,9 @@ export function createServer(options = {}) {
     // to be set up. A signed-in page reads the list from GET /api/auth/accounts with its session.
     const accounts = await store.accounts();
     const ctx = { api: '/api', etag: null, workspace: null, workspaceAvailable: !!row, jiraConfigured, auth: { users: session ? accounts.map(publicAccount) : [], setupRequired: accounts.length === 0 }, account: session ? publicAccount(session.account) : null, served: new Date().toISOString() };
-    const script = `<script id="flight-server">window.FLIGHT_SERVER=${JSON.stringify(ctx).replace(/</g, '\\u003c')};</script>`;
-    return host.html.replace('<head>', `<head>${script}`);
+    const body = `window.FLIGHT_SERVER=${JSON.stringify(ctx).replace(/</g, '\\u003c')};`;
+    // The page's policy is built from the served file once and the hash of this per-request script (#583).
+    return { html: host.html.replace('<head>', `<head><script id="flight-server">${body}</script>`), headers: htmlHeaders(host.html, [hashSource(body)]) };
   };
   // Writes the archive export JSON with each recording's bytes base64-encoded in bounded chunks, one recording at a
   // time and respecting backpressure, so an evidence-heavy archive never has to fit in memory as one object.
@@ -552,6 +557,8 @@ export function createServer(options = {}) {
   const serveStatic = (req, res, rel) => {
     const file = path.normalize(path.join(ROOT, rel));
     if (!file.startsWith(ROOT) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { send(res, 404, { error: 'Not found' }); return; }
+    // An HTML file (demo.html) is a page: it gets the page policy built from its own inline scripts.
+    if (path.extname(file) === '.html') { const html = fs.readFileSync(file, 'utf8'); res.writeHead(200, htmlHeaders(html)); res.end(html); return; }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'public, max-age=3600' });
     fs.createReadStream(file).pipe(res);
   };
@@ -560,9 +567,10 @@ export function createServer(options = {}) {
   async function handle(req, res) {
     const url = new URL(req.url, 'http://localhost');
     const p = url.pathname, m = req.method;
+    withSecurityHeaders(res);
     try {
       await storeReady;
-      if (p === '/' || p === '/index.html') { const pageSession = await sessionOf(req); res.writeHead(200, { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-store' }); res.end(await page(pageSession)); return; }
+      if (p === '/' || p === '/index.html') { const pageSession = await sessionOf(req); const served = await page(pageSession); res.writeHead(200, served.headers); res.end(served.html); return; }
       if (p.startsWith('/assets/') || (p === '/demo.html' && serveDemo) || p === '/favicon.ico') { serveStatic(req, res, p); return; }
       if (!p.startsWith('/api/')) { send(res, 404, { error: 'Not found' }); return; }
       const route = p.slice(4);
@@ -972,7 +980,9 @@ export function createServer(options = {}) {
         const row = await store.evidenceMeta(ev[1]); if (!row) { send(res, 404, { error: `The server holds no recording ${ev[1]}. Upload it from the device that captured it.` }); return; }
         if (!await mayReadEvidence(session, row)) { await refuseEvidenceRead(res, session, row); return; }
         const bytes = await store.evidenceBytes(ev[1]);
-        res.writeHead(200, { 'Content-Type': row.mime, 'Content-Length': bytes.length, 'X-Evidence-Sha256': row.sha256, 'Cache-Control': 'private, no-store' }); res.end(bytes); return;
+        // A download in a sandbox, never a document the browser renders or sniffs (#583).
+        const extension = { 'video/webm': '.webm', 'video/mp4': '.mp4', 'video/quicktime': '.mov' }[row.mime] || '';
+        res.writeHead(200, { 'Content-Type': row.mime, 'Content-Length': bytes.length, 'X-Evidence-Sha256': row.sha256, 'Cache-Control': 'private, no-store', 'Content-Disposition': `attachment; filename="${ev[1]}${extension}"`, 'Content-Security-Policy': EVIDENCE_CSP }); res.end(bytes); return;
       }
       if (ev && ev[2] === '/supersede' && m === 'POST') {
         if (!manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can supersede evidence.' }); return; }
@@ -1050,7 +1060,7 @@ export function createServer(options = {}) {
           const stamp = await recordExtract(a.id, 'print', session.username, { order: a.entry.order, activity: a.entry.activity, archiveSha256: a.sha256, mode }, summary);
           html = html.replace('</body>', `${printExtractStamp(stamp)}</body>`);
           await store.audit(session.username, 'archive-print', { orderId: a.id, mode });
-          res.writeHead(200, { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-store' }); res.end(html); return;
+          res.writeHead(200, htmlHeaders(html)); res.end(html); return;
         }
         // Export: the order with its signatures and history, its activity, and the bytes of its evidence. The extract
         // hash covers each recording's stored metadata, including its SHA-256, so the bytes are bound to the stamped
