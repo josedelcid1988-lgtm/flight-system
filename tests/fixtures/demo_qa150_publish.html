@@ -3493,11 +3493,13 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // The signed form also binds the WI peer review and QA review the buy-off was checked against, and the persistent
   // contributor list with its completeness flag, so the separation-of-duties evidence cannot be rewritten after approval.
   // A buy-off signed with the signer but before the WI reviews and contributor list were bound (no wiReview in its stored
-  // subject) is rebuilt without them; wi === undefined selects that form.
-  const pfmeaSafetySubject = (t, note, signed, wi) => { const who = signed ? snapOf : credOf; return { pfmea: t.id, wi: `${t.wiId} Rev ${t.wiRevision}`, note,
+  // subject) is rebuilt without them; wi === undefined selects that form. The current form also binds when each WI review was
+  // recorded (wiReviewAt, selected by form.reviewAt); a buy-off signed before that is rebuilt without it.
+  const pfmeaSafetySubject = (t, note, signed, wi, form) => { const who = signed ? snapOf : credOf; return { pfmea: t.id, wi: `${t.wiId} Rev ${t.wiRevision}`, note,
     ...(signed ? { part: t.partNumber ?? null, title: t.title ?? null } : {}),
     ...(signed && wi !== undefined ? { wiReview: plain(wi) ? { peer: snapOf(wi.peerReview), qa: snapOf(wi.qaReview) } : null,
       contributors: Array.isArray(t.contributors) ? [...t.contributors].sort() : null, contributorsComplete: t.contributorsComplete === true } : {}),
+    ...(signed && wi !== undefined && plain(form) && form.reviewAt === true ? { wiReviewAt: plain(wi) ? { peer: atOf(wi.peerReview), qa: atOf(wi.qaReview) } : null } : {}),
     ...(signed ? { signedBy: plain(signed.by) ? { credentialId: signed.by.credentialId ?? null, name: signed.by.name ?? null, role: signed.by.role ?? null } : null, signedAt: signed.at ?? null } : {}),
     scope: plain(t.scope) ? { team: t.scope.team, boundaries: t.scope.boundaries ?? '', by: who(t.scope.by), ...(signed ? { at: atOf(t.scope) } : {}) } : null,
     analysisDone: plain(t.analysisDone) ? { by: who(t.analysisDone.by), at: t.analysisDone.at } : null,
@@ -3509,7 +3511,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // The subject a stored Safety Team buy-off must hash to, rebuilt from the live record in the form it was signed in.
   // Shared by verifyManifests and standalone validation so the two can never disagree.
   const pfmeaSafetyWI = (state, t) => (plain(state) && Array.isArray(state.masterWIs) ? state.masterWIs : []).find(w => plain(w) && w.id === t.wiId && w.revision === t.wiRevision) || null;
-  const pfmeaSafetyExpectedSubject = (t, state) => { const s = plain(t.safety) && plain(t.safety.manifest) ? t.safety.manifest.subject : undefined; return plain(s) && Object.hasOwn(s, 'note') ? pfmeaSafetySubject(t, t.safety.note, Object.hasOwn(s, 'signedBy') ? { by: t.safety.by, at: t.safety.at } : null, Object.hasOwn(s, 'wiReview') ? pfmeaSafetyWI(state, t) : undefined) : pfmeaSafetyLegacySubject(t); };
+  const pfmeaSafetyExpectedSubject = (t, state) => { const s = plain(t.safety) && plain(t.safety.manifest) ? t.safety.manifest.subject : undefined; return plain(s) && Object.hasOwn(s, 'note') ? pfmeaSafetySubject(t, t.safety.note, Object.hasOwn(s, 'signedBy') ? { by: t.safety.by, at: t.safety.at } : null, Object.hasOwn(s, 'wiReview') ? pfmeaSafetyWI(state, t) : undefined, { reviewAt: Object.hasOwn(s, 'wiReviewAt') }) : pfmeaSafetyLegacySubject(t); };
   // Everyone whose work the Safety Team buy-off accepts: the person who recorded the scope, failure-mode authors,
   // no-risk reviewers, action closers and the people who completed the analysis and the action step. None of them
   // may give the buy-off.
@@ -9445,8 +9447,16 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (false /* DEMO D-47 */ && MES.pfmeaContributors(t).has(actor(state).credentialId)) return fail('Separation of duties: you recorded part of this analysis (the scope, a failure mode, a no-risk review, an action or its closure, or the analysis or action step completion), now or before a return, so you cannot give the Safety Team buy-off. Another Safety Team member gives it.');
     const ready = MES.releaseWIFromPfmea(state, t.wiId, t.wiRevision, t.id, true); if (!ready.ok) return ready;
     if (!plain(t.analysisDone) || !actorValid(t.analysisDone.by) || !timestamp(t.analysisDone.at)) return fail('The record does not show who completed the analysis and when. Return the PFMEA to analysis and complete it again.');
+    if (!plain(t.actionsDone) || !actorValid(t.actionsDone.by) || !timestamp(t.actionsDone.at)) return fail('The record does not show who completed the action step and when. Return the PFMEA to analysis and complete the analysis and the action step again.');
+    if (!plain(t.scope) || !actorValid(t.scope.by)) return fail('The record does not show who recorded the scope and team. Return the PFMEA to analysis and record the scope again.');
+    { const closed = t.rows.filter(r => plain(r.done) && !actorValid(r.done.by)).map(r => r.id); if (closed.length) return fail(`The record does not show who closed the action on ${closed.join(', ')}. Return the PFMEA to analysis, then set and close the action again.`); }
+    // Keep everyone the record names, the ticket history included, in the contributor list the signature binds, so removing
+    // a history entry after approval cannot erase who worked on the analysis. The history is below its cap here (or the list
+    // was already complete), so the list is complete once merged.
+    t.contributors = [...new Set([...(Array.isArray(t.contributors) ? t.contributors : []), ...MES.pfmeaContributors(t)].filter(c => typeof c === 'string' && c))];
+    if (t.contributorsComplete !== true && Array.isArray(t.history) && t.history.length < MES.PFMEA_HISTORY_CAP) t.contributorsComplete = true;
     const at = now(), by = actor(state);
-    const subject = MES.pfmeaSafetySubject(t, note, { by, at }, wi);
+    const subject = MES.pfmeaSafetySubject(t, note, { by, at }, wi, { reviewAt: true });
     t.safety = { decision: 'Approved', note, by, at, manifest: MES.signManifest(state, MES.PFMEA_SAFETY_MEANING, subject, at) };
     t.status = 'Approved';
     const rel = MES.releaseWIFromPfmea(state, t.wiId, t.wiRevision, t.id);
