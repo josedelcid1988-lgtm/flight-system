@@ -2129,9 +2129,9 @@ function skBoot(){
   if(SERVER){serverSignIn(username,pw).then(function(r){if(!r.ok){err.textContent=r.message;btn.disabled=false;document.getElementById('sk-password').select();secEvent('signin-failed',{username:username,reason:'server'});return;}sessionStorage.setItem(SESSION_KEY,username);applyPermClasses(currentUser());secEvent('signin',{username:username,provider:'server'});try{window.dispatchEvent(new Event('sk-auth'));}catch(e){}startGreeting(r.account.displayName);}).catch(function(e){err.textContent=e.message;btn.disabled=false;});return;}
   var lockMin=lockedFor(username);if(lockMin){err.textContent='Too many failed attempts. Try again in '+lockMin+' minute'+(lockMin===1?'':'s')+'.';btn.disabled=false;secEvent('signin-blocked',{username:username});return;}
   var u=a.users.find(function(x){return x.username===username;});
-  if(!u){var stu=noteFailure(username);err.textContent=SIGNIN_REFUSED+(stu.until>Date.now()?' Account locked for '+LOCK_MINUTES+' minutes.':'');btn.disabled=false;secEvent('signin-failed',{username:username,reason:'unknown account'});return;}
-  // An identity-provider account gets the same refusal and failure count as any other, so the answer never shows which usernames exist; the sign-in note says where those accounts sign in.
-  if(u.sso){var sts=noteFailure(username);err.textContent=SIGNIN_REFUSED+(sts.until>Date.now()?' Account locked for '+LOCK_MINUTES+' minutes.':'');btn.disabled=false;secEvent('signin-failed',{username:username,reason:'identity provider account'});return;}
+  // An unknown or identity-provider account gets the same refusal, failure count and password digest as a wrong password,
+  // so neither the answer nor its timing shows which usernames exist; the sign-in note says where identity-provider accounts sign in.
+  if(!u||u.sso){var why=u?'identity provider account':'unknown account';hashPassword('00',pw).catch(function(){}).then(function(){var st=noteFailure(username);err.textContent=SIGNIN_REFUSED+(st.until>Date.now()?' Account locked for '+LOCK_MINUTES+' minutes.':'');btn.disabled=false;document.getElementById('sk-password').select();secEvent('signin-failed',{username:username,reason:why});});return;}
   hashPassword(u.salt,pw).then(function(h){if(h!==u.hash){var st=noteFailure(username);err.textContent=SIGNIN_REFUSED+(st.until>Date.now()?' Account locked for '+LOCK_MINUTES+' minutes.':'');btn.disabled=false;document.getElementById('sk-password').select();secEvent('signin-failed',{username:username,reason:'password'});return;}clearFailures(username);sessionStorage.setItem(SESSION_KEY,username);applyPermClasses(u);secEvent('signin',{username:username,provider:'local'});try{window.dispatchEvent(new Event('sk-auth'));}catch(e){}startGreeting(u.displayName);}).catch(function(e){err.textContent=e.message;btn.disabled=false;});});
  function runTyping(){
  // One continuous run at a single cadence from the "R" of Ready to the final period.
@@ -5568,6 +5568,8 @@ const OP_BOM_MAX = 12;
     if (isExternal(op.classification) && (op.externalPO || String(input.poNumber ?? '').trim())) {
       const check = purchaseOrderFor({ ...input, poMode: 'existing' }); if (check.error) return fail(check.error);
       editPO = check.po;
+      // Quality's receipt is recorded against this PO; a new PO would let that receipt release work it never covered.
+      if (op.externalReceipt && op.externalPO && editPO.number !== op.externalPO.number) return fail(`Receiving is already recorded against PO ${op.externalPO.number}, so the PO on this operation cannot change. If the work went out on another PO, raise an NC so Quality can disposition the receipt.`);
       if (editPO.number !== op.externalPO?.number || (editPO.url || '') !== (op.externalPO?.url || '')) changes.push(`purchase order (${editPO.number})`);
     }
     if (!changes.length) return fail('Nothing changed. Edit a field before saving.');

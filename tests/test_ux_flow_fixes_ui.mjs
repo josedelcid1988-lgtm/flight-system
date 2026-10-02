@@ -47,6 +47,11 @@ try {
     const unknown = await signInError(page, 'nobody-here', 'wrong-password');
     ok('unknown account gets the same generic refusal', unknown === GENERIC, unknown);
     ok('the refusal never says whether the account exists', !/No account|Incorrect password/.test(wrong + unknown));
+    // Codex P2 on 94dbc42: every refusal waits on the same password digest, so its timing does not show which usernames exist.
+    await page.evaluate(() => { window.__digests = 0; const real = crypto.subtle.digest.bind(crypto.subtle); crypto.subtle.digest = (...a) => { window.__digests++; return real(...a); }; });
+    const digestsFor = async (user) => { await page.evaluate(() => { window.__digests = 0; }); const msg = await signInError(page, user, 'wrong-password'); return { msg, digests: await page.evaluate(() => window.__digests) }; };
+    const dWrong = await digestsFor('demo'), dUnknown = await digestsFor('nobody-else');
+    ok('an unknown account runs the same password digest as a wrong password before refusing', dUnknown.msg === GENERIC && dUnknown.digests === 1 && dWrong.digests === 1, JSON.stringify({ dWrong, dUnknown }));
     // An identity-provider (SSO) account answers the same as an unknown one, and counts toward lockout; the note says where those accounts sign in.
     await page.evaluate(() => { const k = 'skyryse-mes-demo-auth-v1', au = JSON.parse(localStorage.getItem(k)); au.users.push({ username: 'sso-person', displayName: 'SSO Person', sso: true, role: 'general', createdAt: new Date().toISOString() }); localStorage.setItem(k, JSON.stringify(au)); localStorage.removeItem('skyryse-mes-demo-lockout-v1'); });
     await page.reload(); await page.waitForSelector('#sk-login:not([hidden])');
@@ -390,6 +395,26 @@ try {
       finally { document.querySelector('dialog[open] [data-action="close-dialog"], dialog[open] .dialog-close')?.click(); document.querySelectorAll('dialog[open]').forEach(d => d.close()); op.classification = keep.c; op.externalPO = keep.po; }
     });
     ok('Edit Op shows the PO number for an External Testing operation', editPO.shown && editPO.value === 'PO-777', JSON.stringify(editPO));
+    // Codex P2 on 94dbc42: once Quality's receipt is recorded against a PO, Edit Op cannot swap the PO, or that receipt would release work it never covered.
+    const poAfterReceipt = await page.evaluate(() => {
+      const o = state.orders.find(x => x.id === 'WO-10006'), op = o.operations.find(x => !x.done), keep = { c: op.classification, po: op.externalPO, r: op.externalReceipt };
+      const accepted = { status: 'Accepted', level: 'Full', erpReceipt: 'ERP-1', supplierInspectionLot: 'LOT-1', inspectionRef: 'RI-1', by: { name: 'Quality Inspector', role: 'Quality', credentialId: 'Q-1' }, at: new Date().toISOString() };
+      op.classification = MES.EXTERNAL_CLASSES.find(c => c !== MES.EXTERNAL_CLASS); op.externalPO = { number: 'PO-777', line: '1' };
+      try {
+        openOrder(o.id); sequenceEditDialog(op.id);
+        const form = document.getElementById('seq-edit-form');
+        const data = Object.fromEntries(new FormData(form));
+        data.inspectionPoint = form.elements.inspectionPoint.checked; data.requiresTooling = form.elements.requiresTooling.checked;
+        data.callouts = [...form.querySelectorAll('[name=callouts]:checked')].map(c => c.value); data.training = [...form.querySelectorAll('[name=training]:checked')].map(c => c.value);
+        data.grounding = form.querySelector('[name$="-grounding"]:checked')?.value; data.fodLevel = form.querySelector('[name$="-fod"]:checked')?.value; data.msdsLinks = '';
+        data.reason = 'Correct the PO number';
+        const edit = (receipt, poNumber, title) => { const s = structuredClone(state), sop = s.orders.find(x => x.id === o.id).operations.find(x => x.id === op.id); if (receipt) sop.externalReceipt = receipt; else delete sop.externalReceipt; const r = MES.editOrderOperation(s, o.id, op.id, { ...data, poNumber, title: title || data.title }); return { ok: r.ok, message: r.message || '', po: sop.externalPO?.number }; };
+        return { swapped: edit(accepted, 'PO-888'), samePO: edit(accepted, 'PO-777', `${data.title} rev`), beforeReceipt: edit(null, 'PO-888') };
+      } finally { document.querySelectorAll('dialog[open]').forEach(d => d.close()); op.classification = keep.c; op.externalPO = keep.po; if (keep.r === undefined) delete op.externalReceipt; else op.externalReceipt = keep.r; }
+    });
+    ok('Edit Op refuses a new PO once receiving is recorded against the old one, and keeps the old PO', !poAfterReceipt.swapped.ok && /Receiving is already recorded against PO PO-777, so the PO on this operation cannot change\./.test(poAfterReceipt.swapped.message) && poAfterReceipt.swapped.po === 'PO-777', JSON.stringify(poAfterReceipt.swapped));
+    ok('after receiving, other edits that keep the PO still save', poAfterReceipt.samePO.ok && poAfterReceipt.samePO.po === 'PO-777', JSON.stringify(poAfterReceipt.samePO));
+    ok('before receiving, Edit Op can still correct the PO', poAfterReceipt.beforeReceipt.ok && poAfterReceipt.beforeReceipt.po === 'PO-888', JSON.stringify(poAfterReceipt.beforeReceipt));
     // Codex security P1: the engine refuses a buy-off on an external work center until Quality's receipt is accepted. A missing receipt is not a pass.
     const extGate = await page.evaluate(() => {
       const attempt = receipt => {
