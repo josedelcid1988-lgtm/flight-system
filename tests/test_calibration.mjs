@@ -367,6 +367,13 @@ check('an archive candidate holding a __proto__ key is refused, while a clean cl
     try { r = runHist(() => MES.updateSkillDraft(hist, spc.draftId, { wide }, 'A body wider than the value budget.')); } catch (e) { threw = e; }
     check(`a draft body holding ${label} is refused with the plain value-count message, never a throw, and the draft is unchanged`, !threw && r && !r.ok && /holds more than 50,000 values\. Keep it under 50 KB/.test(r.message) && JSON.stringify(draft()) === before);
   }
+  // Codex review on #621: the shape walk runs before the __proto__ check, whose first step serializes the whole body, so
+  // a wide body is refused by its value count without being serialized; a deep but small body keeps the key message.
+  { const before = JSON.stringify(draft());
+    const wideProto = JSON.parse(`{"__proto__":1,"wide":[${Array(200000).fill('{}').join(',')}]}`);
+    let r = null, threw = null;
+    try { r = runHist(() => MES.updateSkillDraft(hist, spc.draftId, wideProto, 'A wide body that also holds the forbidden key.')); } catch (e) { threw = e; }
+    check('a wide draft body that also holds a __proto__ key gets the value-count refusal, so it is measured before it is serialized', !threw && r && !r.ok && /holds more than 50,000 values/.test(r.message) && JSON.stringify(draft()) === before); }
   { const draftsBefore = hist.aiSkillDrafts.length;
     let rw = null, threwWide = null;
     try { rw = runHist(() => MES.runSkill(hist, { skill: 'spc-chart-builder', values: [10.1, 10.2, 9.9], extra: Array.from({ length: 1000000 }, () => ({})), reason: 'A skill run input wider than the value budget.' })); } catch (e) { threwWide = e; }
