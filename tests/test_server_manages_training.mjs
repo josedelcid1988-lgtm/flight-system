@@ -146,6 +146,32 @@ try {
     assert.equal(allowed.status, 200, JSON.stringify(allowed.json));
   });
 
+  await check('authority is decided again inside the account transaction: training that lapses before the commit refuses the change', async () => {
+    // Codex review on #633: the account route checked authority against a workspace read before password hashing and
+    // the transaction. Here the training record is removed from the stored workspace just before the transaction runs.
+    const before = JSON.stringify(server.store.account('plain-tech'));
+    const original = server.store.transaction.bind(server.store);
+    server.store.transaction = async fn => {
+      const row = server.store.getDoc('default');
+      const lapsed = JSON.parse(row.json);
+      for (const person of lapsed.people || []) if (person && person.account === 'current-qm') person.training = [];
+      if (Array.isArray(lapsed.trainingRecords)) lapsed.trainingRecords = lapsed.trainingRecords.filter(r => r.account !== 'current-qm');
+      assert.ok(server.store.putDoc('default', JSON.stringify(lapsed), row.etag, 'test'));
+      server.store.transaction = original;
+      return original(fn);
+    };
+    try {
+      const stale = MES.upgrade(JSON.parse(server.store.getDoc('default').json));
+      assert.deepEqual(server.host.rolesOf(server.store.account('current-qm'), stale), ['qe', 'qm'], 'before the request the role still counts');
+      const refused = await api('PUT', '/auth/accounts', { token: current, body: { users: [{ username: 'plain-tech', displayName: 'Plain Tech changed late', role: 'technician', roles: ['technician'] }] } });
+      assert.equal(refused.status, 403, JSON.stringify(refused.json));
+      assert.match(refused.json.error, /can manage accounts/);
+      assert.equal(JSON.stringify(server.store.account('plain-tech')), before, 'nothing is changed');
+      const after = MES.upgrade(JSON.parse(server.store.getDoc('default').json));
+      assert.deepEqual(server.host.rolesOf(server.store.account('current-qm'), after), ['qe'], 'the lapse took effect in the stored workspace');
+    } finally { server.store.transaction = original; }
+  });
+
   await check('without a stored workspace an extra role never counts', async () => {
     const empty = createServer({ dbPath: ':memory:', quiet: true, setupCode: SETUP_CODE });
     try {

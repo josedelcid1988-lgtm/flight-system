@@ -727,6 +727,13 @@ export function createServer(options = {}) {
             // with the authority profile this request read before the transaction.
             await tx.lockAuthority();
             const current = await tx.accounts();
+            // Authority is decided again here, from the actor and the workspace as this transaction reads them (#580): a
+            // role's training can lapse, or a retraining requirement land, between the check above and this commit.
+            const txRow = await tx.getDoc(TENANT);
+            let txState = null;
+            if (txRow) { try { txState = host.MES.upgrade(structuredClone(JSON.parse(txRow.json))) || null; } catch { txState = null; } }
+            const txActor = session ? current.find(x => x.username === session.username) || null : null;
+            if (!firstRun && !(txActor && (managesIn(txActor, txState) || supervisesIn(txActor, txState)))) { refusal = { status: 403, error: 'Only a Master Access, QA Manager, or Quality Supervisor account can manage accounts.' }; return false; }
             if (firstRun && current.length) { refusal = { status: 409, error: 'An account was created on this server while you were setting it up. Sign in with it instead.' }; return false; }
             for (const u of incoming) {
               const username = String(u.username || '').trim().toLowerCase();
@@ -761,7 +768,7 @@ export function createServer(options = {}) {
                   refusal = { status: 403, error: `Account ${username}: a role with inspection or MRB authority requires a current training record. Create the account without that role, record training, then assign the role.` }; return false;
                 }
               }
-              if (!firstRun && supervisesIn(session.account, actorState)) {
+              if (!firstRun && supervisesIn(txActor, txState)) {
                 const protectedTarget = cur && accountRoles(cur).some(value => ['qm', 'admin'].includes(value));
                 if (protectedTarget) {
                   const unchanged = role === cur.role && JSON.stringify(roles) === JSON.stringify(accountRoles(cur)) && String(u.displayName).trim() === cur.displayName && (!hasHash || prepared.get(u) === cur.hash) && JSON.stringify(u.grants || cur.grants || {}) === JSON.stringify(cur.grants || {}) && JSON.stringify(u.grantHistory || cur.grantHistory || []) === JSON.stringify(cur.grantHistory || []) && (Object.hasOwn(u, 'supportAccess') ? u.supportAccess === true : cur.supportAccess === true) === (cur.supportAccess === true);
@@ -779,7 +786,9 @@ export function createServer(options = {}) {
               if (!cur) await tx.audit(session ? session.username : username, 'account-create', { username, role, roles, trainingCode: requiresTraining ? String(u.trainingCode).trim().toUpperCase() : null });
             }
             // Refuse to demote the last manager.
-            if (!(await tx.accounts()).some(manages)) { refusal = { status: 409, error: 'At least one QA Manager or Master Access account must remain.' }; return false; }
+            // This structural rule counts listed roles, as it did before training gating; it is synchronous so no Promise is
+            // mistaken for a manager.
+            if (!(await tx.accounts()).some(account => accountRoles(account).some(role => ['qm', 'admin'].includes(role)))) { refusal = { status: 409, error: 'At least one QA Manager or Master Access account must remain.' }; return false; }
             return true;
           });
           if (refusal) { send(res, refusal.status, { error: refusal.error }); return; }
