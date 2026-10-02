@@ -5,6 +5,7 @@
 - Inspection and MRB seats now follow role capabilities in production and demo; only conformity and AQI require named, current-training grants. MRB disposition training tiers remain optional and off by default.
 - Server-side grant routes reject attempts to grant inspection or MRB seat capabilities individually.
 - Support Access only lifts stamp binding for one operation; its documentation now matches the enforced rule.
+- Admin page: accounts and roles, training, the stamp register and the master SDS book moved out of Your credentials onto an Admin page (sidebar), shown only to accounts that manage access; others are refused the page and its deep link. Your credentials keeps your own profile, your own stamps and PIN, the account switch and sign out. Conformity and AQI authorities read in words. The stamp register scrolls sideways at tablet width instead of breaking words. Every self-target refusal is unchanged; `test_admin_page` covers it.
 
 What changed in Flight System, newest first. The build id is set in `VERSION.md`; the release record at
 the end of `VERSION.md` names the exact files and the suite results for the build. Storage keys, form

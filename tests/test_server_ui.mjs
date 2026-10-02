@@ -272,6 +272,55 @@ try {
   const escalationWorkspace = await (await fetch(`http://127.0.0.1:${port}/api/workspace`, { headers: { Authorization: `Bearer ${token}` } })).json();
   assert.ok(escalationWorkspace.planner.calendar.escalations.length > 0, 'the server persists escalation to QA follow-up');
 
+  // Today's Big Three is on every person's Hangar (Jose, 2026-10-01). A second account, a Quality engineer, sets and
+  // works its own day from the Hangar; every action runs through the same server commands as Flight Plan, and the
+  // server keeps the day under the signed-in account, apart from the first account's day.
+  await aqiPage.evaluate(() => loadServerWorkspace());
+  await aqiPage.waitForFunction(() => window.skServer?.sync?.status === 'synced', null, { timeout: 15000 });
+  // The AQI step above leaves its result dialog open on this page; close it before working the Hangar.
+  await aqiPage.evaluate(() => { const dialog = document.querySelector('#dialog'); if (dialog?.open) dialog.close(); document.querySelectorAll('.mnv-landing').forEach(item => item.remove()); view = 'home'; render(); });
+  const hangarBig3 = aqiPage.locator('#flight-react-island [data-big3-variant="hangar"]');
+  await hangarBig3.waitFor();
+  assert.match(await hangarBig3.innerText(), /Your day · aqi-inspector/, 'the Hangar Big Three is scoped to the signed-in account');
+  assert.match(await hangarBig3.locator('[data-big3-status]').innerText(), /Not set for today/, "the Hangar does not show another account's day");
+  const hangarRequests = [];
+  aqiPage.on('request', request => { if (request.url().includes('/workspace/actions/MES.') && /BigThree/.test(request.url())) hangarRequests.push(new URL(request.url()).pathname.split('/').pop()); });
+  const hangarDayBefore = new Date().toISOString().slice(0, 10);
+  await hangarBig3.locator('[data-action="big3-create"]').click();
+  await aqiPage.waitForFunction(() => window.skServer?.sync?.status === 'synced', null, { timeout: 15000 });
+  const readServer = async () => (await fetch(`http://127.0.0.1:${port}/api/workspace`, { headers: { Authorization: `Bearer ${token}` } })).json();
+  let hangarWorkspace = await readServer();
+  const hangarDays = hangarWorkspace.planner.days['aqi-inspector'] || {};
+  const hangarDate = [hangarDayBefore, new Date().toISOString().slice(0, 10)].find(day => hangarDays[day]);
+  assert.ok(hangarDate, `the server stores a planner day for the account that set it from the Hangar: ${Object.keys(hangarDays).join(', ')}`);
+  const hangarSet = hangarDays[hangarDate].big3.filter(slot => slot.t).length;
+  assert.ok(hangarSet > 0, 'the Hangar day carries the proposed tasks');
+  assert.equal(hangarWorkspace.planner.days[plannerUser][plannerDate].big3.filter(slot => slot.status === 'accepted').length, acceptedWorkspace.planner.days[plannerUser][plannerDate].big3.filter(slot => slot.status === 'accepted').length, "setting a day from the Hangar leaves the other account's day unchanged");
+  await hangarBig3.locator('[data-action="big3-decide"][data-decision="accept"]').first().click();
+  await aqiPage.waitForFunction(() => window.skServer?.sync?.status === 'synced', null, { timeout: 15000 });
+  hangarWorkspace = await readServer();
+  const hangarAccepted = hangarWorkspace.planner.days['aqi-inspector'][hangarDate].big3.find(slot => slot.status === 'accepted');
+  assert.ok(hangarAccepted, 'the server records a task accepted on the Hangar');
+  await aqiPage.evaluate(() => { view = 'plan'; render(); });
+  await aqiPage.locator('#big3-heading').waitFor();
+  const planSlot = aqiPage.locator('#flight-react-island [data-big3-variant="plan"] .big3-slot').filter({ hasText: hangarAccepted.t });
+  assert.equal(await planSlot.locator('.pill.accepted').count(), 1, 'Flight Plan shows the task accepted on the Hangar for the same day');
+  await aqiPage.evaluate(() => { view = 'home'; render(); });
+  assert.equal(await hangarBig3.locator('[data-action="big3-escalate"]').count(), 0, 'a Quality engineer without post-notice is not offered escalation on the Hangar');
+  const escalationRefusal = await aqiPage.evaluate(() => MES.escalateBigThree(structuredClone(state), new Date().toISOString().slice(0, 10), 0, 'Needs QA follow-up today'));
+  assert.equal(escalationRefusal.ok, false, 'the engine refuses escalation for an account without post-notice');
+  assert.match(escalationRefusal.message, /post-notice holder/, 'the refusal says who can escalate');
+  await hangarBig3.locator('[data-action="big3-carry"]').click();
+  await aqiPage.waitForFunction(() => window.skServer?.sync?.status === 'synced', null, { timeout: 15000 });
+  hangarWorkspace = await readServer();
+  const nextDay = new Date(`${hangarDate}T00:00:00Z`); nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+  const carried = hangarWorkspace.planner.days['aqi-inspector'][nextDay.toISOString().slice(0, 10)];
+  assert.ok(carried?.big3.some(slot => slot.t === hangarAccepted.t && slot.src === 'carried'), 'carrying from the Hangar stores the accepted task on the next day for the same account');
+  assert.deepEqual([...new Set(hangarRequests)].sort(), ['MES.carryBigThree', 'MES.createBigThreePlan', 'MES.decideBigThree'], 'the Hangar actions are the same server commands Flight Plan uses');
+  const hangarAudit = (await server.store.auditRows(1000)).filter(row => row.action === 'action').map(row => JSON.parse(row.detail));
+  assert.ok(hangarAudit.some(entry => entry.action === 'MES.createBigThreePlan'), 'the server audits the Big Three set from the Hangar');
+  assert.deepEqual(aqiErrors, [], 'working the Big Three on the Hangar raises no client errors');
+
   const refusalCheck = await page.evaluate(() => {
     const order = state.orders.find(item => item.status === 'Building');
     if (!order) throw new Error('No Building order is available for the server refusal check.');
@@ -316,6 +365,149 @@ try {
   });
   assert.equal(await page.locator('#flight-server-recovery').count(), 0, 'a recovery copy is removed rather than exposed to another account');
   assert.equal(await page.evaluate(() => sessionStorage.getItem('skyryse-mes-work-order-v1-unconfirmed-server-recovery-v1')), null);
+
+  // #292: the recovery banner clears once the same account has a later write confirmed by the server, and only then.
+  const RECOVERY_STORAGE_KEY = 'skyryse-mes-work-order-v1-unconfirmed-server-recovery-v1';
+  // Priorities toggle between High and Normal: an AOG order would start the page's own AOG broadcast tick mid-check.
+  const recoveryPriorityChange = (refuse, target = null) => page.evaluate(({ refuse, target }) => {
+    const order = state.orders.find(item => item.status === 'Building');
+    if (!order) throw new Error('No Building order is available for the recovery banner check.');
+    const next = target || (order.priority === 'High' ? 'Normal' : 'High');
+    if (!window.__recoveryApi) {
+      const api = window.skServer.api.bind(window.skServer);
+      window.__recoveryApi = true;
+      window.skServer.api = async (path, options) => {
+        if (window.__refusePriority && String(path).includes('/workspace/actions/MES.setPriority')) {
+          window.__refusePriority = false;
+          return { status: 403, json: { error: 'Controlled recovery banner refusal' } };
+        }
+        return api(path, options);
+      };
+    }
+    window.__refusePriority = refuse;
+    window.skServer.sync = { status: 'pending-check', message: '' };
+    const result = MES.setPriority(state, order.id, next);
+    if (!result.ok) throw new Error(result.message);
+    save();
+  }, { refuse, target });
+  const recoveryState = () => page.evaluate(key => ({
+    banner: !!document.querySelector('#flight-server-recovery'),
+    memory: !!unconfirmedServerRecovery,
+    stored: sessionStorage.getItem(key) !== null
+  }), RECOVERY_STORAGE_KEY);
+
+  const recoveryStartPriority = await page.evaluate(() => state.orders.find(item => item.status === 'Building')?.priority);
+  await recoveryPriorityChange(true);
+  await page.waitForFunction(() => window.skServer?.sync?.status === 'error', null, { timeout: 10000 });
+  await page.locator('#flight-server-recovery').waitFor({ state: 'visible', timeout: 10000 });
+  await recoveryPriorityChange(true);
+  await page.waitForFunction(() => window.skServer?.sync?.status === 'error', null, { timeout: 10000 });
+  assert.deepEqual(await recoveryState(), { banner: true, memory: true, stored: true }, 'a second refused change keeps the recovery banner and its copy');
+  await recoveryPriorityChange(false);
+  await page.waitForFunction(() => window.skServer?.sync?.status === 'synced', null, { timeout: 10000 });
+  assert.deepEqual(await recoveryState(), { banner: false, memory: false, stored: false }, 'a later change confirmed by the server for the same account clears the recovery banner and its copy');
+
+  // A confirmed write clears only a copy that belongs to the signed-in account and existed when the write was sent.
+  // (Reloading the shared workspace already removes another account's copy from view; this checks the clear itself.)
+  await recoveryPriorityChange(true);
+  await page.waitForFunction(() => window.skServer?.sync?.status === 'error', null, { timeout: 10000 });
+  await page.locator('#flight-server-recovery').waitFor({ state: 'visible', timeout: 10000 });
+  const guarded = await page.evaluate(() => {
+    const own = unconfirmedServerRecovery;
+    const other = { ...own, username: 'different-account' };
+    unconfirmedServerRecovery = other;
+    sessionStorage.setItem(SERVER_RECOVERY_KEY, JSON.stringify(other));
+    clearConfirmedServerRecovery(other);
+    const otherKept = unconfirmedServerRecovery === other && sessionStorage.getItem(SERVER_RECOVERY_KEY) !== null && !!document.querySelector('#flight-server-recovery');
+    unconfirmedServerRecovery = own;
+    sessionStorage.setItem(SERVER_RECOVERY_KEY, JSON.stringify(own));
+    clearConfirmedServerRecovery({ ...own });
+    const staleKept = unconfirmedServerRecovery === own && sessionStorage.getItem(SERVER_RECOVERY_KEY) !== null;
+    clearConfirmedServerRecovery(null);
+    const noneKept = unconfirmedServerRecovery === own && sessionStorage.getItem(SERVER_RECOVERY_KEY) !== null;
+    return { otherKept, staleKept, noneKept };
+  });
+  assert.deepEqual(guarded, { otherKept: true, staleKept: true, noneKept: true }, "a confirmed write does not clear another account's recovery copy, a newer copy, or a copy made after it was sent");
+  // A change confirmed by the server that the page made on its own keeps the copy: credential binding after sign-in
+  // or load sends MES.selectProfile as an automatic change.
+  const binding = await page.evaluate(async () => {
+    const own = unconfirmedServerRecovery, sent = [], api = window.skServer.api;
+    window.skServer.api = async (path, options) => { if (options?.method) sent.push(String(path)); return api(path, options); };
+    try {
+      state.profile.role = 'unbound-role-check';
+      window.skBindCredential();
+      await serverActionChain;
+    } finally { window.skServer.api = api; }
+    return { sent: sent.includes('/workspace/actions/MES.selectProfile'), status: window.skServer.sync.status, kept: unconfirmedServerRecovery === own && sessionStorage.getItem(SERVER_RECOVERY_KEY) !== null && !!document.querySelector('#flight-server-recovery') };
+  });
+  assert.deepEqual(binding, { sent: true, status: 'synced', kept: true }, 'a confirmed automatic credential binding does not clear the recovery copy');
+  // A workspace snapshot not sent by save() (the first-load initialization, an online retry) is automatic too.
+  const snapshot = await page.evaluate(async () => {
+    const own = unconfirmedServerRecovery, api = window.skServer.api;
+    let put = false;
+    window.skServer.api = async (path, options) => {
+      if (path === '/workspace' && options?.method === 'PUT') { put = true; return { status: 204, etag: serverEtag }; }
+      return api(path, options);
+    };
+    try { pushWorkspace(); await serverPush; } finally { window.skServer.api = api; }
+    return { put, kept: unconfirmedServerRecovery === own && sessionStorage.getItem(SERVER_RECOVERY_KEY) !== null && !!document.querySelector('#flight-server-recovery') };
+  });
+  assert.deepEqual(snapshot, { put: true, kept: true }, 'a confirmed workspace snapshot that save() did not send does not clear the recovery copy');
+  // A person's change keeps its origin through a long await (a file read, a remote call): it is recorded when the
+  // engine call is queued, not from the time since their last input.
+  const awaited = await page.evaluate(async () => {
+    await new Promise(resolve => setTimeout(resolve, 12000));
+    const order = state.orders.find(item => item.status === 'Building');
+    const result = MES.setPriority(state, order.id, order.priority === 'High' ? 'Normal' : 'High');
+    if (!result.ok) throw new Error(result.message);
+    save();
+    await serverActionChain;
+    return { status: window.skServer.sync.status, cleared: unconfirmedServerRecovery === null && sessionStorage.getItem(SERVER_RECOVERY_KEY) === null && !document.querySelector('#flight-server-recovery') };
+  });
+  assert.deepEqual(awaited, { status: 'synced', cleared: true }, "a person's change confirmed after an await clears the recovery copy");
+  // The person's direct server writes (the model adapter setting and a Jira issue, with the server's acceptance
+  // stubbed) clear the copy once the server confirms them, like a queued change does.
+  const refuseForRecovery = async () => {
+    await recoveryPriorityChange(true);
+    await page.waitForFunction(() => window.skServer?.sync?.status === 'error', null, { timeout: 10000 });
+    await page.locator('#flight-server-recovery').waitFor({ state: 'visible', timeout: 10000 });
+  };
+  const directWrite = async (kind) => page.evaluate(async kind => {
+    const api = window.skServer.api;
+    window.skServer.api = async (path, options) => {
+      if (path === '/workspace/actions/MES.configureModelAdapter' || path === '/jira/issue') return { status: 200, ok: true, etag: serverEtag, json: { message: 'Stubbed confirmation', issue: { key: 'STUB-1' } } };
+      return api(path, options);
+    };
+    const host = document.createElement('div');
+    try {
+      if (kind === 'model') {
+        host.innerHTML = '<form data-ai-model-config><select name="enabled"><option value="true" selected>On</option></select><input name="provider" value="stub"><input name="settingName" value="stub"><input name="rationale" value="stub"><p data-ai-model-error></p></form>';
+        document.body.append(host);
+        host.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      } else {
+        host.innerHTML = '<button type="button" data-action="server-jira-send" data-kind="SPR" data-record="SPR-STUB">Send</button>';
+        document.body.append(host);
+        host.querySelector('button').click();
+      }
+      const started = Date.now();
+      while (unconfirmedServerRecovery && Date.now() - started < 10000) await new Promise(resolve => setTimeout(resolve, 50));
+    } finally { host.remove(); window.skServer.api = api; }
+    return { cleared: unconfirmedServerRecovery === null && sessionStorage.getItem(SERVER_RECOVERY_KEY) === null && !document.querySelector('#flight-server-recovery') };
+  }, kind);
+  await refuseForRecovery();
+  assert.deepEqual(await directWrite('model'), { cleared: true }, 'a confirmed model adapter setting clears the recovery copy');
+  await refuseForRecovery();
+  assert.deepEqual(await directWrite('jira'), { cleared: true }, 'a confirmed Jira issue clears the recovery copy');
+  await recoveryPriorityChange(true);
+  await page.waitForFunction(() => window.skServer?.sync?.status === 'error', null, { timeout: 10000 });
+  await page.locator('#flight-server-recovery').waitFor({ state: 'visible', timeout: 10000 });
+  await page.evaluate(() => document.querySelector('[data-action="dismiss-server-recovery"]').click());
+  assert.deepEqual(await recoveryState(), { banner: false, memory: false, stored: false }, 'Dismiss still clears the recovery banner and its copy');
+  // Put the order back to its starting priority for the checks that follow.
+  if (await page.evaluate(() => state.orders.find(item => item.status === 'Building')?.priority) !== recoveryStartPriority) {
+    await recoveryPriorityChange(false, recoveryStartPriority);
+    await page.waitForFunction(() => window.skServer?.sync?.status === 'synced', null, { timeout: 10000 });
+  }
 
   const snapshotRefusal = await page.evaluate(() => {
     const order = state.orders.find(item => item.status === 'Building');

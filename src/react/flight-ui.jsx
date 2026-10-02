@@ -82,8 +82,9 @@ function Hangar({ state, MES, onOpen }) {
   const open = item => setOrder(item);
   return <div className="flight-react">
     <div className="fr-page-heading"><div><span className="fr-eyebrow">FLIGHT CONTROL</span><h1>Hangar<span>.</span></h1></div></div>
-    <section className="fr-top-row" aria-label="Work queue summary and open holds">
+    <section className="fr-top-row fr-hangar-top" aria-label="Work queue summary, today's priorities and open holds">
       <div className="fr-summary"><span className="fr-eyebrow">YOUR WORK QUEUE</span><strong>{rows.length} <small>{filter.toLowerCase()} work orders</small></strong><span>Sorted by due date from the current workspace.</span></div>
+      <BigThree state={state} MES={MES} variant="hangar"/>
       <div className="fr-holds"><div className="fr-section-heading"><h2>Open holds</h2><span className="fr-count">{holds.length}</span></div>
         {holds.length ? holds.map(({ item, reason }) => <button className="fr-hold-row" key={item.id} onClick={() => open(item)}><span className="fr-hold-icon"><Boxes size={18}/></span><span><strong>{item.id} · {titleOf(item)}</strong><small>{reason}</small></span><ChevronRight size={16}/></button>) : <p className="fr-no-holds"><Check size={16}/> No blocking holds in open work orders.</p>}
       </div>
@@ -165,44 +166,96 @@ function WorkOrderQueue({ state, MES, rows: sourceRows, initial, callbacks, onOp
   </div>;
 }
 
-function BigThree({ state, MES }) {
+const big3CollapseKey = username => `flight-system-big3-hangar-v1:${username}`;
+const readBig3Collapsed = username => { try { return localStorage.getItem(big3CollapseKey(username)) === 'collapsed'; } catch { return false; } };
+const writeBig3Collapsed = (username, collapsed) => { try { localStorage.setItem(big3CollapseKey(username), collapsed ? 'collapsed' : 'open'); } catch {} };
+// The Hangar reads the planner from a copy: plannerStatus brings the derived blocker list up to date as it reads, and the
+// landing page must not change the workspace just by being opened. Every Big Three action still runs on the real
+// workspace through the same engine commands (and, with a server, the same server actions) as Flight Plan.
+// The planner read path writes only state.planner (ensurePlanner) and state.blockers (syncPlanningBlockers), so the
+// Hangar copies just those two and shares the rest read-only, instead of cloning the whole workspace on every render.
+const cloneValue = value => { if (value === undefined) return value; try { return structuredClone(value); } catch { return JSON.parse(JSON.stringify(value)); } };
+const plannerReadCopy = state => ({ ...state, planner: cloneValue(state.planner), blockers: cloneValue(state.blockers) });
+
+function BigThreeAccept({ item, index, date }) {
+  return item.status === 'accepted' ? <span className="pill accepted">Accepted</span> : <button className="btn quiet" data-action="big3-decide" data-index={index} data-date={date} data-decision="accept">Accept</button>;
+}
+
+function BigThreeSlotActions({ index, block, date }) {
+  return <>
+    <label className="sr-only" htmlFor={`big3-reason-${index}`}>Reason for declining task {index + 1}</label><input id={`big3-reason-${index}`} className="big3-reason" maxLength="300" placeholder="Reason to decline"/>
+    <button className="btn quiet" data-action="big3-decide" data-index={index} data-date={date} data-decision="decline">Decline</button>
+    {!block ? <><label className="sr-only" htmlFor={`big3-start-${index}`}>Proposed start time for task {index + 1}</label><input id={`big3-start-${index}`} type="time" aria-label="Proposed start time"/><label className="sr-only" htmlFor={`big3-end-${index}`}>Proposed end time for task {index + 1}</label><input id={`big3-end-${index}`} type="time" aria-label="Proposed end time"/><button className="btn quiet" data-action="big3-time-propose" data-index={index} data-date={date}>Propose time</button></> : block.status === 'Proposed' && <><button className="btn quiet" data-action="big3-time-decide" data-id={block.id} data-index={index} data-date={date} data-decision="accept">Accept time</button><label className="sr-only" htmlFor={`big3-time-reason-${index}`}>Reason for declining the proposed time for task {index + 1}</label><input id={`big3-time-reason-${index}`} className="big3-reason" maxLength="300" placeholder="Reason to decline the time"/><button className="btn quiet" data-action="big3-time-decide" data-id={block.id} data-index={index} data-date={date} data-decision="decline">Decline time</button></>}
+    {window.skAuth?.can?.('post-notice') && <><label className="sr-only" htmlFor={`big3-escalation-${index}`}>Escalation reason</label><input id={`big3-escalation-${index}`} className="big3-reason" maxLength="500" placeholder="Escalation reason"/><button className="btn quiet" data-action="big3-escalate" data-index={index} data-date={date}>Escalate to QA</button></>}
+  </>;
+}
+
+// The card title opens the record its task names. The page checks the record still exists before it navigates, so
+// the title is only a pointer: no engine command runs from it.
+function BigThreeTitle({ index, text, target }) {
+  const label = `${index + 1}. ${text}`;
+  return <strong>{target ? <button type="button" className="big3-open" data-action="open-big3-record" data-target-kind={target.kind} data-target-type={target.type} data-target-id={target.id} data-target-revision={target.revision} aria-label={`${label}. Opens ${target.label}`}>{label}</button> : label}</strong>;
+}
+
+function BigThree({ state, MES, variant = 'plan' }) {
+  const hangar = variant === 'hangar';
   const date = new Date().toISOString().slice(0, 10);
-  const snap = MES.plannerStatus(state, date);
+  const source = hangar ? plannerReadCopy(state) : state;
+  const snap = MES.plannerStatus(source, date);
+  const [collapsedBy, setCollapsedBy] = useState({});
   if (!snap) return null;
-  const hasPlan = !!state.planner.days[snap.username]?.[date];
+  const collapsed = hangar && (Object.hasOwn(collapsedBy, snap.username) ? collapsedBy[snap.username] : readBig3Collapsed(snap.username));
+  const hasPlan = !!source.planner.days[snap.username]?.[date];
   const displayDate = value => new Date(`${value}T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+  // A saved slot whose record no longer has an open blocker was resolved in the record; plannerStatus returns the saved
+  // day as stored, so mark it here the same way plannerView does before any action is offered.
+  const openIds = new Set([...(source.blockers || []).filter(row => row.status === 'Open').map(row => row.id), ...snap.candidates.map(candidate => candidate.id)]);
+  const isResolved = slot => !!slot.done || !!(slot.ref && !openIds.has(slot.ref.id));
   const slots = hasPlan ? snap.day.big3 : snap.candidates.slice(0, 3);
-  return <section className="panel big3-panel fr-big3" aria-labelledby="big3-heading">
-    <div className="panel-head"><div><p className="hero-eyebrow">Flight Plan · {snap.username}</p><h2 id="big3-heading">Today's Big Three</h2></div><span className="fr-big3-date">{displayDate(date)}</span></div>
+  const headingId = hangar ? 'hangar-big3-heading' : 'big3-heading';
+  const accepted = hasPlan ? snap.day.big3.filter(slot => slot.t && slot.status === 'accepted').length : 0;
+  const set = hasPlan ? snap.day.big3.filter(slot => slot.t).length : 0;
+  const status = hasPlan ? `${accepted} of ${set} accepted` : snap.candidates.length ? 'Not set for today' : 'Nothing assigned';
+  const toggle = () => { const next = !collapsed; writeBig3Collapsed(snap.username, next); setCollapsedBy(value => ({ ...value, [snap.username]: next })); };
+  const bodyId = 'hangar-big3-body';
+  const canCarry = hasPlan && snap.day.big3.some(slot => slot.status === 'accepted' && !isResolved(slot));
+  const actions = <>{!hasPlan && snap.candidates.length > 0 && <button className="btn primary" data-action="big3-create" data-date={date}>Set today's Big Three</button>}
+    {canCarry && <button className="btn" data-action="big3-carry" data-date={date}>Carry accepted tasks to tomorrow</button>}</>;
+  return <section className={`panel big3-panel fr-big3${hangar ? ' fr-big3-hangar' : ''}${collapsed ? ' is-collapsed' : ''}`} aria-labelledby={headingId} data-big3-variant={variant}>
+    {hangar ? <div className="panel-head"><div className="fr-big3-title"><h2 id={headingId}>Today's Big Three</h2><span className="fr-big3-owner">Your day · {snap.username}</span></div>
+      <div className="fr-big3-head-tools"><span className="fr-big3-date"><span className="fr-big3-day">{displayDate(date)} · </span><span data-big3-status>{status}</span> · {snap.total} open blocker{snap.total === 1 ? '' : 's'}</span>{actions}</div>
+      <button type="button" className="fr-big3-toggle" aria-expanded={!collapsed} aria-controls={collapsed ? undefined : bodyId} onClick={toggle}>{collapsed ? 'Show' : 'Hide'}<span className="sr-only"> Today's Big Three</span></button>
+    </div> : <div className="panel-head"><div><p className="hero-eyebrow">Flight Plan · {snap.username}</p><h2 id={headingId}>Today's Big Three</h2></div><span className="fr-big3-date">{displayDate(date)}</span></div>}
+    {!collapsed && <div id={hangar ? bodyId : undefined}>
     {slots.length ? <ol className="big3-list">{slots.map((slot, index) => {
       const item = hasPlan ? slot : null;
       const task = item ? snap.candidates.find(candidate => candidate.id === item.ref?.id) : slot;
-      const resolved = !!item?.done;
-      const block = item?.ref && state.planner.calendar.blocks.find(record => record.username === snap.username && record.date === date && record.blockerId === item.ref.id && record.status !== 'Declined');
+      const resolved = !!item && isResolved(item);
+      const block = item?.ref && source.planner.calendar.blocks.find(record => record.username === snap.username && record.date === date && record.blockerId === item.ref.id && record.status !== 'Declined');
       const title = item ? item.t : task.title;
-      const why = item ? item.why : `${task.kind.replaceAll('-', ' ')} · ${task.priority}${task.aog ? ' · AOG' : ''}`;
-      return <li className={`big3-slot${resolved ? ' is-done' : ''}`} key={item?.ref?.id || task.id || index}>
-        <div className="big3-slot-copy"><strong>{index + 1}. {title || 'Open priority slot'}</strong>{why && <span>{why}</span>}
-          {task?.due && <time dateTime={task.due}>Due {displayDate(task.due)}</time>}{resolved && <span>Resolved in the record</span>}
+      const why = item ? item.why : `${task.kind.replaceAll('-', ' ')} · ${task.priority}${task.aog && task.priority !== 'AOG' ? ' · AOG' : ''}`;
+      return <li className={`big3-slot${resolved ? ' is-done' : ''}`} key={item?.ref?.id || task?.id || index}>
+        <div className="big3-slot-copy"><BigThreeTitle index={index} text={title || 'Open priority slot'} target={title ? MES.bigThreeTarget(source, item ? item.ref?.id : task?.id) : null}/>{hangar ? (item ? why && <span>{why}</span> : <span>{why} · <time dateTime={task.due}>Due {displayDate(task.due)}</time></span>) : <>{why && <span>{why}</span>}
+          {task?.due && <time dateTime={task.due}>Due {displayDate(task.due)}</time>}</>}{resolved && <span>Resolved in the record</span>}
           {block && <span className={`pill${block.status === 'Accepted' ? ' accepted' : ''}`}>{block.status} time · {block.start} to {block.end}</span>}
         </div>
-        {!hasPlan && task && <span className="fr-big3-priority">Priority {index + 1}</span>}
-        {hasPlan && !resolved && item?.t && <div className="big3-slot-actions">
-          {item.status === 'accepted' ? <span className="pill accepted">Accepted</span> : <button className="btn quiet" data-action="big3-decide" data-index={index} data-decision="accept">Accept</button>}
-          <label className="sr-only" htmlFor={`big3-reason-${index}`}>Reason for declining task {index + 1}</label><input id={`big3-reason-${index}`} className="big3-reason" maxLength="300" placeholder="Reason to decline"/>
-          <button className="btn quiet" data-action="big3-decide" data-index={index} data-decision="decline">Decline</button>
-          {!block ? <><label className="sr-only" htmlFor={`big3-start-${index}`}>Proposed start time for task {index + 1}</label><input id={`big3-start-${index}`} type="time" aria-label="Proposed start time"/><label className="sr-only" htmlFor={`big3-end-${index}`}>Proposed end time for task {index + 1}</label><input id={`big3-end-${index}`} type="time" aria-label="Proposed end time"/><button className="btn quiet" data-action="big3-time-propose" data-index={index}>Propose time</button></> : block.status === 'Proposed' && <><button className="btn quiet" data-action="big3-time-decide" data-id={block.id} data-decision="accept">Accept time</button><button className="btn quiet" data-action="big3-time-decide" data-id={block.id} data-decision="decline">Decline time</button></>}
-          {window.skAuth?.can?.('post-notice') && <><label className="sr-only" htmlFor={`big3-escalation-${index}`}>Escalation reason</label><input id={`big3-escalation-${index}`} className="big3-reason" maxLength="500" placeholder="Escalation reason"/><button className="btn quiet" data-action="big3-escalate" data-index={index}>Escalate to QA</button></>}
-        </div>}
+        {!hasPlan && task && !hangar && <span className="fr-big3-priority">Priority {index + 1}</span>}
+        {hasPlan && !resolved && item?.t && (hangar ? <div className="big3-slot-actions fr-big3-quick">
+          <BigThreeAccept item={item} index={index} date={date}/>
+          <details className="fr-big3-more"><summary>Decline or schedule</summary><div className="fr-big3-more-body"><BigThreeSlotActions index={index} block={block} date={date}/></div></details>
+        </div> : <div className="big3-slot-actions">
+          <BigThreeAccept item={item} index={index} date={date}/>
+          <BigThreeSlotActions index={index} block={block} date={date}/>
+        </div>)}
       </li>;
-    })}</ol> : <p className="muted">No open tasks are assigned to your capabilities.</p>}
-    <div className="big3-footer">{!hasPlan && snap.candidates.length > 0 && <button className="btn primary" data-action="big3-create">Set today's Big Three</button>}
-      {hasPlan && snap.day.big3.some(slot => slot.status === 'accepted' && !slot.done) && <button className="btn" data-action="big3-carry">Carry accepted tasks to tomorrow</button>}
+    })}</ol> : <p className="muted fr-big3-empty">No open tasks are assigned to your capabilities.{hangar && ' Your Big Three fills in when a record needs an action your role can take.'}</p>}
+    {hangar ? null : <div className="big3-footer">{actions}
       <span className="muted">{snap.total} open blocker{snap.total === 1 ? '' : 's'} in your queue</span>
       {state.planner.calendar.connectors.ical && <><button className="btn quiet" data-action="cal-export">Export iCal</button><label className="btn quiet" htmlFor="flight-cal-import">Import iCal<input id="flight-cal-import" className="sr-only" type="file" accept=".ics,text/calendar" data-cal-import/></label></>}
       {window.skAuth?.can?.('configure-org') && <button className="btn quiet" data-action="cal-toggle">{state.planner.calendar.connectors.ical ? 'Disable iCal' : 'Enable iCal'}</button>}
       <span className="muted">{state.planner.calendar.connectors.ical ? 'iCal file sync enabled' : 'iCal is off. Google and Outlook calendars cannot be connected yet.'}</span>
-    </div>
+    </div>}
+    </div>}
   </section>;
 }
 
@@ -293,7 +346,7 @@ function PlanBoard({ state, MES, FlightPlan, onMutation, initialQuery = '', init
         </div>
       </div>
       <div className="fr-table-scroll"><table className={compact ? 'fr-compact' : ''}><thead><tr><th>Planned order</th><th>Master WI</th><th>Configuration</th><th>Quantity</th><th>Need date</th><th>NetSuite on hand</th><th>Status</th><th>Work order</th><th><span className="fr-visually-hidden">Actions</span></th></tr></thead><tbody>
-        {rows.map(item => { const c = item.configuration; const late = FlightPlan.overdue(item); return <tr key={item.id} className={late ? 'fr-overdue' : ''}>
+        {rows.map(item => { const c = item.configuration; const late = FlightPlan.overdue(item); return <tr key={item.id} className={late ? 'fr-overdue' : ''} data-plan-row={item.id}>
           <td><strong className="fr-mono">{item.id}</strong>{late && <small className="fr-overdue-label">Past need date</small>}</td>
           <td><strong className="fr-mono">{item.masterWI.id} Rev {item.masterWI.revision}</strong><small>{item.masterWI.title}</small></td>
           <td><strong className="fr-mono">{c.partNumber} / Rev {c.partRevision}</strong><small>{c.pedigree} · {c.subcategory}</small><small>{c.site || 'Unassigned'} · {c.aircraft}</small></td>
@@ -1245,7 +1298,7 @@ function CalibrationLog({ state, MES }) {
   // superseded entries through the page's [data-calibration-archive] click handler (MES.recordCalibrationArchive).
   const capacity = MES.calibrationCapacity(state);
   const warning = capacity.near ? <p className="inline-info warning" role="status" data-calibration-capacity>{asText(capacity.message)}</p> : null;
-  const archive = canCorrect && capacity.archiveAvailable ? <div className="calibration-archive"><p className="small muted">{capacity.archivable ? `${capacity.archivable} superseded ${capacity.archivable === 1 ? 'entry' : 'entries'} can move to the server archive.` : 'No superseded entries can move to the server archive now.'} The latest entry for each tool and every entry a work order buy-off cites stay in the log.{capacity.archived ? ` ${capacity.archived} archived ${capacity.archived === 1 ? 'entry is' : 'entries are'} kept on the server with ${capacity.archived === 1 ? 'its signature' : 'their signatures'} unchanged.` : ''}</p>{capacity.archivable ? <button className="btn" type="button" data-calibration-archive>Archive superseded entries</button> : null}</div> : null;
+  const archive = canCorrect && capacity.archiveAvailable ? <div className="calibration-archive"><p className="small muted">{asText(capacity.archiveNote)}</p>{capacity.archivable ? <button className="btn" type="button" data-calibration-archive>Archive superseded entries</button> : null}</div> : null;
   const rows = log.slice().reverse().map(row => <li key={row.id}><strong>{asText(row.id)}</strong> · {asText(row.tag)} · {asText(row.description)}{row.torque === true ? ' · torque tool' : ''}{row.expires ? ` · due ${asText(row.expires)}` : ' · no calibration dates'} <span className={`pill ${row.status === 'In Calibration' ? 'closed' : 'high'}`}>{asText(row.status)}</span>{row.supersedes ? <> <span className="muted">corrects {asText(row.supersedes)}</span></> : null}{current.has(row.id) ? null : <> <span className="muted">superseded</span></>}<br/><span className="muted">Recorded by {asText(row.recordedBy)} · {legacyDateTime(row.recordedAt)} · SHA-256{row.note ? ' · ' + asText(row.note) : ''}</span>{canCorrect && current.has(row.id) ? <CalibrationCorrection row={row}/> : null}</li>);
   return <section className="panel"><div className="panel-head"><h2>Calibration log</h2><span className="pill">{log.length} records</span></div>{warning}<form data-qms-record="calibration"><div className="form-grid"><label className="field">Tool asset tag<input name="tag" maxLength="40" required placeholder="CAL-022"/></label><label className="field">Description<input name="description" maxLength="80" required placeholder="DIGITAL CALIPER"/></label><label className="field">Torque tool<select name="torque" required defaultValue=""><option value="">Choose</option><option value="yes">Yes</option><option value="no">No</option></select></label><label className="field">Serial number<input name="serial" maxLength="40"/></label><label className="field">Calibrated on<input name="calibratedAt" type="date"/></label><label className="field">Due date<input name="expires" type="date"/></label><label className="field">Status<select name="status"><option>In Calibration</option><option>Out for Calibration</option><option>Quarantined</option><option>Retired</option></select></label><label className="field">Location<input name="location" maxLength="80" placeholder="Production Floor"/></label><label className="field wide">Note<input name="note" maxLength="300" placeholder="Certificate reference or lab"/></label></div><p className="small muted">New entries supersede the shipped tool snapshot at point of use. A correction appends a new superseding entry; the original stays in the log. Entries are never deleted: to take a tool out of use for good, record it as Retired. Both dates are required, except on a Retired entry for a tool that was never calibrated, which leaves them blank.</p><button className="btn primary" type="submit">Record calibration</button></form><form data-qms-calibration-import><label className="field wide">Import tools from a spreadsheet (CSV)<textarea name="csv" rows="4" placeholder={"tag,description,torque,serial,calibratedAt,expires,status,location,note\nCAL-022,DIGITAL CALIPER,No,150151267,2026-09-28,2027-09-28,In Calibration,Production Floor,Lab cert 42"}/></label><label className="field">Or choose a CSV file<input type="file" data-qms-calibration-file="" accept=".csv,text/csv"/></label><p className="small muted">Header row: tag, description, calibratedAt, expires, and optionally torque (Yes or No), serial, status, location, note. Up to 500 tools at a time. Each row is recorded and signed as its own calibration entry under your name, with the same checks as one recorded above. A blank status records In Calibration. One bad row records nothing and names the row.</p><button className="btn" type="submit">Import calibrations</button></form>{archive}<ul>{rows.length ? rows : <li className="muted">No calibrations recorded.</li>}</ul></section>;
 }
@@ -2152,13 +2205,13 @@ window.FlightReact = {
     }
     flushSync(() => root.render(<WorkOrderQueue state={state} MES={MES} rows={props.rows} initial={props.initial} callbacks={props.callbacks} onOpen={onOpen}/>));
   },
-  renderPlan(element, state, MES, FlightPlan, onMutation, initialQuery = '', initialStatus = 'All') {
+  renderPlan(element, state, MES, FlightPlan, onMutation, initialQuery = '', initialStatus = 'All', navKey = 0) {
     if (!root || rootElement !== element) {
       if (root) root.unmount();
       root = createRoot(element);
       rootElement = element;
     }
-    flushSync(() => root.render(<PlanBoard state={state} MES={MES} FlightPlan={FlightPlan} onMutation={onMutation} initialQuery={initialQuery} initialStatus={initialStatus}/>));
+    flushSync(() => root.render(<PlanBoard key={navKey} state={state} MES={MES} FlightPlan={FlightPlan} onMutation={onMutation} initialQuery={initialQuery} initialStatus={initialStatus}/>));
   },
   renderPlanKanban(element, state, MES, FlightPlan) {
     if (!root || rootElement !== element) {
