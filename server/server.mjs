@@ -392,6 +392,9 @@ export function createServer(options = {}) {
     // A migrated-escape record exempts an unsigned NC closure from the signature check, so it is accepted only as the stored
     // copy holds it, as the one-time backfill of a stored migrated NC, or from the migration of a stored closed escape (#305).
     { const forged = host.MES.legacyEscapeChanges(beforeState, state); if (forged) return { problem: forged }; }
+    // An initial upload has no stored copy to anchor them, so the importing QA Manager's account is recorded against every
+    // unsigned migrated-escape closure it brings in, in the same transaction as the document write.
+    if (!beforeState) { const legacy = host.MES.legacyEscapeImports(state); if (legacy.length) audits = [...audits, { action: 'legacy-escape-import', detail: { ncs: legacy } }]; }
     // Superseded calibration entries an archive record in this write moved out of the live log (#130) go to the
     // calibration archive exactly as the stored log held them, in the same transaction as the document write.
     const calibrationRows = host.MES.calibrationArchivedEntries(beforeState, state).map(({ entry, recordId }) => { const json = JSON.stringify(entry); return { id: entry.id, tag: entry.tag, recordId, json, sha256: sha256hex(json), by: username }; });

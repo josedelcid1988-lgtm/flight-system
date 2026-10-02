@@ -157,6 +157,63 @@ try {
     assert.match(r.json.error, /migrated-escape record that the shared workspace does not hold/);
   });
 
+  // r4160517069: an initial upload has no stored copy, so the record must match the NC's own migration entry, and every
+  // accepted record is audited under the importing QA Manager or Master Access account in the same transaction.
+  const legacyAudit = server => server.store.auditRows(1000).filter(r => r.action === 'legacy-escape-import').map(r => ({ username: r.username, detail: typeof r.detail === 'string' ? JSON.parse(r.detail) : r.detail }));
+
+  await check('r4160517069 an initial upload of the migrated workspace records each migrated-escape closure under the importing account', async () => {
+    const live = await started(raw);
+    const rows = legacyAudit(live.server);
+    assert.equal(rows.length, 1, JSON.stringify(rows));
+    assert.equal(rows[0].username, 'admin');
+    const stored = migratedNcs(JSON.parse(live.server.store.getDoc('default').json));
+    assert.deepEqual(rows[0].detail.ncs.map(n => [n.id, n.escapeId, n.migratedAt]).sort(), stored.map(t => [t.id, t.resolution.legacy.escapeId, t.resolution.legacy.migratedAt]).sort());
+  });
+
+  await check('r4160517069 an initial upload with no migrated-escape record writes no legacy audit row', async () => {
+    const live = await started(JSON.parse(fixture[1]));
+    assert.deepEqual(legacyAudit(live.server), []);
+  });
+
+  // A first import of a workspace where a signed NC was stripped into the migration shape and given the record.
+  const strippedImport = withHistory => {
+    const s = MES.upgrade(JSON.parse(fixture[1])); FlightManeuver.ensure(s);
+    const t = signedNc(s); asMigrated(t);
+    const at = '2026-09-30T00:00:00.000Z';
+    t.resolution = { note: t.resolution.note, by: t.resolution.by, at: t.resolution.at <= at ? t.resolution.at : at, legacy: { source: 'escape', escapeId: 'ESC-999', migratedAt: at } };
+    if (withHistory === 'other') t.history.push({ at, action: 'Migrated from escape ESC-998.', actor: 'system' });
+    if (withHistory === 'match') t.history.push({ at, action: 'Migrated from escape ESC-999.', actor: 'system' });
+    return { s, id: t.id };
+  };
+  const firstPut = async doc => { const server = makeServer(); servers.push(server); await server.ready; const api = caller(server); const token = await signIn(api); return { server, r: await api('PUT', '/workspace', { token, body: doc }) }; };
+
+  await check('r4160517069 the server refuses an initial upload whose migrated-escape record has no migration entry', async () => {
+    const { s, id } = strippedImport(null);
+    const { server, r } = await firstPut(s);
+    assert.equal(r.status, 422, JSON.stringify(r.json));
+    assert.match(r.json.error, new RegExp(`${id} carries a migrated-escape record that does not match its own migration entry`));
+    assert.equal(server.store.getDoc('default'), null, 'nothing was stored');
+    assert.deepEqual(legacyAudit(server), []);
+  });
+
+  await check('r4160517069 the server refuses an initial upload whose migration entry names another escape', async () => {
+    const { s } = strippedImport('other');
+    const { server, r } = await firstPut(s);
+    assert.equal(r.status, 422, JSON.stringify(r.json));
+    assert.match(r.json.error, /does not match its own migration entry/);
+    assert.equal(server.store.getDoc('default'), null, 'nothing was stored');
+  });
+
+  await check('r4160517069 a matching record on an initial upload is accepted only with an audit row naming the importing account', async () => {
+    const { s, id } = strippedImport('match');
+    const { server, r } = await firstPut(s);
+    assert.equal(r.status, 204, JSON.stringify(r.json));
+    const rows = legacyAudit(server);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].username, 'admin');
+    assert.deepEqual(rows[0].detail.ncs.map(n => [n.id, n.escapeId]), [[id, 'ESC-999']]);
+  });
+
   await check('a stock NC newly closed without a signed approval, and without the record, is still refused', async () => {
     const live = await started(JSON.parse(fixture[1]));
     const id = signedNc(JSON.parse(live.server.store.getDoc('default').json)).id;
