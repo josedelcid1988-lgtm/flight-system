@@ -110,6 +110,23 @@ await check('past the 50-push cap each software push gets a new id and the revie
   assert.equal(MES.validate(state), true);
 });
 
+await check('removing an ATP operation closes its open review-push assignment at once, so a reused operation id cannot inherit it', async () => {
+  // Codex review on #629: an operation added later can reuse a removed operation's id and start its pushes again at
+  // PUSH-1; an assignment still open for the removed operation would then name the new push.
+  const state = fresh();
+  const order = state.orders.find(o => ['Draft', 'Kitting', 'Building'].includes(o.status) && o.operations.length > 1 && o.operations.some(op => !op.done));
+  const op = order.operations.filter(item => !item.done).at(-1);
+  op.atp = { repo: 'https://github.example/skyryse/atp', baseline: { sha: 'f'.repeat(40), version: 'v1.0.0' }, pushes: [] };
+  assert.equal(as(admin, state, s => MES.pushATPSoftware(s, order.id, op.id, { sha: 'abc0001', version: 'v1.1' })).ok, true);
+  const assigned = as(admin, state, s => MES.assignWork(s, { type: 'review-push', orderId: order.id, opId: op.id, pushId: 'PUSH-1', assigneeUsername: 'id-reviewer', assigneeName: 'Id Reviewer' }));
+  assert.equal(assigned.ok, true, assigned.message);
+  const removed = as(admin, state, s => MES.removeOrderOperation(s, order.id, op.id, 'Not needed after all.'));
+  assert.equal(removed.ok, true, removed.message);
+  // Read the stored record directly: no sync is run between the removal and this check.
+  assert.notEqual(state.assignments.find(a => a.id === assigned.id).status, 'Open', 'the removal itself closes the assignment');
+  assert.equal(MES.validate(state), true);
+});
+
 await check('validation refuses a repeated id in any of the four lists and a mark below an id it holds', async () => {
   const base = fresh();
   for (let n = 0; n < 3; n += 1) notice(base, n);

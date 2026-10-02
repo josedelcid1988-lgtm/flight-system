@@ -5476,6 +5476,9 @@ const OP_BOM_MAX = 12;
     order.tickets.forEach(t => { if (t.status === 'Open' && plain(t.reworkPlan) && t.reworkPlan.opId === opId) t.reworkPlan = { ...t.reworkPlan, stage: 'Awaiting ME operation', opId: null }; });
     dropBOMFromKit(order, opId);
     order.operations.splice(index, 1);
+    // Close every open assignment for the removed operation now (#585): an operation added later can reuse its id and
+    // start its software pushes again at PUSH-1, and an open review-push assignment would then name the new push.
+    syncAssignments(state);
     queueSequenceChange(state, order, { type: 'remove', opId, title: op.title, classification: op.classification || null, position: number, reason: text });
     record(state, order, `Operation Op ${number} removed: ${op.title}. Reason: ${text}. QA release required.`);
     return { ok: true, message: `Op ${number} removed. QA must release the updated sequence.` };
