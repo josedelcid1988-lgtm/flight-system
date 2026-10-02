@@ -903,6 +903,9 @@ export function createServer(options = {}) {
         const cur = await store.getDoc(TENANT);
         if (cur) { await auditRefusal(409, 'workspace initialized by another request', { etag: cur.etag }); res.writeHead(409, { 'Content-Type': MIME['.json'], ETag: cur.etag }); res.end(JSON.stringify({ error: 'The shared workspace was initialized by another request. Reload to continue.', etag: cur.etag })); return; }
         const problem = validState(state); if (problem) { await auditRefusal(422, problem); send(res, 422, { error: problem }); return; }
+        // The empty server has no history of its own to compare with, so the export's signatures are checked against
+        // the live records they cover, and a signature made to look like the legacy format is refused (#481, #512).
+        { const forged = host.MES.provenanceProblem(state); if (forged) { await auditRefusal(422, forged, { code: 'SIGNATURE_PROVENANCE' }); send(res, 422, { error: forged, code: 'SIGNATURE_PROVENANCE' }); return; } }
         { const bad = await evidenceProblem(null, state, session); if (bad) { await store.audit(session.username, 'evidence-refused', { message: bad }); send(res, 422, { error: bad }); return; } }
         const done = await commitState(state, null, session.username, [{ action: 'workspace-initialize', detail: etag => ({ etag }) }]);
         if (done.problem) { await auditRefusal(422, done.problem); send(res, 422, { error: done.problem }); return; }

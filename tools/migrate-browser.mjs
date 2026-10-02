@@ -34,6 +34,9 @@ export function inspectMigration(input, host = createHost(path.join(ROOT, 'index
   }
   const manifests = host.MES.verifyManifests(state);
   if (!manifests.ok) throw new Error(`Signature manifest verification found ${manifests.failures.length} damaged manifest(s).`);
+  // The server refuses the same thing on initialization; the dry run says so before anything is sent (#481, #512).
+  const provenance = host.MES.provenanceProblem(state);
+  if (provenance) throw new Error(`The workspace was not migrated. ${provenance}`);
   const evidence = linkedEvidence(state).map(item => ({ id: item.id, size: item.size, mimeType: item.mimeType, sha256: item.sha256 || null }));
   const mediaSource = source.media && typeof source.media === 'object' ? source.media : {};
   const missingMedia = evidence.filter(item => !mediaSource[item.id]).map(({ id, size }) => ({ id, size }));
