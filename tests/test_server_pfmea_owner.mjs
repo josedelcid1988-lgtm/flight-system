@@ -28,6 +28,8 @@ const assign = (input, dir = directory) => { const state = base(); const r = hos
 
 const okCase = assign({ action: 'Add a kit label scan', ownerAccount: 'srv-qm', due: '2026-12-01' });
 check('the server records an owner chosen from the tenant account list, with that account and its name', okCase.r.ok === true && okCase.row.ownerBy && okCase.row.ownerBy.credentialId === 'ACCT-srv-qm' && okCase.row.owner === 'Parker Manager' && okCase.valid === true, JSON.stringify(okCase));
+const renamed = assign({ action: 'Add a kit label scan', ownerAccount: 'srv-qm', owner: 'Someone Else', due: '2026-12-01' });
+check('the server records the owner name from the tenant account list, not the name the caller sent', renamed.r.ok === true && renamed.row.owner === 'Parker Manager' && renamed.row.ownerBy.credentialId === 'ACCT-srv-qm', JSON.stringify(renamed.row));
 const unknown = assign({ action: 'Add a kit label scan', ownerAccount: 'not-an-account', owner: 'Somebody', due: '2026-12-01' });
 check('the server refuses an owner account that is not in the tenant account list, and records nothing', unknown.r.ok === false && /account list/.test(unknown.r.message) && unknown.row.action === '' && !unknown.row.ownerBy, JSON.stringify(unknown.r));
 const missing = assign({ action: 'Add a kit label scan', owner: 'Parker Manager', due: '2026-12-01' });

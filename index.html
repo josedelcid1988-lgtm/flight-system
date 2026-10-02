@@ -3488,10 +3488,11 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const pfmeaSafetyWI = (state, t) => (plain(state) && Array.isArray(state.masterWIs) ? state.masterWIs : []).find(w => plain(w) && w.id === t.wiId && w.revision === t.wiRevision) || null;
   // The release a Safety Team buy-off writes on its WI (wi.safetyRelease): the PFMEA, the signer, the signing time and the status
   // it released to (Released, or Unreleased while the drawing waits for its ECO). The WI keeps showing that release, except that
-  // an Unreleased one is later released by QA against the drawing ECO (wi.ecoRelease), a separate, later release.
+  // an Unreleased one is later released by QA against the drawing ECO (wi.ecoRelease), a separate, later release. Its status
+  // must match: a WI released as Unreleased becomes Released only through that later ECO release.
   const pfmeaSafetyRelease = wi => plain(wi) && plain(wi.safetyRelease) ? { pfmea: wi.safetyRelease.pfmea ?? null, by: snapOf(wi.safetyRelease.by), at: wi.safetyRelease.at ?? null, status: wi.safetyRelease.status ?? null } : null;
   const releaseActorSame = (a, b) => plain(a) && plain(b) && ['credentialId', 'name', 'role'].every(k => typeof a[k] === 'string' && a[k] === b[k]);
-  const pfmeaReleaseShown = wi => { const sr = plain(wi) ? wi.safetyRelease : null; if (!plain(sr)) return false; if (releaseActorSame(wi.releasedBy, sr.by) && wi.releasedAt === sr.at) return true; return sr.status === 'Unreleased' && wi.status !== 'Unreleased' && plain(wi.ecoRelease) && releaseActorSame(wi.releasedBy, wi.ecoRelease.by) && wi.releasedAt === wi.ecoRelease.at && typeof sr.at === 'string' && String(wi.ecoRelease.at) >= sr.at; };
+  const pfmeaReleaseShown = wi => { const sr = plain(wi) ? wi.safetyRelease : null; if (!plain(sr)) return false; if (releaseActorSame(wi.releasedBy, sr.by) && wi.releasedAt === sr.at) return (sr.status === 'Unreleased' ? ['Unreleased', 'Obsolete'] : ['Released', 'Obsolete']).includes(wi.status); return sr.status === 'Unreleased' && wi.status !== 'Unreleased' && plain(wi.ecoRelease) && releaseActorSame(wi.releasedBy, wi.ecoRelease.by) && wi.releasedAt === wi.ecoRelease.at && typeof sr.at === 'string' && String(wi.ecoRelease.at) >= sr.at; };
   const pfmeaSafetyExpectedSubject = (t, state) => { const s = plain(t.safety) && plain(t.safety.manifest) ? t.safety.manifest.subject : undefined; return plain(s) && Object.hasOwn(s, 'note') ? pfmeaSafetySubject(t, t.safety.note, Object.hasOwn(s, 'signedBy') ? { by: t.safety.by, at: t.safety.at } : null, Object.hasOwn(s, 'wiReview') ? pfmeaSafetyWI(state, t) : undefined, { reviewAt: Object.hasOwn(s, 'wiReviewAt'), release: Object.hasOwn(s, 'release') ? pfmeaSafetyRelease(pfmeaSafetyWI(state, t)) : undefined }) : pfmeaSafetyLegacySubject(t); };
   // Everyone whose work the Safety Team buy-off accepts: the person who recorded the scope, failure-mode authors,
   // no-risk reviewers, action closers and the people who completed the analysis and the action step. None of them
@@ -9459,14 +9460,15 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (!['Analysis', 'Actions'].includes(t.status)) return fail('Actions are set during analysis or the action step.');
     const row = t.rows.find(r => r.id === rowId); if (!row) return fail('Row not found.');
     const action = clean(input && input.action), account = clean(input && input.ownerAccount), due = clean(input && input.due);
-    // The owner is chosen from the account list, so the record carries their account and the Safety Team buy-off can refuse
-    // them by credential. Where no account list is available (the server re-runs this command), the chosen account is kept as sent.
+    // The owner is chosen from the account list (on the server, the tenant accounts the host passes in), so the record carries
+    // their account and their name as that list shows it, and the Safety Team buy-off can refuse them by credential. Without an
+    // account list (a standalone page with no accounts) the owner is named in free text.
     const users = root && root.skAuth && typeof root.skAuth.users === 'function' ? root.skAuth.users() : [];
     const chosen = account ? users.find(u => u.username === account) : null;
     if (!text(action, 400)) return fail('Describe the action (1 to 400 characters).');
     if (users.length && !chosen) return fail('Choose the action owner from the account list.');
     if (account && !/^[A-Za-z0-9._@-]{1,40}$/.test(account)) return fail('Choose the action owner from the account list.');
-    const owner = clean(input && input.owner) || (chosen ? chosen.name : '');
+    const owner = chosen ? clean(chosen.name) : clean(input && input.owner);
     if (!text(owner, 80)) return fail('Name the action owner.');
     if (!dateOnly(due)) return fail('Enter the due date as a calendar date.');
     Object.assign(row, { action, owner, due }); row.ownerBy = account ? { account, credentialId: `ACCT-${account}` } : null; row.actionSet = { by: actor(state), at: now() }; row.done = null;
