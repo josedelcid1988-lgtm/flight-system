@@ -81,7 +81,7 @@ const refusals = [
   ['a URI password name with a leading space', 'postgresql://flight@db/flight?%20password=Hidden-1', {}, /in lowercase with no spaces around it/],
   ['a URI password name with a trailing space', 'postgresql://flight@db/flight?password%20=Hidden-1', {}, /in lowercase with no spaces around it/],
   // Cursor 4163494602: a URI with leading white space has no = and would otherwise pass as a bare database name.
-  ['a URI with a leading space', ' postgresql://flight:Hidden-1@db/flight', {}, /something before postgresql/],
+  ['a URI with a leading space', ' postgresql://flight:Hidden-1@db/flight', {}, /somewhere other than at its very start/],
   // Independent review of a93f783: libpq matches the scheme in lowercase only, and refuses a parameter with no =.
   ['a URI with its scheme in capitals', 'POSTGRESQL://flight:Hidden-1@db/flight', {}, /in capitals/],
   ['a URI password parameter with no value', 'postgresql://flight@db/flight?password&sslmode=require', {}, /password with no value/],
@@ -91,8 +91,14 @@ const refusals = [
   ['a keyword SCRAM client key', 'host=db dbname=flight scram_client_key=Hidden-1', {}, /carries scram_client_key/],
   ['a keyword SCRAM server key', 'host=db scram_server_key=Hidden-1 password=pw', {}, /carries scram_server_key/],
   ['an upper-case URI OAuth client secret', 'postgresql://flight@db/flight?OAUTH_CLIENT_SECRET=Hidden-1', {}, /in lowercase with no spaces around it/],
-  ['a quoted URI', '"postgresql://flight:Hidden-1@db/flight"', {}, /something before postgresql/],
-  ['a URI with a leading tab', '\tpostgres://flight:Hidden-1@db/flight', {}, /something before postgresql/],
+  // Independent review of 31a2b0c: a parameter name with white space or a control character is refused, whatever libpq
+  // release would make of it.
+  ['a URI password name led by a tab', 'postgresql://flight@db/flight?%09password=Hidden-1', {}, /parameter name libpq cannot read/],
+  ['a URI password name followed by a line break', 'postgresql://flight@db/flight?password%0A=Hidden-1', {}, /parameter name libpq cannot read/],
+  ['a URI password name with a NUL inside', 'postgresql://flight@db/flight?pass%00word=Hidden-1', {}, /parameter name libpq cannot read/],
+  ['a keyword string nesting a URI', 'host=db dbname=postgresql://flight:Hidden-1@db/flight', {}, /somewhere other than at its very start/],
+  ['a quoted URI', '"postgresql://flight:Hidden-1@db/flight"', {}, /somewhere other than at its very start/],
+  ['a URI with a leading tab', '\tpostgres://flight:Hidden-1@db/flight', {}, /somewhere other than at its very start/],
   ['a URI client key passphrase name with a literal space', 'postgresql://flight@db/flight?sslmode=require& sslpassword=Hidden-1', {}, /in lowercase with no spaces around it/],
   // Codex 4161235803: libpq has no environment variable for sslpassword, so it is refused, with or without a password.
   ['a URI client key passphrase', 'postgresql://flight:pw@db/flight?sslkey=client.key&sslpassword=Hidden-1', {}, /client key passphrase/],

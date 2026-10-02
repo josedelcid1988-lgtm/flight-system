@@ -215,7 +215,7 @@ export function pgRestoreTarget(connectionString, env = process.env) {
   // A URI with anything before its scheme (a space, a tab, a quote) is not one libpq reads as a URI, yet it can carry a
   // password in its user info, so it is refused instead of passed on as a bare name (Cursor 4163494602).
   // libpq matches the scheme in lowercase only, so POSTGRESQL:// is no URI to it either (independent review of a93f783).
-  if (!/^postgres(ql)?:\/\//.test(raw) && /postgres(ql)?:\/\//i.test(raw)) refuse('has something before postgresql:// or writes it in capitals; start it with postgresql:// in lowercase so the password can be kept off the command line');
+  if (!/^postgres(ql)?:\/\//.test(raw) && /postgres(ql)?:\/\//i.test(raw)) refuse('holds postgresql:// somewhere other than at its very start, or writes it in capitals; start it with postgresql:// in lowercase and do not nest one connection string in another');
   // A bare database name (no = and not a URI) holds no password: libpq reads it as the dbname alone.
   if (!/^postgres(ql)?:\/\//.test(raw) && !raw.includes('=')) return { dbname: raw, env: {} };
   if (/^postgres(ql)?:\/\//.test(raw)) {
@@ -242,6 +242,10 @@ export function pgRestoreTarget(connectionString, env = process.env) {
     for (const part of query === undefined ? [] : query.split('&')) {
       const eq = part.indexOf('='), key = pct(eq >= 0 ? part.slice(0, eq) : part);
       caseCheck(key);
+      // Every libpq setting name is letters, digits and underscores. A decoded name with anything else (a tab, a line
+      // break, a NUL) is one libpq refuses or, in a newer release, may trim to a secret's name, so it is refused here
+      // rather than passed on with its value (independent review of 31a2b0c).
+      if (part !== '' && !/^[A-Za-z0-9_]+$/.test(key)) refuse('has a URI parameter name libpq cannot read; use only letters, digits and underscores in parameter names');
       // libpq refuses a parameter with no =, so a bare ?password is refused rather than read as an empty password.
       if (eq < 0 && SECRET_NAMES.includes(key)) refuse(`has ${key} with no value; write ${key}= followed by its value`);
       if (key === 'password') { found = true; password = pct(part.slice(eq + 1)); continue; }
