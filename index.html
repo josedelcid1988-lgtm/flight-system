@@ -5171,6 +5171,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const next = nextWIRevision(state, id);
     const draft = { ...JSON.parse(JSON.stringify(wi)), revision: next, status: 'Draft', history: [] };
     delete draft.releasedAt; delete draft.releasedBy; delete draft.obsoletedAt; delete draft.peerReview; delete draft.qaReview; delete draft.pfmea;
+    // A new revision is a fresh Draft: the Safety Team release and the later ECO release belong to the revision they released.
+    delete draft.safetyRelease; delete draft.ecoRelease;
     state.masterWIs.unshift(draft);
     wiLog(state, draft, `Revision ${next} started from Rev ${revision}.`);
     delete draft.authors; noteWIAuthor(state, draft);
