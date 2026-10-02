@@ -35,6 +35,13 @@ const directives = csp => Object.fromEntries(String(csp || '').split(';').map(pa
     let error = null; try { connectSources(bad); } catch (e) { error = e; }
     ok(`connect origins: "${bad}" is refused with what to write instead`, !!error && /not an origin/.test(error.message) && /https:\/\/skyryse\.okta\.com/.test(error.message), error?.message);
   }
+  // A refused entry is named by position, never repeated: it can hold a credential, and the error reaches the log.
+  for (const [value, position] of [['https://operator:tokenvalue@identity.example', 1], ['https://ok.example https://operator:tokenvalue@identity.example/path', 2], ['https://identity.example/?token=tokenvalue', 1]]) {
+    let error = null; try { connectSources(value); } catch (e) { error = e; }
+    ok(`connect origins: a refused entry holding a credential is named as entry ${position} and never echoed`, !!error && error.message.includes(`entry ${position} `) && !error.message.includes('tokenvalue') && !error.message.includes('operator'), error?.message);
+  }
+  let logged = null; try { createServer({ dbPath: ':memory:', quiet: true, cspConnectSrc: 'https://operator:tokenvalue@identity.example' }); } catch (e) { logged = e; }
+  ok('the server start refusal does not carry the credential either', !!logged && !String(logged.stack).includes('tokenvalue'), logged?.message);
   let startError = null; try { createServer({ dbPath: ':memory:', quiet: true, cspConnectSrc: '*' }); } catch (e) { startError = e; }
   ok('the server does not start with a connect origin that is not an origin', !!startError && /FLIGHT_CSP_CONNECT_SRC/.test(startError.message), startError?.message);
 }

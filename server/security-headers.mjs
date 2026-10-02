@@ -42,14 +42,16 @@ export function inlineScriptHashes(html) {
 
 // FLIGHT_CSP_CONNECT_SRC: origins separated by spaces or commas, each http(s) or ws(s) with no credentials, path, query
 // or fragment. Anything else is refused, so a typo cannot widen the policy (a bare * or a scheme alone would allow any
-// host). A valid spelling that is not canonical (a default port, capitals in the host) is stored as its origin.
+// host). A valid spelling that is not canonical (a default port, capitals in the host) is stored as its origin. The
+// refusal names the entry by its position and never repeats it: an entry typed by mistake can hold a credential, and
+// the startup error reaches the server log.
 export function connectSources(value) {
   const origins = [];
-  for (const item of String(value || '').split(/[\s,]+/).filter(Boolean)) {
+  for (const [index, item] of String(value || '').split(/[\s,]+/).filter(Boolean).entries()) {
     let url = null;
     try { url = new URL(item); } catch {}
     if (!url || !['https:', 'http:', 'wss:', 'ws:'].includes(url.protocol) || url.origin === 'null' || !/^[a-z][a-z0-9+.-]*:\/\/[^/?#]+\/?$/i.test(item) || url.username || url.password) {
-      throw new Error(`FLIGHT_CSP_CONNECT_SRC lists "${item.slice(0, 80)}", which is not an origin. List origins such as https://skyryse.okta.com, separated by spaces, with no path.`);
+      throw new Error(`FLIGHT_CSP_CONNECT_SRC entry ${index + 1} is not an origin (it is not repeated here, since it may hold a credential). List origins such as https://skyryse.okta.com, separated by spaces, with no user name, password, path, query or fragment.`);
     }
     origins.push(url.origin);
   }
