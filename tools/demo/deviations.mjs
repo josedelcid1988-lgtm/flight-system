@@ -176,8 +176,8 @@ const LIST = [
     find: /window\.SK_MIRROR = [^;{]*\{[\s\S]*?\};/g, count: 1,
     replace: (ctx, m, id) => `/* DEMO ${id} */ window.SK_MIRROR = window.__FS_SUITE_DEMO_MIRROR__ || { url: '', token: '', batchSize: 50 };` },
   { area: 'Data', title: 'Separate mirror queue keys',
-    why: 'Records, confirmations, acknowledgements and pending recoveries the demo keeps for a mirror are under skyryse-mes-demo-sync-*, so a production page in the same browser never sends a demo record to its mirror and never takes a demo acknowledgement as its own.',
-    find: /(['"])skyryse-mes-sync-(?:queue|sent|client|ack|recovery)-v1\1/g, count: 5,
+    why: 'Records, confirmations, acknowledgements, pending recoveries, device ids and the device clock the demo keeps for a mirror are under skyryse-mes-demo-sync-*, so a production page in the same browser never sends a demo record to its mirror and never takes a demo acknowledgement as its own.',
+    find: /(['"])skyryse-mes-sync-(?:queue|sent|client|ack|recovery|id|clock)-v1\1/g, count: 7,
     replace: (ctx, m, id) => `${m.replace('skyryse-mes-sync-', 'skyryse-mes-demo-sync-')}/* DEMO ${id} */` },
 ];
 

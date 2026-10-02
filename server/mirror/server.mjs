@@ -197,24 +197,30 @@ function checkRecord(r) {
 // already stored (same clientWriteId and payload: idempotent retry), or rejected with a reason.
 // lastAck, when the app sends it, is the newest row it was told was stored. If that row is not there with that
 // clientWriteId, the server lost confirmed rows (it was restored from a backup) and ackCheck says 'missing',
-// so the app sends every entity again.
+// so the app sends every entity again. When the acknowledgement carries the row's chain link (every result the
+// server returns does), the row must still have that link: a restored database that reused the id and the
+// clientWriteId for a different payload, or any other change to the row, is 'missing' too.
 export function ackCheck(db, lastAck) {
   if (!lastAck || typeof lastAck !== 'object') return undefined;
   if (!Number.isInteger(lastAck.id) || lastAck.id < 1 || !str(lastAck.clientWriteId, 200)) return 'missing';
-  const row = db.prepare('SELECT client_write_id FROM records WHERE id = ?').get(lastAck.id);
-  return row && row.client_write_id === lastAck.clientWriteId ? 'ok' : 'missing';
+  if (lastAck.link !== undefined && !HEX64.test(lastAck.link || '')) return 'missing';
+  const row = db.prepare('SELECT * FROM records WHERE id = ?').get(lastAck.id);
+  if (!row || row.client_write_id !== lastAck.clientWriteId) return 'missing';
+  return lastAck.link === undefined || linkHash(row) === lastAck.link ? 'ok' : 'missing';
 }
 
 export function appendRecords(db, clientId, records, now = () => new Date().toISOString(), { afterLock, beforeCommit } = {}) {
   if (!str(clientId, 120)) return { ok: false, status: 400, error: { code: 'bad_request', message: 'clientId is required.' } };
   if (!Array.isArray(records) || !records.length) return { ok: false, status: 400, error: { code: 'bad_request', message: 'records must be a non-empty list.' } };
   if (records.length > MAX_BATCH) return { ok: false, status: 413, error: { code: 'too_large', message: `Send at most ${MAX_BATCH} records per request.` } };
-  const byId = db.prepare('SELECT id, payload_sha256 FROM records WHERE client_write_id = ?');
+  const byId = db.prepare('SELECT * FROM records WHERE client_write_id = ?');
+  const rowById = db.prepare('SELECT * FROM records WHERE id = ?');
   const last = db.prepare('SELECT * FROM records ORDER BY id DESC LIMIT 1');
   const insert = db.prepare(`INSERT INTO records (client_write_id, store_key, entity_type, entity_id, operation, payload_json, payload_sha256, prev_sha256, actor, credential, client_ts, server_ts, build_version, build_sha256, client_id, manifests_sha256)
                              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const manifest = db.prepare('INSERT INTO signature_manifests (record_id, path, meaning, signer_name, signer_credential, signed_at, algorithm, hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
   const results = [];
+  let committed = null;
   db.exec('BEGIN IMMEDIATE');
   try {
     // Runs holding the write lock, before anything is appended: a refusal here rolls back and stores nothing.
@@ -224,7 +230,7 @@ export function appendRecords(db, clientId, records, now = () => new Date().toIS
       const problem = checkRecord(r);
       if (problem) { results.push({ clientWriteId: r && r.clientWriteId, status: 'rejected', reason: problem }); continue; }
       const seen = byId.get(r.clientWriteId);
-      if (seen) { results.push(seen.payload_sha256 === r.payloadSha256 ? { clientWriteId: r.clientWriteId, status: 'duplicate', id: Number(seen.id) } : { clientWriteId: r.clientWriteId, status: 'rejected', reason: 'clientWriteId was already used for a different payload' }); continue; }
+      if (seen) { results.push(seen.payload_sha256 === r.payloadSha256 ? { clientWriteId: r.clientWriteId, status: 'duplicate', id: Number(seen.id), link: linkHash(seen) } : { clientWriteId: r.clientWriteId, status: 'rejected', reason: 'clientWriteId was already used for a different payload' }); continue; }
       // The manifests in exactly the shape that is stored, so the hash in the link is the hash verify recomputes;
       // any other field a client sends (another spelling of the same name included) is ignored, not hashed.
       const stored = (r.manifests || []).map(m => ({ path: m.path, meaning: m.meaning, signer_name: m.signerName, signer_credential: m.signerCredential, signed_at: m.signedAt, algorithm: m.algorithm, hash: m.hash }));
@@ -232,21 +238,25 @@ export function appendRecords(db, clientId, records, now = () => new Date().toIS
       const info = insert.run(r.clientWriteId, r.storeKey, r.entityType, r.entityId, r.operation, r.payloadJson, r.payloadSha256, prev ? linkHash(prev) : ZERO, optional(r.actor), optional(r.credential), optional(r.clientTs), now(), optional(r.buildVersion), optional(r.buildSha256), clientId, manifestSetHash(stored));
       const id = Number(info.lastInsertRowid);
       for (const m of stored) manifest.run(id, m.path, m.meaning, m.signer_name, m.signer_credential, m.signed_at, m.algorithm, m.hash);
-      results.push({ clientWriteId: r.clientWriteId, status: 'stored', id });
+      results.push({ clientWriteId: r.clientWriteId, status: 'stored', id, link: linkHash(rowById.get(id)) });
     }
     // Phase one of the anchor update runs inside the transaction: if it cannot be written, nothing commits.
-    if (beforeCommit && results.some(x => x.status === 'stored')) beforeCommit(chainTip(db));
+    // The count and tip are taken here, under the write lock, and returned as `committed`, so the final anchor
+    // names exactly this commit and never a later one made by another connection.
+    if (results.some(x => x.status === 'stored')) { committed = chainTip(db); if (beforeCommit) beforeCommit(committed); }
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
-  return { ok: true, results };
+  return committed ? { ok: true, results, committed } : { ok: true, results };
 }
 
 // One write as the server makes it. The anchor check and, when another connection has committed since the last
 // full check (SQLite's data_version, which does not change for this connection's own commits), the full chain walk
 // run inside the write transaction, so no other connection can commit between the check and the append. The pending
 // anchor is written before COMMIT and the final one after. state.verifiedVersion carries the last fully checked
-// data_version between writes; afterCheck exists only so the suite can act while the lock is held.
-export function guardedAppend(db, anchorPath, state, clientId, records, { afterCheck } = {}) {
+// data_version between writes. The final anchor is the count and tip captured under the lock, never re-read after
+// COMMIT (another connection may have committed by then). afterCheck and afterCommit exist only so the suite can
+// act while the lock is held and between the commit and the final anchor.
+export function guardedAppend(db, anchorPath, state, clientId, records, { afterCheck, afterCommit } = {}) {
   let anchorNow = null;
   const r = appendRecords(db, clientId, records, undefined, {
     afterLock: () => {
@@ -259,7 +269,10 @@ export function guardedAppend(db, anchorPath, state, clientId, records, { afterC
     },
     beforeCommit: next => writePendingAnchor(anchorPath, anchorNow, next),
   });
-  if (r.ok && r.results.some(x => x.status === 'stored')) writeAnchor(anchorPath, db);
+  if (r.ok && r.committed) {
+    if (afterCommit) afterCommit();
+    putAnchor(anchorPath, { records: r.committed.records, tip: r.committed.tip, anchoredAt: new Date().toISOString() });
+  }
   return r;
 }
 

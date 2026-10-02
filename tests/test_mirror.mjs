@@ -118,6 +118,18 @@ await m.close();
  const lost=await pa({clientId:'anc',lastAck:{id:99,clientWriteId:'srv-99'},records:[rec(54)]});
  ok('a post naming a confirmed row the server no longer holds is answered ackCheck missing',lost.ackCheck==='missing'&&lost.results[0].status==='stored',JSON.stringify(lost));
  ok('a row id holding a different write is missing too',ackCheck(ma.db,{id:top.id,clientWriteId:'someone-else'})==='missing'&&ackCheck(ma.db,undefined)===undefined);
+ // Every result carries the stored row's chain link; an acknowledgement naming it is checked against the row's
+ // content, so a row with the same id and clientWriteId but anything else changed is missing (r4161702700).
+ {const row=ma.db.prepare('SELECT * FROM records WHERE id=?').get(top.id);const {linkHash}=await import(path.join(ROOT,'server/mirror/server.mjs'));
+  ok('each stored result names the row\'s chain link',first.results.every(x=>/^[0-9a-f]{64}$/.test(x.link||''))&&top.link===linkHash(row),JSON.stringify(first.results[2]));
+  const dup=await pa({clientId:'anc',records:[rec(52)]});
+  ok('a duplicate result names the stored row\'s link too',dup.results[0].status==='duplicate'&&dup.results[0].link===top.link,JSON.stringify(dup.results[0]));
+  ok('an acknowledgement with the row\'s link is ok',ackCheck(ma.db,{id:top.id,clientWriteId:'srv-52',link:top.link})==='ok');
+  const other=first.results[1].link;
+  ok('the refusal case is real: id and clientWriteId alone still match',ackCheck(ma.db,{id:top.id,clientWriteId:'srv-52'})==='ok');
+  ok('an acknowledgement whose link the row no longer has is missing, and a malformed link is missing',ackCheck(ma.db,{id:top.id,clientWriteId:'srv-52',link:other})==='missing'&&ackCheck(ma.db,{id:top.id,clientWriteId:'srv-52',link:'x'})==='missing');
+  const probed=await pa({clientId:'anc',lastAck:{id:top.id,clientWriteId:'srv-52',link:other},records:[]});
+  ok('a probe naming a changed row is answered missing',probed.ackCheck==='missing',JSON.stringify(probed));}
  const bka=ma.backup();await ma.close();
  const copy=(n,keepTriggers)=>{const f=path.join(tmp,n+'.sqlite');fs.copyFileSync(bka,f);fs.copyFileSync(bka+'.anchor.json',f+'.anchor.json');if(keepTriggers)return {f};const db=new DatabaseSync(f);['records_no_update','records_no_delete','manifests_no_update','manifests_no_delete'].forEach(t=>db.exec('DROP TRIGGER '+t));return {f,db,anchor:readAnchor(f+'.anchor.json')};};
  {const {db,anchor}=copy('intact');const r=verifyChain(db,{anchor});ok('an intact copy verifies against its anchor',r.ok&&r.records===5,JSON.stringify(r));db.close();}
@@ -344,6 +356,16 @@ await m.close();
   let other='';const r=srv.guardedAppend(ml.db,tp+'.anchor.json',guard,'l',[rec(903)],{afterCheck:()=>{const d=new DatabaseSync(tp);d.exec('PRAGMA busy_timeout = 0');try{const x=rec(904);d.prepare('INSERT INTO records (client_write_id,store_key,entity_type,entity_id,operation,payload_json,payload_sha256,prev_sha256,actor,credential,client_ts,server_ts,build_version,build_sha256,client_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(x.clientWriteId,x.storeKey,x.entityType,x.entityId,x.operation,x.payloadJson,x.payloadSha256,'0'.repeat(64),null,null,x.clientTs,'t',x.buildVersion,x.buildSha256,'intruder');other='committed';}catch(e){other=e.message;}finally{d.close();}}});
   ok('another connection cannot commit while a write is being checked',/locked|busy/i.test(other),other);
   ok('the checked write is stored and the chain stays intact against its anchor',r.ok&&r.results[0].status==='stored'&&ml.verify().ok,JSON.stringify({r,v:ml.verify()}));
+  // Between the commit and the final anchor another connection commits a row: the final anchor names this write's
+  // own count and tip, so that row is not anchored as if it were good and the next write refuses it (r4161702697).
+  {const n1=Number(ml.db.prepare('SELECT COUNT(*) n FROM records').get().n);let slipped='';
+   const w=srv.guardedAppend(ml.db,tp+'.anchor.json',guard,'l',[rec(906)],{afterCommit:()=>{const d=new DatabaseSync(tp);try{const x=rec(907);d.prepare('INSERT INTO records (client_write_id,store_key,entity_type,entity_id,operation,payload_json,payload_sha256,prev_sha256,actor,credential,client_ts,server_ts,build_version,build_sha256,client_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(x.clientWriteId,x.storeKey,x.entityType,x.entityId,x.operation,x.payloadJson,x.payloadSha256,'0'.repeat(64),null,null,x.clientTs,'t',x.buildVersion,x.buildSha256,'intruder');slipped='committed';}catch(e){slipped=e.message;}finally{d.close();}}});
+   const an=readAnchor(tp+'.anchor.json');const total=Number(ml.db.prepare('SELECT COUNT(*) n FROM records').get().n);
+   ok('the refusal case is real: another connection committed a row before the final anchor was written',slipped==='committed'&&total===n1+2,slipped);
+   ok('the final anchor names the write\'s own count and tip, not the row committed after it',w.ok&&an.records===n1+1&&!an.pending&&an.records===w.committed.records&&an.tip===w.committed.tip,JSON.stringify({an,committed:w.committed,total}));
+   const next=srv.guardedAppend(ml.db,tp+'.anchor.json',guard,'l',[rec(908)]);
+   ok('the next write refuses the unanchored row and stores nothing',!next.ok&&next.status===409&&Number(ml.db.prepare('SELECT COUNT(*) n FROM records').get().n)===total,JSON.stringify(next));
+   {const d=new DatabaseSync(tp);const t=d.prepare("SELECT sql FROM sqlite_master WHERE name='records_no_delete'").get().sql;d.exec('DROP TRIGGER records_no_delete');d.exec("DELETE FROM records WHERE client_id='intruder'");d.exec(t);d.close();}}
   {const d=new DatabaseSync(tp);d.exec('DROP TRIGGER records_no_delete');d.exec('DROP TRIGGER manifests_no_delete');d.exec('DELETE FROM signature_manifests WHERE record_id=3');d.exec('DELETE FROM records WHERE id=3');d.close();}
   const n0=Number(ml.db.prepare('SELECT COUNT(*) n FROM records').get().n);const bad=srv.guardedAppend(ml.db,tp+'.anchor.json',guard,'l',[rec(905)]);
   ok('a change made before the write is refused under the lock and nothing is stored',!bad.ok&&bad.status===409&&/rows/.test(bad.refusal||'')&&Number(ml.db.prepare('SELECT COUNT(*) n FROM records').get().n)===n0,JSON.stringify(bad));}
@@ -605,6 +627,49 @@ const OTHER='skyryse-mes-sync-ack-v1:page-other-tab';let staged=false;const e0=(
  await mkOrder(p);await drain();await ctx.unroute(/\/api\/v1\/writes$/);
  ok('its next post names that acknowledgement',sentAck&&s1.ack&&sentAck.id>=s1.ack.id,JSON.stringify({sentAck,mem:s1.ack}));
  await p.evaluate(()=>{Storage.prototype.setItem=window.__ackSet;});await mkOrder(p);await drain();}
+// A recovery stays pending until the server confirms its snapshot: when the queued recovery is lost before it is
+// sent (the queue is cleared, the tab closes), the next load runs it again (r4161702691).
+{const OTHER='skyryse-mes-sync-ack-v1:page-other-tab';const e0=(await devAck()).epoch;let phase=0;
+ await ctx.route(/\/api\/v1\/writes$/,async route=>{if(phase===0){phase=1;const resp=await route.fetch();await p.evaluate(([k,v])=>localStorage.setItem(k,JSON.stringify(v)),[OTHER,{epoch:e0+1,ack:null,at:Date.now()}]);await route.fulfill({response:resp});}else if(phase===1)await route.abort();else await route.continue();});
+ await mkOrder(p);
+ await p.waitForFunction(()=>(JSON.parse(localStorage.getItem('skyryse-mes-sync-queue-v1')||'[]')).some(r=>r.entityType==='snapshot'),null,{timeout:15000});
+ const flag=await p.evaluate(()=>localStorage.getItem('skyryse-mes-sync-recovery-v1'));
+ ok('a recovery whose snapshot is queued but not confirmed stays pending',flag==='true',String(flag));
+ const s0=snapshots().length;
+ await p.evaluate(()=>{localStorage.setItem('skyryse-mes-sync-queue-v1','[]');});
+ phase=2;await p.reload();await p.waitForFunction(()=>window.__ready===true&&!!window.skMirror,null,{timeout:30000});
+ const st7=await p.evaluate(async()=>{for(let i=0;i<120&&(localStorage.getItem('skyryse-mes-sync-recovery-v1')||window.skMirror.status().unsynced);i++){await new Promise(r=>setTimeout(r,100));if(window.skMirror.status().unsynced)await window.skMirror.flush();}return {...window.skMirror.status(),flag:localStorage.getItem('skyryse-mes-sync-recovery-v1')};});
+ await ctx.unroute(/\/api\/v1\/writes$/);
+ ok('with its queued records lost, the next load runs the recovery again: a snapshot is confirmed and nothing is left pending',snapshots().length>s0&&st7.flag===null&&st7.unsynced===0,JSON.stringify({s0,now:snapshots().length,st7}));}
+// The device id is saved when it is made, every id the device has used is kept, and a tab adopts the id another
+// tab saved; a snapshot lists every id, so records written under either are covered (r4161702712).
+{const fctx=await b.newContext();await fctx.addInitScript(([url,token])=>{window.SK_MIRROR={url,token,batchSize:25};},[`http://127.0.0.1:${PORT}`,WTOKEN]);
+ const fp=await fctx.newPage();await fp.goto(PROD);await fp.waitForFunction(()=>!!window.skMirror&&window.skMirror.enabled,null,{timeout:30000});
+ const born=await fp.evaluate(()=>({id:window.skMirror.status().clientId,stored:(JSON.parse(localStorage.getItem('skyryse-mes-sync-client-v1')||'null')||{}).id,reg:Object.keys(localStorage).filter(k=>k.startsWith('skyryse-mes-sync-id-v1:'))}));
+ ok('a new device saves its client id at once, before any write, and registers it',!!born.id&&born.stored===born.id&&born.reg.includes('skyryse-mes-sync-id-v1:'+born.id),JSON.stringify(born));
+ await fctx.close();
+ const mine=await p.evaluate(()=>window.skMirror.status().clientId);const other='client-other-tab-'+Date.now();
+ await p.evaluate(o=>{const c=JSON.parse(localStorage.getItem('skyryse-mes-sync-client-v1'));c.id=o;localStorage.setItem('skyryse-mes-sync-client-v1',JSON.stringify(c));localStorage.setItem('skyryse-mes-sync-id-v1:'+o,'1');},other);
+ const w9=await mkOrder(p);await drain();
+ const by=m.db.prepare("SELECT client_id c FROM records WHERE entity_type='order' AND entity_id=? ORDER BY id DESC LIMIT 1").get(w9.id);
+ ok('a tab adopts the client id another tab saved, and writes under it',by&&by.c===other&&await p.evaluate(()=>window.skMirror.status().clientId)===other,JSON.stringify({by,other}));
+ const OTHER='skyryse-mes-sync-ack-v1:page-other-tab';const e0=(await devAck()).epoch;let staged=false;
+ await ctx.route(/\/api\/v1\/writes$/,async route=>{const resp=await route.fetch();if(!staged){staged=true;await p.evaluate(([k,v])=>localStorage.setItem(k,JSON.stringify(v)),[OTHER,{epoch:e0+1,ack:null,at:Date.now()}]);}await route.fulfill({response:resp});});
+ await mkOrder(p);await drain();await ctx.unroute(/\/api\/v1\/writes$/);
+ const sk=JSON.parse(snapshots().pop().payload_json);
+ ok('the snapshot lists every client id this device has used',Array.isArray(sk.clientIds)&&sk.clientIds.includes(mine)&&sk.clientIds.includes(other)&&sk.clientId===other,JSON.stringify({clientIds:sk.clientIds,mine,other}));}
+// Record and snapshot times come from a device clock that never moves backward: with the system clock behind the
+// last time this device used, the next record and snapshot are still later (r4161702707).
+{const ahead=Date.now()+3600*1000;await p.evaluate(t=>localStorage.setItem('skyryse-mes-sync-clock-v1',String(t)),ahead);
+ const r0=count();await mkOrder(p);await drain();
+ const ts=m.db.prepare('SELECT client_ts t FROM records WHERE id>? ORDER BY id').all(r0).map(x=>Date.parse(x.t));
+ ok('the refusal case is real: the system clock is behind the device clock',Date.now()<ahead);
+ ok('records written after the system clock moved back carry later times than the device last used',ts.length>0&&ts.every(t=>t>ahead)&&ts.every((t,i)=>i===0||t>=ts[i-1]),JSON.stringify({ahead,ts:ts.slice(0,4)}));
+ const OTHER='skyryse-mes-sync-ack-v1:page-other-tab';const e0=(await devAck()).epoch;let staged=false;
+ await ctx.route(/\/api\/v1\/writes$/,async route=>{const resp=await route.fetch();if(!staged){staged=true;await p.evaluate(([k,v])=>localStorage.setItem(k,JSON.stringify(v)),[OTHER,{epoch:e0+1,ack:null,at:Date.now()}]);}await route.fulfill({response:resp});});
+ await mkOrder(p);await drain();await ctx.unroute(/\/api\/v1\/writes$/);
+ const sk=JSON.parse(snapshots().pop().payload_json);
+ ok('a snapshot taken after the system clock moved back is later than every record this device wrote before it',Date.parse(sk.takenAt)>Math.max(...ts),JSON.stringify({takenAt:sk.takenAt,last:new Date(Math.max(...ts)).toISOString()}));}
 // The demo never uses the mirror a production setting names: an SK_MIRROR set before load (as a page, proxy or
 // the suite runner could) is replaced with an empty address, nothing is queued and no request leaves the page.
 // Only the suite runner's own hook, __FS_SUITE_DEMO_MIRROR__, turns the demo's mirror on, under its own keys.

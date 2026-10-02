@@ -114,7 +114,7 @@ Every endpoint except `POST /api/v1/writes` and health needs the operator token.
 
 | Method and path | Purpose |
 | --- | --- |
-| `POST /api/v1/writes` | Write token (or operator token). Body `{ clientId, lastAck, records: [...] }`, up to 500 records. `lastAck` is the newest row the server confirmed to this client; the answer carries `ackCheck: 'missing'` when the server no longer holds it (it was restored from an older backup), and the app then sends every record again. A post with `records: []` and a `lastAck` is a probe: it stores nothing and is answered with `ackCheck` only, so a device with nothing queued (it probes on load, when it comes back online, when its tab is shown again and every five minutes) still finds out about a restore. Each record comes back `stored`, `duplicate` (the same `clientWriteId` and payload already stored: a safe retry) or `rejected` with a reason (bad hash, malformed manifest, a `clientWriteId` reused for a different payload). |
+| `POST /api/v1/writes` | Write token (or operator token). Body `{ clientId, lastAck, records: [...] }`, up to 500 records. `lastAck` is the newest row the server confirmed to this client; the answer carries `ackCheck: 'missing'` when the server no longer holds it (it was restored from an older backup), or holds that id and `clientWriteId` with a different chain link (`link`, which every `stored` and `duplicate` result carries, and the app keeps with its acknowledgement), and the app then sends every record again. A post with `records: []` and a `lastAck` is a probe: it stores nothing and is answered with `ackCheck` only, so a device with nothing queued (it probes on load, when it comes back online, when its tab is shown again and every five minutes) still finds out about a restore. Each record comes back `stored`, `duplicate` (the same `clientWriteId` and payload already stored: a safe retry) or `rejected` with a reason (bad hash, malformed manifest, a `clientWriteId` reused for a different payload). |
 | `GET /api/v1/health` | With the token: row and manifest counts, the last write time, the backup settings and the last backup file. Without it: `{ ok, api }` only. |
 | `GET /api/v1/verify` | Walks the whole chain and compares its count and tip with the anchor: `chainIntact`, the row count, the chain tip, the anchor, and `firstBreak: { id, reason }` when it is broken. `legacyRows` counts rows written before manifests joined the chain (their manifests are not covered by the link). Such rows are accepted only at the start of the chain, up to the row id recorded once when the database gained the column (`mirror_meta.legacy_through`, which cannot be changed); a row without `manifests_sha256` anywhere else breaks the chain. |
 | `GET /api/v1/export?format=json` | Full retention export: every record with its manifests, the chain anchor (`anchor`) and a verify result against it. |
@@ -127,7 +127,7 @@ The server takes an online backup on its schedule with SQLite `VACUUM INTO`, whi
 consistent copy while the server keeps accepting writes, and writes the copy's own anchor next to it
 (`<backup>.sqlite.anchor.json`). The database is checked against its trusted anchor before the copy and the
 copy is checked against the same anchor after it, so a change made by another process in between is never
-backed up; the copy's anchor is taken from the copy itself. Keep the two together. After each backup it keeps the newest copy
+backed up; the copy's anchor is taken from the copy itself. A write's final anchor is the row count and tip taken under its own write lock, never read again after the commit, so a row another process commits in that moment is not anchored and the next write refuses it. Keep the two together. After each backup it keeps the newest copy
 of each day for `backup-keep-days` days and deletes the rest. Take one on demand with:
 
 ```bash
@@ -165,9 +165,13 @@ of that disk.
    deleted, and one `snapshot` record listing every entity key it holds. The device builds these from
    the workspace saved in the browser, not from one tab's memory, so a tab that has not yet heard of
    another tab's change never leaves that change out; when the saved workspace fails validation it
-   sends no snapshot and keeps the recovery pending until a valid workspace is saved. The snapshot's list is
-   rebuilt from the saved workspace just before it is sent. Anything from that device
-   absent from its latest snapshot, and last written before that snapshot's `takenAt`, is deleted, including deletions made before this build. Intermediate versions written
+   sends no snapshot and keeps the recovery pending until a valid workspace is saved. A recovery stays pending until
+   the server confirms its snapshot, so one whose queued records are lost (the tab closed, storage cleared) runs again
+   on the next load. The snapshot's list is
+   rebuilt from the saved workspace just before it is sent. Anything written under any of the snapshot's `clientIds` (every client id the device has used; the id is saved
+   when it is made and a tab adopts the one another tab saved)
+   absent from its latest snapshot, and last written before that snapshot's `takenAt`, is deleted (`takenAt` and each
+   record's `clientTs` come from a device clock that never moves backward, even when the system clock does), including deletions made before this build. Intermediate versions written
    between the backup and the restore are only in the database you moved aside. Before deciding anything about them, compare:
    ```bash
    node server/mirror/restore-test.mjs <backup>.sqlite --against <the database you moved aside> \
