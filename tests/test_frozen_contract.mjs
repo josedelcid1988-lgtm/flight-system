@@ -91,6 +91,10 @@ const SOD=[
   ['the QA Manager test is the account role list, not Master Access',"    return roles.includes('qm');\n",1],
   ['the FAIR lock guards engineering change submit, ECR approval, QA re-release, operation add, remove and edit, rework links, sequence release, reject and withdraw, and serial assign and void',"    { const locked = fairLockRefusal(state, order); if (locked) return locked; }",11],
   ['the FAIR lock guards standard rework',"{ const o0 = state.orders.find(x => x.id === orderId), locked = o0 ? fairLockRefusal(state, o0) : null; if (locked) return locked; }",1],
+  ['a change on a signed FAIR is refused when the revision log is full: sequence release, serial assign and void',"    { const full = fairRollRefusal(state, order); if (full) return full; }",3],
+  ['a reopened FAIR keeps the signatures it supersedes, in the manual and the automatic reopen',"    supersedeFairSignatures(order, ",2],
+  ['verifyManifests rechecks the signatures a reopened FAIR kept',"failures.push(...fairSupersededProblems(order));",1],
+  ['a serial change on a signed FAIR rolls the work order revision',"const rollForSignedFair = (state, order, summary, change) => fairSigned(order) ? rollWorkOrderRevision(state, order, summary, [change], actor(state)) : null;",1],
   ['a signed FAIR is reopened only by a QA Manager',"if (!qaManagerSignedIn(state)) return fail('This FAIR is signed. Only a QA Manager can reopen it.');",1],
   ['only a QA Manager signs a FAIR impact assessment',"if (!qaManagerSignedIn(state)) return fail('Only a QA Manager can sign a FAIR impact assessment.');",1],
   ['the FAIR impact assessment needs all three statements',"if (!(yes(input0.fairValid) && yes(input0.noOperationImpact) && yes(input0.noDrawingDeviation))) return fail(",1],
@@ -98,7 +102,7 @@ const SOD=[
   ['the FAIR impact assessment signs the verification hash, both revisions, the change list, the drawing, the statements and the rationale',"const fairImpactSubject = (order, fair, a) => ({ fair: fairId(order), verified: plain(fair.verified) && plain(fair.verified.manifest) ? fair.verified.manifest.hash : null, fromWoRev: a.fromWoRev, toWoRev: a.toWoRev, changes: a.changes, drawing: a.drawing, statements: a.statements, rationale: a.rationale,",1],
   ['verifyManifests rechecks every FAIR impact assessment',"failures.push(...fairImpactProblems(order));",1],
   ['MES.validate refuses a work order whose FAIR impact assessment fails',"if (plain(order) && plain(order.fair) && fairImpactProblems(order).length) return false;",1],
-  ['an approved engineering change on a signed FAIR reopens it automatically (Jose, #238)',"    const fairReopened = fairSigned(order);\n    if (fairReopened) {\n      const signedAt = fairWoRev(order);\n      clearFairSignatures(order);",1],
+  ['an approved engineering change on a signed FAIR reopens it automatically (Jose, #238)',"    const fairReopened = fairSigned(order);\n    if (fairReopened) {\n      const signedAt = fairWoRev(order);\n      supersedeFairSignatures(order, ",1],
   ['closeOrder and decideOrderClosure refuse a FAIR revision mismatch with no impact assessment at the current revision',"    { const gap = fairRevisionGap(order); if (gap) return fail(gap); }",2],
   ['the recorded signer and time of a signed record must be the manifest signer and time',"const signerMismatch = (rec, m) => !plain(rec.by) || !plain(m.signer) || rec.by.credentialId !== m.signer.credentialId || rec.by.name !== m.signer.name || rec.at !== m.at;",1],
 ];
@@ -108,7 +112,7 @@ for(const [label,text,count] of SOD) has(label,text,count);
 {const serverSrc=fs.readFileSync(path.join(ROOT,'server','server.mjs'),'utf8');const text="if (target.username === actor.username) return fail(403, 'Nobody changes their own roles. Another QA Manager, Quality Supervisor, or Master Access account must do it.');";const n=serverSrc.split(text).length-1;ok('the server refuses any account changing its own roles',n===1,`found ${n} of: ${text.slice(0,120)}`);}
 
 {const serverSrc=fs.readFileSync(path.join(ROOT,'server','server.mjs'),'utf8');const text="{ const forged = host.MES.legacyEscapeChanges(beforeState, state); if (forged) return { problem: forged }; }";const n=serverSrc.split(text).length-1;ok('the server refuses a migrated-escape record the stored workspace does not hold',n===1,`found ${n} of: ${text.slice(0,120)}`);}
-{const serverSrc=fs.readFileSync(path.join(ROOT,'server','server.mjs'),'utf8');const text="if (!beforeState) { const legacy = host.MES.legacyEscapeImports(state); if (legacy.length) audits = [...audits, { action: 'legacy-escape-import', detail: { ncs: legacy } }]; }";const n=serverSrc.split(text).length-1;ok('an initial upload audits every migrated-escape closure under the importing account',n===1,`found ${n} of: ${text.slice(0,120)}`);}
+{const serverSrc=fs.readFileSync(path.join(ROOT,'server','server.mjs'),'utf8');const text="if (!beforeState) { const legacy = host.MES.legacyEscapeImports(state); if (legacy.length) audits = [...audits, ...legacyEscapeImportAudits(legacy)]; }";const n=serverSrc.split(text).length-1;ok('an initial upload audits every migrated-escape closure under the importing account',n===1,`found ${n} of: ${text.slice(0,120)}`);}
 
 // ---- what an approval records ----
 has('a signature manifest names the signer, meaning, time, signed subject, SHA-256 and build',"return { meaning, at, signer, algorithm: 'SHA-256', hash: sha256(canonical(subject)), subject: JSON.parse(JSON.stringify(subject)), authenticated: false, build: buildStamp(),",1);

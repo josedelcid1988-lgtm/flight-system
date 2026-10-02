@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import { Readable, Writable } from 'node:stream';
-import { createServer } from '../server/server.mjs';
+import { createServer, legacyEscapeImportAudits, LEGACY_IMPORT_AUDIT_CHARS } from '../server/server.mjs';
 
 let checks = 0;
 const check = async (name, fn) => { await fn(); checks += 1; console.log(`ok ${name}`); };
@@ -193,10 +193,26 @@ try {
   await check('r4160517069 an initial upload of the migrated workspace records each migrated-escape closure under the importing account', async () => {
     const live = await started(raw);
     const rows = legacyAudit(live.server);
-    assert.equal(rows.length, 1, JSON.stringify(rows));
-    assert.equal(rows[0].username, 'admin');
+    assert.ok(rows.length >= 1, JSON.stringify(rows));
+    assert.ok(rows.every(r => r.username === 'admin' && r.detail.batches === rows.length), JSON.stringify(rows));
+    const ncs = rows.flatMap(r => r.detail.ncs);
+    assert.equal(ncs.length, rows[0].detail.total);
+    assert.equal(rows[0].detail.digest, createHash('sha256').update(JSON.stringify(ncs)).digest('hex'));
     const stored = migratedNcs(JSON.parse(live.server.store.getDoc('default').json));
-    assert.deepEqual(rows[0].detail.ncs.map(n => [n.id, n.escapeId, n.migratedAt]).sort(), stored.map(t => [t.id, t.resolution.legacy.escapeId, t.resolution.legacy.migratedAt]).sort());
+    assert.deepEqual(ncs.map(n => [n.id, n.escapeId, n.migratedAt]).sort(), stored.map(t => [t.id, t.resolution.legacy.escapeId, t.resolution.legacy.migratedAt]).sort());
+  });
+
+  // Codex r4170271763: both stores cut an audit detail at 4,000 characters, so a large import is written as bounded
+  // batches that together name every NC, each with the batch count, the total and the digest of the full list.
+  await check('r4170271763 a large migrated-escape import audits every NC in batches under the 4,000-character detail limit', async () => {
+    const list = Array.from({ length: 500 }, (_, i) => ({ id: `NC-${String(i + 1).padStart(4, '0')}`, escapeId: `ESC-${String(i + 1).padStart(3, '0')}`, migratedAt: '2026-09-30T00:00:00.000Z', closedBy: 'A long closing inspector name for sizing', closedAt: '2026-09-01T00:00:00.000Z' }));
+    const rows = legacyEscapeImportAudits(list);
+    assert.ok(rows.length > 1, String(rows.length));
+    assert.ok(rows.every(r => r.action === 'legacy-escape-import' && JSON.stringify(r.detail).length < 4000), JSON.stringify(rows.map(r => JSON.stringify(r.detail).length)));
+    assert.ok(rows.every((r, i) => r.detail.batch === i + 1 && r.detail.batches === rows.length && r.detail.total === 500), 'batch numbering');
+    assert.deepEqual(rows.flatMap(r => r.detail.ncs), list);
+    assert.ok(rows.every(r => r.detail.digest === createHash('sha256').update(JSON.stringify(list)).digest('hex')));
+    assert.ok(LEGACY_IMPORT_AUDIT_CHARS < 4000);
   });
 
   await check('r4160517069 an initial upload with no migrated-escape record writes no legacy audit row', async () => {

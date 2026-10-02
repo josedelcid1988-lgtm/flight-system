@@ -3737,6 +3737,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       if (plain(fair) && plain(fair.verified) && plain(fair.verified.manifest) && !plain(fair.verified.manifest.subject) && (String(fair.verified.at || '') >= MANIFEST_SUBJECTS_FROM || fair.verified.manifest.build !== undefined)) failures.push({ where: `${order.id} FAIR verification`, reason: 'the verification signature has lost its signed FAIR content' });
       // A FAIR impact assessment is rebuilt from the stored record and the work order revision log and rechecked.
       if (plain(fair) && Array.isArray(fair.impactAssessments) && fair.impactAssessments.length) { recomputed += fair.impactAssessments.length; failures.push(...fairImpactProblems(order)); }
+      // The signatures a reopened FAIR superseded are kept and rechecked.
+      if (plain(fair) && Array.isArray(fair.superseded) && fair.superseded.length) { recomputed += fair.superseded.length; failures.push(...fairSupersededProblems(order)); }
       // Box 22 chains to the verified FAIR, and an approval signed since box 22 was bound into it chains to box 22.
       // An approval signed before that carries no reviewed key and is checked as it was signed.
       if (plain(fair) && plain(fair.reviewed) && plain(fair.reviewed.manifest) && plain(fair.verified) && plain(fair.verified.manifest)) { recomputed++; const rm = fair.reviewed.manifest, current = plain(rm.subject) && Object.hasOwn(rm.subject, 'reviewer'); const sub = current ? fairReviewSubject(order, fair, fair.reviewed.by, fair.reviewed.at, rm.override, Object.hasOwn(rm.subject, 'reviewerStamp'), Object.hasOwn(rm.subject, 'verifiedAt')) : { fair: fairId(order), verified: fair.verified.manifest.hash, ...(rm.override ? { override: rm.override } : {}) }; if (sha256(canonical(sub)) !== fair.reviewed.manifest.hash) failures.push({ where: `${order.id} FAIR box 22`, reason: 'box 22 does not chain to the verified FAIR' }); }
@@ -5853,9 +5855,10 @@ const OP_BOM_MAX = 12;
   }
   // Internal: the sequence change and engineering change approvals call it with the order they are changing. It is
   // not a server action (server/mes-host.mjs actionExclude), and the page never sends it as one.
+  const WO_REVISION_LIMIT = 200;
   function rollWorkOrderRevision(state, order, summary, changes, approver) {
     ensureRevisions(state);
-    if (order.revisions.length >= 200) return null;
+    if (order.revisions.length >= WO_REVISION_LIMIT) return null;
     const rev = nextWoRev(order.woRev);
     order.woRev = rev;
     const entry = {
@@ -5875,6 +5878,7 @@ const OP_BOM_MAX = 12;
     if (!pending) return fail('There is no sequence change waiting for QA.');
     { const d = denied('approve-wo', 'release an operation change'); if (d) return d; }
     { const locked = fairLockRefusal(state, order); if (locked) return locked; }
+    { const full = fairRollRefusal(state, order); if (full) return full; }
     if (pending.entries.some(entry => entry.by?.credentialId === '__demo_never_matches__' /* DEMO D-20 */)) return fail('The person who changed the sequence can’t release it. A different Quality Engineering or QA Manager account must release it.');
     const at = new Date().toISOString();
     order.sequenceChanges = [...(Array.isArray(order.sequenceChanges) ? order.sequenceChanges: []), { ...pending, status: 'Released', approvedBy: actor(state), approvedAt: at }].slice(-50);
@@ -5974,9 +5978,11 @@ const OP_BOM_MAX = 12;
     const used = new Set(assigned.map(entry => entry.unit));
     let unit = 1;
     while (used.has(unit)) unit++;
+    { const full = fairRollRefusal(state, order); if (full) return full; }
     state.serialLog.push({ id: `SNL-${String(state.serialLog.length + 1).padStart(5, '0')}`, serial, partNumber: order.partNumber, revision: order.revision, orderId: order.id, unit, status: 'Assigned', assignedAt: new Date().toISOString(), assignedBy: profileSnapshot(state.profile) });
-    record(state, order, `Serial number ${serial} assigned to unit ${unit}.`);
-    return { ok: true, message: `${serial} assigned to unit ${unit}.`, serial };
+    const rev = rollForSignedFair(state, order, `Serial number ${serial} assigned after the FAIR was signed.`, `Assigned serial ${serial} to unit ${unit}`);
+    record(state, order, `Serial number ${serial} assigned to unit ${unit}.${rev ? ` Work order revision rolled to ${woRevLabel(rev.rev)}.` : ''}`);
+    return { ok: true, message: `${serial} assigned to unit ${unit}.${rev ? ` Revision is now ${woRevLabel(rev.rev)}; the FAIR needs an impact assessment or a new FAI before closure.` : ''}`, serial };
   }
 
   function voidSerial(state, orderId, serial, reason) {
@@ -5991,9 +5997,11 @@ const OP_BOM_MAX = 12;
     if (!entry) return fail('That serial number is not assigned on this work order.');
     const text = String(reason ?? '').trim();
     if (!str(text, 200)) return fail('Enter a reason for voiding (up to 200 characters).');
+    { const full = fairRollRefusal(state, order); if (full) return full; }
     Object.assign(entry, { status: 'Voided', voidedAt: new Date().toISOString(), voidedBy: profileSnapshot(state.profile), voidReason: text });
-    record(state, order, `Serial number ${serial} voided: ${text}.`);
-    return { ok: true, message: `${serial} voided. It stays in the log and won’t be reused.` };
+    const rev = rollForSignedFair(state, order, `Serial number ${serial} voided after the FAIR was signed.`, `Voided serial ${serial}: ${text}`);
+    record(state, order, `Serial number ${serial} voided: ${text}.${rev ? ` Work order revision rolled to ${woRevLabel(rev.rev)}.` : ''}`);
+    return { ok: true, message: `${serial} voided. It stays in the log and won’t be reused.${rev ? ` Revision is now ${woRevLabel(rev.rev)}; the FAIR needs an impact assessment or a new FAI before closure.` : ''}` };
   }
 
   function inventoryReadiness(state, order) {
@@ -6183,7 +6191,8 @@ const OP_BOM_MAX = 12;
     && (f.sampleSize === null || (Number.isInteger(f.sampleSize) && f.sampleSize >= 1)) && ['Open', 'Verified', 'Approved'].includes(f.status)
     && (f.verified === null || (plain(f.verified) && snapshotValid(f.verified.by) && timestamp(f.verified.at) && (f.verified.woRev === undefined || (typeof f.verified.woRev === 'string' && /^(Baseline|[A-Z]{1,4})$/.test(f.verified.woRev))))) && (f.approved === null || (plain(f.approved) && snapshotValid(f.approved.by) && timestamp(f.approved.at)))
     // Box 22 is signed only on a verified FAIR, by a named signer, at a time, with its signature manifest.
-    && (f.reviewed === undefined || f.reviewed === null || (plain(f.reviewed) && plain(f.verified) && ['Verified', 'Approved'].includes(f.status) && snapshotValid(f.reviewed.by) && timestamp(f.reviewed.at) && plain(f.reviewed.manifest) && typeof f.reviewed.manifest.meaning === 'string' && !!f.reviewed.manifest.meaning && f.reviewed.manifest.at === f.reviewed.at && plain(f.reviewed.manifest.signer) && typeof f.reviewed.manifest.signer.credentialId === 'string' && f.reviewed.manifest.signer.credentialId === f.reviewed.by.credentialId && f.reviewed.manifest.signer.name === f.reviewed.by.name && f.reviewed.manifest.algorithm === 'SHA-256' && /^[0-9a-f]{64}$/.test(String(f.reviewed.manifest.hash)) && !fairSelfReview(f, f.reviewed.by))));
+    && (f.reviewed === undefined || f.reviewed === null || (plain(f.reviewed) && plain(f.verified) && ['Verified', 'Approved'].includes(f.status) && snapshotValid(f.reviewed.by) && timestamp(f.reviewed.at) && plain(f.reviewed.manifest) && typeof f.reviewed.manifest.meaning === 'string' && !!f.reviewed.manifest.meaning && f.reviewed.manifest.at === f.reviewed.at && plain(f.reviewed.manifest.signer) && typeof f.reviewed.manifest.signer.credentialId === 'string' && f.reviewed.manifest.signer.credentialId === f.reviewed.by.credentialId && f.reviewed.manifest.signer.name === f.reviewed.by.name && f.reviewed.manifest.algorithm === 'SHA-256' && /^[0-9a-f]{64}$/.test(String(f.reviewed.manifest.hash)) && !fairSelfReview(f, f.reviewed.by)))
+    && fairSupersededValid(f.superseded));
   // Prefill from the work order: the index from the kit (sub-assemblies carry their own FAIR or lot), tests from ATP operations.
   const fairSeedReason = order => { const reason = String(order.fai?.reason || ''); return reason.startsWith('First work order from ') ? 'First production from approved Master WI' : reason.includes('revised') ? 'Mfg. process change' : 'New part (first production)'; };
   function fairSeed(state, order) {
@@ -6375,8 +6384,9 @@ const OP_BOM_MAX = 12;
     if (!qaManagerSignedIn(state)) return fail('This FAIR is signed. Only a QA Manager can reopen it.');
     if (order.status === 'Closed') return fail('The work order is closed; a correction needs a new FAI order.');
     reason = String(reason ?? '').trim(); if (!str(reason, 300)) return fail('Say why the FAIR is being reopened.');
-    clearFairSignatures(order);
-    record(state, order, `FAIR reopened: ${reason}`);
+    if (fairSupersededFull(order)) return fail(FAIR_SUPERSEDED_FULL_MESSAGE);
+    supersedeFairSignatures(order, reason, new Date().toISOString());
+    record(state, order, `FAIR reopened: ${reason} The superseded signatures are kept with the FAIR.`);
     return { ok: true, message: 'FAIR reopened.' };
   }
 
@@ -6389,6 +6399,39 @@ const OP_BOM_MAX = 12;
   const FAIR_LOCK_MESSAGE = "This work order's FAIR is signed. Only a QA Manager can change it.";
   // Reopening a FAIR clears its verification, box 22, approval and impact assessments; a new FAI is signed after it.
   const clearFairSignatures = order => { order.fair.status = 'Open'; order.fair.verified = null; order.fair.approved = null; delete order.fair.reviewed; delete order.fair.impactAssessments; };
+  // A reopened FAIR keeps the signatures it held (AGENTS.md rule 2): each reopen appends the verification, box 22, Skyryse
+  // QA approval and impact assessments it supersedes, with when and why, to fair.superseded. verifyManifests rechecks every
+  // kept manifest. The list holds FAIR_SUPERSEDED_MAX reopens; a full list refuses the reopen, so nothing is ever dropped.
+  const FAIR_SUPERSEDED_MAX = 50;
+  const fairSupersededFull = order => !!(order && plain(order.fair) && Array.isArray(order.fair.superseded) && order.fair.superseded.length >= FAIR_SUPERSEDED_MAX);
+  const FAIR_SUPERSEDED_FULL_MESSAGE = `This FAIR has been reopened ${FAIR_SUPERSEDED_MAX} times and keeps every superseded signature, so it can't be reopened again. Run the change on a new FAI work order.`;
+  const fairSupersededValid = list => list === undefined || (Array.isArray(list) && list.length <= FAIR_SUPERSEDED_MAX && list.every(x => plain(x) && timestamp(x.reopenedAt) && str(x.reason, 400) && ['Verified', 'Approved'].includes(x.status)
+    && (x.verified === null || plain(x.verified)) && (x.reviewed === null || plain(x.reviewed)) && (x.approved === null || plain(x.approved)) && Array.isArray(x.impactAssessments) && x.impactAssessments.every(plain)));
+  function supersedeFairSignatures(order, reason, at) {
+    const f = order.fair;
+    const kept = JSON.parse(JSON.stringify({ reopenedAt: at, reason: String(reason).slice(0, 400), status: f.status, verified: f.verified ?? null, reviewed: f.reviewed ?? null, approved: f.approved ?? null, impactAssessments: Array.isArray(f.impactAssessments) ? f.impactAssessments : [] }));
+    f.superseded = [...(Array.isArray(f.superseded) ? f.superseded : []), kept];
+    clearFairSignatures(order);
+  }
+  // Every manifest a superseded entry keeps must be well formed and, where it stored its subject, still hash to it. A FAIR
+  // signed before manifests existed is kept as it was.
+  const fairSupersededProblems = order => {
+    const out = [], list = plain(order.fair) && Array.isArray(order.fair.superseded) ? order.fair.superseded : [];
+    list.forEach((x, i) => {
+      if (!plain(x)) return;
+      const where = label => `${order.id} FAIR superseded signature ${i + 1} (${label})`;
+      const check = (label, m) => {
+        if (!plain(m)) return;
+        if (!(typeof m.meaning === 'string' && !!m.meaning && timestamp(m.at) && plain(m.signer) && m.algorithm === 'SHA-256' && /^[0-9a-f]{64}$/.test(String(m.hash)))) out.push({ where: where(label), reason: 'the kept manifest is malformed' });
+        else if (plain(m.subject) && m.hash !== sha256(canonical(m.subject))) out.push({ where: where(label), reason: 'hash does not match the signed record' });
+      };
+      if (plain(x.verified)) check('verification', x.verified.manifest);
+      if (plain(x.reviewed)) check('box 22', x.reviewed.manifest);
+      if (plain(x.approved)) check('Skyryse QA approval', x.approved.manifest);
+      (Array.isArray(x.impactAssessments) ? x.impactAssessments : []).forEach(a => check(`impact assessment ${a && a.id || ''}`.trim(), a && a.manifest));
+    });
+    return out;
+  };
   const fairSigned = order => !!(order && plain(order.fair) && ['Verified', 'Approved'].includes(order.fair.status));
   // The signed-in account holds the QA Manager role. Master Access is a different role and does not count. With no signed-in
   // account (engine harnesses, profile mode) the chosen profile decides, as every other role gate does there.
@@ -6399,6 +6442,15 @@ const OP_BOM_MAX = 12;
     return roles.includes('qm');
   };
   const fairLockRefusal = (state, order) => fairSigned(order) && !qaManagerSignedIn(state) ? fail(FAIR_LOCK_MESSAGE) : null;
+  // A change a QA Manager makes on a signed FAIR rolls the work order revision, so the FAIR no longer matches the order
+  // and closure needs an impact assessment or a new FAI. A full revision log cannot record that roll, so the change is
+  // refused before anything moves.
+  const fairRollRefusal = (state, order) => {
+    if (!fairSigned(order)) return null;
+    ensureRevisions(state);
+    return order.revisions.length >= WO_REVISION_LIMIT ? fail(`This work order's revision log is full (${WO_REVISION_LIMIT} revisions), so a change on its signed FAIR can't be recorded. Reopen the FAIR first, then make the change.`) : null;
+  };
+  const rollForSignedFair = (state, order, summary, change) => fairSigned(order) ? rollWorkOrderRevision(state, order, summary, [change], actor(state)) : null;
   // The work order revision the FAIR was signed at. A FAIR verified before the revision was bound takes the revision in
   // force at its verification time from the revision log.
   function fairWoRev(order) {
@@ -7564,6 +7616,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (!change || change.status !== 'Awaiting QA') return fail('An engineering edit must finish its required ECR approval before QA re-release.');
     if (change.requestedBy.credentialId === '__demo_never_matches__' /* DEMO D-20 */) return fail(selfApprovalMessage);
     if (blockingTickets(order).length) return fail('Resolve every open hold before QA re-release.');
+    if (fairSigned(order) && fairSupersededFull(order)) return fail(FAIR_SUPERSEDED_FULL_MESSAGE);
     change.qaApproval = { ...actor(state), at: new Date(Math.max(Date.now(), Date.parse(change.ecrApproval?.at || change.requestedAt))).toISOString(), virtual: true };
     order.revision = change.after.revision;
     order.quantity = change.after.quantity;
@@ -7588,8 +7641,8 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const fairReopened = fairSigned(order);
     if (fairReopened) {
       const signedAt = fairWoRev(order);
-      clearFairSignatures(order);
-      record(state, order, `FAIR ${fairId(order)} reopened automatically: engineering change ${change.id} applied after the FAIR was signed at WO Rev ${signedAt}. A new FAI is signed against WO Rev ${order.woRev}.`, 'Quality reviewer');
+      supersedeFairSignatures(order, `Engineering change ${change.id} applied after the FAIR was signed at WO Rev ${signedAt}.`, change.qaApproval.at);
+      record(state, order, `FAIR ${fairId(order)} reopened automatically: engineering change ${change.id} applied after the FAIR was signed at WO Rev ${signedAt}. The superseded signatures are kept with the FAIR. A new FAI is signed against WO Rev ${order.woRev}.`, 'Quality reviewer');
     }
     return { ok: true, message: `Engineering edits applied after QA re-release.${revEntry ? ` Work order revision rolled to ${woRevLabel(revEntry.rev)}.` : ''}${fairReopened ? ' The FAIR was reopened; sign a new FAI against this revision.' : ''} The original work-order stage is retained.` };
   }
@@ -13638,7 +13691,7 @@ function fairRevText(o){const f=o.fair;if(!f||!f.verified)return '';const rev=ME
   return `FAIR signed at WO Rev ${rev} (${proc==='Ad hoc'?'ad hoc, no master WI':proc})${rev!==cur?`. Signed at WO Rev ${rev}; work order is now Rev ${cur}`:''}.`;}
 function fairImpactText(a){return `${a.id}: WO Rev ${a.fromWoRev} to Rev ${a.toWoRev}, signed by ${a.by.name}${a.by.stamp?` (stamp ${a.by.stamp.number})`:''} on ${String(a.at).slice(0,10)}. ${a.statements.join(' ')} Rationale: ${a.rationale}`;}
 function fairImpactBlock(o){const f=o.fair;if(!f||!f.verified)return '';const list=Array.isArray(f.impactAssessments)?f.impactAssessments:[],gap=MES.fairRevisionGap(o),oid=esc(o.id),qm=MES.holdsQaManagerRole(state)&&skCan('approve-wo');
-  const drawing=`${o.partNumber} Rev ${esc((o.revisions||[]).find(e=>e.rev===o.woRev)?.drawingRev??o.drawingRev??o.revision)}`;
+  const drawing=esc(`${o.partNumber} Rev ${(o.revisions||[]).find(e=>e.rev===o.woRev)?.drawingRev??o.drawingRev??o.revision}`);
   return `<div class="fair-impact"><p class="small muted">Work order revision</p><p data-fair-rev><strong>${esc(fairRevText(o))}</strong></p>${list.length?`<ul class="fair-impact-list">${list.map(a=>`<li>${esc(fairImpactText(a))}</li>`).join('')}</ul>`:''}
     ${gap?(qm&&o.status!=='Closed'?`<form data-form="fair-impact" data-order="${oid}"><p class="small muted">FAIR impact assessment (QA Manager). Confirm all three statements, or reopen the FAIR for a delta or full FAI.</p>
       <label class="check"><input type="checkbox" name="fairValid" required> The existing FAIR remains valid.</label>

@@ -98,6 +98,21 @@ export async function unlockAccount(store, username, reason, by) {
 
 // Bind address when none is named: loopback only, so a server started with the defaults is reachable from this
 // machine and its reverse proxy, never from the network. --host, FLIGHT_HOST or options.host binds wider.
+// Both stores cut an audit detail at 4,000 characters, so the migrated-escape import audit is written as bounded rows
+// instead of one row an initial upload with hundreds of migrated NCs would cut mid-record (Codex r4170271763). Every row
+// carries its batch number, the batch count, the total and the SHA-256 of the full list, so a missing row is visible.
+export const LEGACY_IMPORT_AUDIT_CHARS = 3000;
+export function legacyEscapeImportAudits(list) {
+  const digest = sha256hex(JSON.stringify(list)), batches = [];
+  let batch = [], size = 0;
+  for (const nc of list) {
+    const n = JSON.stringify(nc).length + 1;
+    if (batch.length && size + n > LEGACY_IMPORT_AUDIT_CHARS) { batches.push(batch); batch = []; size = 0; }
+    batch.push(nc); size += n;
+  }
+  if (batch.length) batches.push(batch);
+  return batches.map((ncs, i) => ({ action: 'legacy-escape-import', detail: { batch: i + 1, batches: batches.length, total: list.length, digest, ncs } }));
+}
 export const DEFAULT_HOST = '127.0.0.1';
 // Session lifetime: minutes without activity and hours since sign-in. Options, then environment, then defaults.
 export const SESSION_DEFAULTS = Object.freeze({ idleMinutes: 30, maxHours: 12 });
@@ -400,7 +415,7 @@ export function createServer(options = {}) {
     { const forged = host.MES.legacyEscapeChanges(beforeState, state); if (forged) return { problem: forged }; }
     // An initial upload has no stored copy to anchor them, so the importing QA Manager's account is recorded against every
     // unsigned migrated-escape closure it brings in, in the same transaction as the document write.
-    if (!beforeState) { const legacy = host.MES.legacyEscapeImports(state); if (legacy.length) audits = [...audits, { action: 'legacy-escape-import', detail: { ncs: legacy } }]; }
+    if (!beforeState) { const legacy = host.MES.legacyEscapeImports(state); if (legacy.length) audits = [...audits, ...legacyEscapeImportAudits(legacy)]; }
     // Superseded calibration entries an archive record in this write moved out of the live log (#130) go to the
     // calibration archive exactly as the stored log held them, in the same transaction as the document write.
     const calibrationRows = host.MES.calibrationArchivedEntries(beforeState, state).map(({ entry, recordId }) => { const json = JSON.stringify(entry); return { id: entry.id, tag: entry.tag, recordId, json, sha256: sha256hex(json), by: username }; });

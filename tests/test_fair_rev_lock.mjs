@@ -138,9 +138,20 @@ ok('a QA Manager cannot release their own sequence change on a FAIR-locked order
 // ---- Jose's decision: an approved engineering change on a signed FAIR reopens it automatically ----
 await prepare({prepEc:true});
 await as('qmb');
-r=await run(([id])=>{const C=window.__C,o=C.orders.find(x=>x.id===id),ch=o.engineeringChanges.at(-1);const ecr=ch.status==='Awaiting ECR'?MES.approveECR(C,id):{ok:true};const a=MES.approveEngineeringChange(C,id);const log=(o.history||o.activity||[]).map(e=>typeof e==='string'?e:(e.action||'')).join('\n');return {ecr,a,st:o.fair.status,verified:o.fair.verified,approved:o.fair.approved,reviewed:o.fair.reviewed===undefined,ia:o.fair.impactAssessments===undefined,woRev:o.woRev,gap:MES.fairRevisionGap(o),logged:/FAIR .* reopened automatically: engineering change .* applied after the FAIR was signed at WO Rev Baseline\. A new FAI is signed against WO Rev A\./.test(log)||JSON.stringify(o).includes('reopened automatically'),valid:MES.validate(C),mv:MES.verifyManifests(C).ok,msg:a.message};},[ID]);
+r=await run(([id])=>{const C=window.__C,o=C.orders.find(x=>x.id===id),ch=o.engineeringChanges.at(-1);const ecr=ch.status==='Awaiting ECR'?MES.approveECR(C,id):{ok:true};const a=MES.approveEngineeringChange(C,id);const log=(o.history||o.activity||[]).map(e=>typeof e==='string'?e:(e.action||'')).join('\n');return {ecr,a,st:o.fair.status,verified:o.fair.verified,approved:o.fair.approved,reviewed:o.fair.reviewed===undefined,ia:o.fair.impactAssessments===undefined,woRev:o.woRev,gap:MES.fairRevisionGap(o),kept:o.fair.superseded,logged:/FAIR .* reopened automatically: engineering change .* applied after the FAIR was signed at WO Rev Baseline\. The superseded signatures are kept with the FAIR\. A new FAI is signed against WO Rev A\./.test(log)||JSON.stringify(o).includes('reopened automatically'),valid:MES.validate(C),mv:MES.verifyManifests(C).ok,msg:a.message};},[ID]);
 ok('an approved engineering change on a signed FAIR reopens the FAIR automatically, with a recorded reason',r.ecr.ok&&r.a.ok&&r.st==='Open'&&r.verified===null&&r.approved===null&&r.reviewed&&r.ia&&r.woRev==='A'&&r.logged&&/The FAIR was reopened/.test(r.msg),JSON.stringify(r));
 ok('after the automatic reopen the order is unlocked, nothing is left to assess, and the workspace validates and verifies',r.gap===null&&r.valid&&r.mv,JSON.stringify(r));
+// Codex P1 on 24200f1 (AGENTS.md rule 2): the reopen keeps every signature it supersedes, with when and why.
+{const k=r.kept&&r.kept[0];
+ok('the automatic reopen keeps the superseded verification, box 22 and approval with their manifests',Array.isArray(r.kept)&&r.kept.length===1&&k.status==='Approved'&&/^Engineering change .+ applied after the FAIR was signed at WO Rev Baseline\.$/.test(k.reason)&&!!k.reopenedAt&&/^[0-9a-f]{64}$/.test(k.verified.manifest.hash)&&k.verified.woRev==='Baseline'&&/^[0-9a-f]{64}$/.test(k.reviewed.manifest.hash)&&/^[0-9a-f]{64}$/.test(k.approved.manifest.hash),JSON.stringify(r.kept));}
+r=await run(([id])=>{const t=f=>{const s=structuredClone(window.__C),o=s.orders.find(x=>x.id===id);f(o.fair.superseded[0],o);const v=MES.verifyManifests(s);return {ok:v.ok,valid:MES.validate(s),why:v.failures.map(x=>x.where+': '+x.reason)};};
+  return {verified:t(k=>{k.verified.manifest.subject.woRev='A';}),approved:t(k=>{k.approved.manifest.hash='0'.repeat(64);}),reviewed:t(k=>{k.reviewed.manifest.algorithm='MD5';}),reason:t(k=>{k.reason='';}),gone:t((k,o)=>{o.fair.superseded=[{...k,reopenedAt:'not a time'}];})};},[ID]);
+ok('editing a kept verification subject fails verification',!r.verified.ok&&r.verified.why.some(w=>/superseded signature 1 \(verification\): hash does not match/.test(w)),JSON.stringify(r.verified));
+ok('a forged kept approval hash fails verification',!r.approved.ok&&r.approved.why.some(w=>/superseded signature 1 \(Skyryse QA approval\)/.test(w)),JSON.stringify(r.approved));
+ok('a malformed kept box 22 manifest fails verification',!r.reviewed.ok&&r.reviewed.why.some(w=>/superseded signature 1 \(box 22\): the kept manifest is malformed/.test(w)),JSON.stringify(r.reviewed));
+ok('a kept entry with no reason or a bad time fails validation',!r.reason.valid&&!r.gone.valid,JSON.stringify({reason:r.reason.valid,gone:r.gone.valid}));
+r=await run(([id])=>{const C=structuredClone(window.__S),o=C.orders.find(x=>x.id===id);o.status='Building';o.fair.superseded=Array.from({length:50},()=>({reopenedAt:'2026-09-01T00:00:00.000Z',reason:'Earlier reopen.',status:'Approved',verified:null,reviewed:null,approved:null,impactAssessments:[]}));const before=JSON.stringify(C);const x=MES.reopenFair(C,id,'Another delta FAI');return {x,same:JSON.stringify(C)===before,valid:MES.validate(structuredClone(window.__S))};},[ID]);
+ok('a FAIR whose superseded list is full refuses another reopen and changes nothing',!r.x.ok&&/reopened 50 times and keeps every superseded signature/.test(r.x.message)&&r.same,JSON.stringify(r));
 await as('ume');
 r=await run(([id])=>MES.addOrderOperation(structuredClone(window.__C),id,{classification:'Manufacturing',title:'After reopen',description:'Added.',buyoffType:'Technician',stepList:[{title:'S',instruction:'Do.'}],position:window.__C.orders.find(x=>x.id===id).operations.length}),[ID]);
 ok('a reopened FAIR no longer locks the order for the floor',r.message!==LOCK,JSON.stringify(r));
@@ -151,6 +162,31 @@ await as('qmb');
 r=await run(([id])=>{const C=window.__C,o=C.orders.find(x=>x.id===id);const a=MES.approveSequenceChange(C,id);return {a,woRev:o.woRev,signedAt:MES.fairWoRev(o),gap:MES.fairRevisionGap(o),valid:MES.validate(C)};},[ID]);
 ok('a second QA Manager releases the sequence change and the work order rolls to Rev A',r.a.ok&&r.woRev==='A'&&r.signedAt==='Baseline'&&r.valid,JSON.stringify(r));
 ok('the FAIR reports the revision mismatch with what to do next',/FAIR was signed at WO Rev Baseline and the work order is now Rev A\. A QA Manager signs a FAIR impact assessment at Rev A or reopens the FAIR/.test(r.gap||''),String(r.gap));
+// Codex r4170271751: a QA Manager's serial change on a signed FAIR rolls the work order revision, so the FAIR no longer
+// matches the order and closure needs an impact assessment or a new FAI.
+await prepare({});await as('uqm');
+r=await run(([id])=>{const C=window.__C,o=C.orders.find(x=>x.id===id);const sn=MES.orderSerials(C,o)[0].serial;const v=MES.voidSerial(C,id,sn,'Damaged tag');return {v,woRev:o.woRev,signedAt:MES.fairWoRev(o),gap:MES.fairRevisionGap(o),last:o.revisions.at(-1),valid:MES.validate(C),mv:MES.verifyManifests(C).ok};},[ID]);
+ok('a QA Manager voiding a serial on a signed FAIR rolls the work order to Rev A',r.v.ok&&r.woRev==='A'&&r.signedAt==='Baseline'&&r.last.changes.some(c=>/^Voided serial /.test(c))&&r.valid&&r.mv,JSON.stringify(r));
+ok('the void opens the FAIR revision gap and says what is needed before closure',/now Rev A/.test(r.gap||'')&&/impact assessment or a new FAI before closure/.test(r.v.message),JSON.stringify(r));
+r=await run(([id])=>{const C=window.__C,o=C.orders.find(x=>x.id===id);const a=MES.assignSerial(C,id);return {a,woRev:o.woRev,gap:MES.fairRevisionGap(o),last:o.revisions.at(-1),valid:MES.validate(C),mv:MES.verifyManifests(C).ok};},[ID]);
+ok('a QA Manager assigning a serial on a signed FAIR rolls the work order again',r.a.ok&&r.woRev==='B'&&/now Rev B/.test(r.gap||'')&&r.last.changes.some(c=>/^Assigned serial /.test(c))&&r.valid&&r.mv,JSON.stringify(r));
+await prepare({},false);await as('uqm');
+r=await run(([id])=>{const C=window.__C,o=C.orders.find(x=>x.id===id);const v=MES.voidSerial(C,id,MES.orderSerials(C,o)[0].serial,'Damaged tag');return {v,woRev:o.woRev};},[ID]);
+ok('a serial change with no signed FAIR does not roll the work order revision',r.v.ok&&r.woRev==='Baseline',JSON.stringify(r));
+
+// Codex r4170271755: with the revision log full, a change on a signed FAIR is refused before anything moves, so the FAIR
+// can never be left matching a work order that changed.
+const fullLog=`const o=C.orders.find(x=>x.id===id);while(o.revisions.length<200)o.revisions.push({...o.revisions.at(-1)});`;
+for(const [name,prep,user,src] of [
+  ['releasing a sequence change',{prepSeq:true},'qmb','MES.approveSequenceChange(C,id)'],
+  ['voiding a serial',{},'uqm',"MES.voidSerial(C,id,MES.orderSerials(C,C.orders.find(x=>x.id===id))[0].serial,'Damaged tag')"],
+  ['assigning a serial',{prepVoid:true},'uqm','MES.assignSerial(C,id)'],
+]){
+  await prepare(prep);await as(user);
+  r=await run(([id,fill,src])=>{const C=window.__C;(new Function('C','id',fill))(C,id);const before=JSON.stringify(C);const out=(new Function('C','id','MES',`return ${src};`))(C,id,MES);return {out,same:JSON.stringify(C)===before};},[ID,fullLog,src]);
+  ok(`${name} on a signed FAIR is refused when the revision log is full, and nothing changes`,!r.out.ok&&/revision log is full \(200 revisions\).+Reopen the FAIR first/.test(r.out.message)&&r.same,JSON.stringify(r.out));
+}
+
 // The closure path: the complete order (every operation bought off, in Quality) rolls to Rev A through the engine's revision
 // roll, the same record a QA-approved engineering or sequence change writes.
 r=await run(([id])=>{const C=structuredClone(window.__S),o=C.orders.find(x=>x.id===id);const e=MES.rollWorkOrderRevision(C,o,'Engineering change applied.',['Instruction updated on Op 30'],{name:'Second QA Manager',role:'Quality Manager',credentialId:'ACCT-qmb'});window.__R=C;return {rev:e&&e.rev,status:o.status,valid:MES.validate(C),mv:MES.verifyManifests(C).ok};},[ID]);
@@ -171,6 +207,10 @@ ok('the QA Manager sees the impact assessment form',/data-form="fair-impact"/.te
 await as('uqe');
 r=await run(([id])=>fairPanel(state.orders.find(x=>x.id===id)),[ID]);
 ok('a Quality Engineer sees what blocks closure, not the form',!/data-form="fair-impact"/.test(r)&&/A QA Manager signs a FAIR impact assessment/.test(r));
+// Codex r4170271759: the drawing in the impact form is escaped as a whole, so a markup-bearing part number stays text.
+await as('uqm');
+r=await run(([id])=>{state=structuredClone(window.__R);const o=state.orders.find(x=>x.id===id);o.partNumber='<IMG SRC=X ONERROR=&#97;LERT(1)>';return fairPanel(o);},[ID]);
+ok('the impact form escapes the drawing part number',/data-form="fair-impact"/.test(r)&&!r.includes('<IMG')&&r.includes('&lt;IMG SRC=X ONERROR=&amp;#97;LERT(1)&gt;'),r.slice(0,400));
 
 // ---- the impact assessment ----
 const IA={fairValid:true,noOperationImpact:true,noDrawingDeviation:true,rationale:'Added a sequence-only build operation; no characteristic or completed buy-off is affected.'};
@@ -218,8 +258,9 @@ for(const [label,src] of TAMPER){const t=await tamper(src);ok(`impact assessment
 
 // Reopening the FAIR is the alternative: QA Manager only, and it clears the assessments and the lock.
 await as('uqm');
-r=await run(([id])=>{const C=structuredClone(window.__R),o=C.orders.find(x=>x.id===id);const x=MES.reopenFair(C,id,'Delta FAI for the new operation');return {x,st:o.fair.status,ia:o.fair.impactAssessments===undefined,gap:MES.fairRevisionGap(o),valid:MES.validate(C)};},[ID]);
-ok('a QA Manager reopens the FAIR, which clears the assessments and the lock',r.x.ok&&r.st==='Open'&&r.ia&&r.gap===null&&r.valid,JSON.stringify(r));
+r=await run(([id])=>{const C=structuredClone(window.__R),o=C.orders.find(x=>x.id===id);const x=MES.reopenFair(C,id,'Delta FAI for the new operation');const k=(o.fair.superseded||[]).at(-1);return {x,st:o.fair.status,ia:o.fair.impactAssessments===undefined,kept:!!k&&k.reason==='Delta FAI for the new operation'&&k.impactAssessments.length===1&&/^[0-9a-f]{64}$/.test(k.impactAssessments[0].manifest.hash)&&!!k.verified&&!!k.approved,gap:MES.fairRevisionGap(o),valid:MES.validate(C),mv:MES.verifyManifests(C).ok};},[ID]);
+ok('a QA Manager reopens the FAIR, which clears the assessments and the lock',r.x.ok&&r.st==='Open'&&r.ia&&r.gap===null&&r.valid&&r.mv,JSON.stringify(r));
+ok('the reopen keeps the superseded signatures and the signed impact assessment, with the reason',r.kept,JSON.stringify(r));
 
 // A FAIR verified before the revision was bound takes the revision in force at its verification time.
 r=await run(()=>{const S=window.__S,o=S.orders.find(x=>x.id==='WO-10002');return {rev:MES.fairWoRev(o),cur:o.woRev,gap:MES.fairRevisionGap(o),bound:o.fair.verified.woRev};});
