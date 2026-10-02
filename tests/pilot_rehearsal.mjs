@@ -7,7 +7,7 @@ const fails=[];
 const step=(who,what,r)=>{const ok=r&&r.ok!==false;console.log((ok?'  ok   ':'  FAIL ')+who.padEnd(11)+what+(ok?'':' -> '+(r&&r.message||'no result')));if(!ok)fails.push(who+': '+what+' -> '+(r&&r.message));return r;};
 async function signIn(u){
   // Each person signs in on their own machine; here one browser plays every seat, so sign out first.
-  await p.evaluate(()=>{try{sessionStorage.removeItem('skyryse-mes-session-v1');}catch(e){}}).catch(()=>{});
+  await p.evaluate(()=>{try{sessionStorage.removeItem('skyryse-mes-demo-session-v1');}catch(e){}}).catch(()=>{});
   await p.goto('file://'+FIXTURES+'demo_qa150_publish.html'); await p.waitForTimeout(900);
   const gate=await p.evaluate(()=>!!document.querySelector('#sk-boot input[name=username]'));
   if(gate) await p.evaluate(x=>{const un=document.querySelector('#sk-boot input[name=username]');const pw=document.querySelector('#sk-boot input[type=password]');
