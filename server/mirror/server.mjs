@@ -92,7 +92,9 @@ export const defaultAnchorPath = dbPath => dbPath + '.anchor.json';
 
 // The SHA-256 of a record's signature manifests in the order they were stored. It is a column of the row,
 // so it is inside the row's link: a manifest changed, added or removed breaks the chain.
-export const manifestSetHash = list => sha256(JSON.stringify(list.map(m => [m.path, m.meaning, m.signer_name ?? m.signerName, m.signer_credential ?? m.signerCredential, m.signed_at ?? m.signedAt, m.algorithm, m.hash])));
+// It takes manifests only in the stored shape (database rows, or the object appendRecords builds and inserts), with
+// no fallback to other spellings, so a field the client adds can never reach the hash.
+export const manifestSetHash = list => sha256(JSON.stringify(list.map(m => [m.path, m.meaning, m.signer_name, m.signer_credential, m.signed_at, m.algorithm, m.hash])));
 
 // The chain link of a row: SHA-256 over every column except payload_json itself, whose hash is in it.
 // The next row stores this value as its prev_sha256. Rows written before manifests joined the chain have
