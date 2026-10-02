@@ -14532,14 +14532,13 @@ function holdActionButtons(o,h){const me=skActorId();const out=[];
 
   var read = function (key, fallback) { try { var v = JSON.parse(localStorage.getItem(key) || 'null'); return v === null ? fallback : v; } catch (e) { return fallback; } };
   var client = read(CLIENT_KEY, null);
-  if (!client || typeof client.id !== 'string') {
-    client = { id: 'client-' + (window.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2)), seq: 0 };
-    try { localStorage.setItem(CLIENT_KEY, JSON.stringify(client)); } catch (e) { /* kept in memory */ }
-  }
-  // Every client id this device has used is kept under its own key, so a snapshot can cover records written under
-  // any of them (two tabs opened at once on first use can each make one before either is saved).
+  if (!client || typeof client.id !== 'string') client = { id: 'client-' + (window.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2)), seq: 0 };
+  // Every client id this device has used is registered the moment it is made, under a key of its own, so a snapshot
+  // can cover records written under any of them (two tabs opened at once on first use can each make one before either
+  // is saved). The shared client record is written only when the tab saves its queue, and a tab then adopts the id
+  // another tab saved first: a page that only loads never writes a key another tab may be writing at the same time.
   var ID_PREFIX = 'skyryse-mes-demo-sync-id-v1'/* DEMO D-40 */ + ':';
-  var registerId = function (id) { try { localStorage.setItem(ID_PREFIX + id, '1'); } catch (e) { /* the snapshot lists this tab's id anyway */ } };
+  var registerId = function (id) { try { if (localStorage.getItem(ID_PREFIX + id) !== '1') localStorage.setItem(ID_PREFIX + id, '1'); } catch (e) { /* the snapshot lists this tab's id anyway */ } };
   var deviceIds = function () {
     var ids = {}; ids[client.id] = 1;
     try { for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k && k.indexOf(ID_PREFIX) === 0) ids[k.slice(ID_PREFIX.length)] = 1; } } catch (e) {}

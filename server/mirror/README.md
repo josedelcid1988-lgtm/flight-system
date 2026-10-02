@@ -168,8 +168,8 @@ of that disk.
    sends no snapshot and keeps the recovery pending until a valid workspace is saved. A recovery stays pending until
    the server confirms its snapshot, so one whose queued records are lost (the tab closed, storage cleared) runs again
    on the next load. The snapshot's list is
-   rebuilt from the saved workspace just before it is sent. Anything written under any of the snapshot's `clientIds` (every client id the device has used; the id is saved
-   when it is made and a tab adopts the one another tab saved)
+   rebuilt from the saved workspace just before it is sent. Anything written under any of the snapshot's `clientIds` (every client id the device has used; each id is registered
+   under its own key when it is made, and a tab adopts the one another tab saved)
    absent from its latest snapshot, and last written before that snapshot's `takenAt`, is deleted (`takenAt` and each
    record's `clientTs` come from a device clock that never moves backward, even when the system clock does), including deletions made before this build. Intermediate versions written
    between the backup and the restore are only in the database you moved aside. Before deciding anything about them, compare:

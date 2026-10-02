@@ -646,7 +646,8 @@ const OTHER='skyryse-mes-sync-ack-v1:page-other-tab';let staged=false;const e0=(
 {const fctx=await b.newContext();await fctx.addInitScript(([url,token])=>{window.SK_MIRROR={url,token,batchSize:25};},[`http://127.0.0.1:${PORT}`,WTOKEN]);
  const fp=await fctx.newPage();await fp.goto(PROD);await fp.waitForFunction(()=>!!window.skMirror&&window.skMirror.enabled,null,{timeout:30000});
  const born=await fp.evaluate(()=>({id:window.skMirror.status().clientId,stored:(JSON.parse(localStorage.getItem('skyryse-mes-sync-client-v1')||'null')||{}).id,reg:Object.keys(localStorage).filter(k=>k.startsWith('skyryse-mes-sync-id-v1:'))}));
- ok('a new device saves its client id at once, before any write, and registers it',!!born.id&&born.stored===born.id&&born.reg.includes('skyryse-mes-sync-id-v1:'+born.id),JSON.stringify(born));
+ ok('a new device registers its client id at once, before any write, under a key of its own',!!born.id&&born.reg.includes('skyryse-mes-sync-id-v1:'+born.id),JSON.stringify(born));
+ ok('a page that only loads does not write the shared client record',born.stored===undefined,JSON.stringify(born));
  await fctx.close();
  const mine=await p.evaluate(()=>window.skMirror.status().clientId);const other='client-other-tab-'+Date.now();
  await p.evaluate(o=>{const c=JSON.parse(localStorage.getItem('skyryse-mes-sync-client-v1'));c.id=o;localStorage.setItem('skyryse-mes-sync-client-v1',JSON.stringify(c));localStorage.setItem('skyryse-mes-sync-id-v1:'+o,'1');},other);
