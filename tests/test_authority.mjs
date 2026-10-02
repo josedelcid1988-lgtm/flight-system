@@ -194,8 +194,9 @@ const legacy=await run(()=>{const salt='abcd1234';const hash=MES.sha256(`${salt}
 ok('a PIN set before scrypt still verifies',legacy);
 
 // ---------------- screens ----------------
-const ui=await run(()=>{profileDialog();const body=document.getElementById('dialog-body');return {train:!!body.querySelector('#training-form'),rec:!!body.querySelector('#training-record-form'),imp:!!body.querySelector('#stamp-import-form')};});
-ok('the QA Manager sees training requirements, certificate uploads and the stamp import',ui.train&&ui.rec&&ui.imp&&await p.locator('#training-record-form [name=certificate]').count()===1,JSON.stringify(ui));
+const ui=await run(()=>{view='admin';render();const body=document.getElementById('main');return {train:!!body.querySelector('#training-form'),rec:!!body.querySelector('#training-record-form'),imp:!!body.querySelector('#stamp-import-form')};});
+ok('the QA Manager sees training requirements, certificate uploads and the stamp import on the Admin page',ui.train&&ui.rec&&ui.imp&&await p.locator('#training-record-form [name=certificate]').count()===1,JSON.stringify(ui));
+await p.click('[data-admin-tab="training"]');
 await p.locator('#training-record-form [name=account]').selectOption('priv');
 await p.locator('#training-record-form [name=code]').selectOption('TORQUE');
 await p.locator('#training-record-form [name=expires]').fill(future(1));
