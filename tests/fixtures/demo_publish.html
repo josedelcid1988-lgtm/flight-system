@@ -3523,6 +3523,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // checked link by link. Any edit to a signed field after signing shows up as a failure.
   function verifyManifests(state) {
     const failures = []; let checked = 0, recomputed = 0, legacy = 0; const manifestSubjects = [], unsignedLegacy = [];
+    // #581: an unsigned rework approval is legacy only if the seal lists it (or, before any seal, no plan is signed).
+    const reworkSeal = plain(state) && plain(state.reworkLegacySeal) && Array.isArray(state.reworkLegacySeal.tickets) ? new Set(state.reworkLegacySeal.tickets) : null, signedRework = signedReworkExists(state);
     const shapeOk = m => plain(m) && typeof m.meaning === 'string' && !!m.meaning && typeof m.at === 'string' && !Number.isNaN(Date.parse(m.at)) && plain(m.signer) && typeof m.signer.name === 'string' && !!m.signer.name.trim() && typeof m.signer.credentialId === 'string' && !!m.signer.credentialId.trim() && m.algorithm === 'SHA-256' && /^[0-9a-f]{64}$/.test(m.hash);
     const walk = (node, path) => {
       if (Array.isArray(node)) { node.forEach((x, i) => walk(x, `${path}[${i}]`)); return; }
@@ -3562,6 +3564,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
         if (!plain(t.reworkPlan)) return;
         const p = t.reworkPlan;
         if (plain(p.manifest)) { recheck(`${order.id} ${t.id} rework approval`, p.manifest, reworkApprovalSubject(order, t)); if (!reworkSignerOk(p.manifest, p.approvedBy)) failures.push({ where: `${order.id} ${t.id} rework approval`, reason: 'the signer is not the approver on the record' }); }
+        else if (reworkSeal ? !reworkSeal.has(reworkSealKey(t)) : signedRework) failures.push({ where: `${order.id} ${t.id} rework approval`, reason: 'the approval is not signed and does not predate signing' });
         else unsignedLegacy.push(`${order.id} ${t.id} rework approval`);
         if (t.status !== 'Resolved') { if (t.manifest !== undefined || p.stage === 'Released' || p.releasedAt !== undefined || p.releasedBy !== undefined) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the ticket carries a QA release but is open again' }); return; }
         if (plain(t.manifest)) { if (t.manifest.meaning !== REWORK_RELEASE_MEANING) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the ticket was closed with a signature that is not a QA release' }); else { recheck(`${order.id} ${t.id} rework release`, t.manifest, reworkReleaseSubject(order, t)); if (!reworkSignerOk(t.manifest, p.releasedBy)) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the signer is not the releaser on the record' }); } }
@@ -5531,7 +5534,10 @@ const OP_BOM_MAX = 12;
     const taken = new Set(order.tickets.filter(t => plain(t.reworkPlan) && t.reworkPlan.opId).map(t => t.reworkPlan.opId));
     const op = order.operations.find(item => item.classification === want && !item.done && !taken.has(item.id) && (!item.ticketId || item.ticketId === ticket.id));
     if (!op) return false;
-    ticket.reworkPlan = { ...ticket.reworkPlan, stage: 'Awaiting QA release', opId: op.id, opAddedBy: op.addedBy || actor(state), opAddedAt: new Date().toISOString() };
+    // The release signs who added the operation (#581), so it comes from the record of that change, never from the
+    // person who links it: the sequence entry that added it, or none when the operation predates any recorded change.
+    const added = [order.sequenceChange, ...(Array.isArray(order.sequenceChanges) ? order.sequenceChanges : [])].filter(plain).flatMap(c => Array.isArray(c.entries) ? c.entries : []).find(e => plain(e) && e.type === 'add' && e.opId === op.id && plain(e.by));
+    ticket.reworkPlan = { ...ticket.reworkPlan, stage: 'Awaiting QA release', opId: op.id, opAddedBy: added ? { ...added.by } : plain(op.addedBy) ? { ...op.addedBy } : null, opAddedAt: new Date().toISOString() };
     op.ticketId = ticket.id;
     record(state, order, `${want} operation ${op.title} linked to ${ticket.id}. QA must release it to close the ticket.`);
     return true;

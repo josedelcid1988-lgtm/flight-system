@@ -224,5 +224,35 @@ const repair = walk('seed-curated', 'WO-10003', 'Repair', {}, state => { MES.get
   ok('Seal: the first signed approval in an unsealed workspace writes an empty seal', fresh.approve.ok && plain(fresh.state.reworkLegacySeal) && fresh.state.reworkLegacySeal.tickets.length === 0 && MES.validate(fresh.state), JSON.stringify([fresh.approve, fresh.state.reworkLegacySeal]));
 }
 
+// ---- Codex P2 on #602 (3bce5c0): a stripped approval that the seal does not list fails verifyManifests too ----
+{
+  const open = walk('seed-curated', 'WO-10006', 'Rework');
+  const stripped = structuredClone(open.state);
+  delete MES.getOrder(stripped, 'WO-10006').tickets.find(t => t.id === open.ticketId).reworkPlan.manifest;
+  const v = verify(stripped);
+  ok('Seal: a stripped approval on an open ticket is refused by validate', MES.validate(stripped) === false);
+  ok('Seal: verifyManifests fails it instead of listing it as unsigned legacy', !v.ok && v.failures.some(f => f.where.endsWith(`${open.ticketId} rework approval`) && /does not predate signing/.test(f.reason)) && !v.unsignedLegacy.some(w => w.includes(open.ticketId)), JSON.stringify({ failures: v.failures, unsignedLegacy: v.unsignedLegacy }));
+  const legacyOnly = verify(open.state);
+  ok('Seal: the sealed legacy NC-0001 is still listed as unsigned legacy, not failed', legacyOnly.ok && legacyOnly.unsignedLegacy.includes('WO-10005 NC-0001 rework approval'), JSON.stringify(legacyOnly.failures));
+}
+
+// ---- Codex P2 on #602 (3bce5c0): the release names the ME author of an operation added before Quality approved ----
+{
+  const state = MES.upgrade(structuredClone(seed('seed-curated')));
+  const as = (who, fn) => host.withAccount(who, fn, state);
+  const id = 'WO-10006', order = MES.getOrder(state, id);
+  const op = order.operations.find(item => !item.done) || order.operations[0];
+  const created = as(qm, () => MES.createTicket(state, id, op.id, { type: 'NC', title: 'Torque out of spec', description: 'J3 torque below the drawing value.', hold: true }));
+  as(me, () => MES.dispositionTicket(state, id, created.id, { decision: 'Rework', note: 'Rework J3.' }));
+  const early = as(me, () => reworkOp(state, id, created.id, 'Rework'));
+  const approved = as(qe, () => MES.resolveTicket(state, id, created.id, 'Rework approved.', { defectCode: 'DIM', subCode: 'DIM-02' }));
+  const plan = MES.getOrder(state, id).tickets.find(t => t.id === created.id).reworkPlan;
+  ok('Operation author: ME adds the operation before Quality approves, and the approval links it', early.ok && approved.ok && plan.stage === 'Awaiting QA release', JSON.stringify([early, approved, plan.stage]));
+  ok('Operation author: the plan names ME, not the Quality reviewer who linked it', plain(plan.opAddedBy) && plan.opAddedBy.credentialId === 'ACCT-rw-me', JSON.stringify(plan.opAddedBy));
+  const rel = as(qe2, () => MES.approveSequenceChange(state, id));
+  const t = MES.getOrder(state, id).tickets.find(x => x.id === created.id);
+  ok('Operation author: the signed release binds the ME author', rel.ok && t.manifest.subject.opAddedBy && t.manifest.subject.opAddedBy.credentialId === 'ACCT-rw-me' && MES.validate(state) && verify(state).ok, JSON.stringify([rel, t.manifest && t.manifest.subject.opAddedBy]));
+}
+
 console.log(fails.length ? `FAILS ${JSON.stringify(fails)}` : 'FAILS []');
 process.exit(fails.length ? 1 : 0);
