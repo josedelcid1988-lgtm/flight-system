@@ -309,5 +309,21 @@ const repair = walk('seed-curated', 'WO-10003', 'Repair', {}, state => { MES.get
   ok('Operation author: the plan names who added the current operation, not the removed one', plain(plan.opAddedBy) && plan.opAddedBy.credentialId === 'ACCT-rw-me2', JSON.stringify(plan.opAddedBy));
 }
 
+// ---- Codex on #602 (c13a080): the verifier checks meaning and time; a closure stripped of every rework field is refused ----
+{
+  const ticketIn = st => MES.getOrder(st, 'WO-10006').tickets.find(t => t.id === rework.ticketId);
+  const relabel = structuredClone(rework.state);
+  { const m = ticketIn(relabel).reworkPlan.manifest; m.meaning = 'Engineering review'; m.at = '2026-01-01T00:00:00.000Z'; }
+  ok('Verifier: a changed approval signature meaning and time fails verifyManifests, not only validate', MES.validate(relabel) === false && failsAt(relabel, new RegExp(`${rework.ticketId} rework approval`)), JSON.stringify(verify(relabel).failures));
+  const retime = structuredClone(rework.state);
+  ticketIn(retime).manifest.at = '2026-01-01T00:00:00.000Z';
+  ok('Verifier: a changed release signature time fails verifyManifests', MES.validate(retime) === false && failsAt(retime, new RegExp(`${rework.ticketId} rework release`)), JSON.stringify(verify(retime).failures));
+  const bare = structuredClone(rework.state);
+  { const t = ticketIn(bare); delete t.reworkPlan; delete t.manifest; delete t.dispo; delete t.affected; }
+  const bV = verify(bare);
+  ok('Stripped: a released Rework NC stripped of plan, signatures, disposition and affected units is refused', MES.validate(bare) === false && new RegExp(`${rework.ticketId} was closed after approvals were signed but carries no signature`).test(detail(bare)), detail(bare));
+  ok('Stripped: verifyManifests fails that closure', !bV.ok && bV.failures.some(f => f.where === `WO-10006 ${rework.ticketId} closure`), JSON.stringify(bV.failures));
+}
+
 console.log(fails.length ? `FAILS ${JSON.stringify(fails)}` : 'FAILS []');
 process.exit(fails.length ? 1 : 0);

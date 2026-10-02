@@ -3565,11 +3565,11 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
         // #581: a Rework or Repair plan carries its own approval signature and closes with a signed release.
         if (!plain(t.reworkPlan)) return;
         const p = t.reworkPlan;
-        if (plain(p.manifest)) { recheck(`${order.id} ${t.id} rework approval`, p.manifest, reworkApprovalSubject(order, t)); if (!reworkSignerOk(p.manifest, p.approvedBy)) failures.push({ where: `${order.id} ${t.id} rework approval`, reason: 'the signer is not the approver on the record' }); }
+        if (plain(p.manifest)) { recheck(`${order.id} ${t.id} rework approval`, p.manifest, reworkApprovalSubject(order, t)); if (!reworkSignerOk(p.manifest, p.approvedBy)) failures.push({ where: `${order.id} ${t.id} rework approval`, reason: 'the signer is not the approver on the record' }); if (p.manifest.meaning !== REWORK_APPROVAL_MEANING || p.manifest.at !== p.approvedAt) failures.push({ where: `${order.id} ${t.id} rework approval`, reason: 'the signature meaning or time is not the Quality approval on the record' }); }
         else if (!reworkLegacy.approval(t)) failures.push({ where: `${order.id} ${t.id} rework approval`, reason: 'the approval is not signed and does not predate signing' });
         else unsignedLegacy.push(`${order.id} ${t.id} rework approval`);
         if (t.status !== 'Resolved') { if (t.manifest !== undefined || p.stage === 'Released' || p.releasedAt !== undefined || p.releasedBy !== undefined) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the ticket carries a QA release but is open again' }); return; }
-        if (plain(t.manifest)) { if (t.manifest.meaning !== REWORK_RELEASE_MEANING) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the ticket was closed with a signature that is not a QA release' }); else { recheck(`${order.id} ${t.id} rework release`, t.manifest, reworkReleaseSubject(order, t)); if (!reworkSignerOk(t.manifest, p.releasedBy)) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the signer is not the releaser on the record' }); } }
+        if (plain(t.manifest)) { if (t.manifest.meaning !== REWORK_RELEASE_MEANING) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the ticket was closed with a signature that is not a QA release' }); else { recheck(`${order.id} ${t.id} rework release`, t.manifest, reworkReleaseSubject(order, t)); if (t.manifest.at !== p.releasedAt) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the signature time is not the QA release on the record' }); if (!reworkSignerOk(t.manifest, p.releasedBy)) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the signer is not the releaser on the record' }); } }
         else if (plain(p.manifest)) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the QA release that closed the ticket is not signed' });
         else if (!reworkLegacy.release(t)) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the release is not signed and does not predate signing' });
         else unsignedLegacy.push(`${order.id} ${t.id} rework release`);
@@ -3580,6 +3580,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
         if (t.status === 'Resolved' ? reworkLegacy.release(t) : reworkLegacy.approval(t)) unsignedLegacy.push(where);
         else failures.push({ where, reason: `the approved ${t.dispo.decision} plan is missing and does not predate signing` });
       });
+      unsignedClosuresAfterSeal({ reworkLegacySeal: state.reworkLegacySeal, orders: [order] }).filter(t => !reworkLegacy.release(t)).forEach(t => failures.push({ where: `${order.id} ${t.id} closure`, reason: 'the ticket was closed after approvals were signed but carries no signature' }));
       (order.tickets || []).forEach(t => { if (!plain(t.manifest) || t.status !== 'Resolved' || plain(t.reworkPlan)) return; const carried = order.splitFrom && plain(t.carriedFrom) ? t.carriedFrom : null; recheck(`${order.id} ${t.id} approval`, t.manifest, carried ? { ...ticketSubject(order, t), orderId: carried.orderId } : ticketSubject(order, t)); });
       if (plain(order.closure) && plain(order.closure.manifest)) recheck(`${order.id} closure`, order.closure.manifest, closureSubject(state, order));
       (Array.isArray(order.sendBacks) ? order.sendBacks : []).forEach(e => { if (!plain(e) || !plain(e.manifest)) { failures.push({ where: `${order.id} send back`, reason: 'send back to Building is not signed' }); return; } recheck(`${order.id} ${e.id} send back`, e.manifest, sendBackSubject(order, e)); });
@@ -3823,6 +3824,11 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const reworkSealKeysValid = list => Array.isArray(list) && list.length <= REWORK_SEAL_MAX && list.every(key => typeof key === 'string' && /^(IDR|NC)-\d{4,8}@/.test(key) && timestamp(key.slice(key.indexOf('@') + 1))) && unique(list);
   const reworkSealValid = seal => plain(seal) && Object.keys(seal).length === 3 && reworkSealKeysValid(seal.tickets) && reworkSealKeysValid(seal.releases) && timestamp(seal.sealedAt);
   const sealReworkLegacy = state => { if (plain(state) && state.reworkLegacySeal === undefined && !signedReworkExists(state) && unsignedReworkIds(state).length) state.reworkLegacySeal = reworkSealFor(state); };
+  // Every work order ticket closed by this build is signed: an ordinary disposition approval by resolveTicketBase, a
+  // Rework or Repair one by its QA release. So once the seal exists, a closed ticket created or closed after it with no
+  // signature lost its records, whatever else was removed with them (plan, disposition, affected units).
+  const afterSeal = (seal, at) => typeof at === 'string' && Date.parse(at) > Date.parse(seal.sealedAt);
+  const unsignedClosuresAfterSeal = state => { const seal = plain(state) ? state.reworkLegacySeal : undefined; if (!plain(seal)) return []; return (Array.isArray(state.orders) ? state.orders : []).flatMap(o => plain(o) && Array.isArray(o.tickets) ? o.tickets.filter(t => plain(t) && t.status === 'Resolved' && t.manifest === undefined && !plain(t.reworkPlan) && !reworkDispo(t) && (afterSeal(seal, t.createdAt) || afterSeal(seal, t.resolvedAt))) : []); };
   // Whether an unsigned approval or release is legacy: listed on the seal, or, before any seal, nothing is signed yet.
   const reworkLegacyCheck = state => { const seal = plain(state) ? state.reworkLegacySeal : undefined, signed = signedReworkExists(state); const has = list => { const set = plain(seal) && Array.isArray(seal[list]) ? new Set(seal[list]) : null; return t => set ? set.has(reworkSealKey(t)) : seal === undefined && !signed; }; return { approval: has('tickets'), release: has('releases') }; };
   function reworkSealProblem(state) {
@@ -3834,7 +3840,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const stray = unsignedReworkTickets(state).find(t => !legacy.approval(t));
     if (stray) return plain(stray.reworkPlan) ? `${stray.id} has an unsigned Rework or Repair approval, but it was not approved before approvals were signed: its signatures were removed.` : `${stray.id} was approved for ${stray.dispo.decision} but its approved plan is missing: the approval record was removed.`;
     const strayRelease = unsignedReleaseTickets(state).find(t => !legacy.release(t));
-    if (!strayRelease) return null;
+    if (!strayRelease) { const bare = unsignedClosuresAfterSeal(state).find(t => !legacy.release(t)); return bare ? `${bare.id} was closed after approvals were signed but carries no signature: its approval records were removed.` : null; }
     return plain(strayRelease.reworkPlan) ? `${strayRelease.id} is closed without a signed QA release, but it was not released before releases were signed: its release signature was removed.` : `${strayRelease.id} is a closed ${strayRelease.dispo.decision} NC without its approved plan and signed release: those records were removed.`;
   }
   // What is wrong with a ticket's rework signatures, in plain words, or null.
