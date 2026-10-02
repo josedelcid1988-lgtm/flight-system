@@ -159,7 +159,7 @@ await check('#512: an MRB decision downgraded to v81 with its rationale and vote
   b.decision.note = 'Accepted without engineering review.'; b.votes[2].note = 'Forged.';
   downgrade(b.decision.manifest);
   const r = await refused(doc, 'decision.manifest');
-  assert.match(r.json.error, /dated after v82, which stores one, replaced v81 on 2026-09-28/);
+  assert.match(r.json.error, /no build stamp, but it is dated after v82, which stores the subject, replaced v81 on 2026-09-28/);
 });
 await check('#512: the MRB downgrade with the decision also backdated is refused', async () => {
   const doc = exported(), b = mrbOf(doc);
@@ -170,13 +170,13 @@ await check('#512: the MRB downgrade with the decision also backdated is refused
 });
 await check('#512: a CAR closure downgraded to v81 is refused, backdated or not', async () => {
   const plain = exported(); carOf(plain).closure.note = 'Closed without verification.'; downgrade(carOf(plain).closure.manifest);
-  assert.match((await refused(plain, 'closure.manifest')).json.error, /dated after v82, which stores one, replaced v81 on 2026-09-28/);
+  assert.match((await refused(plain, 'closure.manifest')).json.error, /no build stamp, but it is dated after v82, which stores the subject, replaced v81 on 2026-09-28/);
   const back = exported(); carOf(back).closure.at = BACKDATED; downgrade(carOf(back).closure.manifest, BACKDATED);
   assert.match((await refused(back, `${current.carId} closure`)).json.error, /dated before the steps it closes/);
 });
 await check('#512: a stock NC disposition approval downgraded to v81 is refused, backdated or not', async () => {
   const plain = exported(); ncOf(plain).resolution.note = 'Use as is, no MRB.'; downgrade(ncOf(plain).resolution.manifest);
-  assert.match((await refused(plain, 'resolution.manifest')).json.error, /dated after v82, which stores one, replaced v81 on 2026-09-28/);
+  assert.match((await refused(plain, 'resolution.manifest')).json.error, /no build stamp, but it is dated after v82, which stores the subject, replaced v81 on 2026-09-28/);
   const back = exported(); ncOf(back).resolution.at = BACKDATED; downgrade(ncOf(back).resolution.manifest, BACKDATED);
   assert.match((await refused(back, `${current.ncId} disposition approval`)).json.error, /dated before the nonconformance or its disposition/);
 });
@@ -199,7 +199,7 @@ await check('stripping every subject and build stamp in the workspace does not h
   for (const m of [fairOf(doc).verified.manifest, mrbOf(doc).decision.manifest, carOf(doc).closure.manifest, ncOf(doc).resolution.manifest]) m.hash = MES.sha256(MES.canonical({}));
   assert.ok(MES.validate(doc) && MES.verifyManifests(doc).ok, 'the forgery passes validation and manifest verification on their own');
   const r = await refused(doc, 'manifest');
-  assert.match(r.json.error, /dated after v82, which stores one, replaced v81 on 2026-09-28/);
+  assert.match(r.json.error, /no build stamp, but it is dated after v82, which stores the subject, replaced v81 on 2026-09-28/);
 });
 await check('a FAIR verification, a FAIR QA approval, a buy-off or a stock NC approval with its manifest deleted is refused', async () => {
   const cases = [
@@ -213,6 +213,32 @@ await check('a FAIR verification, a FAIR QA approval, a buy-off or a stock NC ap
     assert.ok(MES.validate(doc) && MES.verifyManifests(doc).ok, `${where}: validation alone accepts the deletion`);
     assert.match((await refused(doc, where)).json.error, /the record says it was signed, but its signature manifest is missing/);
   }
+});
+
+// Codex review on #631: signatures from a browser still running v81 after v82 shipped, and closed escapes from before
+// the ticket restructure, are genuine and must still initialize.
+await check('signatures made by a v81 browser after v82 shipped still initialize', async () => {
+  const doc = curated(), late = '2026-10-01T16:00:00.000Z';
+  const order = doc.orders.find(o => o.operations.some(op => op.buyoff && op.buyoff.manifest));
+  const signed = order.operations.filter(op => op.buyoff && op.buyoff.manifest);
+  signed.forEach(op => { op.buyoff.manifest.at = late; op.buyoff.manifest.build = { version: 'v81', sha256: 'f'.repeat(64) }; if (op.buyoff.at) op.buyoff.at = late; });
+  assert.ok(MES.validate(doc) && MES.verifyManifests(doc).ok, 'the v81 workspace validates');
+  const r = await initialize(doc);
+  assert.equal(r.status, 204, JSON.stringify(r.json));
+  const stripped = curated(), op = stripped.orders.find(o => o.id === order.id).operations.find(x => x.id === signed[0].id);
+  op.buyoff.manifest.at = late; if (op.buyoff.at) op.buyoff.at = late;
+  assert.match((await refused(stripped, 'buyoff.manifest')).json.error, /no build stamp, but it is dated after v82/);
+});
+await check('a closed escape from before the ticket restructure still initializes', async () => {
+  const doc = curated(), by = doc.maneuver.ncs[0].raisedBy;
+  delete doc.maneuver.__ticketsV2;
+  doc.maneuver.escapes = [{ id: 'ESC-0001', title: 'Loose connector found by customer', description: 'Connector J3 was not seated.', status: 'Closed', partNumber: 'SR-IH-040', serials: [], detectedAt: 'Customer', escapedFrom: 'Final inspection', raisedBy: by, raisedAt: '2026-09-10T16:00:00.000Z', closure: { note: 'Reseated and re-inspected.', by, at: '2026-09-12T16:00:00.000Z' }, containment: null, attachments: [], history: [] }];
+  const r = await initialize(doc);
+  assert.equal(r.status, 204, JSON.stringify(r.json));
+  const state = JSON.parse(r.stored.json), nc = state.maneuver.ncs.find(t => t.escape && t.resolution && t.resolution.note === 'Reseated and re-inspected.');
+  assert.ok(nc && !nc.resolution.manifest && nc.dispo === null, 'the escape became a resolved NC carrying its old closure');
+  const forged = exported(); delete ncOf(forged).resolution.manifest; ncOf(forged).history.push({ at: '2026-09-12T16:00:00.000Z', action: 'Migrated from escape ESC-9.', actor: 'system' });
+  assert.match((await refused(forged, `${current.ncId} disposition approval`)).json.error, /signature manifest is missing/);
 });
 
 await check('the browser migration dry run refuses the #481 forgery and accepts the unedited export', async () => {

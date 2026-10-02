@@ -3504,7 +3504,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const carClosureSubject = (car, note) => ({ id: car.id, title: car.title, severity: car.severity, rootCause: car.rootCause && car.rootCause.statement, actions: (car.actions || []).map(a => ({ id: a.id, description: a.description, completedAt: a.completedAt })), verification: car.verification && car.verification.at, effectiveness: car.effectiveness && car.effectiveness.result, note });
   const ncApprovalSubject = (t, code, quantity, note) => ({ id: t.id, partNumber: t.partNumber, serial: t.serial, lot: t.lot, disposition: t.dispo && t.dispo.decision, defect: code, quantity, mrbId: t.mrbId, note });
   // Builds v82 and later store the signed subject in every manifest; v81 and earlier did not (#481, #512). v82 replaced
-  // v81 on main at V82_RELEASED_AT, so no v81 signature is dated after it.
+  // v81 on main at V82_RELEASED_AT. A browser still running v81 after that (offline, or an old cached page) keeps signing
+  // without a subject, and every v81 manifest carries its v81 build stamp, so a later one must show it.
   const SUBJECT_BUILD_MAJOR = 82, V82_RELEASED_AT = Date.parse('2026-09-28T22:38:38Z');
   const subjectEraBuild = b => plain(b) && /^v(\d+)/.test(String(b.version || '')) && Number(/^v(\d+)/.exec(b.version)[1]) >= SUBJECT_BUILD_MAJOR;
   // The FAIR content a verification signs that stays fixed after it is signed: the Form 1 fields the FAIR owns and Forms 2 and 3.
@@ -3532,7 +3533,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     walk(state, 'state');
     subjectless.forEach(([where, m]) => {
       if (subjectEraBuild(m.build)) failures.push({ where, reason: `it was signed by build ${m.build.version}, which stores the signed subject, but the subject is missing` });
-      else if (time(m.at) !== null && time(m.at) >= V82_RELEASED_AT) failures.push({ where, reason: 'it has no signed subject, but it is dated after v82, which stores one, replaced v81 on 2026-09-28' });
+      else if (time(m.at) !== null && time(m.at) >= V82_RELEASED_AT && !(plain(m.build) && /^v\d+/.test(String(m.build.version || '')))) failures.push({ where, reason: 'it has no signed subject and no build stamp, but it is dated after v82, which stores the subject, replaced v81 on 2026-09-28' });
     });
     const refuse = (where, reason) => failures.push({ where, reason });
     // A v81 signature cannot predate the steps it signs.
@@ -3547,7 +3548,10 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     });
     (fm.mrb || []).forEach(b => { if (plain(b) && plain(b.decision)) unsigned(b.decision, `${b.id} MRB decision`); });
     (fm.cars || []).forEach(c => { if (plain(c) && plain(c.closure)) unsigned(c.closure, `${c.id} closure`); });
-    (fm.ncs || []).forEach(t => { if (plain(t) && plain(t.resolution)) unsigned(t.resolution, `${t.id} disposition approval`); });
+    // A closed escape from before the ticket restructure becomes a resolved stock NC with its old closure and no
+    // disposition (FlightManeuver.ensure). approveNC always records both the disposition and the affected quantity.
+    const migratedEscape = t => t.dispo === null && t.affected === null && (t.history || []).some(e => plain(e) && /^Migrated from escape /.test(String(e.action || '')));
+    (fm.ncs || []).forEach(t => { if (plain(t) && plain(t.resolution) && !migratedEscape(t)) unsigned(t.resolution, `${t.id} disposition approval`); });
     (state.orders || []).forEach(order => {
       const f = order.fair; if (!plain(f) || !plain(f.verified) || !plain(f.verified.manifest)) return;
       const m = f.verified.manifest, where = `${order.id} FAIR verification`;

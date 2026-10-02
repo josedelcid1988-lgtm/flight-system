@@ -22,12 +22,14 @@ A workspace from outside becomes the shared record in two places: the first `PUT
   verified FAIR, or an MRB, CAR or NC after signing, initialized an empty server unchallenged.
 - **No downgrade to the v81 shape.** v81 manifests store no subject; v82, which replaced v81 on main on 2026-09-28,
   always stores one. A manifest without a subject is refused when it carries a v82 or later build stamp, when it is
-  dated on or after 2026-09-28T22:38:38Z, when it is dated before the steps it signs (FAIR characteristic result dates,
+  dated on or after 2026-09-28T22:38:38Z with no build stamp (every v81 manifest carries its v81 stamp, so a browser
+  still running v81 after that date keeps working), when it is dated before the steps it signs (FAIR characteristic result dates,
   MRB convening and votes, CAR steps, NC creation and disposition), or when the order history records the FAIR
   verification by a v82 build.
 - **No deleted signatures.** A buy-off, an approved order closure, a FAIR verification, box 22 review or QA approval,
   an MRB decision, a CAR closure or a stock NC approval that has lost its manifest is refused; `MES.validate` alone
-  accepted several of these.
+  accepted several of these. A closed escape migrated from before the ticket restructure, a resolved NC carrying its
+  old closure with no disposition, is not a signed approval and still loads.
 - **Refusal.** The server answers 422 with code `SIGNATURE_PROVENANCE`, names the record, stores nothing and writes a
   `workspace-put-refused` audit row. The migration dry run stops with the same finding.
 - **Still loads.** Workspaces whose signatures are all genuinely v81 (the curated sample: 45 manifests, no subject, no
