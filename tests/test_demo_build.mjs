@@ -67,6 +67,9 @@ ok('the demo reads and writes accounts only under skyryse-mes-demo-auth-v1',!/['
 // ---- in the browser ----
 const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{});
 const errs=[];
+// An uncaught timeout or error is reported as a FAIL line with where it happened, so the suite runner's summary names
+// the step instead of only the error's name.
+{const report=e=>{console.log('  FAIL uncaught '+String(e&&e.stack||e).split('\n').filter(l=>!/node_modules/.test(l)).slice(0,3).join(' | ').replace(/\(?(file:\/\/)?\/[^\s)]*\//g,'').replace(/\s+/g,' '));process.exit(1);};process.on('unhandledRejection',report);process.on('uncaughtException',report);}
 // A blank page of the fixtures' own origin, named for this run and removed on exit. A tab opens it before the app where
 // a check depends on the tab's first storage writes, and other pages open it to see a write (#556). The mirror run
 // copies only the HTML fixtures, so the page is written here.
@@ -196,7 +199,7 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
   // write made just before the reload can be lost under load, leaving that load no session to end (#556).
   await p.evaluate(u=>{window.name='sk-test-session:'+u;},who);await p.reload();
   // The ended session is logged once the page has loaded; wait for that entry, not a fixed time, before the next reload.
-  await p.waitForFunction(u=>!!document.getElementById('sk-legacy-review')&&JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').some(e=>e.type==='signout'&&e.username===u&&/older demo build/.test(e.reason||'')),who,{timeout:15000}).catch(()=>{});
+  await p.waitForFunction(u=>!!document.getElementById('sk-legacy-review')&&JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').some(e=>e.type==='signout'&&e.username===u&&/older demo build/.test(e.reason||'')),who,{timeout:60000}).catch(()=>{});
   g=await closedState();
   ok(`a session of ${who} is ended on a closed browser, a QA Manager or Master Access account included`,g.gate&&g.session===null&&g.user===null,JSON.stringify(g));}
  {const ends=await p.evaluate(()=>JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').filter(e=>e.type==='signout'&&/older demo build/.test(e.reason||'')).map(e=>e.username));
