@@ -4313,6 +4313,10 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   }
   const ASSIGN_TYPES = Object.freeze({ 'create-wo': 'Create a work order', 'add-op': 'Add an operation', 'approve-ecr': 'Approve an ECR', split: 'Split an order', op: 'Work an operation', ticket: 'Handle an NC', 'review-wi': 'Review a master WI', 'review-push': 'Review an ATP software push', ecr: 'Work an ECR', 'wo-request': 'Create a requested work order', 'peer-review-wi': 'Peer-review a master WI', 'qa-review-wi': 'QA-review a master WI' });
   const assignmentValid = a => plain(a) && str(a.id, 20) && Object.hasOwn(ASSIGN_TYPES, a.type) && plain(a.assignee) && str(a.assignee.username, 40) && str(a.assignee.name, 60) && ['Open', 'Done', 'Reassigned'].includes(a.status);
+  // An operation removed by a sequence change still waiting for QA is kept in the change's baseline; a rejection or
+  // withdrawal puts it back. Its open assignments stay open until the change is released (#585). A push is matched by
+  // id and by the time it was recorded, so a push on a later operation that reuses the id is never taken for it.
+  const heldOp = (order, opId) => pendingSequenceChange(order) && Array.isArray(order.sequenceBaseline) ? order.sequenceBaseline.find(x => plain(x) && x.id === opId) || null : null;
   function syncAssignments(state) {
     if (!Array.isArray(state.assignments)) state.assignments = [];
     markRecordIds(state, 'ASG', state.assignments);
@@ -4327,12 +4331,12 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       else if (a.type === 'peer-review-wi') { const wi = findWI(state, a.wiId, a.wiRevision); done = !wi || wi.status !== 'Draft' || !!wi.peerReview; }
       else if (a.type === 'qa-review-wi') { const wi = findWI(state, a.wiId, a.wiRevision); done = !wi || wi.status !== 'Draft'; }
       else if (!order && a.type !== 'review-wi') done = false;
-      else if (a.type === 'op') { const op = order.operations.find(x => x.id === a.opId); done = !op || op.done; }
+      else if (a.type === 'op') { const op = order.operations.find(x => x.id === a.opId) || heldOp(order, a.opId); done = !op || op.done; }
       else if (a.type === 'ticket') { const t = order.tickets.find(x => x.id === a.ticketId); done = !t || t.status !== 'Open' || !!t.dispo && `ACCT-${a.assignee.username}` === t.dispo.credentialId; }
       else if (a.type === 'approve-ecr') done = !engineeringChange(order);
       else if (a.type === 'split') done = Array.isArray(order.splitInto) && order.splitInto.length > (a.splitCount || 0);
       else if (a.type === 'review-wi') { const wi = findWI(state, a.wiId, a.wiRevision); done = !wi || wi.status !== 'Draft' || !!wi.peerReview; }
-      else if (a.type === 'review-push') { const op = order.operations.find(x => x.id === a.opId); const push = op?.atp?.pushes.find(x => x.id === a.pushId); done = !push || push.status !== 'Pending'; }
+      else if (a.type === 'review-push') { const assigned = op => (op?.atp?.pushes || []).find(x => x.id === a.pushId && (!a.pushAt || x.at === a.pushAt)); const push = assigned(order.operations.find(x => x.id === a.opId)) || assigned(heldOp(order, a.opId)); done = !push || push.status !== 'Pending'; }
       if (done) Object.assign(a, { status: 'Done', doneAt: now, autoClosed: true });
     });
     return state;
@@ -4368,7 +4372,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (type === 'ticket') { ticket = order.tickets.find(x => x.id === input.ticketId); if (!ticket) return fail('Choose the NC.'); if (ticket.status !== 'Open') return fail('That NC is already closed.'); if(ticket.dispo&&`ACCT-${username}`===ticket.dispo.credentialId)return fail('Choose a different Quality reviewer. The person who recorded the disposition cannot approve it.'); }
     const who = actor(state), at = new Date().toISOString();
     const key = a => [a.type, a.orderId || '', a.opId || '', a.ticketId || '', a.wiId || '', a.wiRevision || '', a.pushId || '', a.ecrId || '', a.worId || ''].join('|');
-    const entry = { id: nextRecordId(state, 'ASG', state.assignments, 4), type, assignee: { username, name }, ...(order ? { orderId: order.id } : {}), ...(op ? { opId: op.id } : {}), ...(ticket ? { ticketId: ticket.id } : {}), ...(wi ? { wiId: wi.id, wiRevision: wi.revision } : {}), ...(push ? { pushId: push.id } : {}), ...(ecr ? { ecrId: ecr.id } : {}), ...(wor ? { worId: wor.id } : {}), ...(type === 'split' ? { splitCount: (order.splitInto || []).length } : {}), ...(note ? { note } : {}), ...(due ? { due } : {}), status: 'Open', by: who, at };
+    const entry = { id: nextRecordId(state, 'ASG', state.assignments, 4), type, assignee: { username, name }, ...(order ? { orderId: order.id } : {}), ...(op ? { opId: op.id } : {}), ...(ticket ? { ticketId: ticket.id } : {}), ...(wi ? { wiId: wi.id, wiRevision: wi.revision } : {}), ...(push ? { pushId: push.id, pushAt: push.at } : {}), ...(ecr ? { ecrId: ecr.id } : {}), ...(wor ? { worId: wor.id } : {}), ...(type === 'split' ? { splitCount: (order.splitInto || []).length } : {}), ...(note ? { note } : {}), ...(due ? { due } : {}), status: 'Open', by: who, at };
     state.assignments.filter(a => a.status === 'Open' && key(a) === key(entry) && ['op', 'ticket', 'review-wi', 'review-push', 'ecr', 'wo-request', 'peer-review-wi', 'qa-review-wi'].includes(type)).forEach(a => Object.assign(a, { status: 'Reassigned', doneAt: at }));
     if (input.replaces) { const old = state.assignments.find(a => a.id === input.replaces && a.status === 'Open'); if (old) Object.assign(old, { status: 'Reassigned', doneAt: at, reassignedTo: entry.id }); }
     state.assignments = [...state.assignments, entry].slice(-500);
@@ -5478,9 +5482,6 @@ const OP_BOM_MAX = 12;
     order.tickets.forEach(t => { if (t.status === 'Open' && plain(t.reworkPlan) && t.reworkPlan.opId === opId) t.reworkPlan = { ...t.reworkPlan, stage: 'Awaiting ME operation', opId: null }; });
     dropBOMFromKit(order, opId);
     order.operations.splice(index, 1);
-    // Close every open assignment for the removed operation now (#585): an operation added later can reuse its id and
-    // start its software pushes again at PUSH-1, and an open review-push assignment would then name the new push.
-    syncAssignments(state);
     queueSequenceChange(state, order, { type: 'remove', opId, title: op.title, classification: op.classification || null, position: number, reason: text });
     record(state, order, `Operation Op ${number} removed: ${op.title}. Reason: ${text}. QA release required.`);
     return { ok: true, message: `Op ${number} removed. QA must release the updated sequence.` };

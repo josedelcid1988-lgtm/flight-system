@@ -110,11 +110,13 @@ await check('past the 50-push cap each software push gets a new id and the revie
   assert.equal(MES.validate(state), true);
 });
 
-await check('removing an ATP operation closes its open review-push assignment at once, so a reused operation id cannot inherit it', async () => {
-  // Codex review on #629: an operation added later can reuse a removed operation's id and start its pushes again at
-  // PUSH-1; an assignment still open for the removed operation would then name the new push.
+// Codex review on #629: an operation removed by a sequence change waiting for QA comes back if the change is rejected
+// or withdrawn, so its open assignments stay open until the change is released; and a push is matched by id and by the
+// time it was recorded, so a later operation that reuses the operation id (its pushes start again at PUSH-1) never
+// inherits the assignment.
+const removalSetup = () => {
   const state = fresh();
-  const order = state.orders.find(o => ['Draft', 'Kitting', 'Building'].includes(o.status) && o.operations.length > 1 && o.operations.some(op => !op.done));
+  const order = state.orders.find(o => ['Draft', 'Kitting', 'Building'].includes(o.status) && o.operations.length > 1 && o.operations.some(op => !op.done) && !o.sequenceChange);
   const op = order.operations.filter(item => !item.done).at(-1);
   op.atp = { repo: 'https://github.example/skyryse/atp', baseline: { sha: 'f'.repeat(40), version: 'v1.0.0' }, pushes: [] };
   assert.equal(as(admin, state, s => MES.pushATPSoftware(s, order.id, op.id, { sha: 'abc0001', version: 'v1.1' })).ok, true);
@@ -122,9 +124,31 @@ await check('removing an ATP operation closes its open review-push assignment at
   assert.equal(assigned.ok, true, assigned.message);
   const removed = as(admin, state, s => MES.removeOrderOperation(s, order.id, op.id, 'Not needed after all.'));
   assert.equal(removed.ok, true, removed.message);
-  // Read the stored record directly: no sync is run between the removal and this check.
-  assert.notEqual(state.assignments.find(a => a.id === assigned.id).status, 'Open', 'the removal itself closes the assignment');
+  const status = () => { MES.syncAssignments(state); return state.assignments.find(a => a.id === assigned.id).status; };
+  return { state, order, op, status };
+};
+
+await check('a removed operation keeps its open review-push assignment while the sequence change waits, and a rejection keeps it', async () => {
+  const { state, order, op, status } = removalSetup();
+  assert.equal(status(), 'Open', 'the removal is not final until QA releases it');
+  const rejected = as(reviewer, state, s => MES.rejectSequenceChange(s, order.id, 'Keep the ATP operation.'));
+  assert.equal(rejected.ok, true, rejected.message);
+  assert.ok(order.operations.some(item => item.id === op.id), 'the rejection puts the operation back');
+  assert.equal(status(), 'Open', 'the review is still open and still names the restored push');
   assert.equal(MES.validate(state), true);
+});
+
+await check('releasing the removal closes the assignment, and an operation reusing the id never inherits it', async () => {
+  const { state, order, op, status } = removalSetup();
+  // A later operation with the same id whose pushes start again at PUSH-1.
+  const reused = { ...structuredClone(op), atp: { ...structuredClone(op.atp), pushes: [{ ...structuredClone(op.atp.pushes[0]), at: new Date(Date.parse(op.atp.pushes[0].at) + 60000).toISOString(), sha: 'abc0009', version: 'v9.9' }] } };
+  order.operations.push(reused);
+  assert.equal(status(), 'Open', 'still open while the removal waits for QA');
+  order.operations = order.operations.filter(item => item !== reused);
+  const released = as(reviewer, state, s => MES.approveSequenceChange(s, order.id));
+  assert.equal(released.ok, true, released.message);
+  order.operations.push(reused);
+  assert.notEqual(status(), 'Open', 'once released, the review closes even though a new operation holds a pending PUSH-1 under the same id');
 });
 
 await check('validation refuses a repeated id in any of the four lists and a mark below an id it holds', async () => {
