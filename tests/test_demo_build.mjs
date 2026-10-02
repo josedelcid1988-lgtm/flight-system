@@ -73,7 +73,7 @@ const errs=[];
 const BLANK=`_same_origin_blank_${process.pid}.html`;fs.writeFileSync(FIXTURES+BLANK,'<!doctype html><meta charset=utf-8><title>blank</title>');process.on('exit',()=>fs.rmSync(FIXTURES+BLANK,{force:true}));
 // Before a reload that depends on a write made just before it, wait until another page of the origin sees the write:
 // a write can otherwise be lost to the reload under load (#556).
-const settled=async(ctx,seen)=>{const probe=await ctx.newPage();await probe.goto('file://'+FIXTURES+BLANK);await probe.waitForFunction(seen,null,{timeout:20000});await probe.close();};
+const settled=async(ctx,seen)=>{const probe=await ctx.newPage();await probe.goto('file://'+FIXTURES+BLANK);await probe.waitForFunction(seen,null,{timeout:60000});await probe.close();};
 async function open(file,user){const ctx=await b.newContext({viewport:{width:1440,height:1000}});if(user)await ctx.addInitScript(([u,sess])=>{sessionStorage.setItem(sess,u);sessionStorage.setItem('sk-boot-seen','1');sessionStorage.setItem('sk-mnv-landing-seen','1');},[user,/demo/.test(path.basename(file))?'skyryse-mes-demo-session-v1':'skyryse-mes-session-v1']);const p=await ctx.newPage();p.on('pageerror',e=>errs.push(file+': '+e.message));await p.goto('file://'+path.join(ROOT,file));await p.waitForTimeout(1500);return {p,ctx};}
 const REAL={tech:['operate-steps'],operations:['operate','operate-steps'],mfgeng:['edit-wi','create-wo','dispo-nc'],quality:['approve-wo','approve-nc'],engineering:['push-software']};
 const NOT={tech:['create-wo','approve-wo','edit-wi','dispo-nc','manage-access'],operations:['create-wo','approve-wo','edit-wi','approve-nc'],mfgeng:['approve-wo','approve-wi','approve-nc'],quality:['edit-wi','create-wo','dispo-nc','operate'],engineering:['edit-wi','approve-nc','operate','create-wo']};
@@ -274,7 +274,7 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  const seed=await ctx.newPage();await seed.goto('file://'+FIXTURES+BLANK);
  await seed.evaluate(H=>localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify({users:[{username:'ops9',displayName:'Ops Nine',...H,role:'ops',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'mlee',displayName:'Morgan Lee',...H,role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'}]})),H);
  await seed.close();
- const seeded=async pg=>{await pg.goto('file://'+FIXTURES+BLANK);await pg.waitForFunction(()=>!!localStorage.getItem('skyryse-mes-auth-v1'),null,{timeout:20000});};
+ const seeded=async pg=>{await pg.goto('file://'+FIXTURES+BLANK);await pg.waitForFunction(()=>!!localStorage.getItem('skyryse-mes-auth-v1'),null,{timeout:60000});};
  // A page already open on the sign-in screen (an active signed-in tab would rewrite shared storage from its own copy).
  const open=await ctx.newPage();open.on('pageerror',e=>errs.push(e.message));await seeded(open);
  await open.goto('file://'+FIXTURES+'publish.html');await open.waitForFunction(()=>!document.getElementById('sk-login').hidden,null,{timeout:20000});
