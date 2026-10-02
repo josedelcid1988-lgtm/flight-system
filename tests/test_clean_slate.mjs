@@ -174,6 +174,28 @@ const prod = createHost(here('../index.html'));
     check('a quantity re-release is refused while a sequence change awaits QA, the order unchanged', !seqResult.ok && /sequence change on this order is awaiting QA/.test(seqResult.message) && seq.quantity === 5, seqResult.message);
   }
   {
+    // Only a drawn kit line survives a sequence rollback or an operation removal (Codex review on #331): a lot chosen
+    // but not verified has issued nothing, so the added operation's line goes; a verified line stays as recorded.
+    const ls = load(prod, MES.seed());
+    ls.masterWIs = JSON.parse(JSON.stringify(qtyState.masterWIs));
+    const toKitting = o => prod.withAccount(admin, () => { if (MES.requiresReleaseQA(o)) o.release = { status: 'Approved', name: 'QA Peer', role: 'Quality Engineer', credentialId: 'ACCT-qapeer', at: new Date().toISOString(), note: 'test' }; return MES.advance(ls, o.id); }, ls);
+    prod.withAccount(admin, () => MES.postInventoryTransaction(ls, { type: 'Receive', partNumber: 'BOM-009', lot: 'LOT-CLIP-1', quantity: 40, buildClass: 'Production', conformityStatus: 'Accepted', conformityRef: 'NS-LOT-CLIP-1', note: 'Receipt for the rollback test' }), ls);
+    const clipOp = { title: 'Fit clip', description: 'Fit the clip', steps: 'Fit clip', buyoffType: 'Technician', classification: 'Manufacturing', callouts: [], bom: [{ partNumber: 'BOM-009', name: 'Clip', required: 4 }] };
+    const order = () => { const r = prod.withAccount(admin, () => MES.addOrder(ls, { masterWI: `${qtyWi.id}|${qtyWi.revision}`, pedigree: 'Production', subcategory: 'Mfg.', quantity: 2, aircraft: MES.AIRCRAFT[0], site: MES.SITES[0] }), ls); const o = r.ok ? MES.getOrder(ls, r.id) : null; return o && toKitting(o).ok ? o : null; };
+    const addClip = o => prod.withAccount(me, () => MES.addOrderOperation(ls, o.id, { ...clipOp, position: o.operations.length }), ls);
+    const clip = o => o.materials.find(m => m.partNumber === 'BOM-009');
+    const pick = (o, verify) => prod.withAccount(admin, () => { const a = MES.setMaterialLot(ls, o.id, clip(o).id, 'LOT-CLIP-1'); return a.ok && verify ? MES.setMaterial(ls, o.id, clip(o).id, true) : a; }, ls);
+    const reject = o => prod.withAccount(qa, () => MES.rejectSequenceChange(ls, o.id, 'Keep the released sequence for this order.'), ls);
+    const issued = o => -(ls.inventoryLedger.transactions.filter(t => t.orderId === o.id && t.partNumber === 'BOM-009').reduce((n, t) => n + t.quantity, 0));
+    const a = order(), aAdd = a && addClip(a), aPick = aAdd && aAdd.ok && pick(a, false), aRej = aPick && aPick.ok && reject(a);
+    check('rejecting a sequence change removes the added operation\'s kit line when its lot was chosen but not verified', !!aRej && aRej.ok && clip(a) === undefined && issued(a) === 0 && MES.validate(ls) === true, `${aAdd && aAdd.message} | ${aPick && aPick.message} | ${aRej && aRej.message}`);
+    const b = order(), bAdd = b && addClip(b), bPick = bAdd && bAdd.ok && pick(b, true), bRej = bPick && bPick.ok && reject(b);
+    check('a verified kit line stays as recorded when the sequence change is rejected (its 8 stay issued to the order)', !!bRej && bRej.ok && !!clip(b) && clip(b).ready === true && issued(b) === 8 && MES.validate(ls) === true, `${bAdd && bAdd.message} | ${bPick && bPick.message} | ${bRej && bRej.message}`);
+    const c = order(), cAdd = c && addClip(c), cPick = cAdd && cAdd.ok && pick(c, false);
+    const cRem = cPick && cPick.ok && prod.withAccount(me, () => MES.removeOrderOperation(ls, c.id, cAdd.opId, 'Not needed on this order'), ls);
+    check('removing an operation removes its kit line when the lot was chosen but not verified', !!cRem && cRem.ok && clip(c) === undefined && MES.validate(ls) === true, `${cAdd && cAdd.message} | ${cPick && cPick.message} | ${cRem && cRem.message}`);
+  }
+  {
     // A split moves the issued share of a kit line on the inventory ledger too (Codex review on #331): a return from
     // the parent and an issue to the new order, so each order holds what it was issued and marking a line missing
     // later returns only that order's share.

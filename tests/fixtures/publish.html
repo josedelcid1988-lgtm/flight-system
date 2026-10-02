@@ -4985,6 +4985,9 @@ const OP_BOM_MAX = 12;
   // them: each BOM kit line keeps its baseline (what it holds beyond the changed operations' BOM lines) and asks again
   // for what the restored operations' BOM lines need, a line only the rejected operations asked for goes, and a part
   // a restored operation needs that no line covers comes back. A line already drawn stays as recorded.
+  // A kit line is drawn once it is verified (the Issue is posted then) or filled from a sub-assembly. A lot chosen but
+  // not verified has issued nothing, so the line can still follow the operations.
+  const kitLineDrawn = m => m.ready === true || !!m.source;
   function rebuildKitFromOps(order, changedOps) {
     const share = (ops, id, part) => opBOMShare(ops.find(item => item.id === id), part);
     const kept = [];
@@ -4992,7 +4995,7 @@ const OP_BOM_MAX = 12;
       if (!Array.isArray(m.forOps) || !m.forOps.length) { kept.push(m); continue; }
       const base = Math.max(0, m.required - m.forOps.reduce((n, id) => n + share(changedOps, id, m.partNumber), 0));
       const ops = order.operations.filter(op => opBOMShare(op, m.partNumber) > 0).map(op => op.id);
-      if (m.ready || m.lot) { kept.push(m); continue; }
+      if (kitLineDrawn(m)) { kept.push(m); continue; }
       if (!ops.length && !base) continue;
       if (ops.length) m.forOps = ops.slice(0, 20); else delete m.forOps;
       m.required = Math.min(999, Math.max(1, base + ops.reduce((n, id) => n + share(order.operations, id, m.partNumber), 0)));
@@ -5017,7 +5020,7 @@ const OP_BOM_MAX = 12;
     order.materials = kit.filter(m => {
       const ops = m.forOps || [];
       if (!ops.includes(opId)) return true;
-      if (m.ready || m.lot) return true;          // already drawn: it stays on the record
+      if (kitLineDrawn(m)) return true;           // already drawn: it stays on the record
       if (ops.length > 1) {
         m.forOps = ops.filter(x => x !== opId);
         const remaining = m.forOps.reduce((n, id) => n + opBOMShare(order.operations.find(item => item.id === id), m.partNumber), 0);
