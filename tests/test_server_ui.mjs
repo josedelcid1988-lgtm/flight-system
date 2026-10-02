@@ -366,6 +366,149 @@ try {
   assert.equal(await page.locator('#flight-server-recovery').count(), 0, 'a recovery copy is removed rather than exposed to another account');
   assert.equal(await page.evaluate(() => sessionStorage.getItem('skyryse-mes-work-order-v1-unconfirmed-server-recovery-v1')), null);
 
+  // #292: the recovery banner clears once the same account has a later write confirmed by the server, and only then.
+  const RECOVERY_STORAGE_KEY = 'skyryse-mes-work-order-v1-unconfirmed-server-recovery-v1';
+  // Priorities toggle between High and Normal: an AOG order would start the page's own AOG broadcast tick mid-check.
+  const recoveryPriorityChange = (refuse, target = null) => page.evaluate(({ refuse, target }) => {
+    const order = state.orders.find(item => item.status === 'Building');
+    if (!order) throw new Error('No Building order is available for the recovery banner check.');
+    const next = target || (order.priority === 'High' ? 'Normal' : 'High');
+    if (!window.__recoveryApi) {
+      const api = window.skServer.api.bind(window.skServer);
+      window.__recoveryApi = true;
+      window.skServer.api = async (path, options) => {
+        if (window.__refusePriority && String(path).includes('/workspace/actions/MES.setPriority')) {
+          window.__refusePriority = false;
+          return { status: 403, json: { error: 'Controlled recovery banner refusal' } };
+        }
+        return api(path, options);
+      };
+    }
+    window.__refusePriority = refuse;
+    window.skServer.sync = { status: 'pending-check', message: '' };
+    const result = MES.setPriority(state, order.id, next);
+    if (!result.ok) throw new Error(result.message);
+    save();
+  }, { refuse, target });
+  const recoveryState = () => page.evaluate(key => ({
+    banner: !!document.querySelector('#flight-server-recovery'),
+    memory: !!unconfirmedServerRecovery,
+    stored: sessionStorage.getItem(key) !== null
+  }), RECOVERY_STORAGE_KEY);
+
+  const recoveryStartPriority = await page.evaluate(() => state.orders.find(item => item.status === 'Building')?.priority);
+  await recoveryPriorityChange(true);
+  await page.waitForFunction(() => window.skServer?.sync?.status === 'error', null, { timeout: 10000 });
+  await page.locator('#flight-server-recovery').waitFor({ state: 'visible', timeout: 10000 });
+  await recoveryPriorityChange(true);
+  await page.waitForFunction(() => window.skServer?.sync?.status === 'error', null, { timeout: 10000 });
+  assert.deepEqual(await recoveryState(), { banner: true, memory: true, stored: true }, 'a second refused change keeps the recovery banner and its copy');
+  await recoveryPriorityChange(false);
+  await page.waitForFunction(() => window.skServer?.sync?.status === 'synced', null, { timeout: 10000 });
+  assert.deepEqual(await recoveryState(), { banner: false, memory: false, stored: false }, 'a later change confirmed by the server for the same account clears the recovery banner and its copy');
+
+  // A confirmed write clears only a copy that belongs to the signed-in account and existed when the write was sent.
+  // (Reloading the shared workspace already removes another account's copy from view; this checks the clear itself.)
+  await recoveryPriorityChange(true);
+  await page.waitForFunction(() => window.skServer?.sync?.status === 'error', null, { timeout: 10000 });
+  await page.locator('#flight-server-recovery').waitFor({ state: 'visible', timeout: 10000 });
+  const guarded = await page.evaluate(() => {
+    const own = unconfirmedServerRecovery;
+    const other = { ...own, username: 'different-account' };
+    unconfirmedServerRecovery = other;
+    sessionStorage.setItem(SERVER_RECOVERY_KEY, JSON.stringify(other));
+    clearConfirmedServerRecovery(other);
+    const otherKept = unconfirmedServerRecovery === other && sessionStorage.getItem(SERVER_RECOVERY_KEY) !== null && !!document.querySelector('#flight-server-recovery');
+    unconfirmedServerRecovery = own;
+    sessionStorage.setItem(SERVER_RECOVERY_KEY, JSON.stringify(own));
+    clearConfirmedServerRecovery({ ...own });
+    const staleKept = unconfirmedServerRecovery === own && sessionStorage.getItem(SERVER_RECOVERY_KEY) !== null;
+    clearConfirmedServerRecovery(null);
+    const noneKept = unconfirmedServerRecovery === own && sessionStorage.getItem(SERVER_RECOVERY_KEY) !== null;
+    return { otherKept, staleKept, noneKept };
+  });
+  assert.deepEqual(guarded, { otherKept: true, staleKept: true, noneKept: true }, "a confirmed write does not clear another account's recovery copy, a newer copy, or a copy made after it was sent");
+  // A change confirmed by the server that the page made on its own keeps the copy: credential binding after sign-in
+  // or load sends MES.selectProfile as an automatic change.
+  const binding = await page.evaluate(async () => {
+    const own = unconfirmedServerRecovery, sent = [], api = window.skServer.api;
+    window.skServer.api = async (path, options) => { if (options?.method) sent.push(String(path)); return api(path, options); };
+    try {
+      state.profile.role = 'unbound-role-check';
+      window.skBindCredential();
+      await serverActionChain;
+    } finally { window.skServer.api = api; }
+    return { sent: sent.includes('/workspace/actions/MES.selectProfile'), status: window.skServer.sync.status, kept: unconfirmedServerRecovery === own && sessionStorage.getItem(SERVER_RECOVERY_KEY) !== null && !!document.querySelector('#flight-server-recovery') };
+  });
+  assert.deepEqual(binding, { sent: true, status: 'synced', kept: true }, 'a confirmed automatic credential binding does not clear the recovery copy');
+  // A workspace snapshot not sent by save() (the first-load initialization, an online retry) is automatic too.
+  const snapshot = await page.evaluate(async () => {
+    const own = unconfirmedServerRecovery, api = window.skServer.api;
+    let put = false;
+    window.skServer.api = async (path, options) => {
+      if (path === '/workspace' && options?.method === 'PUT') { put = true; return { status: 204, etag: serverEtag }; }
+      return api(path, options);
+    };
+    try { pushWorkspace(); await serverPush; } finally { window.skServer.api = api; }
+    return { put, kept: unconfirmedServerRecovery === own && sessionStorage.getItem(SERVER_RECOVERY_KEY) !== null && !!document.querySelector('#flight-server-recovery') };
+  });
+  assert.deepEqual(snapshot, { put: true, kept: true }, 'a confirmed workspace snapshot that save() did not send does not clear the recovery copy');
+  // A person's change keeps its origin through a long await (a file read, a remote call): it is recorded when the
+  // engine call is queued, not from the time since their last input.
+  const awaited = await page.evaluate(async () => {
+    await new Promise(resolve => setTimeout(resolve, 12000));
+    const order = state.orders.find(item => item.status === 'Building');
+    const result = MES.setPriority(state, order.id, order.priority === 'High' ? 'Normal' : 'High');
+    if (!result.ok) throw new Error(result.message);
+    save();
+    await serverActionChain;
+    return { status: window.skServer.sync.status, cleared: unconfirmedServerRecovery === null && sessionStorage.getItem(SERVER_RECOVERY_KEY) === null && !document.querySelector('#flight-server-recovery') };
+  });
+  assert.deepEqual(awaited, { status: 'synced', cleared: true }, "a person's change confirmed after an await clears the recovery copy");
+  // The person's direct server writes (the model adapter setting and a Jira issue, with the server's acceptance
+  // stubbed) clear the copy once the server confirms them, like a queued change does.
+  const refuseForRecovery = async () => {
+    await recoveryPriorityChange(true);
+    await page.waitForFunction(() => window.skServer?.sync?.status === 'error', null, { timeout: 10000 });
+    await page.locator('#flight-server-recovery').waitFor({ state: 'visible', timeout: 10000 });
+  };
+  const directWrite = async (kind) => page.evaluate(async kind => {
+    const api = window.skServer.api;
+    window.skServer.api = async (path, options) => {
+      if (path === '/workspace/actions/MES.configureModelAdapter' || path === '/jira/issue') return { status: 200, ok: true, etag: serverEtag, json: { message: 'Stubbed confirmation', issue: { key: 'STUB-1' } } };
+      return api(path, options);
+    };
+    const host = document.createElement('div');
+    try {
+      if (kind === 'model') {
+        host.innerHTML = '<form data-ai-model-config><select name="enabled"><option value="true" selected>On</option></select><input name="provider" value="stub"><input name="settingName" value="stub"><input name="rationale" value="stub"><p data-ai-model-error></p></form>';
+        document.body.append(host);
+        host.querySelector('form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      } else {
+        host.innerHTML = '<button type="button" data-action="server-jira-send" data-kind="SPR" data-record="SPR-STUB">Send</button>';
+        document.body.append(host);
+        host.querySelector('button').click();
+      }
+      const started = Date.now();
+      while (unconfirmedServerRecovery && Date.now() - started < 10000) await new Promise(resolve => setTimeout(resolve, 50));
+    } finally { host.remove(); window.skServer.api = api; }
+    return { cleared: unconfirmedServerRecovery === null && sessionStorage.getItem(SERVER_RECOVERY_KEY) === null && !document.querySelector('#flight-server-recovery') };
+  }, kind);
+  await refuseForRecovery();
+  assert.deepEqual(await directWrite('model'), { cleared: true }, 'a confirmed model adapter setting clears the recovery copy');
+  await refuseForRecovery();
+  assert.deepEqual(await directWrite('jira'), { cleared: true }, 'a confirmed Jira issue clears the recovery copy');
+  await recoveryPriorityChange(true);
+  await page.waitForFunction(() => window.skServer?.sync?.status === 'error', null, { timeout: 10000 });
+  await page.locator('#flight-server-recovery').waitFor({ state: 'visible', timeout: 10000 });
+  await page.evaluate(() => document.querySelector('[data-action="dismiss-server-recovery"]').click());
+  assert.deepEqual(await recoveryState(), { banner: false, memory: false, stored: false }, 'Dismiss still clears the recovery banner and its copy');
+  // Put the order back to its starting priority for the checks that follow.
+  if (await page.evaluate(() => state.orders.find(item => item.status === 'Building')?.priority) !== recoveryStartPriority) {
+    await recoveryPriorityChange(false, recoveryStartPriority);
+    await page.waitForFunction(() => window.skServer?.sync?.status === 'synced', null, { timeout: 10000 });
+  }
+
   const snapshotRefusal = await page.evaluate(() => {
     const order = state.orders.find(item => item.status === 'Building');
     if (!order) throw new Error('No Building order is available for the snapshot refusal check.');

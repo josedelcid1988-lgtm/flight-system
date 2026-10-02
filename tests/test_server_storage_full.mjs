@@ -74,6 +74,9 @@ try {
   await page.evaluate(() => window.__restoreStorage());
   const third = await addOrder(page, 'STORAGE-FULL-003');
   await waitForServer('STORAGE-FULL-003');
+  // The server stores the change before the page has its confirmation; the offline copy is written, and the notice
+  // cleared, when the confirmation arrives, which under parallel load can be a moment later.
+  await page.waitForFunction(key => JSON.parse(localStorage.getItem(key) || '{}').orders?.some(order => order.partNumber === 'STORAGE-FULL-003') && document.querySelector('#offline-copy-alert')?.hidden !== false, KEY, { timeout: 15000 }).catch(() => {});
   const stored = await page.evaluate(key => JSON.parse(localStorage.getItem(key) || '{}').orders?.some(order => order.partNumber === 'STORAGE-FULL-003'), KEY);
   check('once browser storage works again the offline copy is updated and the notice clears', third.ok && stored && !(await shown(page, '#offline-copy-alert')), await shown(page, '#offline-copy-alert'));
 
