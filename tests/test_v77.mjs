@@ -5,7 +5,7 @@ const p=await (await b.newContext({viewport:{width:1440,height:1000}})).newPage(
 const errs=[]; p.on('pageerror',e=>errs.push(e.message));
 const fails=[]; const step=(w,r)=>{const ok=r&&r.ok!==false;console.log((ok?'  ok   ':'  FAIL ')+w+(ok?'':' -> '+(r&&r.message)));if(!ok)fails.push(w);};
 const no=(w,r)=>step(w,{ok:!(r&&r.ok),message:r&&r.message||'was allowed'});
-async function signIn(u){await p.evaluate(()=>{try{sessionStorage.removeItem('skyryse-mes-session-v1');}catch(e){}}).catch(()=>{});await p.goto('file://'+FIXTURES+'demo_qa150_publish.html'); await p.waitForTimeout(900);
+async function signIn(u){await p.evaluate(()=>{try{sessionStorage.removeItem('skyryse-mes-demo-session-v1');}catch(e){}}).catch(()=>{});await p.goto('file://'+FIXTURES+'demo_qa150_publish.html'); await p.waitForTimeout(900);
 await p.evaluate(x=>{const un=document.querySelector('#sk-boot input[name=username]');if(!un)return;const pw=document.querySelector('#sk-boot input[type=password]');un.value=x;un.dispatchEvent(new Event('input',{bubbles:true}));pw.value='demo1234';pw.dispatchEvent(new Event('input',{bubbles:true}));un.closest('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));},u);
 await p.waitForTimeout(2800);}
 await signIn('master');
