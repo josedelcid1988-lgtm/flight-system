@@ -4213,7 +4213,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     return version < 3 || (unique(state.orders.flatMap(order => order.operations.flatMap(operation => operation.evidence.map(item => item.id)))) && state.orders.every(order => !order.sourceTicket || state.orders.some(source => source.id === order.sourceTicket.orderId && source.tickets.some(ticket => ticket.id === order.sourceTicket.ticketId))));
   }
 
-  const validate = state => !hasProtoKey(state) && validateVersion(state, 3) && (!Object.hasOwn(state, 'masterWIs') || masterWIsValid(state.masterWIs));
+  const validate = state => !hasProtoKey(state) && validateVersion(state, 3) && (!Object.hasOwn(state, 'masterWIs') || masterWIsValid(state.masterWIs)) && recordIdsValid(state);
 
   // Buy-off types, inspection points, operation sequence changes, and master WIs (master work orders).
   const BUYOFF_TYPES = Object.freeze(['Technician', 'Quality', 'A&P', 'Engineering', '8130-9 Authorized Inspector', 'Conformity Inspector']);
@@ -4328,6 +4328,35 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const EXTERNAL_CLASSES = Object.freeze([EXTERNAL_CLASS, EXTERNAL_TEST_CLASS]);
   const isExternal = c => EXTERNAL_CLASSES.includes(c);
   const SHA_RE = /^[0-9a-f]{7,40}$/i, REPO_RE = /^https:\/\/[A-Za-z0-9.-]+(?::\d+)?\/(?:[A-Za-z0-9._~-]+\/){1,}[A-Za-z0-9._~-]+\/?$/;
+  // Record ids come from a stored high-water mark, never from the list length (#585). A list trimmed to its cap, or a
+  // record removed from it, would otherwise give the next record an id that is still, or was once, in use, and every
+  // lookup by id would land on the older record. The mark is the highest number ever used for a prefix: workspace
+  // ids in state.idCounters (ASG, WOR, NTC), software push ids per ATP operation in op.atp.idCounters (PUSH). A
+  // workspace saved before the mark starts from the highest id it holds. The id formats do not change.
+  const RECORD_ID_LISTS = Object.freeze([['assignments', 'ASG'], ['woRequests', 'WOR'], ['notices', 'NTC']]);
+  const recordIdNumber = (id, prefix) => { const m = /^([A-Z]+)-(\d{1,9})$/.exec(String(id ?? '')); return m && m[1] === prefix ? Number(m[2]) : 0; };
+  const highestRecordId = (list, prefix) => (Array.isArray(list) ? list : []).reduce((n, item) => Math.max(n, recordIdNumber(item?.id, prefix)), 0);
+  const recordCounter = (holder, prefix) => { const value = plain(holder?.idCounters) ? holder.idCounters[prefix] : undefined; return Number.isSafeInteger(value) && value >= 0 ? value : 0; };
+  // Raises the stored mark to the highest id in the list. Called before a record is removed, so its number is kept.
+  const markRecordIds = (holder, prefix, list) => { const n = Math.max(recordCounter(holder, prefix), highestRecordId(list, prefix)); if (n > 0 || plain(holder.idCounters)) holder.idCounters = { ...(plain(holder.idCounters) ? holder.idCounters : {}), [prefix]: n }; };
+  function nextRecordId(holder, prefix, list, pad) {
+    const n = Math.max(recordCounter(holder, prefix), highestRecordId(list, prefix)) + 1;
+    holder.idCounters = { ...(plain(holder.idCounters) ? holder.idCounters : {}), [prefix]: n };
+    return `${prefix}-${String(n).padStart(pad, '0')}`;
+  }
+  const recordIdsUnique = list => unique(list.filter(item => plain(item) && typeof item.id === 'string').map(item => item.id));
+  // Each list holds an id once, and a stored mark is never below an id in its list.
+  const recordCountersValid = (holder, prefixes, lists) => holder.idCounters === undefined || (plain(holder.idCounters) && Object.entries(holder.idCounters).every(([prefix, value]) => prefixes.includes(prefix) && Number.isSafeInteger(value) && value >= 0) && prefixes.every((prefix, i) => recordCounter(holder, prefix) >= highestRecordId(lists[i], prefix)));
+  const pushIdsValid = op => !plain(op?.atp) || !Array.isArray(op.atp.pushes) || (recordIdsUnique(op.atp.pushes) && recordCountersValid(op.atp, ['PUSH'], [op.atp.pushes]));
+  const recordIdsValid = state => RECORD_ID_LISTS.every(([key]) => !Array.isArray(state[key]) || recordIdsUnique(state[key])) && recordCountersValid(state, RECORD_ID_LISTS.map(([, prefix]) => prefix), RECORD_ID_LISTS.map(([key]) => state[key])) &&
+    (Array.isArray(state.orders) ? state.orders : []).every(order => (Array.isArray(order?.operations) ? order.operations : []).every(pushIdsValid));
+  // A workspace saved with repeated ids (#585) keeps its first record under each id; each later repeat gets a new
+  // id from the mark, so every id names one record. Then the marks are set from the highest ids held.
+  function repairRecordIds(state) {
+    const renumber = (holder, prefix, list, pad) => { if (!Array.isArray(list)) return; markRecordIds(holder, prefix, list); const seen = new Set(); list.forEach(item => { if (!plain(item) || typeof item.id !== 'string') return; if (seen.has(item.id) && recordIdNumber(item.id, prefix)) item.id = nextRecordId(holder, prefix, list, pad); seen.add(item.id); }); };
+    RECORD_ID_LISTS.forEach(([key, prefix]) => renumber(state, prefix, state[key], 4));
+    (Array.isArray(state.orders) ? state.orders : []).forEach(order => (Array.isArray(order?.operations) ? order.operations : []).forEach(op => { if (plain(op?.atp) && Array.isArray(op.atp.pushes) && !recordIdsUnique(op.atp.pushes)) renumber(op.atp, 'PUSH', op.atp.pushes, 0); }));
+  }
   const atpPending = op => (op && op.atp && Array.isArray(op.atp.pushes) ? op.atp.pushes : []).filter(push => push.status === 'Pending');
   const atpValid = op => op.atp === undefined || (plain(op.atp) && REPO_RE.test(op.atp.repo) && plain(op.atp.baseline) && SHA_RE.test(op.atp.baseline.sha) && str(op.atp.baseline.version, 40) && Array.isArray(op.atp.pushes) && op.atp.pushes.length <= 50 && op.atp.pushes.every(push => plain(push) && str(push.id, 20) && SHA_RE.test(push.sha) && str(push.version, 40) && str(push.message ?? '', 200, 0) && ['Pending', 'Accepted', 'Rejected'].includes(push.status)));
   function atpFor(input) {
@@ -4341,6 +4370,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const assignmentValid = a => plain(a) && str(a.id, 20) && Object.hasOwn(ASSIGN_TYPES, a.type) && plain(a.assignee) && str(a.assignee.username, 40) && str(a.assignee.name, 60) && ['Open', 'Done', 'Reassigned'].includes(a.status);
   function syncAssignments(state) {
     if (!Array.isArray(state.assignments)) state.assignments = [];
+    markRecordIds(state, 'ASG', state.assignments);
     state.assignments = state.assignments.filter(assignmentValid);
     const now = new Date().toISOString();
     state.assignments.filter(a => a.status === 'Open').forEach(a => {
@@ -4393,7 +4423,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (type === 'ticket') { ticket = order.tickets.find(x => x.id === input.ticketId); if (!ticket) return fail('Choose the NC.'); if (ticket.status !== 'Open') return fail('That NC is already closed.'); if(ticket.dispo&&`ACCT-${username}`===ticket.dispo.credentialId)return fail('Choose a different Quality reviewer. The person who recorded the disposition cannot approve it.'); }
     const who = actor(state), at = new Date().toISOString();
     const key = a => [a.type, a.orderId || '', a.opId || '', a.ticketId || '', a.wiId || '', a.wiRevision || '', a.pushId || '', a.ecrId || '', a.worId || ''].join('|');
-    const entry = { id: `ASG-${String(state.assignments.length + 1).padStart(4, '0')}`, type, assignee: { username, name }, ...(order ? { orderId: order.id } : {}), ...(op ? { opId: op.id } : {}), ...(ticket ? { ticketId: ticket.id } : {}), ...(wi ? { wiId: wi.id, wiRevision: wi.revision } : {}), ...(push ? { pushId: push.id } : {}), ...(ecr ? { ecrId: ecr.id } : {}), ...(wor ? { worId: wor.id } : {}), ...(type === 'split' ? { splitCount: (order.splitInto || []).length } : {}), ...(note ? { note } : {}), ...(due ? { due } : {}), status: 'Open', by: who, at };
+    const entry = { id: nextRecordId(state, 'ASG', state.assignments, 4), type, assignee: { username, name }, ...(order ? { orderId: order.id } : {}), ...(op ? { opId: op.id } : {}), ...(ticket ? { ticketId: ticket.id } : {}), ...(wi ? { wiId: wi.id, wiRevision: wi.revision } : {}), ...(push ? { pushId: push.id } : {}), ...(ecr ? { ecrId: ecr.id } : {}), ...(wor ? { worId: wor.id } : {}), ...(type === 'split' ? { splitCount: (order.splitInto || []).length } : {}), ...(note ? { note } : {}), ...(due ? { due } : {}), status: 'Open', by: who, at };
     state.assignments.filter(a => a.status === 'Open' && key(a) === key(entry) && ['op', 'ticket', 'review-wi', 'review-push', 'ecr', 'wo-request', 'peer-review-wi', 'qa-review-wi'].includes(type)).forEach(a => Object.assign(a, { status: 'Reassigned', doneAt: at }));
     if (input.replaces) { const old = state.assignments.find(a => a.id === input.replaces && a.status === 'Open'); if (old) Object.assign(old, { status: 'Reassigned', doneAt: at, reassignedTo: entry.id }); }
     state.assignments = [...state.assignments, entry].slice(-500);
@@ -4520,7 +4550,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const needBy = String(input?.needBy ?? '').trim(), reason = String(input?.reason ?? '').trim();
     if (needBy && !/^\d{4}-\d{2}-\d{2}$/.test(needBy)) return fail('Use a valid need-by date.');
     if (!str(reason, 500)) return fail('Explain what the work order is for (up to 500 characters).');
-    const entry = { id: `WOR-${String(list.length + 1).padStart(4, '0')}`, partNumber: part.partNumber, quantity: qty, pedigree: input.pedigree, subcategory: input.subcategory, ...(input.aircraft && AIRCRAFT.includes(input.aircraft) ? { aircraft: input.aircraft } : {}), ...(needBy ? { needBy } : {}), reason, status: 'Open', requestedBy: actor(state), at: new Date().toISOString() };
+    const entry = { id: nextRecordId(state, 'WOR', list, 4), partNumber: part.partNumber, quantity: qty, pedigree: input.pedigree, subcategory: input.subcategory, ...(input.aircraft && AIRCRAFT.includes(input.aircraft) ? { aircraft: input.aircraft } : {}), ...(needBy ? { needBy } : {}), reason, status: 'Open', requestedBy: actor(state), at: new Date().toISOString() };
     state.woRequests = [...list, entry].slice(-500);
     return { ok: true, id: entry.id, message: `${entry.id} sent. Manufacturing Engineering will create the work order.` };
   }
@@ -4554,7 +4584,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (kind === 'QMS change' && !str(doc, 40)) return fail('Enter the QMS document number, for example QP-7.5-001.');
     if (!str(rev, 10, 0)) return fail('Keep the revision under 10 characters.');
     if (effective && !/^\d{4}-\d{2}-\d{2}$/.test(effective)) return fail('Use a valid effective date.');
-    const entry = { id: `NTC-${String(list.length + 1).padStart(4, '0')}`, kind, title, body, ...(mention ? { mention } : {}), ...(kind === 'QMS change' ? { doc: { number: doc, ...(rev ? { revision: rev } : {}), ...(effective ? { effective } : {}) }, ackRequired: input.ackRequired === true, acks: [] } : {}), pinned: input.pinned === true, by: actor(state), at: new Date().toISOString() };
+    const entry = { id: nextRecordId(state, 'NTC', list, 4), kind, title, body, ...(mention ? { mention } : {}), ...(kind === 'QMS change' ? { doc: { number: doc, ...(rev ? { revision: rev } : {}), ...(effective ? { effective } : {}) }, ackRequired: input.ackRequired === true, acks: [] } : {}), pinned: input.pinned === true, by: actor(state), at: new Date().toISOString() };
     state.notices = [...list, entry].slice(-200);
     return { ok: true, id: entry.id, message: `${kind} posted.` };
   }
@@ -4572,7 +4602,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const me = actor(state);
     if (n.by?.credentialId !== me.credentialId && !can('post-notice')) return fail('Only the poster or leadership can change this announcement.');
     if (action === 'pin') { n.pinned = !n.pinned; return { ok: true, message: n.pinned ? 'Pinned to the top.' : 'Unpinned.' }; }
-    if (action === 'remove') { state.notices = state.notices.filter(x => x.id !== id); return { ok: true, message: 'Announcement removed.' }; }
+    if (action === 'remove') { markRecordIds(state, 'NTC', state.notices); state.notices = state.notices.filter(x => x.id !== id); return { ok: true, message: 'Announcement removed.' }; }
     return fail('Unknown action.');
   }
   function pruneExpiredNotices(state) {
@@ -4585,7 +4615,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       return !Number.isFinite(at) || at >= cutoff;
     });
     const removed = notices.length - kept.length;
-    if (removed) state.notices = kept;
+    if (removed) { markRecordIds(state, 'NTC', notices); state.notices = kept; }
     return { ok: true, removed, message: removed ? `${removed} expired announcement${removed === 1 ? '' : 's'} removed.` : 'No expired announcements.' };
   }
   const CLOSURE_REASONS = Object.freeze(['Obsolete', 'Scrap']);
@@ -4682,7 +4712,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (sha === op.atp.baseline.sha) return fail('That commit is already the approved baseline. No push is needed.');
     if (atpPending(op).some(push => push.sha === sha)) return fail('That commit is already waiting for Software Engineering.');
     const at = new Date().toISOString();
-    const push = { id: `PUSH-${op.atp.pushes.length + 1}`, sha, version, message, by: actor(state), at, status: 'Pending' };
+    const push = { id: nextRecordId(op.atp, 'PUSH', op.atp.pushes, 0), sha, version, message, by: actor(state), at, status: 'Pending' };
     op.atp.pushes = [...op.atp.pushes, push].slice(-50);
     record(state, order, `Software pushed to Op ${opNumber(order, op.id)} (${op.title}): ${version} · ${sha.slice(0, 7)}. Software Engineering acceptance required before buy-off.`);
     return { ok: true, message: `Push recorded. Software Engineering must accept ${version} before Op ${opNumber(order, op.id)} can be bought off.` };
@@ -6891,7 +6921,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     try {
       state = renameKitOp(migrateEngineeringChanges(migrateSplitIds(state)));
       try { migrateChangeIds(state); } catch (e) {}
-      if (plain(state)) { sealCalibrationLog(state); markCalibrationStart(state); }
+      if (plain(state)) { sealCalibrationLog(state); markCalibrationStart(state); repairRecordIds(state); }
       if (validate(state)) { const migrated = JSON.parse(JSON.stringify(state)); ['audits','certifications','supplierApprovals','qualityValues','qualityVerdicts'].forEach(key=>{if(!Array.isArray(migrated[key]))migrated[key]=[];}); migrateOperationTypes(migrated); return validate(migrated) ? migrated : JSON.parse(JSON.stringify(state)); }
       if (!validateVersion(state, 1) && !validateVersion(state, 2)) return null;
       const upgraded = JSON.parse(JSON.stringify(state));
@@ -8247,6 +8277,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (state.orders.length > MAX_ORDERS) return { where: 'orders', detail: `${state.orders.length} work orders; the workspace holds ${MAX_ORDERS}.`, fix: null };
     const dupOrders = state.orders.map(o => o && o.id).filter((id, i, a) => a.indexOf(id) !== i);
     if (dupOrders.length) return { where: dupOrders[0], detail: `Duplicate work order id ${dupOrders[0]}.`, fix: null };
+    if (!recordIdsValid(state)) return { where: 'record ids', detail: 'An assignment, work order request, notice or ATP software push id is used twice, or a stored id counter is below an id in use. Reload the workspace so each repeated record gets its own id.', fix: s => repairRecordIds(s) };
     if (Array.isArray(state.activity)) {
       if (state.activity.length > 500) return { where: 'activity', detail: `Activity log has ${state.activity.length} events; 500 is the limit.`, fix: s => { s.activityArchive = [...(s.activity.splice(500)), ...(s.activityArchive || [])].slice(0, 10000); } };
       const seen = new Set();
