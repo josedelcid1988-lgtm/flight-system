@@ -786,6 +786,45 @@ function surfaces(state) {
   } finally { server.store.close(); }
 }
 
+// ---- server: an initialization snapshot with an unsigned recording removal is refused (#568) ----
+{
+  const state = curated();
+  const { order, op } = recordingTarget(state);
+  host.withAccount(technician, () => MES.attachEvidence(state, order.id, op.id, clip(evId(990))), state);
+  host.withAccount(technician, () => MES.removeEvidence(state, order.id, op.id, evId(990), REASON), state);
+  const removedClip = copy => copy.orders.find(o => o.id === order.id).operations.find(x => x.id === op.id).quarantinedEvidence.find(e => e.id === evId(990));
+  check('the engine lists no unsigned recording removal on a workspace whose removals are all signed', MES.unsignedEvidenceRemovals(state).length === 0);
+  const stripped = structuredClone(state); delete removedClip(stripped).manifest;
+  const listed = MES.unsignedEvidenceRemovals(stripped);
+  check('the engine lists a recording removal whose manifest was deleted, with its order and operation', listed.length === 1 && listed[0].id === evId(990) && listed[0].orderId === order.id && listed[0].opId === op.id);
+  check('a browser workspace with that removal still loads, as a removal saved before signing does', MES.validate(stripped));
+  const initialize = async snapshot => {
+    const server = createServer({ dbPath: ':memory:', quiet: true, setupCode: 'attachment-quarantine-init' });
+    await server.ready;
+    const call = async (method, url, token, body) => {
+      const incoming = Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]); incoming.method = method; incoming.url = url;
+      incoming.headers = { ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...(token ? { authorization: `Bearer ${token}` } : {}) };
+      const chunks = [], outgoing = new Writable({ write(c, e, cb) { chunks.push(Buffer.from(c)); cb(); } });
+      outgoing.writeHead = status => { outgoing.statusCode = status; return outgoing; };
+      const done = new Promise((resolve, reject) => { outgoing.once('finish', resolve); outgoing.once('error', reject); });
+      server.listeners('request')[0](incoming, outgoing); await done;
+      const text = Buffer.concat(chunks).toString('utf8'); let json = null; try { json = text ? JSON.parse(text) : null; } catch { json = null; }
+      return { status: outgoing.statusCode, json };
+    };
+    try {
+      await server.store.upsertAccount({ username: 'srv-qm', displayName: 'Server QA Manager', salt: '', hash: await makeHash('srv-qm-pass-1'), role: 'qm', roles: ['qm'] });
+      const token = (await call('POST', '/api/auth/session', null, { username: 'srv-qm', password: 'srv-qm-pass-1' })).json.token;
+      const put = await call('PUT', '/api/workspace', token, snapshot);
+      return { ...put, stored: !!(await server.store.getDoc('default')) };
+    } finally { server.store.close(); }
+  };
+  const refused = await initialize(stripped);
+  check('the server refuses to initialize from a snapshot with an unsigned recording removal (422), names it and stores nothing', refused.status === 422 && refused.json.code === 'UNSIGNED_EVIDENCE_REMOVAL' && refused.json.error.includes(evId(990)) && /no removal signature/.test(refused.json.error) && !refused.stored);
+  check('the refusal says what to do next and carries no em dash', /ask the QA Manager to review/.test(refused.json.error) && !refused.json.error.includes('\u2014'));
+  const accepted = await initialize(structuredClone(state));
+  check('the server initializes from a snapshot whose recording removals are all signed', accepted.status === 204 && accepted.stored);
+}
+
 // ---- page: Remove asks for a confirmation and a reason; the file moves to the quarantine view, not away ----
 {
   const fixture = new URL('./fixtures/demo_qa150_publish.html', import.meta.url).href;

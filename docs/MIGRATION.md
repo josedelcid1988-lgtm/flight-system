@@ -72,6 +72,8 @@ node tools/migrate-browser.mjs --input /protected/path/flight-browser-export.jso
 
 The command uploads supplied recordings, writes the validated Flight workspace, then imports account records, so each account's cited training record is already on the server, and then adds each account's other roles. Its result lists `rolesNotApplied` (with the server's reason) and `manualAfterMigration`. It uses the server ETag and same workspace validation used by normal writes. If a step fails, the command reports which earlier step completed. Check the server audit and evidence report before retrying.
 
+The server refuses a workspace that holds a removed recording with no removal signature (422, `UNSIGNED_EVIDENCE_REMOVAL`), and stores nothing. Recordings removed before removals were signed have no signature, and a signed removal with its signature deleted looks the same, so the server cannot tell who removed it. The refusal names the recordings. Keep that workspace in the browser, where it still loads, and have the QA Manager review those removals before migrating.
+
 ## Verification limits
 
 Flight records created before the v82 port did not store the subject used to calculate their signature hash. The verifier preserves these signatures and reports them as legacy, but it cannot recompute those hashes. New manifests store their subject and can be checked against the SHA-256. The report marks whether verification is complete.
