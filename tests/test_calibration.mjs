@@ -404,6 +404,20 @@ check('an archive candidate holding a __proto__ key is refused, while a clean cl
     try { rp = runHist(() => MES.runSkill(hist, input)); } catch (e) { threwProto = e; }
     check(`a skill run input holding a ${nested ? 'nested' : 'top-level'} __proto__ key is refused with the key message, never a throw, and nothing is logged or drafted`, !threwProto && rp && !rp.ok && /Remove the "__proto__" key/.test(rp.message) && hist.aiSkillDrafts.length === draftsBefore && (hist.aiActionLog || []).length === logBefore);
   }
+  // Codex review on #621: with the runSkill(state, skill, input) overload the raw input is measured before it is copied
+  // into the normalized input, so an object with a million keys is refused without being duplicated.
+  { const draftsBefore = hist.aiSkillDrafts.length, logBefore = (hist.aiActionLog || []).length;
+    const wideRaw = {}; for (let n = 0; n < 1000000; n += 1) wideRaw[`k${n}`] = n;
+    // Counting property reads shows the input was not copied: a spread reads every one of the million keys.
+    let reads = 0;
+    const counted = new Proxy(wideRaw, { get: (target, key, receiver) => { reads += 1; return Reflect.get(target, key, receiver); } });
+    let ro = null, threwRaw = null;
+    try { ro = runHist(() => MES.runSkill(hist, 'spc-chart-builder', counted)); } catch (e) { threwRaw = e; }
+    check('the runSkill(state, skill, input) overload refuses a raw input with a million keys by its value count, never a throw, and nothing is logged or drafted', !threwRaw && ro && !ro.ok && /holds more than 50,000 values/.test(ro.message) && hist.aiSkillDrafts.length === draftsBefore && (hist.aiActionLog || []).length === logBefore);
+    check('that raw input is refused before it is copied: fewer than 100,000 of its million keys are read', reads < 100000, `${reads} reads`);
+    let rd = null, threwDeep = null;
+    try { rd = runHist(() => MES.runSkill(hist, 'spc-chart-builder', nested(3000))); } catch (e) { threwDeep = e; }
+    check('the runSkill(state, skill, input) overload refuses a raw input nested 3000 deep with the depth message, never a throw', !threwDeep && rd && !rd.ok && /nested too deeply to save/.test(rd.message)); }
   const drafts = hist.aiSkillDrafts.length;
   let rs = null, threwRun = null;
   try { rs = runHist(() => MES.runSkill(hist, { skill: 'spc-chart-builder', values: [10.1, 10.2, 9.9], extra: nested(3000), reason: 'A skill run input nested past the depth limit.' })); } catch (e) { threwRun = e; }
