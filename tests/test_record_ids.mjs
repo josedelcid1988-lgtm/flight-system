@@ -132,8 +132,20 @@ await check('validation refuses a repeated id in any of the four lists and a mar
   for (const [name, damage] of Object.entries(broken)) {
     const state = structuredClone(base); damage(state);
     assert.equal(MES.validate(state), false, `${name} is refused`);
-    assert.equal(MES.diagnose(state).where, 'record ids', `diagnose names the record ids for: ${name}`);
+    const diagnosis = MES.diagnose(state);
+    assert.equal(diagnosis.where, 'record ids', `diagnose names the record ids for: ${name}`);
+    // Codex review on #629: every refused case is one the repair resolves, so the workspace still loads.
+    const upgraded = MES.upgrade(structuredClone(state));
+    assert.ok(upgraded && MES.validate(upgraded), `upgrade repairs: ${name}`);
+    const fixed = structuredClone(state); diagnosis.fix(fixed);
+    assert.equal(MES.validate(fixed), true, `the diagnose fix repairs: ${name}`);
   }
+  // A push list with no stored mark and no repeated id is left untouched by the repair.
+  const untouched = structuredClone(base); const { op: plainOp } = atpOp(untouched);
+  plainOp.atp.pushes = [{ id: 'PUSH-1', sha: 'abc0001', version: 'v1', message: '', status: 'Pending' }];
+  const upgradedPlain = MES.upgrade(structuredClone(untouched));
+  const plainAfter = upgradedPlain.orders.flatMap(o => o.operations).find(o => o.atp && o.atp.pushes.length === 1 && o.atp.pushes[0].id === 'PUSH-1');
+  assert.equal(plainAfter.atp.idCounters, undefined, 'an ATP operation with nothing to repair gains no mark');
 });
 
 await check('a workspace saved before the marks loads, its marks start from its highest ids, and repeats get new ids', async () => {

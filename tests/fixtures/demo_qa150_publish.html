@@ -4352,10 +4352,21 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     (Array.isArray(state.orders) ? state.orders : []).every(order => (Array.isArray(order?.operations) ? order.operations : []).every(pushIdsValid));
   // A workspace saved with repeated ids (#585) keeps its first record under each id; each later repeat gets a new
   // id from the mark, so every id names one record. Then the marks are set from the highest ids held.
+  // Keeps only the prefixes a holder may carry, each a whole number of 0 or more, so repair never leaves a mark that
+  // validation refuses.
+  const normalizeRecordCounters = (holder, prefixes) => { if (holder.idCounters === undefined) return; const kept = {}; if (plain(holder.idCounters)) for (const prefix of prefixes) { const value = holder.idCounters[prefix]; if (Number.isSafeInteger(value) && value >= 0) kept[prefix] = value; } holder.idCounters = kept; };
   function repairRecordIds(state) {
     const renumber = (holder, prefix, list, pad) => { if (!Array.isArray(list)) return; markRecordIds(holder, prefix, list); const seen = new Set(); list.forEach(item => { if (!plain(item) || typeof item.id !== 'string') return; if (seen.has(item.id) && recordIdNumber(item.id, prefix)) item.id = nextRecordId(holder, prefix, list, pad); seen.add(item.id); }); };
+    normalizeRecordCounters(state, RECORD_ID_LISTS.map(([, prefix]) => prefix));
     RECORD_ID_LISTS.forEach(([key, prefix]) => renumber(state, prefix, state[key], 4));
-    (Array.isArray(state.orders) ? state.orders : []).forEach(order => (Array.isArray(order?.operations) ? order.operations : []).forEach(op => { if (plain(op?.atp) && Array.isArray(op.atp.pushes) && !recordIdsUnique(op.atp.pushes)) renumber(op.atp, 'PUSH', op.atp.pushes, 0); }));
+    // Every ATP push list with a stored mark, or with a repeated id, is normalized; a list with neither is left
+    // untouched, so a signed operation gains no new field.
+    (Array.isArray(state.orders) ? state.orders : []).forEach(order => (Array.isArray(order?.operations) ? order.operations : []).forEach(op => {
+      if (!plain(op?.atp) || !Array.isArray(op.atp.pushes)) return;
+      if (op.atp.idCounters === undefined && recordIdsUnique(op.atp.pushes)) return;
+      normalizeRecordCounters(op.atp, ['PUSH']);
+      renumber(op.atp, 'PUSH', op.atp.pushes, 0);
+    }));
   }
   const atpPending = op => (op && op.atp && Array.isArray(op.atp.pushes) ? op.atp.pushes : []).filter(push => push.status === 'Pending');
   const atpValid = op => op.atp === undefined || (plain(op.atp) && REPO_RE.test(op.atp.repo) && plain(op.atp.baseline) && SHA_RE.test(op.atp.baseline.sha) && str(op.atp.baseline.version, 40) && Array.isArray(op.atp.pushes) && op.atp.pushes.length <= 50 && op.atp.pushes.every(push => plain(push) && str(push.id, 20) && SHA_RE.test(push.sha) && str(push.version, 40) && str(push.message ?? '', 200, 0) && ['Pending', 'Accepted', 'Rejected'].includes(push.status)));
