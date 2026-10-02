@@ -929,7 +929,8 @@ export function createServer(options = {}) {
         if (!ifMatch) { send(res, 428, { error: 'Include the current workspace ETag in If-Match before running an action.' }); return; }
         if (ifMatch && ifMatch !== etag) { send(res, 409, { error: 'The workspace changed on another device. Reload to continue.', etag }); return; }
         let result;
-        try { result = host.withAccount(session.account, () => fn(state, ...args), state); } catch (e) { internalError(res, req, e, 'The action could not run. Nothing was saved.'); return; }
+        const directory = await store.accounts();
+        try { result = host.withAccount(session.account, () => fn(state, ...args), state, directory); } catch (e) { internalError(res, req, e, 'The action could not run. Nothing was saved.'); return; }
         if (!result || result.ok === false) { await store.audit(session.username, 'action-refused', { action: action[1], message: result && result.message }); send(res, 403, { error: result ? result.message : 'Refused.', result }); return; }
         const invalid = validState(state); if (invalid) { send(res, 422, { error: `The action would leave the workspace invalid: ${invalid}` }); return; }
         { const bad = await evidenceProblem(raw, state, session); if (bad) { await store.audit(session.username, 'evidence-refused', { action: action[1], message: bad }); send(res, 422, { error: bad }); return; } }
