@@ -67,6 +67,9 @@ ok('the demo reads and writes accounts only under skyryse-mes-demo-auth-v1',!/['
 // ---- in the browser ----
 const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{});
 const errs=[];
+// A blank page of the fixtures' own origin. A tab opens it before the app where a check depends on the tab's first
+// storage writes (#556); the mirror run copies only the HTML fixtures, so the page is written here and removed on exit.
+const BLANK='_same_origin_blank.html';fs.writeFileSync(FIXTURES+BLANK,'<!doctype html><meta charset=utf-8><title>blank</title>');process.on('exit',()=>fs.rmSync(FIXTURES+BLANK,{force:true}));
 async function open(file,user){const ctx=await b.newContext({viewport:{width:1440,height:1000}});if(user)await ctx.addInitScript(([u,sess])=>{sessionStorage.setItem(sess,u);sessionStorage.setItem('sk-boot-seen','1');sessionStorage.setItem('sk-mnv-landing-seen','1');},[user,/demo/.test(path.basename(file))?'skyryse-mes-demo-session-v1':'skyryse-mes-session-v1']);const p=await ctx.newPage();p.on('pageerror',e=>errs.push(file+': '+e.message));await p.goto('file://'+path.join(ROOT,file));await p.waitForTimeout(1500);return {p,ctx};}
 const REAL={tech:['operate-steps'],operations:['operate','operate-steps'],mfgeng:['edit-wi','create-wo','dispo-nc'],quality:['approve-wo','approve-nc'],engineering:['push-software']};
 const NOT={tech:['create-wo','approve-wo','edit-wi','dispo-nc','manage-access'],operations:['create-wo','approve-wo','edit-wi','approve-nc'],mfgeng:['approve-wo','approve-wi','approve-nc'],quality:['edit-wi','create-wo','dispo-nc','operate'],engineering:['edit-wi','approve-nc','operate','create-wo']};
@@ -155,7 +158,7 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
   localStorage.setItem('skyryse-mes-security-v1',JSON.stringify([{at:'2026-09-03T00:00:00.000Z',page:'/srv/flight/demo.html',type:'signin',username:'master'},{at:'2026-09-03T00:01:00.000Z',page:'/srv/flight/demo.html',type:'role-change',username:'qa.boss',by:'master'},{at:'2026-09-03T00:02:00.000Z',page:'/srv/flight/index.html',type:'signin',username:'mlee'}]));},demoUsers);
  // The tab opens a plain file of the same origin first. Writes made by the first page a fresh tab loads can be lost
  // when that page is reloaded soon after, so the checks below would read a workspace the page never saw (#556).
- await p.goto('file://'+FIXTURES+'migration-export-minimal.json');
+ await p.goto('file://'+FIXTURES+BLANK);
  await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(1200);
  const r=await p.evaluate(()=>({users:JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.map(u=>u.username),queue:JSON.parse(localStorage.getItem('skyryse-mes-sync-queue-v1')).map(x=>x.clientWriteId),notice:(document.getElementById('sk-legacy-demo-notice')||{}).textContent||null,gate:(document.getElementById('sk-legacy-review')||{}).textContent||null,demoAuth:JSON.parse(localStorage.getItem('skyryse-mes-demo-auth-v1')||'{"users":[]}').users,legacyAccounts:JSON.parse(localStorage.getItem('skyryse-mes-legacy-demo-accounts-v1')||'[]'),heldAccounts:JSON.parse(localStorage.getItem('skyryse-mes-legacy-demo-account-queue-v1')||'[]'),queueRaw:localStorage.getItem('skyryse-mes-sync-queue-v1'),sent:localStorage.getItem('skyryse-mes-sync-sent-v1'),drafts:localStorage.getItem('skyryse-mes-drafts-v1'),demoDrafts:JSON.parse(localStorage.getItem('skyryse-mes-demo-drafts-v1')||'[]'),legacyDrafts:JSON.parse(localStorage.getItem('skyryse-mes-legacy-demo-drafts-v1')||'[]'),locks:JSON.parse(localStorage.getItem('skyryse-mes-lockout-v1')||'{}'),legacyLocks:JSON.parse(localStorage.getItem('skyryse-mes-legacy-demo-lockout-v1')||'{}'),log:localStorage.getItem('skyryse-mes-security-v1')||'',demoLog:JSON.parse(localStorage.getItem('skyryse-mes-demo-security-v1')||'[]')}));
  ok('the refusal case is real: the older demo accounts include master',demoUsers.some(u=>u.username==='master'&&u.createdBy==='demo build'));
@@ -255,10 +258,10 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  // The accounts are seeded by a page of their own, closed before any page of the app opens, and every page waits on a
  // plain file of the same origin until the seed has reached it. A page that writes as it starts can have that write
  // reach storage long after a later page's writes, and overwrite them.
- const seed=await ctx.newPage();await seed.goto('file://'+FIXTURES+'migration-export-minimal.json');
+ const seed=await ctx.newPage();await seed.goto('file://'+FIXTURES+BLANK);
  await seed.evaluate(H=>localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify({users:[{username:'ops9',displayName:'Ops Nine',...H,role:'ops',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'mlee',displayName:'Morgan Lee',...H,role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'}]})),H);
  await seed.close();
- const seeded=async pg=>{await pg.goto('file://'+FIXTURES+'migration-export-minimal.json');await pg.waitForFunction(()=>!!localStorage.getItem('skyryse-mes-auth-v1'),null,{timeout:20000});};
+ const seeded=async pg=>{await pg.goto('file://'+FIXTURES+BLANK);await pg.waitForFunction(()=>!!localStorage.getItem('skyryse-mes-auth-v1'),null,{timeout:20000});};
  // A page already open on the sign-in screen (an active signed-in tab would rewrite shared storage from its own copy).
  const open=await ctx.newPage();open.on('pageerror',e=>errs.push(e.message));await seeded(open);
  await open.goto('file://'+FIXTURES+'publish.html');await open.waitForFunction(()=>!document.getElementById('sk-login').hidden,null,{timeout:20000});
