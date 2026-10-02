@@ -133,6 +133,16 @@ await prepare({prep:'building',prepSeq:true});
 r=await run(([id])=>MES.approveSequenceChange(window.__C,id),[ID]);
 ok('a QA Manager cannot release their own sequence change on a FAIR-locked order',!r.ok&&/can’t release it/.test(r.message),JSON.stringify(r));
 
+// ---- Jose's decision: an approved engineering change on a signed FAIR reopens it automatically ----
+await prepare({prep:'building',prepEc:true});
+await as('qmb');
+r=await run(([id])=>{const C=window.__C,o=C.orders.find(x=>x.id===id),ch=o.engineeringChanges.at(-1);const ecr=ch.status==='Awaiting ECR'?MES.approveECR(C,id):{ok:true};const a=MES.approveEngineeringChange(C,id);const log=(o.history||o.activity||[]).map(e=>typeof e==='string'?e:(e.action||'')).join('\n');return {ecr,a,st:o.fair.status,verified:o.fair.verified,approved:o.fair.approved,reviewed:o.fair.reviewed===undefined,ia:o.fair.impactAssessments===undefined,woRev:o.woRev,gap:MES.fairRevisionGap(o),logged:/FAIR .* reopened automatically: engineering change .* applied after the FAIR was signed at WO Rev Baseline\. A new FAI is signed against WO Rev A\./.test(log)||JSON.stringify(o).includes('reopened automatically'),valid:MES.validate(C),mv:MES.verifyManifests(C).ok,msg:a.message};},[ID]);
+ok('an approved engineering change on a signed FAIR reopens the FAIR automatically, with a recorded reason',r.ecr.ok&&r.a.ok&&r.st==='Open'&&r.verified===null&&r.approved===null&&r.reviewed&&r.ia&&r.woRev==='A'&&r.logged&&/The FAIR was reopened/.test(r.msg),JSON.stringify(r));
+ok('after the automatic reopen the order is unlocked, nothing is left to assess, and the workspace validates and verifies',r.gap===null&&r.valid&&r.mv,JSON.stringify(r));
+await as('ume');
+r=await run(([id])=>MES.addOrderOperation(structuredClone(window.__C),id,{classification:'Manufacturing',title:'After reopen',description:'Added.',buyoffType:'Technician',stepList:[{title:'S',instruction:'Do.'}],position:window.__C.orders.find(x=>x.id===id).operations.length}),[ID]);
+ok('a reopened FAIR no longer locks the order for the floor',r.message!==LOCK,JSON.stringify(r));
+
 // ---- a second QA Manager rolls the revision; closure waits for the impact assessment ----
 await prepare({prep:'building',prepSeq:true});
 await as('qmb');

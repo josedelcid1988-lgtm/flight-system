@@ -98,6 +98,7 @@ const SOD=[
   ['the FAIR impact assessment signs the verification hash, both revisions, the change list, the drawing, the statements and the rationale',"const fairImpactSubject = (order, fair, a) => ({ fair: fairId(order), verified: plain(fair.verified) && plain(fair.verified.manifest) ? fair.verified.manifest.hash : null, fromWoRev: a.fromWoRev, toWoRev: a.toWoRev, changes: a.changes, drawing: a.drawing, statements: a.statements, rationale: a.rationale,",1],
   ['verifyManifests rechecks every FAIR impact assessment',"failures.push(...fairImpactProblems(order));",1],
   ['MES.validate refuses a work order whose FAIR impact assessment fails',"if (plain(order) && plain(order.fair) && fairImpactProblems(order).length) return false;",1],
+  ['an approved engineering change on a signed FAIR reopens it automatically (Jose, #238)',"    const fairReopened = fairSigned(order);\n    if (fairReopened) {\n      const signedAt = fairWoRev(order);\n      clearFairSignatures(order);",1],
   ['closeOrder and decideOrderClosure refuse a FAIR revision mismatch with no impact assessment at the current revision',"    { const gap = fairRevisionGap(order); if (gap) return fail(gap); }",2],
   ['the recorded signer and time of a signed record must be the manifest signer and time',"const signerMismatch = (rec, m) => !plain(rec.by) || !plain(m.signer) || rec.by.credentialId !== m.signer.credentialId || rec.by.name !== m.signer.name || rec.at !== m.at;",1],
 ];

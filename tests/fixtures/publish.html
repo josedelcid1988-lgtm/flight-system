@@ -6287,7 +6287,7 @@ const OP_BOM_MAX = 12;
     if (!qaManagerSignedIn(state)) return fail('This FAIR is signed. Only a QA Manager can reopen it.');
     if (order.status === 'Closed') return fail('The work order is closed; a correction needs a new FAI order.');
     reason = String(reason ?? '').trim(); if (!str(reason, 300)) return fail('Say why the FAIR is being reopened.');
-    order.fair.status = 'Open'; order.fair.verified = null; order.fair.approved = null; delete order.fair.reviewed; delete order.fair.impactAssessments;
+    clearFairSignatures(order);
     record(state, order, `FAIR reopened: ${reason}`);
     return { ok: true, message: 'FAIR reopened.' };
   }
@@ -6299,6 +6299,8 @@ const OP_BOM_MAX = 12;
   // an NC, the Part Conformity buy-off, notes and closure requests stay open to the floor. When a QA Manager rolls the work
   // order revision, closure waits until a QA Manager signs a FAIR impact assessment at the current revision or reopens the FAIR.
   const FAIR_LOCK_MESSAGE = "This work order's FAIR is signed. Only a QA Manager can change it.";
+  // Reopening a FAIR clears its verification, box 22, approval and impact assessments; a new FAI is signed after it.
+  const clearFairSignatures = order => { order.fair.status = 'Open'; order.fair.verified = null; order.fair.approved = null; delete order.fair.reviewed; delete order.fair.impactAssessments; };
   const fairSigned = order => !!(order && plain(order.fair) && ['Verified', 'Approved'].includes(order.fair.status));
   // The signed-in account holds the QA Manager role. Master Access is a different role and does not count. With no signed-in
   // account (engine harnesses, profile mode) the chosen profile decides, as every other role gate does there.
@@ -7486,7 +7488,16 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const revEntry = rollWorkOrderRevision(state, order, `Engineering change ${change.id}${change.ecrId ? ` (${change.ecrId})` : ''} applied.`, revChanges, { ...change.qaApproval });
     if (requiresReleaseQA(order) && releaseApproval(order)) order.releaseApproval = { ...change.qaApproval, configuration: releaseConfiguration(order) };
     record(state, order, `QA re-release by ${actor(state).name}. Engineering edit ${change.id} applied; revision ${change.before.revision} → ${change.after.revision}, planned quantity ${change.before.quantity} → ${change.after.quantity}, ${change.after.instructions.length} unfinished instruction(s) changed. Prior evidence retained; no production authorization.`, 'Quality reviewer');
-    return { ok: true, message: `Engineering edits applied after QA re-release.${revEntry ? ` Work order revision rolled to ${woRevLabel(revEntry.rev)}.` : ''} The original work-order stage is retained.` };
+    // QA Manager decision (Jose, #238): an approved engineering change on a signed FAIR reopens it automatically, as AS9102
+    // requires for a design change, so a new FAI is signed against the new configuration. Sequence-only revision rolls keep
+    // the FAIR and are covered by a FAIR impact assessment instead.
+    const fairReopened = fairSigned(order);
+    if (fairReopened) {
+      const signedAt = fairWoRev(order);
+      clearFairSignatures(order);
+      record(state, order, `FAIR ${fairId(order)} reopened automatically: engineering change ${change.id} applied after the FAIR was signed at WO Rev ${signedAt}. A new FAI is signed against WO Rev ${order.woRev}.`, 'Quality reviewer');
+    }
+    return { ok: true, message: `Engineering edits applied after QA re-release.${revEntry ? ` Work order revision rolled to ${woRevLabel(revEntry.rev)}.` : ''}${fairReopened ? ' The FAIR was reopened; sign a new FAI against this revision.' : ''} The original work-order stage is retained.` };
   }
 
   function setMaterial(state, id, key, ready) {
