@@ -70,9 +70,17 @@ const cardGateOf = (order, MES) => {
 // Two more holds stop work that the list rows do not carry: a source-inspection operation with no inspection record
 // (the Hangar holds panel and the drawer list it; buy-off is refused until it is recorded) and an operation sequence
 // change awaiting QA release (buy-off and MES.advance both refuse the order). Both card lists add them to the gate here,
-// so the card is Blocked and names what clears it.
+// so the card is Blocked and names what clears it. A source inspection counts once every earlier operation is done:
+// MES.recordSourceInspection refuses the record before then, so a later one is not yet the next step.
+const actionableSourceInspections = (order, MES) => {
+  const ops = order.operations || [];
+  return (MES && MES.sourceInspectionHolds ? MES.sourceInspectionHolds(null, order) : []).filter(hold => {
+    const index = ops.findIndex(op => op.id === hold.operationId);
+    return index >= 0 && ops.slice(0, index).every(op => op.done);
+  });
+};
 const withCardHolds = (gate, order, MES) => {
-  const sourceInspections = MES && MES.sourceInspectionHolds ? MES.sourceInspectionHolds(null, order) : [];
+  const sourceInspections = actionableSourceInspections(order, MES);
   const sequenceChange = !!(MES && MES.pendingSequenceChange && MES.pendingSequenceChange(order));
   return sourceInspections.length || sequenceChange ? { ...gate, held: true, sourceInspections, sequenceChange } : gate;
 };

@@ -270,6 +270,33 @@ try {
       }
       assert.equal(await page.evaluate(() => MES.validate(state)), true, 'the restored workspace is valid');
     });
+    await check(`${at} home and orders: a source inspection later in the sequence does not block the card yet`, async () => {
+      const setup = await page.evaluate(() => {
+        // An open order with an unfinished operation before the source inspection: the record is refused until that
+        // earlier operation is done, so the inspection is not yet the next step.
+        const order = state.orders.find(o => o.status !== 'Closed' && !orderBlocked(o) && (o.operations || []).filter(op => !op.done).length >= 2);
+        const later = order.operations.filter(op => !op.done)[1];
+        window.__later = [later, later.classification, later.sourceInspection];
+        later.classification = MES.SOURCE_INSPECTION_CLASS; delete later.sourceInspection;
+        return { id: order.id, pending: MES.sourceInspectionHolds(null, order).length, refused: MES.recordSourceInspection(state, order.id, later.id, {}).ok === false, blocked: orderBlocked(order) };
+      });
+      try {
+        assert.ok(setup.pending > 0 && setup.refused, `the engine lists the later inspection and refuses its record (${JSON.stringify(setup)})`);
+        assert.equal(setup.blocked, false, 'orderBlocked does not count a source inspection that cannot be recorded yet');
+        for (const route of ['home', 'orders']) {
+          await show(page, route);
+          const card = page.locator(`#main [data-wo-card="${setup.id}"]`);
+          assert.equal(await card.locator('.fr-order-blocked').count(), 0, `${route}: the card is not Blocked by a later source inspection`);
+          assert.ok(!/source inspection record/.test(await card.locator('.fr-wo-card-next dd').innerText()), `${route}: the next step does not ask for a record that cannot be made yet`);
+          if (route === 'orders') assert.ok(!(await blockedFilterCards(page)).includes(setup.id), 'the Blocked filter leaves out an order whose source inspection is still ahead');
+        }
+        const legacy = await page.evaluate(orderId => new DOMParser().parseFromString(`<table>${renderOrders()}</table>`, 'text/html').querySelector(`tr[data-order-row="${orderId}"]`)?.className ?? null, setup.id);
+        assert.ok(legacy !== null && !/\bhold-row\b/.test(legacy), `legacy table: the row is not a hold row (${legacy})`);
+      } finally {
+        await page.evaluate(() => { const [op, classification, record] = window.__later; if (classification === undefined) delete op.classification; else op.classification = classification; if (record) op.sourceInspection = record; render(); });
+      }
+      assert.equal(await page.evaluate(() => MES.validate(state)), true, 'the restored workspace is valid');
+    });
     await check(`${at} home and orders: a sequence change awaiting QA blocks the card and names the QA release`, async () => {
       const id = await page.evaluate(() => {
         // Set up a finished build with a sequence change awaiting QA: without the hold it would read "Send to QA".
