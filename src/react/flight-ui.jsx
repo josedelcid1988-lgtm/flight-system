@@ -402,7 +402,7 @@ function PlanForecast({ state, MES, FlightPlan }) {
   </div>;
 }
 
-function ManeuverDrawer({ item, onClose, onOpen }) {
+function ManeuverDrawer({ item, onClose, onOpen, can = () => true }) {
   const dialog = useRef(null);
   const returnFocus = useRef(null);
   const lastItem = useRef(null);
@@ -432,7 +432,15 @@ function ManeuverDrawer({ item, onClose, onOpen }) {
         <div><dt>Next permitted step</dt><dd>{record.nextStep || 'Open the record to review its current gate.'}</dd></div>
       </dl>
       {record.summary && <p className="fr-mnv-summary">{record.summary}</p>}
-      <button className="fr-primary" onClick={() => { close(); onOpen(record); }}>Open full record <ArrowUpRight size={17}/></button>
+      {record.kind === 'SPR'
+        // A problem report has no full-record page: its Jira steps run from here, through the same page actions as the legacy table.
+        ? <div className="fr-drawer-actions">
+          <button className="fr-secondary" data-action="rec-files" data-kind="sprs" data-rec={record.id} onClick={close}>Files</button>
+          <button className="fr-secondary" data-action="mnv-copy-spr" data-id={record.id}>Copy payload</button>
+          {record.status === 'Open' && can('raise-nc') && <button className="fr-primary" data-action="mnv-spr-jira" data-id={record.id} onClick={close}>Record Jira key</button>}
+          {record.status === 'In Jira' && can('approve-nc') && <button className="fr-primary" data-action="mnv-spr-close" data-id={record.id} onClick={close}>Close from Jira</button>}
+        </div>
+        : <button className="fr-primary" onClick={() => { close(); onOpen(record); }}>Open full record <ArrowUpRight size={17}/></button>}
     </section>}
   </dialog>;
 }
@@ -447,7 +455,7 @@ function navOpenCount(state, FM, kind) {
   return null;
 }
 
-function ManeuverHangar({ state, FM, view, onOpen }) {
+function ManeuverHangar({ state, FM, view, onOpen, can }) {
   const pageKind = ({ 'mnv-intake': 'NC', 'mnv-cars': 'CAR', 'mnv-mrb': 'MRB', 'mnv-spr': 'SPR' })[view] || 'All';
   const pageTitle = ({ NC: 'NC intake', CAR: 'Corrective actions', MRB: 'Material Review Board', SPR: 'Problem reports' })[pageKind] || 'Quality Hangar';
   const recordNoun = ({ NC: ['NC record', 'NC records'], CAR: ['corrective action', 'corrective actions'], MRB: ['board', 'boards'], SPR: ['problem report', 'problem reports'] })[pageKind] || ['record', 'records'];
@@ -508,7 +516,7 @@ function ManeuverHangar({ state, FM, view, onOpen }) {
       <footer><span>{rows.length} {recordNoun[rows.length === 1 ? 0 : 1]}</span></footer>
     </section>
     {pageKind === 'All' && <div className="fr-mnv-create"><button data-action="mnv-nc-new"><Plus size={15}/> Raise NC</button><button data-action="mnv-spr-new"><Plus size={15}/> Raise SPR</button><button data-action="nav" data-view="mnv-intake">NC intake <ArrowUpRight size={15}/></button></div>}
-    <ManeuverDrawer item={selected} onClose={() => setSelected(null)} onOpen={onOpen}/>
+    <ManeuverDrawer item={selected} onClose={() => setSelected(null)} onOpen={onOpen} can={can}/>
   </div>;
 }
 
@@ -1260,7 +1268,7 @@ function CalibrationLog({ state, MES }) {
   // superseded entries through the page's [data-calibration-archive] click handler (MES.recordCalibrationArchive).
   const capacity = MES.calibrationCapacity(state);
   const warning = capacity.near ? <p className="inline-info warning" role="status" data-calibration-capacity>{asText(capacity.message)}</p> : null;
-  const archive = canCorrect && capacity.archiveAvailable ? <div className="calibration-archive"><p className="small muted">{capacity.archivable ? `${capacity.archivable} superseded ${capacity.archivable === 1 ? 'entry' : 'entries'} can move to the server archive.` : 'No superseded entries can move to the server archive now.'} The latest entry for each tool and every entry a work order buy-off cites stay in the log.{capacity.archived ? ` ${capacity.archived} archived ${capacity.archived === 1 ? 'entry is' : 'entries are'} kept on the server with ${capacity.archived === 1 ? 'its signature' : 'their signatures'} unchanged.` : ''}</p>{capacity.archivable ? <button className="btn" type="button" data-calibration-archive>Archive superseded entries</button> : null}</div> : null;
+  const archive = canCorrect && capacity.archiveAvailable ? <div className="calibration-archive"><p className="small muted">{asText(capacity.archiveNote)}</p>{capacity.archivable ? <button className="btn" type="button" data-calibration-archive>Archive superseded entries</button> : null}</div> : null;
   // One row per entry with its tag, status, due date and signer; the note, signature time and correction sit in an
   // expandable row beneath it. The legacy renderQmsRecords markup in index.html carries the same table.
   const rows = log.slice().reverse().flatMap(row => [<tr key={row.id} data-calibration-entry={asText(row.id)}><td className="mono">{asText(row.id)}</td><td><strong className="mono">{asText(row.tag)}</strong><small>{asText(row.description)}{row.torque === true ? ' · torque tool' : ''}</small></td><td><span className={`pill ${calibrationPillClass(row.status)}`}>{asText(row.status)}</span>{row.supersedes ? <small className="muted">corrects {asText(row.supersedes)}</small> : null}{current.has(row.id) ? null : <small className="muted">superseded</small>}</td><td>{row.expires ? <time dateTime={asText(row.expires)}>{asText(row.expires)}</time> : <span className="muted">No calibration dates</span>}</td><td>{asText(row.recordedBy)}<small>{legacyDateTime(row.recordedAt)}</small></td></tr>, <tr key={`${row.id}-detail`} className="calibration-detail-row"><td colSpan="5"><div className="calibration-detail"><details className="calibration-notes"><summary>Notes and signature</summary><p className="small">{row.note ? asText(row.note) : <span className="muted">No note recorded.</span>}</p><p className="small muted">Recorded by {asText(row.recordedBy)} · {legacyDateTime(row.recordedAt)} · SHA-256{row.serial ? ` · S/N ${asText(row.serial)}` : ''}{row.location ? ` · ${asText(row.location)}` : ''}</p></details>{canCorrect && current.has(row.id) ? <CalibrationCorrection row={row}/> : null}</div></td></tr>]);
@@ -2194,13 +2202,13 @@ window.FlightReact = {
     }
     flushSync(() => root.render(<PlanForecast state={state} MES={MES} FlightPlan={FlightPlan}/>));
   },
-  renderManeuver(element, state, FM, view, onOpen) {
+  renderManeuver(element, state, FM, view, onOpen, can) {
     if (!root || rootElement !== element) {
       if (root) root.unmount();
       root = createRoot(element);
       rootElement = element;
     }
-    flushSync(() => root.render(<ManeuverHangar state={state} FM={FM} view={view} onOpen={onOpen}/>));
+    flushSync(() => root.render(<ManeuverHangar state={state} FM={FM} view={view} onOpen={onOpen} can={can}/>));
   },
   renderSerials(element, state, onTrace, onOpen) {
     if (!root || rootElement !== element) {

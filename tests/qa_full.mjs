@@ -13,7 +13,7 @@ const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.en
 const FILES={demo:pathToFileURL(path.join(FIXTURES,'demo_qa150_publish.html')).href,prod:pathToFileURL(path.join(FIXTURES,'publish.html')).href};
 
 async function newPage(w=1440){const ctx=await b.newContext({viewport:{width:w,height:1000}});const p=await ctx.newPage();const errs=[];p.on('pageerror',e=>errs.push(String(e.message||e)));p.on('console',m=>{if(m.type()==='error'&&!/ERR_FILE_NOT_FOUND|favicon/.test(m.text()))errs.push('console: '+m.text());});return {p,errs,ctx};}
-async function signIn(p,build,u,pw='demo1234',displayName){await p.evaluate(()=>{try{sessionStorage.removeItem('skyryse-mes-session-v1');}catch(e){}}).catch(()=>{});
+async function signIn(p,build,u,pw='demo1234',displayName){await p.evaluate(()=>{try{sessionStorage.removeItem('skyryse-mes-session-v1');sessionStorage.removeItem('skyryse-mes-demo-session-v1');}catch(e){}}).catch(()=>{});
   await p.goto(FILES[build]);await p.waitForTimeout(900);
   await p.evaluate(([x,pw,dn])=>{const un=document.querySelector('#sk-boot input[name=username]');if(!un)return;const f=un.closest('form');const pwd=f.querySelector('input[type=password]');un.value=x;un.dispatchEvent(new Event('input',{bubbles:true}));pwd.value=pw;pwd.dispatchEvent(new Event('input',{bubbles:true}));const cf=f.querySelector('input[name=confirm]');if(cf){cf.value=pw;cf.dispatchEvent(new Event('input',{bubbles:true}));}const d=f.querySelector('input[name=displayName]');if(d&&dn){d.value=dn;d.dispatchEvent(new Event('input',{bubbles:true}));}f.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));},[u,pw,displayName]);
   await p.waitForTimeout(2600);await p.evaluate(()=>{document.body.click();document.querySelectorAll('.mnv-landing').forEach(e=>e.remove());try{sessionStorage.setItem('sk-mnv-landing-seen','1');}catch(e){}});}
@@ -329,7 +329,7 @@ const S='Static';
 const prod=fs.readFileSync(FIXTURES+'publish.html','utf8'),demo=fs.readFileSync(FIXTURES+'demo_qa150_publish.html','utf8');
 add(S,'Build','Production build carries no demo relaxations',!/D-5|demo relaxation|DEMO_LIFT|__demoFullAccess/.test(prod)&&!/skDemoRelax/.test(prod),`${(prod.length/1024).toFixed(0)} KB`);
 add(S,'Build','Demo build is titled Flight System Demo',/<title>Flight System Demo<\/title>/.test(demo),'');
-add(S,'Build','Production build is titled Flight Control',/<title>Flight Control(?: · [^<]*)?<\/title>/.test(prod),'');
+add(S,'Build','Production build is titled Flight System',/^[\s\S]*?<head>[\s\S]*?<title>([^<]*)<\/title>/.exec(prod)?.[1]==='Flight System','');
 add(S,'Build','Both builds embed Inter from Google Fonts and no other external hosts',[prod,demo].every(h=>{const ext=[...h.matchAll(/(?:src|href)="(https?:\/\/[^"]+)"/g)].map(m=>new URL(m[1]).host);return ext.every(x=>/fonts\.(googleapis|gstatic)\.com/.test(x));}),'');
 add(S,'Build','No em dashes in UI copy',!/\u2014/.test(prod),'an em dash is in index.html');
 // Release zips: package the current build with tools/package-release.mjs and check both zips hold exactly
