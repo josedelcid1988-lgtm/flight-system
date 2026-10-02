@@ -197,6 +197,11 @@ export async function restoreListWithoutSessions(archivePath) {
 // libpq has no environment variable for a client key passphrase, so one in the string cannot be moved out of the
 // arguments; it is refused instead (Codex 4161235803).
 const SSL_PASSWORD_REFUSAL = 'carries a client key passphrase (sslpassword), which pg_dump and pg_restore would show in their arguments; use an unencrypted key file readable only by the server account, or remove sslpassword';
+// libpq 18's OAuth client secret and SCRAM keys have no environment variable either, so they are refused the same way
+// (Cursor 4164991682).
+const ARGUMENT_SECRETS = ['oauth_client_secret', 'scram_client_key', 'scram_server_key'];
+const SECRET_NAMES = ['password', 'sslpassword', 'service', ...ARGUMENT_SECRETS];
+const secretRefusal = key => `carries ${key}, a secret libpq takes only in the connection string, which pg_dump and pg_restore would show in their arguments; remove ${key} from FLIGHT_DATABASE_URL for backup and restore`;
 export function pgRestoreTarget(connectionString, env = process.env) {
   const raw = String(connectionString);
   const refuse = why => { throw new Error(`The PostgreSQL connection string ${why}. Nothing was run. Fix FLIGHT_DATABASE_URL and try again.`); };
@@ -204,7 +209,7 @@ export function pgRestoreTarget(connectionString, env = process.env) {
   // lowercase name, and newer libpq trims ASCII spaces around a URI parameter name, so Password=, SSLPASSWORD= or
   // ?%20password= could reach --dbname untouched. Any other spelling is refused before it can (Cursor 4162958234,
   // 4163152933).
-  const caseCheck = key => { const plain = key.replace(/^ +| +$/g, '').toLowerCase(); if (['password', 'sslpassword', 'service'].includes(plain) && key !== plain) refuse(`names ${plain} as "${key}"; write it as ${plain}, in lowercase with no spaces around it`); };
+  const caseCheck = key => { const plain = key.replace(/^ +| +$/g, '').toLowerCase(); if (SECRET_NAMES.includes(plain) && key !== plain) refuse(`names ${plain} as "${key}"; write it as ${plain}, in lowercase with no spaces around it`); };
   const pct = text => { try { return decodeURIComponent(text); } catch { return refuse('has a malformed percent-encoded part'); } };
   let dbname = raw, password = null, service = false, found = false;
   // A URI with anything before its scheme (a space, a tab, a quote) is not one libpq reads as a URI, yet it can carry a
@@ -238,10 +243,11 @@ export function pgRestoreTarget(connectionString, env = process.env) {
       const eq = part.indexOf('='), key = pct(eq >= 0 ? part.slice(0, eq) : part);
       caseCheck(key);
       // libpq refuses a parameter with no =, so a bare ?password is refused rather than read as an empty password.
-      if (eq < 0 && ['password', 'sslpassword', 'service'].includes(key)) refuse(`has ${key} with no value; write ${key}= followed by its value`);
+      if (eq < 0 && SECRET_NAMES.includes(key)) refuse(`has ${key} with no value; write ${key}= followed by its value`);
       if (key === 'password') { found = true; password = pct(part.slice(eq + 1)); continue; }
       if (key === 'service') service = true;
       if (key === 'sslpassword') refuse(SSL_PASSWORD_REFUSAL);
+      if (ARGUMENT_SECRETS.includes(key)) refuse(secretRefusal(key));
       kept.push(part);
     }
     if (!found) return { dbname: raw, env: {} };
@@ -265,6 +271,7 @@ export function pgRestoreTarget(connectionString, env = process.env) {
       if (key === 'password') { found = true; password = (value.startsWith("'") ? value.slice(1, -1) : value).replace(/\\(.)/g, '$1'); continue; }
       if (key === 'service') service = true;
       if (key === 'sslpassword') refuse(SSL_PASSWORD_REFUSAL);
+      if (ARGUMENT_SECRETS.includes(key)) refuse(secretRefusal(key));
       // Kept as key=value with the value exactly as written, escapes included, so an escaped trailing space survives
       // (Codex 4161531104).
       kept.push(`${key}=${value}`);

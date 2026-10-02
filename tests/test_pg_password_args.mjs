@@ -85,6 +85,12 @@ const refusals = [
   // Independent review of a93f783: libpq matches the scheme in lowercase only, and refuses a parameter with no =.
   ['a URI with its scheme in capitals', 'POSTGRESQL://flight:Hidden-1@db/flight', {}, /in capitals/],
   ['a URI password parameter with no value', 'postgresql://flight@db/flight?password&sslmode=require', {}, /password with no value/],
+  // Cursor 4164991682: libpq 18 secrets with no environment variable are refused like sslpassword, with or without a password.
+  ['a URI OAuth client secret', 'postgresql://flight@db/flight?oauth_client_secret=Hidden-1', {}, /carries oauth_client_secret/],
+  ['a URI OAuth client secret beside a password', 'postgresql://flight:pw@db/flight?oauth_client_secret=Hidden-1', {}, /carries oauth_client_secret/],
+  ['a keyword SCRAM client key', 'host=db dbname=flight scram_client_key=Hidden-1', {}, /carries scram_client_key/],
+  ['a keyword SCRAM server key', 'host=db scram_server_key=Hidden-1 password=pw', {}, /carries scram_server_key/],
+  ['an upper-case URI OAuth client secret', 'postgresql://flight@db/flight?OAUTH_CLIENT_SECRET=Hidden-1', {}, /in lowercase with no spaces around it/],
   ['a quoted URI', '"postgresql://flight:Hidden-1@db/flight"', {}, /something before postgresql/],
   ['a URI with a leading tab', '\tpostgres://flight:Hidden-1@db/flight', {}, /something before postgresql/],
   ['a URI client key passphrase name with a literal space', 'postgresql://flight@db/flight?sslmode=require& sslpassword=Hidden-1', {}, /in lowercase with no spaces around it/],
