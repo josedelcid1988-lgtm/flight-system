@@ -78,6 +78,10 @@ const refusals = [
   // Cursor 4163152933: newer libpq trims ASCII spaces around a URI parameter name, so a spaced name is a real setting.
   ['a URI password name with a leading space', 'postgresql://flight@db/flight?%20password=Hidden-1', {}, /in lowercase with no spaces around it/],
   ['a URI password name with a trailing space', 'postgresql://flight@db/flight?password%20=Hidden-1', {}, /in lowercase with no spaces around it/],
+  // Cursor 4163494602: a URI with leading white space has no = and would otherwise pass as a bare database name.
+  ['a URI with a leading space', ' postgresql://flight:Hidden-1@db/flight', {}, /something before postgresql/],
+  ['a quoted URI', '"postgresql://flight:Hidden-1@db/flight"', {}, /something before postgresql/],
+  ['a URI with a leading tab', '\tpostgres://flight:Hidden-1@db/flight', {}, /something before postgresql/],
   ['a URI client key passphrase name with a literal space', 'postgresql://flight@db/flight?sslmode=require& sslpassword=Hidden-1', {}, /in lowercase with no spaces around it/],
   // Codex 4161235803: libpq has no environment variable for sslpassword, so it is refused, with or without a password.
   ['a URI client key passphrase', 'postgresql://flight:pw@db/flight?sslkey=client.key&sslpassword=Hidden-1', {}, /client key passphrase/],

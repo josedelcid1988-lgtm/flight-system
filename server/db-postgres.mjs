@@ -207,6 +207,9 @@ export function pgRestoreTarget(connectionString, env = process.env) {
   const caseCheck = key => { const plain = key.replace(/^ +| +$/g, '').toLowerCase(); if (['password', 'sslpassword', 'service'].includes(plain) && key !== plain) refuse(`names ${plain} as "${key}"; write it as ${plain}, in lowercase with no spaces around it`); };
   const pct = text => { try { return decodeURIComponent(text); } catch { return refuse('has a malformed percent-encoded part'); } };
   let dbname = raw, password = null, service = false, found = false;
+  // A URI with anything before its scheme (a space, a tab, a quote) is not one libpq reads as a URI, yet it can carry a
+  // password in its user info, so it is refused instead of passed on as a bare name (Cursor 4163494602).
+  if (!/^postgres(ql)?:\/\//i.test(raw) && /postgres(ql)?:\/\//i.test(raw)) refuse('has something before postgresql://; start it with postgresql:// so the password can be kept off the command line');
   // A bare database name (no = and not a URI) holds no password: libpq reads it as the dbname alone.
   if (!/^postgres(ql)?:\/\//i.test(raw) && !raw.includes('=')) return { dbname: raw, env: {} };
   if (/^postgres(ql)?:\/\//i.test(raw)) {
