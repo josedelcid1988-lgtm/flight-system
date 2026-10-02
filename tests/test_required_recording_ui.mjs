@@ -7,7 +7,8 @@ import { chromium } from 'playwright';
 
 const FIXTURES = process.env.FS_FIXTURES_DIR ? 'file://' + process.env.FS_FIXTURES_DIR.replace(/\/?$/, '/') : new URL('./fixtures/', import.meta.url).href;
 const ORDER = 'WO-10009', OP = 'op-030';
-const REFUSAL = /Save and review an installation recording before buying off this operation\./;
+// WO-10009 is not an Installation order, so the refusal says "a recording", matching the Operation evidence heading.
+const REFUSAL = /^Save and review a recording before buying off this operation\.$/;
 const browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
 const errors = [];
 
@@ -112,7 +113,7 @@ try {
     assert.match(attempt.error, REFUSAL);
     const engine = await page.evaluate(({ id, opId }) => { const copy = structuredClone(state); return MES.completeOperation(copy, id, opId, 'Engine refusal check', {}); }, { id: ORDER, opId: OP });
     assert.equal(engine.ok, false, 'the engine also refuses the buy-off without a reviewed recording');
-    assert.match(engine.message, /Attach and review at least one video/);
+    assert.equal(engine.message, 'Attach and review at least one video before this operation can be bought off.');
     assert.equal(await page.evaluate(({ id, opId }) => MES.getOrder(state, id).operations.find(op => op.id === opId).buyoff ?? null, { id: ORDER, opId: OP }), null, 'no buy-off record is written');
     await context.close();
   }
