@@ -374,6 +374,22 @@ check('an archive candidate holding a __proto__ key is refused, while a clean cl
     let r = null, threw = null;
     try { r = runHist(() => MES.updateSkillDraft(hist, spc.draftId, wideProto, 'A wide body that also holds the forbidden key.')); } catch (e) { threw = e; }
     check('a wide draft body that also holds a __proto__ key gets the value-count refusal, so it is measured before it is serialized', !threw && r && !r.ok && /holds more than 50,000 values/.test(r.message) && JSON.stringify(draft()) === before); }
+  // Cursor security review on #621: passing the depth limit only marks the body, so a body both deep and wide (side by
+  // side, or a wide list below a deep chain) is still counted and refused by its value count before the __proto__ check
+  // serializes it.
+  { const deepChain = (depth, leaf) => { let value = leaf; for (let n = 0; n < depth; n += 1) value = { a: value }; return value; };
+    const bodies = [
+      ['a wide list beside a 70-level chain', { wide: Array.from({ length: 200000 }, () => ({})), deep: deepChain(70, { x: 1 }) }],
+      ['a wide list at the bottom of a 70-level chain', { deep: deepChain(70, Array.from({ length: 200000 }, () => ({}))) }]
+    ];
+    for (const [label, body] of bodies) {
+      const before = JSON.stringify(draft());
+      // Parsed from text so the __proto__ key is an own key, as it is in a request body.
+      const withProto = JSON.parse(`{"__proto__":1,${JSON.stringify(body).slice(1)}`);
+      let r = null, threw = null;
+      try { r = runHist(() => MES.updateSkillDraft(hist, spc.draftId, withProto, 'A body both deep and wide.')); } catch (e) { threw = e; }
+      check(`a draft body holding ${label} gets the value-count refusal, never a throw, and the draft is unchanged`, !threw && r && !r.ok && /holds more than 50,000 values/.test(r.message) && JSON.stringify(draft()) === before);
+    } }
   { const draftsBefore = hist.aiSkillDrafts.length;
     let rw = null, threwWide = null;
     try { rw = runHist(() => MES.runSkill(hist, { skill: 'spc-chart-builder', values: [10.1, 10.2, 9.9], extra: Array.from({ length: 1000000 }, () => ({})), reason: 'A skill run input wider than the value budget.' })); } catch (e) { threwWide = e; }

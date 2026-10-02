@@ -3439,20 +3439,22 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // queued, and containers are read in place (arrays by index, objects key by key), so a wide value is refused once the
   // budget is spent, never after its children have been copied or queued.
   const JSON_BODY_MAX_DEPTH = 64, JSON_BODY_MAX_VALUES = 50000;
-  // Returns null, or { message, wide }: wide is true when the value budget, not the depth, was exceeded.
+  // Returns null, or { message, wide }: wide is true when the value budget was exceeded. Passing the depth limit only
+  // marks the body: the walk keeps counting, so a body both deep and wide is reported as wide and every refusal path
+  // after it (the __proto__ check serializes the whole body) only ever sees a body within the value budget.
   const jsonShapeProblem = root => {
     const deep = `The JSON is nested too deeply to save: more than ${JSON_BODY_MAX_DEPTH} levels. Flatten it to ${JSON_BODY_MAX_DEPTH} levels or fewer and try again.`;
     const wide = `The JSON holds more than ${JSON_BODY_MAX_VALUES.toLocaleString('en-US')} values. Keep it under 50 KB and try again.`;
     if (!root || typeof root !== 'object') return null;
-    const stack = [[root, 1]]; let values = 1;
+    const stack = [[root, 1]]; let values = 1, tooDeep = false;
     while (stack.length) {
       const [value, depth] = stack.pop();
-      if (depth > JSON_BODY_MAX_DEPTH) return { message: deep, wide: false };
+      if (depth > JSON_BODY_MAX_DEPTH) tooDeep = true;
       const visit = child => { values += 1; if (values > JSON_BODY_MAX_VALUES) return false; if (child && typeof child === 'object') stack.push([child, depth + 1]); return true; };
       if (Array.isArray(value)) { for (let i = 0; i < value.length; i += 1) if (!visit(value[i])) return { message: wide, wide: true }; }
       else for (const key in value) { if (Object.hasOwn(value, key) && !visit(value[key])) return { message: wide, wide: true }; }
     }
-    return null;
+    return tooDeep ? { message: deep, wide: false } : null;
   };
   const hasProtoKey = root => { let text; try { text = JSON.stringify(root); } catch (e) { return hasProtoKeyWalk(root); } return typeof text === 'string' && text.includes('"__proto__":') && hasProtoKeyWalk(root); };
   const findProtoKeyPath = (root, rootPath) => { const stack = [[root, rootPath]]; while (stack.length) { const [value, path] = stack.pop(); if (!value || typeof value !== 'object') continue; if (Array.isArray(value)) { for (let i = value.length - 1; i >= 0; i -= 1) stack.push([value[i], `${path}[${i}]`]); continue; } const keys = Object.keys(value); if (keys.includes('__proto__')) return path; for (let i = keys.length - 1; i >= 0; i -= 1) stack.push([value[keys[i]], `${path}.${keys[i]}`]); } return null; };
