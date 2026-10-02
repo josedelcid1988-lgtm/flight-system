@@ -129,19 +129,34 @@ await check('#481: the same forgery with an earlier build-stamped record on the 
 await check('#481: a subjectless FAIR verification left at its real date is refused as a format downgrade', async () => {
   const state = current(), fair = state.orders.find(o => o.id === 'WO-10004').fair;
   strip(fair.verified.manifest); fair.chars.find(c => c.id === 'C-3').result = '0.020';
-  await refused('#481 undated', state, /^WO-10004 FAIR verification \(blocks 20 and 21\) was signed on \d{4}-\d\d-\d\d, after Flight System began storing the signed subject, but its manifest has no subject\./);
+  await refused('#481 undated', state, /^WO-10004 FAIR verification \(blocks 20 and 21\) was signed on \d{4}-\d\d-\d\d, after the v82 port, when every signature stores what it signed, but its manifest has no subject\./);
 });
 
 await check('a current-format FAIR verification whose box 14 reasons were changed (subject kept) is refused', async () => {
   const state = current(), fair = state.orders.find(o => o.id === 'WO-10004').fair;
   fair.reasons = [...fair.reasons.filter(r => r !== 'Mfg. process change'), 'Mfg. process change'].reverse();
   assert.notEqual(MES.canonical(MES.fairSnapshot(state, state.orders.find(o => o.id === 'WO-10004')).form1.reasons), MES.canonical(fair.verified.manifest.subject.form1.reasons), 'the edit changes Form 1 box 14');
-  await refused('FAIR reasons', state, /^WO-10004 FAIR verification \(blocks 20 and 21\) does not match what was signed: Forms 1 to 3 were changed after verification\./);
+  await refused('FAIR reasons', state, /^WO-10004 FAIR verification \(blocks 20 and 21\) does not match what was signed: Forms 1 to 3, the part or its serials were changed after verification\./);
 });
 
 await check('a current-format FAIR verification whose Form 3 was changed (subject kept) is refused', async () => {
   const state = current(); state.orders.find(o => o.id === 'WO-10004').fair.chars.find(c => c.id === 'C-2').result = '2.900';
-  await refused('FAIR forms', state, /^WO-10004 FAIR verification \(blocks 20 and 21\) does not match what was signed: Forms 1 to 3 were changed after verification\./);
+  await refused('FAIR forms', state, /^WO-10004 FAIR verification \(blocks 20 and 21\) does not match what was signed: Forms 1 to 3, the part or its serials were changed after verification\./);
+});
+
+await check('a current-format FAIR verification moved to another serial (subject kept) is refused', async () => {
+  const state = current(), order = state.orders.find(o => o.id === 'WO-10004');
+  const entry = state.serialLog.find(e => e.orderId === order.id && e.status === 'Assigned');
+  assert.ok(entry, 'WO-10004 carries an assigned serial');
+  // The FAIR is re-pointed at another unit: its own serial-log entry now names a different serial.
+  entry.serial = entry.serial.replace(/\d$/, d => String((Number(d) + 5) % 10));
+  await refused('FAIR serial', state, /^WO-10004 FAIR verification \(blocks 20 and 21\) does not match what was signed: Forms 1 to 3, the part or its serials were changed after verification\./);
+});
+
+await check('#512: a stock NC approval with its manifest deleted and its record altered is refused', async () => {
+  const state = current(), nc = state.maneuver.ncs.find(t => t.id === 'NC-0002');
+  delete nc.resolution.manifest; nc.lot = 'LOT-FORGED';
+  await refused('#512 NC unsigned', state, /^NC-0002 disposition approval has no signature, but the NC carries a disposition, and every disposition approval is signed\./);
 });
 
 const mrbOf = s => s.maneuver.mrb.find(m => m.id === 'MRB-101'), carOf = s => s.maneuver.cars.find(c => c.id === 'CAR-1001'), ncOf = s => s.maneuver.ncs.find(t => t.id === 'NC-0002');
@@ -152,7 +167,7 @@ for (const [kind, label, signed, edit, field] of [
 ]) {
   await check(`#512: a ${kind} signature stripped to the legacy format and altered is refused on empty-server init`, async () => {
     const state = current(); strip(signed(state).manifest); edit(state);
-    await refused(`#512 ${kind}`, state, new RegExp(`^${label} was signed on \\d{4}-\\d\\d-\\d\\d, after Flight System began storing the signed subject, but its manifest has no subject\\.`));
+    await refused(`#512 ${kind}`, state, new RegExp(`^${label} was signed on \\d{4}-\\d\\d-\\d\\d, after the v82 port, when every signature stores what it signed, but its manifest has no subject\\.`));
   });
   await check(`#512: a ${kind} signature downgraded, backdated and rehashed over a weaker subject is refused`, async () => {
     const state = current(), s = signed(state), weak = { ...s.manifest.subject };

@@ -3582,21 +3582,23 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       const p = plain(order) ? fairImportProblem(state, order) : null; if (p) return p;
     }
     const maneuver = root && root.FlightManeuver && typeof root.FlightManeuver.provenanceProblem === 'function' ? root.FlightManeuver.provenanceProblem : null;
-    return maneuver ? maneuver(state) : null;
+    return maneuver ? maneuver(state) : 'The Flight Maneuver engine is not loaded, so its CAR, MRB and NC signatures cannot be checked.';
   }
   function fairImportProblem(state, order) {
     const fair = order.fair; if (!plain(fair) || !plain(fair.verified) || !plain(fair.verified.manifest)) return null;
     const m = fair.verified.manifest, label = `${order.id} FAIR verification (blocks 20 and 21)`, edited = 'The export was edited after it was made. Initialize from an unedited export.';
     let rebuilt = null; try { rebuilt = { ...fairSnapshot(state, order), ...(m.override ? { override: m.override } : {}) }; } catch (e) { rebuilt = null; }
     if (plain(m.subject)) {
-      // The stored subject must still describe this FAIR's forms. Fields taken from the work order (serials, revision,
-      // quantity) are left out: they can change after verification without changing what the inspector signed.
+      // The stored subject must still describe this FAIR's forms and the part and serials they were verified for. The
+      // other fields taken from the work order (revision, process reference, quantity) are left out: a revision roll or
+      // quantity change can follow verification without changing what the inspector signed.
       const s = m.subject, f1 = plain(s.form1) ? s.form1 : {};
       const own = { form2: fair.form2, tests: fair.tests, chars: fair.chars, form1: { reasons: rebuilt ? rebuilt.form1.reasons : fair.reasons, supplierCode: fair.supplierCode, po: fair.po, additionalChanges: fair.additionalChanges, type: fair.type, baselinePart: fair.baselinePart, baselineFair: fair.baselineFair, reason: fair.reason, index: fair.index, comments: fair.comments, sampleSize: fair.sampleSize } };
+      Object.assign(own.form1, { partNumber: order.partNumber, fairId: fairId(order), serials: orderSerials(state, order).map(e => e.serial) });
       const signed = { form2: s.form2, tests: s.tests, chars: s.chars, form1: Object.fromEntries(Object.keys(own.form1).map(k => [k, f1[k]])) };
-      return canonical(own) === canonical(signed) ? null : `${label} does not match what was signed: Forms 1 to 3 were changed after verification. ${edited}`;
+      return canonical(own) === canonical(signed) ? null : `${label} does not match what was signed: Forms 1 to 3, the part or its serials were changed after verification. ${edited}`;
     }
-    if (afterSubjectBinding(m)) return `${label} was signed on ${String(m.at).slice(0, 10)}, after Flight System began storing the signed subject, but its manifest has no subject. ${edited}`;
+    if (afterSubjectBinding(m)) return `${label} was signed on ${String(m.at).slice(0, 10)}, after the v82 port, when every signature stores what it signed, but its manifest has no subject. ${edited}`;
     if (rebuilt && sha256(canonical(rebuilt)) === m.hash) return null;
     if (m.build !== undefined) return `${label} carries a build stamp, so it was signed by a build whose FAIR subject can be rebuilt, but it does not match the forms: they were changed after verification. ${edited}`;
     // A verification from before the handover: its subject cannot be rebuilt, so it is accepted as legacy only when the
@@ -9697,14 +9699,18 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const check = (label, signed, subject) => {
       const manifest = signed.manifest;
       const stored = plain(manifest.subject);
-      if (!stored && MES.afterSubjectBinding(manifest)) return `${label} was signed on ${String(manifest.at).slice(0, 10)}, after Flight System began storing the signed subject, but its manifest has no subject. The export was edited after it was made. Initialize from an unedited export.`;
+      if (!stored && MES.afterSubjectBinding(manifest)) return `${label} was signed on ${String(manifest.at).slice(0, 10)}, after the v82 port, when every signature stores what it signed, but its manifest has no subject. The export was edited after it was made. Initialize from an unedited export.`;
       let rebuilt; try { rebuilt = subject(); } catch (e) { return `${label} is missing the fields its signature covers. The export was edited after it was made. Initialize from an unedited export.`; }
       if (MES.sha256(MES.canonical(rebuilt)) !== manifest.hash || (stored && MES.canonical(manifest.subject) !== MES.canonical(rebuilt))) return `${label} does not match what was signed: the record was changed after it was signed. Initialize from an unedited export.`;
       return null;
     };
     for (const car of Array.isArray(m.cars) ? m.cars : []) { if (!plain(car) || !plain(car.closure) || !plain(car.closure.manifest)) continue; const p = check(`${car.id} closure`, car.closure, () => carClosureSubject(car, car.closure.note)); if (p) return p; }
     for (const x of Array.isArray(m.mrb) ? m.mrb : []) { if (!plain(x) || !plain(x.decision) || !plain(x.decision.manifest)) continue; const p = check(`${x.id} board decision`, x.decision, () => mrbDecisionSubject(x, x.decision.status, x.decision.note)); if (p) return p; }
-    for (const t of Array.isArray(m.ncs) ? m.ncs : []) { if (!plain(t) || !plain(t.resolution) || !plain(t.resolution.manifest)) continue; const p = check(`${t.id} disposition approval`, t.resolution, () => ncApprovalSubject(t, t.resolution.note)); if (p) return p; }
+    for (const t of Array.isArray(m.ncs) ? m.ncs : []) {
+      if (!plain(t) || !plain(t.resolution)) continue;
+      // Only an escape migrated from the old register is resolved without a signature, and it carries no disposition. A
+      // resolution with a disposition was approved, and every approval is signed.
+      if (!plain(t.resolution.manifest)) { if (t.dispo || t.affected) return `${t.id} disposition approval has no signature, but the NC carries a disposition, and every disposition approval is signed. The export was edited after it was made. Initialize from an unedited export.`; continue; } const p = check(`${t.id} disposition approval`, t.resolution, () => ncApprovalSubject(t, t.resolution.note)); if (p) return p; }
     return null;
   }
   function closeCAR(state, id, note) {
