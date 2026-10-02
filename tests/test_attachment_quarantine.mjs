@@ -517,6 +517,17 @@ function surfaces(state) {
   const kitOrder = state.orders.find(o => ['Kitting', 'Building'].includes(o.status));
   host.withAccount(operator, () => MES.addKitFile(state, kitOrder.id, { name: 'crafted.pdf', type: 'application/pdf', size: -5 }), state);
   check('a kit list file sent with a negative size is stored with size 0', kitOrder.kitFiles.at(-1).size === 0);
+  {
+    const legacy = structuredClone(state); const lk = legacy.orders.find(o => o.id === kitOrder.id); lk.kitFiles.at(-1).size = -5;
+    check('a kit list file saved by an older build with a negative size still validates', MES.validate(legacy));
+    const tamper = mutate => { const t = structuredClone(state); mutate(t.orders.find(o => o.id === kitOrder.id)); return MES.validate(t); };
+    check('a kit list entry that is not a file record is refused by validation', !tamper(o => { o.kitFiles.push('KIT-forged'); }));
+    check('a kit list file without a name is refused by validation', !tamper(o => { o.kitFiles.at(-1).name = ''; }));
+    check('a kit list file marked inline with no stored content is refused by validation', !tamper(o => { const f = o.kitFiles.at(-1); f.storage = 'inline'; delete f.dataUrl; }));
+    check('a kit list file without who attached it is refused by validation', !tamper(o => { delete o.kitFiles.at(-1).addedBy; }));
+    check('two kit list files with the same ID are refused by validation', !tamper(o => { o.kitFiles.push(structuredClone(o.kitFiles.at(-1))); }));
+    check('a kit list that is not a list is refused by validation', !tamper(o => { o.kitFiles = { files: [] }; }));
+  }
   // A record that already holds a malformed file, saved before this check, can still remove it with a reason.
   nc.attachments.at(-1).size = -1;
   const id = nc.attachments.at(-1).id;

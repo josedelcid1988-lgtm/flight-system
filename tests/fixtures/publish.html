@@ -3721,6 +3721,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (!order.operations.every(operation => buyoffValid(operation.buyoff, operation.done))) return false;
     if (!Array.isArray(order.tickets) || order.tickets.length > 100 || !unique(order.tickets.map(ticket => ticket && ticket.id)) || !order.tickets.every(ticket => ticketValid(ticket, order))) return false;
     if (!orderQuarantineValid(order)) return false;
+    if (order.kitFiles !== undefined && !(Array.isArray(order.kitFiles) && order.kitFiles.length <= 10 && unique(order.kitFiles.map(file => file && file.id)) && order.kitFiles.every(kitFileValid))) return false;
     if (!Array.isArray(order.reports) || order.reports.length > 20 || !unique(order.reports.map(report => report && report.id)) || !order.reports.every(report => reportValid(report, order))) return false;
     if (order.status === 'Closed' && !order.closedAs && blockingTickets(order).length) return false;
     if (version === 3 && (!([null, ...SUBCATEGORIES].includes(order.subcategory)) || !creationFieldsValid(order) || !order.operations.every(operationEvidenceValid) || !engineeringChangesValid(order))) return false;
@@ -6623,6 +6624,9 @@ const OP_BOM_MAX = 12;
   }
 
   const MAX_ATTACHMENT = 300000, MAX_ATTACHMENTS_TOTAL = 3000000;
+  // A live kit list file keeps the shape addKitFile writes (#402). Sizes are not bounded below: older builds stored a
+  // negative size as sent, and those saved workspaces must still load.
+  const kitFileValid = file => plain(file) && str(file.id, 60) && str(file.name, 160) && typeof file.type === 'string' && Number.isInteger(file.size) && ['inline', 'reference'].includes(file.storage) && (file.storage === 'reference' || (typeof file.dataUrl === 'string' && file.dataUrl.length > 0 && file.dataUrl.length <= MAX_ATTACHMENT)) && timestamp(file.addedAt) && profileValid(file.addedBy);
   const attachmentValid = file => plain(file) && str(file.id, 40) && str(file.name, 160) && str(file.type, 80, 0) && Number.isInteger(file.size) && file.size >= 0 && ['inline', 'reference'].includes(file.storage) && (file.storage === 'reference' || (typeof file.dataUrl === 'string' && file.dataUrl.length <= MAX_ATTACHMENT)) && timestamp(file.addedAt) && profileValid(file.addedBy);
   const listOf = value => Array.isArray(value) ? value : [];
   // A stored file costs its content plus its record: name, who added it and, once removed, the reason, remover and
