@@ -120,7 +120,9 @@ try {
   },fixture);
   assert.match(await page.locator('.steps-complete').innerText(),/Master Access override/);
   // Nobody changes their own roles: your own row has no role control, and a forged one is refused.
-  await page.getByRole('button',{name:'Your credentials',exact:true}).click();
+  await page.evaluate(()=>{window.__ord={id:selectedId,op:selectedOp};view='admin';render();});
+  await page.getByRole('heading',{name:'Admin',exact:true}).waitFor();
+  assert(await page.locator('tr:has-text("master-test")').count()>0,'Your own row is listed on the Admin page');
   assert.equal(await page.locator('[data-role-user="master-test"],[data-roles-user="master-test"]').count(),0,'No role control on your own row');
   const forged=await page.evaluate(()=>{const sel=document.createElement('select');sel.dataset.roleUser='master-test';sel.innerHTML='<option value="general">General</option>';document.body.appendChild(sel);sel.value='general';sel.dispatchEvent(new Event('change',{bubbles:true}));sel.remove();return {role:skAuth.role(),toast:document.querySelector('#toast p')?.textContent||'',direct:skAuth.setRoles('master-test',['general'],'Testing self role refusal.','')};});
   assert.equal(forged.role,'admin','A forged own-row role control is refused');
@@ -128,7 +130,8 @@ try {
   assert.match(forged.direct.message,/Nobody changes their own roles/);
   // A role change made by another manager refreshes the open dialog and the underlying buy-off without reload.
   await page.evaluate(async()=>{const k='skyryse-mes-auth-v1',a=JSON.parse(localStorage.getItem(k)),salt='00112233445566778899aabbccddeeff';const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(salt+':peer-admin')))].map(x=>x.toString(16).padStart(2,'0')).join('');if(!a.users.some(u=>u.username==='peer-admin'))a.users.push({username:'peer-admin',displayName:'Peer Admin',salt,hash,role:'admin',createdAt:new Date().toISOString(),createdBy:'master-test'});localStorage.setItem(k,JSON.stringify(a));});
-  const as=async user=>{await page.evaluate(user=>{sessionStorage.setItem('skyryse-mes-session-v1',user);window.dispatchEvent(new Event('sk-auth'));},user);await page.waitForTimeout(200);await page.evaluate(()=>profileDialog());};
+  // A manager works on the Admin page; the account under test goes back to its open buy-off and Your credentials.
+  const as=async user=>{await page.evaluate(user=>{sessionStorage.setItem('skyryse-mes-session-v1',user);window.dispatchEvent(new Event('sk-auth'));},user);await page.waitForTimeout(200);await page.evaluate(user=>{const d=document.getElementById('dialog');if(d&&d.open)d.close();if(user==='peer-admin'){view='admin';render();}else{view='order';selectedId=window.__ord.id;selectedOp=window.__ord.op;tab='operations';render();profileDialog();}},user);};
   const setPeerRole=peerRole=>page.evaluate(peerRole=>{const k='skyryse-mes-auth-v1',a=JSON.parse(localStorage.getItem(k));a.users.find(u=>u.username==='peer-admin').role=peerRole;localStorage.setItem(k,JSON.stringify(a));},peerRole);
   const storedRole=()=>page.evaluate(()=>JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.find(u=>u.username==='master-test').role);
   const role=page.locator('[data-role-user="master-test"]');
