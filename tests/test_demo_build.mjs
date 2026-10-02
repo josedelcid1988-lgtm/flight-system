@@ -248,7 +248,9 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  // Once the record has reached the browser's copy, the tab's next load is closed and its session ends. (This harness
  // can lose a write made milliseconds before the same page reloads, which a write from another tab never is.)
  await p.waitForTimeout(6000);
- await p.evaluate(v=>{if(!localStorage.getItem('skyryse-mes-legacy-demo-review-v1'))localStorage.setItem('skyryse-mes-legacy-demo-review-v1',v);},v);await p.waitForTimeout(3000);
+ await p.evaluate(v=>{if(!localStorage.getItem('skyryse-mes-legacy-demo-review-v1'))localStorage.setItem('skyryse-mes-legacy-demo-review-v1',v);},v);
+ // The reload waits until another page of the origin sees the record, so the write cannot be lost to it (#556).
+ {const probe=await ctx.newPage();await probe.goto('file://'+FIXTURES+BLANK);await probe.waitForFunction(()=>!!localStorage.getItem('skyryse-mes-legacy-demo-review-v1'),null,{timeout:20000});await probe.close();}
  await p.reload();await p.waitForTimeout(900);
  const open=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),user:window.skAuth&&skAuth.user()&&skAuth.user().username}));
  ok('that tab is then closed and its Operations session ends',open.gate&&!open.user,JSON.stringify(open));
