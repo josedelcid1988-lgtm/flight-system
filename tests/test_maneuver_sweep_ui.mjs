@@ -29,7 +29,7 @@ try {
   await page.goto(fixture);
   await page.waitForFunction(() => window.__ready === true);
   const raiseSpr = title => page.evaluate(title => {
-    const r = window.FlightManeuver.raiseSPR(state, { title, partNumber: 'PN-SWEEP-461', foundAt: window.FlightManeuver.SPR_FOUND_AT[0], description: 'Raised by the Flight Maneuver sweep test.', occurred: new Date().toISOString().slice(0, 10) });
+    const r = window.FlightManeuver.raiseSPR(state, { title, partNumber: 'PN-SWEEP-461', foundAt: window.FlightManeuver.SPR_FOUND_AT[0], description: 'Raised by the Flight Maneuver sweep test.', occurred: window.MES.siteToday() });
     if (r.ok) save();
     return r.ok ? r.id : `refused: ${r.message}`;
   }, title);

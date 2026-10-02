@@ -156,7 +156,7 @@ try {
     const result = await fetch(`http://127.0.0.1:${port}/api/workspace/actions/${name}`, { method: 'POST', headers: { Authorization: `Bearer ${preparerToken}`, 'Content-Type': 'application/json', 'If-Match': server.store.getDoc('default').etag }, body: JSON.stringify({ args }) });
     assert.equal(result.status, 200, `${name}: ${await result.clone().text()}`);
   };
-  const today = new Date().toISOString().slice(0, 10);
+  const today = server.host.MES.siteToday();
   await preparerAction('MES.void8130_9', [aqiOrder.id, aqiPackage.serial, 'Re-completed against the current MDL copy for the server UI AQI check.']);
   await preparerAction('MES.saveConformity', [aqiOrder.id, aqiPackage.serial, { mdlReceived: today }]);
   const { section, item, make, model, registration, checkDate, basis } = capturedForm;

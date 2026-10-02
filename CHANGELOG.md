@@ -11,6 +11,32 @@ What changed in Flight System, newest first. The build id is set in `VERSION.md`
 the end of `VERSION.md` names the exact files and the suite results for the build. Storage keys, form
 numbers and record number formats have not changed in any entry below.
 
+## Hermes audit sweep: site-day dates, one torque rule, inspection buy-off on edit, print note (#587 to #592)
+
+- **Dates use the site day (#587, #588).** Record date checks compared against the UTC calendar day, which is
+  already tomorrow from 5 pm PDT (4 pm PST) to midnight Pacific. They now use the Pacific site day
+  (`MES.siteToday()`, built on the existing `pacificDay` helper): consumable shelf life at step check-off, source
+  inspection dates, the MDL received date and its 30-day age, the 8130-9 flight or operational check date, the
+  DAR signature date and its floor (the site day of the AQI signature, not the UTC day of its timestamp), the
+  date recorded on a FAIR characteristic result (Form 3 block 9B), the default planned start of a new or ad hoc
+  work order, the start of a work order converted from a planned order, the CAR due date ("cannot be in the
+  past") and the problem report date ("cannot be in the future"). The source-inspection dialog's date limit
+  follows the same day.
+- **One torque rule (#589).** `MES.stepRecordsTorque` decides whether a step records a torque value. Adding and
+  editing an operation, default steps and the upgrade of older steps all use it, so "Apply torque stripe",
+  torque seal, paint and mark steps no longer ask for a torque reading after an edit. An unchanged step keeps its
+  saved setting.
+- **Inspection buy-off on edit (#590).** Two checks that could never fail were removed. Editing an Inspection or
+  Source Inspection operation to a buy-off that is not an inspection buy-off is refused before anything changes
+  (the edit already refused it for Inspection, later in the function; Source Inspection was not covered).
+- **Print note (#592).** The Team discussion print note again reads "Internal prints include this discussion.
+  External prints omit all messages and Slack links." in the legacy page and the React work order, instead of a
+  lone lock icon.
+- **Tests.** `test_sweep_hermes_engine` (clock pinned to 17:30 Pacific) and `test_sweep_hermes_ui` are new. The
+  qa_multi "Print record validates before printing" flow (#591) now drives `printWorkOrder`: an invalid workspace
+  and an unknown print mode open no preview and say why, and a valid order opens one. Tests that fed the UTC day
+  into these checks now use `MES.siteToday()`.
+
 ## Work orders frozen in QA review; signed QA send back to Building (#542)
 
 QA Manager decision: once a work order is sent to QA, no changes are allowed. Saved workspaces open as they are.
