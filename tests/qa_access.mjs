@@ -26,7 +26,9 @@ try {
   for(const cap of ['conformity','aqi-sign'])
     assert.equal(await page.evaluate(cap=>skAuth.can(cap),cap),false);
   assert.equal(await page.evaluate(()=>MES.stampCheck({name:'Unregistered Test',credentialId:'invalid'}).ok),false);
-  await page.getByRole('button',{name:'Your credentials',exact:true}).click();
+  // Account administration lives on the Admin page, not in Your credentials.
+  await page.getByRole('button',{name:'Admin',exact:true}).click();
+  await page.getByRole('heading',{name:'Admin',exact:true}).waitFor();
   assert.match(await page.locator('.access-coverage').innerText(),/Access coverage needs review/);
   assert.match(await page.locator('.access-coverage').innerText(),/target: at least 2/);
   await page.getByRole('button',{name:'Create Master Access account',exact:true}).click();
@@ -41,7 +43,8 @@ try {
   await page.locator('#account-new-password').fill(replacement);
   await page.locator('#account-confirm-password').fill(replacement);
   await page.locator('#account-password-form button[type=submit]').click();
-  await page.getByRole('heading',{name:'Your credentials'}).waitFor();
+  await page.locator('#dialog:not([open])').waitFor({state:'attached'});
+  await page.getByRole('heading',{name:'Admin',exact:true}).waitFor();
   // A general user cannot create a privileged account, even with a stale form.
   await page.locator('[data-access-add] [name=displayName]').fill('Refused Test');
   await page.locator('[data-access-add] [name=username]').fill('refused-test');
@@ -51,7 +54,6 @@ try {
   await page.locator('[data-access-add] button[type=submit]').click();
   assert.equal(await page.evaluate(()=>skAuth.users().some(u=>u.username==='refused-test')),false);
   assert.match(await page.locator('[data-access-add] .access-add-error').innerText(),/Only a Master Access or QA Manager/);
-  await page.locator('#dialog [data-action="close-dialog"]').first().click();
   await page.getByRole('button',{name:'Your credentials',exact:true}).click();
   await page.locator('#account-switch-user').selectOption('master');
   await page.locator('#account-switch-password').fill('wrong-password');
