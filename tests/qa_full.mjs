@@ -139,7 +139,8 @@ const eng=await run(p,()=>{
   // Stamps, PIN, training
   const st=s.stamps.find(x=>x.status==='Active');
   ok('setStampPin rejects weak PINs',()=>{const c=C();return !MES.setStampPin(c,st.id,'1111','1111').ok&&!MES.setStampPin(c,st.id,'1234','1234').ok&&!MES.setStampPin(c,st.id,'12','12').ok;});
-  ok('setStampPin stores a salted hash, never the PIN',()=>{const c=C();const r=MES.setStampPin(c,st.id,'2580','2580');const p=c.stamps.find(x=>x.id===st.id).pin;return (r.ok&&p&&p.salt&&p.hash&&!JSON.stringify(p).includes('2580')&&MES.validate(c))||r.message;});
+  // The random hex salt and hash can contain the digits 2580 by chance, so they are checked for shape and left out of the PIN search.
+  ok('setStampPin stores a salted hash, never the PIN',()=>{const c=C();const r=MES.setStampPin(c,st.id,'2580','2580');const h=c.stamps.find(x=>x.id===st.id);const p=h.pin;const hex=v=>typeof v==='string'&&/^[0-9a-f]{16,}$/.test(v);return (r.ok&&p&&hex(p.salt)&&hex(p.hash)&&!Object.keys(p).some(k=>/pin|plain/i.test(k))&&!JSON.stringify({...p,salt:'',hash:''}).includes('2580')&&MES.identityStepUp(h,{pin:'2580'}).ok&&MES.validate(c))||r.message||JSON.stringify(Object.keys(p||{}));});
   ok('identityStepUp accepts the right PIN and refuses a wrong one',()=>{const c=C();MES.setStampPin(c,st.id,'2580','2580');const h=MES.stampHolderFor?MES.stampHolderFor(c,st):null;const holder=c.stamps.find(x=>x.id===st.id);const ok1=MES.identityStepUp(holder,{pin:'2580'});const ok2=MES.identityStepUp(holder,{pin:'0000'});return ok1.ok&&!ok2.ok?true:JSON.stringify({ok1,ok2});});
   ok('trainingCheck flags missing ESD training and passes with a future date',()=>{const c=C();const holder=c.stamps.find(x=>x.id===st.id);holder.training={};const miss=MES.trainingCheck(holder,{callouts:['ESD']});MES.updateStamp(c,st.id,{trainingESD:'2027-06-30'});const good=MES.trainingCheck(c.stamps.find(x=>x.id===st.id),{callouts:['ESD']});return !miss.ok&&good.ok?true:JSON.stringify({miss,good});});
   ok('trainingCheck flags expired FOD training',()=>{const c=C();MES.updateStamp(c,st.id,{trainingFOD:'2020-01-01'});const r=MES.trainingCheck(c.stamps.find(x=>x.id===st.id),{callouts:['FOD']});return !r.ok;});
@@ -328,7 +329,7 @@ const S='Static';
 const prod=fs.readFileSync(FIXTURES+'publish.html','utf8'),demo=fs.readFileSync(FIXTURES+'demo_qa150_publish.html','utf8');
 add(S,'Build','Production build carries no demo relaxations',!/D-5|demo relaxation|DEMO_LIFT|__demoFullAccess/.test(prod)&&!/skDemoRelax/.test(prod),`${(prod.length/1024).toFixed(0)} KB`);
 add(S,'Build','Demo build is titled Flight System Demo',/<title>Flight System Demo<\/title>/.test(demo),'');
-add(S,'Build','Production build is titled Flight Control',/<title>Flight Control(?: · [^<]*)?<\/title>/.test(prod),'');
+add(S,'Build','Production build is titled Flight System',/^[\s\S]*?<head>[\s\S]*?<title>([^<]*)<\/title>/.exec(prod)?.[1]==='Flight System','');
 add(S,'Build','Both builds embed Inter from Google Fonts and no other external hosts',[prod,demo].every(h=>{const ext=[...h.matchAll(/(?:src|href)="(https?:\/\/[^"]+)"/g)].map(m=>new URL(m[1]).host);return ext.every(x=>/fonts\.(googleapis|gstatic)\.com/.test(x));}),'');
 add(S,'Build','No em dashes in UI copy',!/\u2014/.test(prod),'an em dash is in index.html');
 // Release zips: package the current build with tools/package-release.mjs and check both zips hold exactly

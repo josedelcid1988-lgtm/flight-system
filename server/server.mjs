@@ -381,6 +381,9 @@ export function createServer(options = {}) {
   const commitState = async (state, expectedEtag, username, audits = []) => {
     const exportState = structuredClone(state);
     const beforeRow = await store.getDoc(TENANT);
+    // An initialization (expectedEtag null) that finds a stored workspace lost the race to another request: report the
+    // conflict before any comparison against that workspace, so the loser never reads as a calibration or archive refusal.
+    if (expectedEtag === null && beforeRow) return { conflict: true };
     const beforeState = beforeRow ? JSON.parse(beforeRow.json) : null;
     const r = host.MES.archiveOrders ? host.MES.archiveOrders(state) : { ok: true, archived: [] };
     if (!r.ok) return { problem: r.message };
@@ -877,32 +880,36 @@ export function createServer(options = {}) {
         // a preflighted migration. Existing shared records can only change through MES actions.
         // This closes the authorization bypass where a manager could replace records wholesale.
         const currentWorkspace = await store.getDoc(TENANT);
-        const doc = await readJson(req), ifMatch = req.headers['if-match'] || null;
-        if (!manages(session.account)) { await store.audit(session.username, 'workspace-put-refused', { reason: currentWorkspace ? 'initialized workspace is action-only' : 'only QA Manager or Master Access may initialize' }); send(res, 403, { error: currentWorkspace ? 'The shared workspace is initialized and cannot be replaced as a snapshot. Use a server-authorized record action or the approved migration procedure.' : 'Only QA Manager or Master Access can initialize the shared workspace.' }); return; }
+        // Every refused snapshot write is audited with its status, so the audit shows refusal patterns
+        // (a stale client, a client without If-Match, an unreadable body, an invalid initialization), not only the 403s.
+        const auditRefusal = async (status, reason, extra = {}) => { await store.audit(session.username, 'workspace-put-refused', { status, reason: String(reason).slice(0, 500), ...extra }); };
+        let doc;
+        try { doc = await readJson(req); } catch (e) { if (e.status === 400 || e.status === 413) await auditRefusal(e.status, e.status === 413 ? 'request body over the size limit' : 'request body is not JSON'); throw e; }
+        const ifMatch = req.headers['if-match'] || null;
+        if (!manages(session.account)) { await auditRefusal(403, currentWorkspace ? 'initialized workspace is action-only' : 'only QA Manager or Master Access may initialize'); send(res, 403, { error: currentWorkspace ? 'The shared workspace is initialized and cannot be replaced as a snapshot. Use a server-authorized record action or the approved migration procedure.' : 'Only QA Manager or Master Access can initialize the shared workspace.' }); return; }
         if (currentWorkspace) {
-          if (!ifMatch) { send(res, 428, { error: 'Include the current workspace ETag in If-Match.' }); return; }
-          if (currentWorkspace.etag !== ifMatch) { res.writeHead(409, { 'Content-Type': MIME['.json'], ETag: currentWorkspace.etag }); res.end(JSON.stringify({ error: 'The workspace changed on another device. Reload to continue.', etag: currentWorkspace.etag })); return; }
+          if (!ifMatch) { await auditRefusal(428, 'missing If-Match', { etag: currentWorkspace.etag }); send(res, 428, { error: 'Include the current workspace ETag in If-Match.' }); return; }
+          if (currentWorkspace.etag !== ifMatch) { await auditRefusal(409, 'stale If-Match', { etag: currentWorkspace.etag }); res.writeHead(409, { 'Content-Type': MIME['.json'], ETag: currentWorkspace.etag }); res.end(JSON.stringify({ error: 'The workspace changed on another device. Reload to continue.', etag: currentWorkspace.etag })); return; }
           if (canon(doc) === canon(JSON.parse(currentWorkspace.json))) { await store.audit(session.username, 'workspace-snapshot-noop', { etag: currentWorkspace.etag }); res.writeHead(204, { ETag: currentWorkspace.etag }); res.end(); return; }
           const stored = JSON.parse(currentWorkspace.json);
           const changedKeys = [...new Set([...Object.keys(doc || {}), ...Object.keys(stored || {})])].filter(key => canon(doc?.[key]) !== canon(stored?.[key]));
-          await store.audit(session.username, 'workspace-put-refused', { reason: 'initialized workspace is action-only', etag: currentWorkspace.etag, changedKeys }); send(res, 403, { error: 'The shared workspace is initialized and cannot be replaced as a snapshot. Use a server-authorized record action or the approved migration procedure.' }); return;
+          await auditRefusal(403, 'initialized workspace is action-only', { etag: currentWorkspace.etag, changedKeys }); send(res, 403, { error: 'The shared workspace is initialized and cannot be replaced as a snapshot. Use a server-authorized record action or the approved migration procedure.' }); return;
         }
-        { const stale = await dropArchived(doc); if (stale) { send(res, 409, { error: stale, code: 'ARCHIVED' }); return; } }
+        { const stale = await dropArchived(doc); if (stale) { await auditRefusal(409, stale, { code: 'ARCHIVED' }); send(res, 409, { error: stale, code: 'ARCHIVED' }); return; } }
         const state = host.MES.upgrade(structuredClone(doc));
-        if (!state) { send(res, 422, { error: (host.MES.diagnose(doc) || {}).detail || 'The document does not match the current record format.' }); return; }
-        { const unconverged = convergeDerivedState(state); if (unconverged) { send(res, 422, { error: unconverged }); return; } }
+        if (!state) { const error = (host.MES.diagnose(doc) || {}).detail || 'The document does not match the current record format.'; await auditRefusal(422, error); send(res, 422, { error }); return; }
+        { const unconverged = convergeDerivedState(state); if (unconverged) { await auditRefusal(422, unconverged); send(res, 422, { error: unconverged }); return; } }
         const accountProfile = host.withAccount(session.account, () => host.MES.profileOptions(state)?.[0], state);
         if (accountProfile) state.profile = { name: accountProfile.name, role: accountProfile.role, credentialId: accountProfile.credentialId };
+        // The server was empty when this request began. Initialization commits only while it is still empty: a
+        // workspace another request initialized meanwhile is never replaced, whatever ETag this request presents.
         const cur = await store.getDoc(TENANT);
-        if (cur && !ifMatch) { send(res, 428, { error: 'Include the current workspace ETag in If-Match before saving.' }); return; }
-        // Archive counters only move forward: a device that has not seen the latest archiving cannot lower them.
-        if (cur && state.archive) { const was = JSON.parse(cur.json).archive; if (was) { for (const k of ['orders', 'lastOrderNumber', 'lastTicketNumber']) state.archive[k] = Math.max(Number(state.archive[k]) || 0, Number(was[k]) || 0); if (was.lastArchivedAt && (!state.archive.lastArchivedAt || was.lastArchivedAt > state.archive.lastArchivedAt)) state.archive.lastArchivedAt = was.lastArchivedAt; } }
-        const problem = validState(state); if (problem) { send(res, 422, { error: problem }); return; }
-        { const bad = await evidenceProblem(cur ? JSON.parse(cur.json) : null, state, session); if (bad) { await store.audit(session.username, 'evidence-refused', { message: bad }); send(res, 422, { error: bad }); return; } }
-        if (cur && ifMatch && cur.etag !== ifMatch) { res.writeHead(409, { 'Content-Type': MIME['.json'], ETag: cur.etag }); res.end(JSON.stringify({ error: 'The workspace changed on another device. Reload to continue.', etag: cur.etag, current: JSON.parse(cur.json) })); return; }
-        const done = await commitState(state, cur ? cur.etag : null, session.username, [{ action: 'workspace-initialize', detail: etag => ({ etag }) }]);
-        if (done.problem) { send(res, 422, { error: done.problem }); return; }
-        if (done.conflict) { send(res, 409, { error: 'The workspace changed on another device. Reload to continue.' }); return; }
+        if (cur) { await auditRefusal(409, 'workspace initialized by another request', { etag: cur.etag }); res.writeHead(409, { 'Content-Type': MIME['.json'], ETag: cur.etag }); res.end(JSON.stringify({ error: 'The shared workspace was initialized by another request. Reload to continue.', etag: cur.etag })); return; }
+        const problem = validState(state); if (problem) { await auditRefusal(422, problem); send(res, 422, { error: problem }); return; }
+        { const bad = await evidenceProblem(null, state, session); if (bad) { await store.audit(session.username, 'evidence-refused', { message: bad }); send(res, 422, { error: bad }); return; } }
+        const done = await commitState(state, null, session.username, [{ action: 'workspace-initialize', detail: etag => ({ etag }) }]);
+        if (done.problem) { await auditRefusal(422, done.problem); send(res, 422, { error: done.problem }); return; }
+        if (done.conflict) { await auditRefusal(409, 'workspace initialized by another request'); send(res, 409, { error: 'The shared workspace was initialized by another request. Reload to continue.' }); return; }
         res.writeHead(204, { ETag: done.etag, ...(done.archived.length ? { 'X-Flight-Archived': done.archived.join(',') } : {}) }); res.end(); return;
       }
       // -- actions: run an engine function server-side with the session's authority --
