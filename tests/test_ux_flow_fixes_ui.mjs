@@ -48,16 +48,16 @@ try {
     ok('unknown account gets the same generic refusal', unknown === GENERIC, unknown);
     ok('the refusal never says whether the account exists', !/No account|Incorrect password/.test(wrong + unknown));
     // An identity-provider (SSO) account answers the same as an unknown one, and counts toward lockout; the note says where those accounts sign in.
-    await page.evaluate(() => { const k = 'skyryse-mes-auth-v1', au = JSON.parse(localStorage.getItem(k)); au.users.push({ username: 'sso-person', displayName: 'SSO Person', sso: true, role: 'general', createdAt: new Date().toISOString() }); localStorage.setItem(k, JSON.stringify(au)); localStorage.removeItem('skyryse-mes-lockout-v1'); });
+    await page.evaluate(() => { const k = 'skyryse-mes-demo-auth-v1', au = JSON.parse(localStorage.getItem(k)); au.users.push({ username: 'sso-person', displayName: 'SSO Person', sso: true, role: 'general', createdAt: new Date().toISOString() }); localStorage.setItem(k, JSON.stringify(au)); localStorage.removeItem('skyryse-mes-demo-lockout-v1'); });
     await page.reload(); await page.waitForSelector('#sk-login:not([hidden])');
     const sso = await signInError(page, 'sso-person', 'any-password');
     ok('an identity-provider account gets the same generic refusal', sso === GENERIC, sso);
-    ok('an identity-provider account counts toward lockout', await page.evaluate(() => (JSON.parse(localStorage.getItem('skyryse-mes-lockout-v1') || '{}')['sso-person'] || {}).fails === 1));
+    ok('an identity-provider account counts toward lockout', await page.evaluate(() => (JSON.parse(localStorage.getItem('skyryse-mes-demo-lockout-v1') || '{}')['sso-person'] || {}).fails === 1));
     ok('the sign-in note says where identity-provider accounts sign in', /company identity provider sign in through it/.test(await page.locator('#sk-login-note').innerText()));
-    await page.evaluate(() => { const k = 'skyryse-mes-auth-v1', au = JSON.parse(localStorage.getItem(k)); au.users = au.users.filter(u => u.username !== 'sso-person'); localStorage.setItem(k, JSON.stringify(au)); localStorage.removeItem('skyryse-mes-lockout-v1'); });
+    await page.evaluate(() => { const k = 'skyryse-mes-demo-auth-v1', au = JSON.parse(localStorage.getItem(k)); au.users = au.users.filter(u => u.username !== 'sso-person'); localStorage.setItem(k, JSON.stringify(au)); localStorage.removeItem('skyryse-mes-demo-lockout-v1'); });
     await page.reload(); await page.waitForSelector('#sk-login:not([hidden])');
     // Lockout is unchanged: the fifth failure locks, the next attempt is refused with the wait time.
-    await page.evaluate(() => localStorage.removeItem('skyryse-mes-lockout-v1'));
+    await page.evaluate(() => localStorage.removeItem('skyryse-mes-demo-lockout-v1'));
     let last = '';
     for (let i = 0; i < 5; i++) last = await signInError(page, 'demo', 'wrong-password-' + i);
     ok('fifth failure still locks the account', last === GENERIC + ' Account locked for 5 minutes.', last);
@@ -69,7 +69,7 @@ try {
     const blockedUnknown = await signInError(page, 'nobody-here', 'wrong-password');
     ok('a locked unknown account reads the same as a locked real account', blockedUnknown === blocked, JSON.stringify({ blockedUnknown, blocked }));
     ok('locked account is still refused with the wait time', /^Too many failed attempts\. Try again in 5 minutes\.$/.test(blocked), blocked);
-    await page.evaluate(() => localStorage.removeItem('skyryse-mes-lockout-v1'));
+    await page.evaluate(() => localStorage.removeItem('skyryse-mes-demo-lockout-v1'));
     await page.locator('#sk-username').fill('demo'); await page.locator('#sk-password').fill('demo1234'); await page.locator('#sk-login-submit').click();
     await page.waitForFunction(() => !document.getElementById('sk-boot'));
     const sw = await page.evaluate(() => skAuth.switchAccount('master', 'wrong-password'));
@@ -172,7 +172,7 @@ try {
   // ---- H3: the buy-off dialog lists what is missing, keeps Complete off until done, and keeps its entries on refusal.
   {
     const page = await open('demo');
-    await page.evaluate(() => { localStorage.removeItem('skyryse-mes-drafts-v1'); openOrder('WO-10006'); }); await page.waitForTimeout(400);
+    await page.evaluate(() => { localStorage.removeItem('skyryse-mes-demo-drafts-v1'); openOrder('WO-10006'); }); await page.waitForTimeout(400);
     const fx = await page.evaluate(() => { const o = order(), op = o.operations.find(x => !x.done); return { o: o.id, op: op.id, insp: MES.isInspectionOp(op), test: MES.isTestOperation(op), steps: op.steps.length, stamp: MES.buyoffCredential(state.profile, op.buyoffType).holder?.number || '' }; });
     ok('fixture: next operation on WO-10006 is an ATP inspection with steps', fx.insp && fx.test && fx.steps > 0, JSON.stringify(fx));
     for (let i = 0; i < fx.steps; i++) { const l = page.locator('label.step-check:has(input[data-step-check]:not(:checked))').first(); if (!await l.count()) break; await l.click(); await page.waitForTimeout(300); }
