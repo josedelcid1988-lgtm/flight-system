@@ -63,7 +63,7 @@ dispositions start Off.
 | `create-wo` (create work orders) | yes |  |  |  | yes | yes |  |  |  |  |  | yes |
 | `adjust-wo` (adjust work-order operations) | yes |  |  |  | yes | yes |  |  |  |  |  | yes |
 | `split` (split a work order) | yes |  |  | yes | yes | yes |  |  |  |  |  | yes |
-| `approve-wo` (approve work orders) | yes |  |  |  |  |  |  | yes |  |  | yes | yes |
+| `approve-wo` (approve work orders and send a work order in QA review back to Building) | yes |  |  |  |  |  |  | yes |  |  | yes | yes |
 | `dispo-nc` (record the NC initial disposition) | yes |  |  |  | yes | yes |  |  |  |  |  | yes |
 | `approve-nc` (approve an NC) | yes |  |  |  |  |  |  | yes |  |  | yes | yes |
 | `request-pedigree` (request a pedigree change) | yes |  |  | yes | yes | yes |  | yes |  |  | yes | yes |

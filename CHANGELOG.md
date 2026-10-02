@@ -10,6 +10,28 @@ What changed in Flight System, newest first. The build id is set in `VERSION.md`
 the end of `VERSION.md` names the exact files and the suite results for the build. Storage keys, form
 numbers and record number formats have not changed in any entry below.
 
+## Work orders frozen in QA review; signed QA send back to Building (#542)
+
+QA Manager decision: once a work order is sent to QA, no changes are allowed. Saved workspaces open as they are.
+
+- **Frozen in Quality.** The engine (and so the server action route) refuses, for every role including Master
+  Access, with "This work order is in QA review. Ask Quality to send it back to Building before changing it.":
+  serial assign, auto-assign and void; operation, NC and kit file removal; engineering change submit, ECR
+  approval and QA re-release; priority change and clearing AOG; planned dates; ATP software link; adding a
+  purchase order; linking the order to a project; and adding operation files by anyone outside Quality.
+  Operation add, remove and edit, splits, pedigree change and material lots stay refused as before.
+- **Still allowed in Quality:** raising an NC, notes and messages, Quality adding evidence files, the FAIR,
+  the conformity package and 8130-9, closure requests, and Review & close.
+- **Send back to Building.** `MES.sendBackToBuilding` is the Quality role's (`approve-wo`) only way to move a
+  work order from Quality back to Building. It needs a rationale of 1 to 300 characters and can link an NC
+  raised on the order. It writes a record with the person, credential and time and a SHA-256 manifest binding
+  the order, its revision and WO revision, the rationale, the linked NC, the from and to statuses, the signer
+  and the time; `MES.validate` and `verifyManifests` recheck it. The order keeps its last 20 send backs. The
+  work order shows "Sent back by QA: rationale, name, date" while it is back in Building, and the activity
+  record, the record print and the traveler show it. The demo keeps the freeze.
+- `test_qa_freeze` covers every refusal, the send back refusals, the tamper checks and the full flow;
+  `test_frozen_contract` pins the rules.
+
 ## FAIR box 22 required, box 10 captured (build v81)
 
 Checked against AS9102 Rev C in the QMS standards library. Saved FAIRs open as they are.
