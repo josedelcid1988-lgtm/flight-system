@@ -560,6 +560,22 @@ function surfaces(state) {
   check('validation refuses a removal manifest that claims an override', !MES.validate(copy) && !MES.verifyManifests(copy).ok);
 }
 
+// ---- engine: stored content must be a data URL that can be read back ----
+{
+  const state = curated(); FlightManeuver.ensure(state);
+  const raised = host.withAccount(qm, () => FlightManeuver.raiseNC(state, { sourceType: 'Serial number', type: 'NC', title: 'Readable check', description: 'Readable content check.', partNumber: 'SR-IH-040', revision: 'A', serial: 'IH-040-RD1', quantity: 1, foundAt: 'Stock', pedigree: 'Production', escaped: 'no' }), state);
+  const before = JSON.stringify(state);
+  for (const bad of ['not-a-data-url', 'data:image/png;base64,***', 'data:text/plain,%ZZ']) {
+    const r = host.withAccount(general, () => FlightManeuver.addRecordFile(state, 'ncs', raised.id, { name: 'bad.bin', type: 'image/png', size: 1, dataUrl: bad }), state);
+    check(`a file whose content is not a readable data URL (${bad.slice(0, 18)}) is refused, nothing changes`, !r.ok && /could not be read as stored content/.test(r.message) && JSON.stringify(state) === before);
+  }
+  const kitOrder = state.orders.find(o => ['Kitting', 'Building'].includes(o.status));
+  const k = host.withAccount(operator, () => MES.addKitFile(state, kitOrder.id, { name: 'bad.bin', type: 'image/png', size: 1, dataUrl: 'not-a-data-url' }), state);
+  check('the kit list refuses unreadable content the same way', !k.ok && /could not be read as stored content/.test(k.message));
+  const ok = host.withAccount(general, () => FlightManeuver.addRecordFile(state, 'ncs', raised.id, photo), state);
+  check('a well-formed data URL is still accepted', ok.ok);
+}
+
 // ---- engine: a sequence change that would copy files past the workspace limit is refused before anything changes ----
 {
   const state = curated();
