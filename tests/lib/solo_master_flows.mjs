@@ -161,9 +161,9 @@ const workOrder = {
   async run(u) {
     const id = await u.step('create a work order from master WI MWI-0004', () => createOrderFromWI(u, 'MWI-0004|A', { quantity: 2, fai: false }));
     await u.step('issue to kitting', () => issueToKitting(u, id));
-    await u.step('print the traveler', () => u.expectPrint('traveler', () => u.page.locator('#main [data-action=print-traveler]').first().evaluate(e => e.click())));
-    await u.step('print the work order (external)', () => u.expectPrint('work order print, external', () => u.page.locator('#main [data-action=print-order]').first().evaluate(e => e.click())));
-    await u.step('print the work order (internal)', () => u.expectPrint('work order print, internal', () => u.page.locator('#main [data-action=print-order]').nth(1).evaluate(e => e.click())));
+    await u.step('print the traveler', () => u.expectPrint('traveler', () => u.clickLoc(u.page.locator('#main [data-action=print-traveler]').first())));
+    await u.step('print the work order (external)', () => u.expectPrint('work order print, external', () => u.clickLoc(u.page.locator('#main [data-action=print-order]').first())));
+    await u.step('print the work order (internal)', () => u.expectPrint('work order print, internal', () => u.clickLoc(u.page.locator('#main [data-action=print-order]').nth(1))));
     await u.step('kit every line, attach the NetSuite kit list, start the build', () => kitAndStart(u, id));
     const ops = await u.step('check off every step and buy off every operation', () => buyOffAll(u, id));
     u.check('manufacturing, tooling and inspection buy-offs all recorded', ops.length >= 6 && ops.some(o => o.inspection), JSON.stringify(ops.map(o => o.title)));
@@ -258,7 +258,7 @@ const lru = {
       if (!(await u.order(id)).conformity[0].aqi) throw new Error('AQI not signed: ' + await u.toast());
       await confWizardPage(u);
     });
-    await u.step('print the 8130-9', () => u.expectPrint('8130-9 print', () => u.page.locator('#dialog[open] [data-action=conf-8130-print]').first().evaluate(e => e.click())));
+    await u.step('print the 8130-9', () => u.expectPrint('8130-9 print', () => u.clickLoc(u.page.locator('#dialog[open] [data-action=conf-8130-print]').first())));
     await u.closeDialog();
     await u.step('buy off the conformity hold point', () => buyOffCurrent(u, id, 'Package reviewed, 8130-9 signed, LRU tagged.'));
     await u.step('send to Quality, review and close', async () => { await sendToQuality(u, id); await qualityReviewAndClose(u, id); });
@@ -334,7 +334,7 @@ const fai = {
     await u.step('verify the FAIR (blocks 20 and 21)', () => fairSign(u, id, 'fair-verify', 'verified'));
     await u.step('box 22 review by the same person', () => fairSign(u, id, 'fair-review', 'reviewed'));
     await u.step('Skyryse QA approval', () => fairSign(u, id, 'fair-approve', 'approved'));
-    await u.step('print the FAIR', () => u.expectPrint('FAIR print', () => u.page.locator('#main [data-action=fair-print]').first().evaluate(e => e.click())));
+    await u.step('print the FAIR', () => u.expectPrint('FAIR print', () => u.clickLoc(u.page.locator('#main [data-action=fair-print]').first())));
     await u.step('quality review and close', () => qualityReviewAndClose(u, id));
     const o = await u.order(id);
     u.check('FAIR approved and the FAI order closed', o.fair?.status === 'Approved' && o.status === 'Closed', `${o.fair?.status} ${o.status}`);
@@ -526,7 +526,7 @@ const car = {
     const id = await u.step('raise a CAR', () => raiseCar(u, 'Torque escapes on backshells', 'Repeat backshell torque escapes across three orders.'));
     const c = await carToClosure(u, id);
     u.check(`${id} closed by the one person who raised it, found the root cause and verified it`, c.status === 'Closed', c.status);
-    await u.step('print the CAR', () => u.expectPrint('CAR print', () => u.page.locator('#main [data-action=mnv-print]').first().evaluate(e => e.click())));
+    await u.step('print the CAR', () => u.expectPrint('CAR print', () => u.clickLoc(u.page.locator('#main [data-action=mnv-print]').first())));
     const s = await u.step('raise a supplier CAR', () => raiseCar(u, 'Bracket cracks from one lot', 'Cracked brackets found at receiving from one supplier lot.'));
     const sc = await carToClosure(u, s, { supplier: 'Acme Metals' });
     u.check(`${s} with its SCAR closed`, sc.status === 'Closed', sc.status + ' ' + JSON.stringify(sc.scar));
@@ -609,13 +609,31 @@ const spr = {
       if (!s) throw new Error('SPR not raised: ' + await u.toast());
       return s;
     });
-    // The Problem Reports page is the React list; the Record Jira key and Close from Jira controls of the
-    // legacy SPR table are not rendered in this build, for any account. Reported, not a separation-of-duties block.
-    await u.nav('mnv-spr');
-    const reachable = await u.page.locator(`[data-action=mnv-spr-jira][data-id="${id}"]`).count();
-    u.log(true, reachable ? 'the Record Jira key control is shown' : 'KNOWN GAP (all accounts, production too): Record Jira key and Close from Jira are not shown on the Problem Reports page; the SPR stays Open');
+    // The Problem Reports list opens each SPR in a drawer; its Jira steps (Record Jira key, then Close from Jira) run
+    // from there, as a person would reach them.
+    const fromDrawer = async (action) => {
+      await u.nav('mnv-spr');
+      await u.clickText(id, { root: '#main', tag: '.fr-record-link' });
+      await u.click(`[data-action=${action}][data-id="${id}"]`, { root: 'dialog.fr-drawer[open]' });
+      if (!(await u.dialogOpen())) throw new Error(`${action} did not open its form for ${id}`);
+    };
+    await u.step('record the Jira key from the Problem Reports drawer', async () => {
+      await fromDrawer('mnv-spr-jira');
+      await u.fill('#dialog[open]', { key: 'SPR-901' });
+      await u.submitDialog('Record key');
+      const s = await u.read(i => FlightManeuver.get(state, 'sprs', i).status, id);
+      if (s !== 'In Jira') throw new Error(`${id} is ${s} after recording the Jira key: ` + await u.toast());
+    });
+    await u.step('close the SPR from Jira', async () => {
+      await fromDrawer('mnv-spr-close');
+      await u.fill('#dialog[open]', { note: 'Jira SPR-901 closed: watchdog timeout traced to a loose harness connector, reseated and retested.' });
+      await u.submitDialog('Close SPR');
+      const s = await u.read(i => FlightManeuver.get(state, 'sprs', i).status, id);
+      if (s !== 'Closed') throw new Error(`${id} is ${s} after closing from Jira: ` + await u.toast());
+    });
+    await u.expectValid('the SPR workflow');
     const s = await u.read(i => FlightManeuver.get(state, 'sprs', i).status, id);
-    return `${id} ${s}${reachable ? '' : ' (Jira key and close not reachable: flagged)'}`;
+    return `${id} ${s} (Jira key SPR-901 recorded and closed from Jira)`;
   },
 };
 

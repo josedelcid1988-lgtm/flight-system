@@ -33,10 +33,21 @@ browser keeps your work; it is there the next time you open `demo.html`.
 
 ## 4. Start over
 
-To get the original sample data back, clear the demo's saved data in your browser:
+To get the original sample data back, remove only the demo's saved data. The demo and the production
+`index.html` can share the same browser storage when they are opened from the same folder, so do **not**
+use the browser's **Clear site data**: it would also erase any production workspace, accounts and
+records kept in this browser.
 
-- Chrome or Edge: press F12, open **Application**, choose **Storage**, click **Clear site data**,
-  then reload the page.
+- Chrome or Edge: with `demo.html` open, press F12, open **Console**, paste this line, press Enter,
+  then reload the page (if Chrome asks first, type `allow pasting` and press Enter):
+
+  ```js
+  Object.keys(localStorage).filter(k=>k.startsWith('skyryse-mes-demo-')||k==='skyryse-mes-work-order-qa100-v1').forEach(k=>localStorage.removeItem(k));sessionStorage.removeItem('skyryse-mes-demo-session-v1')
+  ```
+
+  It removes only the keys the demo uses (they start with `skyryse-mes-demo-`, plus the demo
+  workspace `skyryse-mes-work-order-qa100-v1`). The demo then loads its sample data again and shows
+  the sign-in screen.
 - Or use a private window (Incognito or InPrivate) when you want a throwaway session: nothing is
   kept when you close it.
 
@@ -113,10 +124,6 @@ approval; Use for Dev moves the order to Development.
 
 These affect every account, in the demo and in production, and are being fixed separately:
 
-- An SPR can be raised, but **Record Jira key** and **Close from Jira** are not shown on the
-  Problem Reports page, so an SPR stays Open.
-- When you raise an NC outside a work order and answer that it is an escape, the **Escaped from**
-  choice is not shown; the NC records Final inspection.
 - Do not split a work order after an engineering change has been applied to it: the split leaves
   the workspace invalid and the original order is set aside. Split first, then make the
   engineering change.

@@ -258,11 +258,11 @@ const LIST = [
     why: 'The message after an analysis draft is reviewed matches the relaxation D-50, so a solo walk-through is told its real next step. Production says a different qualified person must accept it.',
     find: 'reviewed. A different qualified person must accept it.', count: 1,
     replace: (ctx, m, id) => `reviewed.\${''/* DEMO ${id} */} In this demo the reviewer may accept it next.` },
-  { area: 'Separation of duties', title: 'Audit form text says the writer may close a finding',
-    why: 'The help text under Open audit matches the relaxations D-50 and D-53, which let the person who recorded a finding close it and its audit, so a solo walk-through is not told another person must sign. Production says a different person signs each closure.',
-    // MES.AUDIT_FINDING_CLOSE_HELP is a single-quoted string read by both the legacy and the React audit form.
-    find: "MES.AUDIT_FINDING_CLOSE_HELP = 'The person who records a finding cannot close it. A different person signs each closure.';", count: 1,
-    replace: (ctx, m, id) => `MES.AUDIT_FINDING_CLOSE_HELP = /* DEMO ${id} */ 'In this demo the person who records a finding may also sign it closed.';` },
+  { area: 'Separation of duties', title: 'System QMS text says one person may close findings and audits and sign every document role',
+    why: 'The help text under Open audit, the note on an open audit card and the controlled document summary match the relaxations D-50, D-52 and D-53, which let the person who recorded a finding close it and its audit, and let one person author, review and release a document, so a solo walk-through is not told another person must sign. Production says a different person signs each closure, the audit author cannot close the audit, and the author, reviewer and releaser are three different people.',
+    // The three sentences are single-quoted MES constants read by both the legacy and the React System QMS page.
+    find: "MES.AUDIT_FINDING_CLOSE_HELP = 'The person who records a finding cannot close it. A different person signs each closure.';\n  MES.AUDIT_CLOSE_WAIT = 'Close every finding before closing this audit. The audit author cannot close it.';\n  MES.CONTROLLED_DOC_PEOPLE = 'The author, reviewer, and releaser must be three different people.';", count: 1,
+    replace: (ctx, m, id) => `MES.AUDIT_FINDING_CLOSE_HELP = /* DEMO ${id} */ 'In this demo the person who records a finding may also sign it closed.';\n  MES.AUDIT_CLOSE_WAIT = /* DEMO ${id} */ 'Close every finding before closing this audit. In this demo the audit author may close it.';\n  MES.CONTROLLED_DOC_PEOPLE = /* DEMO ${id} */ 'In this demo one person may author, review and release a revision.';` },
 ];
 
 export const DEVIATIONS = LIST.map((d, i) => Object.freeze({ ...d, id: `D-${i + 1}` }));

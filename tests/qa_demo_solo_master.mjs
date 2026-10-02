@@ -95,16 +95,26 @@ async function drainRefusals(label) {
   return texts;
 }
 
-async function click(selector, { root = '#main', timeout = 2500 } = {}) {
+// Clicks go through Playwright's actionability checks only: a control a person could not click (hidden, covered,
+// disabled) fails the step instead of being activated from script. A control inside a closed menu (a <details> such
+// as an order's More menu) is reached the way a person reaches it: its menu is opened with a click first.
+async function clickLoc(loc, { timeout = 5000 } = {}) {
+  if (!await loc.isVisible()) {
+    const menu = loc.locator('xpath=ancestor::details[not(@open)][1]/summary');
+    if (await menu.count()) await menu.first().click({ timeout });
+  }
+  await loc.click({ timeout });
+}
+async function click(selector, { root = '#main', timeout = 5000 } = {}) {
   const loc = page.locator(`${root} ${selector}`).first();
   if (!await loc.count()) throw new Error(`no control ${root} ${selector}`);
-  try { await loc.click({ timeout }); } catch { await loc.evaluate(e => e.click()); }
+  await clickLoc(loc, { timeout });
   await settle();
 }
-async function clickText(text, { root = '#main', tag = 'button' } = {}) {
+async function clickText(text, { root = '#main', tag = 'button', timeout = 5000 } = {}) {
   const loc = page.locator(`${root} ${tag}`).filter({ hasText: text }).first();
   if (!await loc.count()) throw new Error(`no ${tag} "${text}" in ${root}`);
-  try { await loc.click({ timeout: 2500 }); } catch { await loc.evaluate(e => e.click()); }
+  await clickLoc(loc, { timeout });
   await settle();
 }
 async function closeDialog() {
@@ -115,7 +125,9 @@ async function nav(viewName) {
   await closeDialog();
   const btn = page.locator(`[data-action=nav][data-view="${viewName}"]`).first();
   if (!await btn.count()) throw new Error('no navigation to ' + viewName);
-  try { await btn.click({ timeout: 1500 }); } catch { await btn.evaluate(e => e.click()); }
+  // Only a link that is not shown (its module is not the one on screen) is activated in place; a shown link that cannot
+  // be clicked fails the step.
+  if (await btn.isVisible()) await btn.click({ timeout: 5000 }); else await btn.evaluate(e => e.click());
   await wait(450);
   await page.evaluate(() => document.querySelectorAll('.mnv-landing').forEach(e => e.remove()));
 }
@@ -207,17 +219,39 @@ async function expectPrint(label, trigger) {
   return check(`${label} opens and says DEMO, NOT FOR ACCEPTANCE`, /DEMO, NOT FOR ACCEPTANCE/.test(text), text.slice(0, 200));
 }
 
+// The "Start over" line in docs/DEMO_QUICK_START.md, run exactly as written: it must bring the sample data back and
+// leave every production key alone (the demo and production can share one browser storage origin).
+async function quickStartReset(sample) {
+  const doc = fs.readFileSync(path.join(TESTS, '..', 'docs', 'DEMO_QUICK_START.md'), 'utf8');
+  const code = (doc.match(/## 4\. Start over[\s\S]*?```js\n([\s\S]*?)\n\s*```/) || [])[1];
+  if (!check('the quick start gives a reset line', !!code)) return '';
+  const changed = await read(() => ({ orders: (state.orders || []).length, users: skAuth.users().map(u => u.username).sort().join(',') }));
+  check('the walk-through changed the demo data before the reset', changed.orders !== sample.orders || changed.users !== sample.users, JSON.stringify({ sample, changed }));
+  await read(() => localStorage.setItem('skyryse-mes-work-order-v1', '{"production":"keep"}'));
+  await page.evaluate(code.trim());
+  await page.goto(DEMO_URL, { waitUntil: 'domcontentloaded' });
+  check('after the reset the demo opens on the sign-in screen', await page.waitForSelector('#sk-username', { timeout: 15000 }).then(() => true, () => false));
+  check('the reset leaves the production workspace key alone', await read(() => localStorage.getItem('skyryse-mes-work-order-v1')) === '{"production":"keep"}');
+  await signIn('master');
+  const after = await read(() => ({ orders: (state.orders || []).length, users: skAuth.users().map(u => u.username).sort().join(',') }));
+  check('the reset brings back the original sample orders and accounts', after.orders === sample.orders && after.users === sample.users, JSON.stringify({ sample, after }));
+  await expectValid('the demo workspace after the reset');
+  return `${after.orders} sample orders and ${after.users.split(',').length} accounts back; production key kept`;
+}
+
 const ui = {
   page, context, flow, step, check, log, read, order, nav, click, clickText, fill, submitDialog, dialogOpen, dialogText,
-  closeDialog, openOrder, orderTab, toast, wait, settle, expectPrint, expectValid, signIn, today, kitFile, photoFile,
+  clickLoc, closeDialog, openOrder, orderTab, toast, wait, settle, expectPrint, expectValid, signIn, today, kitFile, photoFile,
   drainRefusals, setExpectRefusals: v => { expectRefusals = v; }, allRefusals: () => ALL_REFUSALS, needsAnotherPerson: t => NEEDS_ANOTHER_PERSON.test(t),
 };
 
 try {
   await signIn('master');
   await expectValid('the demo workspace after sign-in');
+  const sample = await read(() => ({ orders: (state.orders || []).length, users: skAuth.users().map(u => u.username).sort().join(',') }));
   for (const f of FLOWS) await flow(f.name, f.title, () => f.run(ui));
   if (!ONLY || ONLY.includes('pilot')) await flow('pilot', 'Pilot seats keep the real rules (tech, quality)', () => pilotCounterpart(ui));
+  if (!ONLY || ONLY.includes('reset')) await flow('reset', 'Start over: the quick start reset brings the sample back', () => quickStartReset(sample));
 } finally {
   await browser.close();
   fs.rmSync(SCRATCH, { recursive: true, force: true });
