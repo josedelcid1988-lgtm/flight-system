@@ -85,10 +85,11 @@ const grantFor = (username, cap, { by = GRANTOR, trainingCode = 'ESD', reason = 
   const who = { name: by.displayName, credentialId: `ACCT-${by.username}`, account: by.username }, at = new Date().toISOString();
   return { by: who, at, reason, trainingCode, hash: sha256(MES.canonical({ account: username, authority: cap, action: 'granted', by: who, at, reason, trainingCode })) };
 };
-// Give the subject the curated Quality stamp SKY-0002 with a PIN, then apply the variant.
+// Give the subject the curated Quality stamp SKY-0002 with a PIN, then apply the variant. Its dates are set from
+// today, not taken from the seed, so the active fixtures stay active whatever day the suite runs.
 const giveStamp = (state, subject, patch = {}) => {
   const stamp = state.stamps.find(s => s.number === 'SKY-0002');
-  stamp.account = subject.username;
+  Object.assign(stamp, { account: subject.username, issued: day(-30), expires: day(400), qualifications: (stamp.qualifications || []).map(q => ({ ...q, expires: day(400) })) });
   const pin = host.withAccount(subject, () => MES.setStampPin(state, stamp.id, PIN, PIN), state);
   if (!pin.ok) throw new Error(`stamp PIN for ${subject.username}: ${pin.message}`);
   Object.assign(stamp, patch);
@@ -365,13 +366,13 @@ const TARGET = account('fx-target', 'qe');
   ok('browser: Master Access granting itself Support Access is refused with today\'s text', (await asBrowser(MASTER.username, u => skAuth.setSupportAccess(u, true, 'Granting myself support.'), [MASTER.username])).message === SELF_SUPPORT);
   for (const [n, refused] of [[9, true], [10, false], [300, false], [301, true]]) {
     const g = await setGrant(GRANTOR.username, TARGET.username, reasonOf(n));
-    ok(`browser: a grant reason of ${n} characters is ${refused ? 'refused' : 'accepted'}`, refused ? !g.ok && g.message === GRANT_REASON_BROWSER : g.message !== GRANT_REASON_BROWSER, JSON.stringify(g));
+    ok(`browser: a grant reason of ${n} characters is ${refused ? 'refused' : 'accepted'}`, refused ? !g.ok && g.message === GRANT_REASON_BROWSER : g.ok === true, JSON.stringify(g));
     const r = await setRoles(GRANTOR.username, TARGET.username, reasonOf(n));
-    ok(`browser: a role change reason of ${n} characters is ${refused ? 'refused' : 'accepted'}`, refused ? !r.ok && r.message === ROLES_REASON_BROWSER : r.message !== ROLES_REASON_BROWSER, JSON.stringify(r));
+    ok(`browser: a role change reason of ${n} characters is ${refused ? 'refused' : 'accepted'}`, refused ? !r.ok && r.message === ROLES_REASON_BROWSER : r.ok === true, JSON.stringify(r));
   }
   for (const [n, refused] of [[9, true], [10, false], [500, false], [501, true]]) {
     const s = await setSupport(MASTER.username, TARGET.username, reasonOf(n));
-    ok(`browser: a Support Access reason of ${n} characters is ${refused ? 'refused' : 'accepted'}`, refused ? !s.ok && s.message === SUPPORT_REASON : s.message !== SUPPORT_REASON, JSON.stringify(s));
+    ok(`browser: a Support Access reason of ${n} characters is ${refused ? 'refused' : 'accepted'}`, refused ? !s.ok && s.message === SUPPORT_REASON : s.ok === true, JSON.stringify(s));
   }
   await page.evaluate(([AUTH, users]) => localStorage.setItem(AUTH, JSON.stringify({ users })), [AUTH, browserUsers]);
 
@@ -382,6 +383,12 @@ const TARGET = account('fx-target', 'qe');
   ok('server: granting your own authority is refused 403 with today\'s text', selfGrant.status === 403 && selfGrant.json.error === SELF_GRANT, JSON.stringify(selfGrant));
   const selfSupport = await access(master, { action: 'support', username: MASTER.username, on: true, reason: 'Granting myself support.' });
   ok('server: Master Access granting itself Support Access is refused 403 with today\'s text', selfSupport.status === 403 && selfSupport.json.error === SELF_SUPPORT, JSON.stringify(selfSupport));
+  const selfRoles = await access(qm, { action: 'roles', username: GRANTOR.username, roles: ['qm'], reason: 'Changing my own roles on purpose.' });
+  ok('server: changing your own roles is refused 403 with today\'s text', selfRoles.status === 403 && selfRoles.json.error === SELF_ROLES, JSON.stringify(selfRoles));
+  for (const [n, refused] of [[9, true], [10, false], [300, false], [301, true]]) {
+    const r = await access(qm, { action: 'roles', username: TARGET.username, roles: ['qe'], reason: reasonOf(n) });
+    ok(`server: a role change reason of ${n} characters is ${refused ? 'refused' : 'accepted'}`, refused ? r.status === 400 && r.json.error === GRANT_REASON_SERVER : r.status === 200, JSON.stringify(r));
+  }
   for (const [n, refused] of [[9, true], [10, false], [300, false], [301, true]]) {
     const r = await access(qm, { action: 'revoke', username: TARGET.username, cap: 'conformity', reason: reasonOf(n) });
     ok(`server: a grant reason of ${n} characters is ${refused ? 'refused' : 'accepted'}`, refused ? r.status === 400 && r.json.error === GRANT_REASON_SERVER : r.status === 200 && r.json.message === 'Not granted.', JSON.stringify(r));
@@ -469,4 +476,5 @@ server.close?.();
 console.log(`\nchecks ${pass + fails.length} pass ${pass} fail ${fails.length} skip 0`);
 console.log('FAILS ' + JSON.stringify(fails));
 console.log('errors ' + JSON.stringify(errors));
-process.exit(fails.length ? 1 : 0);
+// A browser page error fails the suite on its own too, not only through the suite runner's reading of this line.
+process.exit(fails.length || errors.length ? 1 : 0);
