@@ -29,6 +29,8 @@ const withPassword = [
   `postgresql://flight@db/flight?oauth_client_secret=${SECRET}`,
   // An unencoded / cuts the user info short; libpq would read the rest of the password as a port.
   `postgresql://flight:${SECRET.slice(0, 4)}/${SECRET.slice(4)}@db/flight`,
+  // The same with a numeric first part, which would otherwise read as a host and port (Codex review).
+  'postgresql://flight:123/456@db/flight',
   `host=db user=flight password=${SECRET} dbname=flight`,
   `host=db password='${SECRET} with spaces'`,
   `host=db sslpassword=${SECRET}`,

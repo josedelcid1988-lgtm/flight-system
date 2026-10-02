@@ -1204,7 +1204,10 @@ export function connectionStringHasPassword(value) {
   try { if (new URL(text).password) return true; } catch {}
   const rest = text.slice(uri[0].length), at = rest.indexOf('@'), slash = rest.indexOf('/');
   if (at >= 0 && (slash < 0 || at < slash)) { const userinfo = rest.slice(0, at); if (userinfo.includes(':') && userinfo.slice(userinfo.indexOf(':') + 1) !== '') return true; }
-  else if (at >= 0 && rest.slice(0, slash).split(',').some(host => /:[^:\]]*$/.test(host) && !/:\d*$/.test(host))) return true;
+  // An @ after the first / with a : before that / is a password cut short by an unencoded /, numeric or not
+  // (user:123/456@host). It is refused even though a database name with an @ and an explicit port reads the same way:
+  // that rare string can still be given in FLIGHT_DATABASE_URL.
+  else if (at >= 0 && rest.slice(0, slash).split(',').some(host => /:[^:\]]*$/.test(host))) return true;
   const query = rest.includes('?') ? rest.slice(rest.indexOf('?') + 1) : '';
   return query.split('&').some(part => { const eq = part.indexOf('='); let key = eq >= 0 ? part.slice(0, eq) : part; try { key = decodeURIComponent(key); } catch {} return SECRET_SETTING.test(key) && (eq < 0 || part.slice(eq + 1) !== ''); });
 }
