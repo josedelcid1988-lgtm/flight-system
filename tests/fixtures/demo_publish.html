@@ -4150,7 +4150,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   function runSkill(state,skillOrInput,inputArg,options){
     const input=typeof skillOrInput==='string'?{...(plain(inputArg)?inputArg:{}),skill:skillOrInput,...(options?.trigger?{triggerId:options.trigger.id}: {})}:skillOrInput;
     const bad=aiGovernanceReady(state);if(bad)return bad;
-    {const shape=jsonShapeProblem(input);if(shape)return fail(shape);}
+    {const shape=jsonShapeProblem(input);if(shape)return fail(shape);if(protoKeyPath(input))return fail('Remove the "__proto__" key from the input JSON. Saved data cannot use that key name.');}
     const key=String(input?.skill||''),title=skillTitle(key),reason=String(input?.reason||'').trim(),triggerId=input?.triggerId?String(input.triggerId).trim():null;
     if(!title)return fail('This skill is not on the Flight System approved list.');
     if(!str(reason,300)||reason.length<8)return fail('Provide a clear reason for this skill run.');

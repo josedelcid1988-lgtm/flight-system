@@ -371,6 +371,16 @@ check('an archive candidate holding a __proto__ key is refused, while a clean cl
     let rw = null, threwWide = null;
     try { rw = runHist(() => MES.runSkill(hist, { skill: 'spc-chart-builder', values: [10.1, 10.2, 9.9], extra: Array.from({ length: 1000000 }, () => ({})), reason: 'A skill run input wider than the value budget.' })); } catch (e) { threwWide = e; }
     check('a skill run input holding a list of 1,000,000 empty objects is refused with the value-count message and no draft is added', !threwWide && rw && !rw.ok && /holds more than 50,000 values/.test(rw.message) && hist.aiSkillDrafts.length === draftsBefore); }
+  // Codex review on #621: a skill run input with an own __proto__ key is refused before it is hashed. The canonical
+  // form drops that key, so two inputs differing only there would hash the same and the second run would be returned
+  // as a duplicate of the first.
+  for (const nested of [false, true]) {
+    const draftsBefore = hist.aiSkillDrafts.length, logBefore = (hist.aiActionLog || []).length;
+    const input = JSON.parse(nested ? '{"skill":"spc-chart-builder","values":[10.1,10.2,9.9],"extra":{"__proto__":{"x":1}},"reason":"A skill run input holding the forbidden key."}' : '{"skill":"spc-chart-builder","values":[10.1,10.2,9.9],"__proto__":{"x":1},"reason":"A skill run input holding the forbidden key."}');
+    let rp = null, threwProto = null;
+    try { rp = runHist(() => MES.runSkill(hist, input)); } catch (e) { threwProto = e; }
+    check(`a skill run input holding a ${nested ? 'nested' : 'top-level'} __proto__ key is refused with the key message, never a throw, and nothing is logged or drafted`, !threwProto && rp && !rp.ok && /Remove the "__proto__" key/.test(rp.message) && hist.aiSkillDrafts.length === draftsBefore && (hist.aiActionLog || []).length === logBefore);
+  }
   const drafts = hist.aiSkillDrafts.length;
   let rs = null, threwRun = null;
   try { rs = runHist(() => MES.runSkill(hist, { skill: 'spc-chart-builder', values: [10.1, 10.2, 9.9], extra: nested(3000), reason: 'A skill run input nested past the depth limit.' })); } catch (e) { threwRun = e; }
