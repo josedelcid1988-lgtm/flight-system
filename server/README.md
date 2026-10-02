@@ -16,7 +16,9 @@ installed wherever these commands run.
 Give the connection string in the `FLIGHT_DATABASE_URL` environment variable, not on the command
 line: anyone who can list processes on the machine can read a command line. `--database-url` is
 accepted only without a password (the password can then come from `PGPASSWORD`); one that carries a
-password is refused before anything connects.
+password is refused before anything connects. This covers the server's own process only: until #234
+lands, `pg_dump` and `pg_restore` still receive the connection string, password included, as their
+`--dbname` argument while a backup or restore runs.
 
 Online backup while the server runs:
 

@@ -14,7 +14,9 @@ export FLIGHT_DATABASE_URL='<live-url>'
 
 # The server and its commands read FLIGHT_DATABASE_URL themselves. Do not pass it again on the
 # command line: a command line is readable from the process list, so a --database-url that
-# carries a password is refused and nothing runs (#584).
+# carries a password is refused and nothing runs (#584). This covers the server's own process
+# only: until #234 lands, pg_dump and pg_restore still receive the connection string, password
+# included, as their --dbname argument while they run.
 
 # 1. Stop the MES server that uses that database, so no write lands between the backup and the
 #    baseline below. Then take the backup and record the baseline (step 4 of the next section).

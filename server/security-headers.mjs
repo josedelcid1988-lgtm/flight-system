@@ -41,9 +41,10 @@ export function inlineScriptHashes(html) {
 }
 
 // FLIGHT_CSP_CONNECT_SRC: origins separated by spaces or commas, each http(s) or ws(s) with no credentials, path, query
-// or fragment, and no wildcard. The host must be letters, digits, dots and hyphens (or a bracketed IPv6 address), so a
-// ; or a quote cannot end connect-src and add a directive of its own (a frame-ancestors that would let a site frame
-// the app). Anything else is refused, so a typo cannot widen the policy (a bare *, a scheme alone,
+// or fragment, and no wildcard. The written entry may hold no delimiter (; , quote, backslash, *, %), and the host as
+// parsed (an international name becomes its punycode form) must be letters, digits, dots and hyphens or a bracketed
+// IPv6 address, so an entry cannot end connect-src and add a directive of its own (a frame-ancestors that would let a
+// site frame the app) or decode into a wildcard. Anything else is refused, so a typo cannot widen the policy (a bare *, a scheme alone,
 // https://* or https://*.example.com would allow any host or any subdomain). A valid spelling that is not canonical (a default port, capitals in the host) is stored as its origin. The
 // refusal names the entry by its position and never repeats it: an entry typed by mistake can hold a credential, and
 // the startup error reaches the server log.
@@ -52,7 +53,7 @@ export function connectSources(value) {
   for (const [index, item] of String(value || '').split(/[\s,]+/).filter(Boolean).entries()) {
     let url = null;
     try { url = new URL(item); } catch {}
-    if (!url || !['https:', 'http:', 'wss:', 'ws:'].includes(url.protocol) || url.origin === 'null' || !/^(?:https?|wss?):\/\/(?:[a-z0-9-]+(?:\.[a-z0-9-]+)*|\[[0-9a-f:.]+\])(?::\d{1,5})?\/?$/i.test(item) || url.username || url.password) {
+    if (!url || !['https:', 'http:', 'wss:', 'ws:'].includes(url.protocol) || url.origin === 'null' || !/^(?:https?|wss?):\/\/[^/?#@\\;,'"*%\s]+\/?$/i.test(item) || !/^(?:(?:[a-z0-9-]+\.)*[a-z0-9-]+\.?|\[[0-9a-f:.]+\])$/.test(url.hostname) || url.username || url.password) {
       throw new Error(`FLIGHT_CSP_CONNECT_SRC entry ${index + 1} is not an origin (it is not repeated here, since it may hold a credential). List origins such as https://skyryse.okta.com, separated by spaces, with no wildcard, user name, password, path, query or fragment.`);
     }
     origins.push(url.origin);
