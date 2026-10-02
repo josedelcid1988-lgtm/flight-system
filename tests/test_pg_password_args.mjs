@@ -71,10 +71,14 @@ const refusals = [
   ['a password with PGSERVICE set', 'postgresql://flight:Hidden-1@db/flight', { PGSERVICE: 'prod' }, /connection service/],
   // Cursor 4162958234: a secret-bearing setting name in another case is not one libpq reads, so it would reach --dbname
   // as it was; it is refused instead.
-  ['a mixed-case URI password parameter', 'postgresql://flight@db/flight?Password=Hidden-1', {}, /libpq reads only the lowercase name/],
-  ['an upper-case keyword password', 'host=db PASSWORD=Hidden-1 dbname=flight', {}, /libpq reads only the lowercase name/],
-  ['an upper-case URI client key passphrase', 'postgresql://flight@db/flight?SSLPASSWORD=Hidden-1', {}, /libpq reads only the lowercase name/],
-  ['a mixed-case keyword service beside a password', 'host=db Service=prod password=Hidden-1', {}, /libpq reads only the lowercase name/],
+  ['a mixed-case URI password parameter', 'postgresql://flight@db/flight?Password=Hidden-1', {}, /in lowercase with no spaces around it/],
+  ['an upper-case keyword password', 'host=db PASSWORD=Hidden-1 dbname=flight', {}, /in lowercase with no spaces around it/],
+  ['an upper-case URI client key passphrase', 'postgresql://flight@db/flight?SSLPASSWORD=Hidden-1', {}, /in lowercase with no spaces around it/],
+  ['a mixed-case keyword service beside a password', 'host=db Service=prod password=Hidden-1', {}, /in lowercase with no spaces around it/],
+  // Cursor 4163152933: newer libpq trims ASCII spaces around a URI parameter name, so a spaced name is a real setting.
+  ['a URI password name with a leading space', 'postgresql://flight@db/flight?%20password=Hidden-1', {}, /in lowercase with no spaces around it/],
+  ['a URI password name with a trailing space', 'postgresql://flight@db/flight?password%20=Hidden-1', {}, /in lowercase with no spaces around it/],
+  ['a URI client key passphrase name with a literal space', 'postgresql://flight@db/flight?sslmode=require& sslpassword=Hidden-1', {}, /in lowercase with no spaces around it/],
   // Codex 4161235803: libpq has no environment variable for sslpassword, so it is refused, with or without a password.
   ['a URI client key passphrase', 'postgresql://flight:pw@db/flight?sslkey=client.key&sslpassword=Hidden-1', {}, /client key passphrase/],
   ['a URI client key passphrase with no password', 'postgresql://flight@db/flight?sslpassword=Hidden-1', {}, /client key passphrase/],

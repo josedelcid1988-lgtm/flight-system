@@ -200,9 +200,11 @@ const SSL_PASSWORD_REFUSAL = 'carries a client key passphrase (sslpassword), whi
 export function pgRestoreTarget(connectionString, env = process.env) {
   const raw = String(connectionString);
   const refuse = why => { throw new Error(`The PostgreSQL connection string ${why}. Nothing was run. Fix FLIGHT_DATABASE_URL and try again.`); };
-  // libpq matches setting names exactly, so Password= or SSLPASSWORD= is not a setting it reads, and the value would
-  // reach --dbname untouched. A secret-bearing name in any other case is refused before it can (Cursor 4162958234).
-  const caseCheck = key => { const lower = key.toLowerCase(); if (['password', 'sslpassword', 'service'].includes(lower) && key !== lower) refuse(`names ${lower} as "${key}"; libpq reads only the lowercase name, so write it as ${lower}`); };
+  // A secret-bearing setting name must be written exactly: lowercase, with no spaces around it. libpq reads only the
+  // lowercase name, and newer libpq trims ASCII spaces around a URI parameter name, so Password=, SSLPASSWORD= or
+  // ?%20password= could reach --dbname untouched. Any other spelling is refused before it can (Cursor 4162958234,
+  // 4163152933).
+  const caseCheck = key => { const plain = key.replace(/^ +| +$/g, '').toLowerCase(); if (['password', 'sslpassword', 'service'].includes(plain) && key !== plain) refuse(`names ${plain} as "${key}"; write it as ${plain}, in lowercase with no spaces around it`); };
   const pct = text => { try { return decodeURIComponent(text); } catch { return refuse('has a malformed percent-encoded part'); } };
   let dbname = raw, password = null, service = false, found = false;
   // A bare database name (no = and not a URI) holds no password: libpq reads it as the dbname alone.
