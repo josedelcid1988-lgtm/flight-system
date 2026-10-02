@@ -256,6 +256,41 @@ await check('a workspace saved before the marks loads, its marks start from its 
   assert.equal(MES.verifyManifests(cleanUp).ok, true, 'every signature still verifies');
 });
 
+await check('repairing a repeated push id moves its review assignment and the baseline with the record they named', async () => {
+  // Codex review on #629: repair renumbered the later of two pushes sharing an id but left the review assignment and
+  // the baseline's acceptedFrom on the old id, so an old assignment (saved without pushAt) resolved to the first record.
+  const state = fresh();
+  const by = { name: 'Old Poster', role: 'Software Engineer', credentialId: 'ACCT-old' };
+  const { order, op } = atpOp(state);
+  const at = n => new Date(Date.UTC(2026, 0, 1, 0, n)).toISOString();
+  op.atp.pushes = [
+    { id: 'PUSH-50', sha: 'abc0000', version: 'v0', message: '', by, at: at(0), status: 'Accepted', reviewedBy: by, reviewedAt: at(1) },
+    { id: 'PUSH-51', sha: 'abc0001', version: 'v1', message: '', by, at: at(2), status: 'Rejected', reviewedBy: by, reviewedAt: at(3), reviewNote: 'Fails ATP.' },
+    { id: 'PUSH-52', sha: 'abc0002', version: 'v2', message: '', by, at: at(4), status: 'Pending' }
+  ];
+  const assigned = as(admin, state, s => MES.assignWork(s, { type: 'review-push', orderId: order.id, opId: op.id, pushId: 'PUSH-52', assigneeUsername: 'id-reviewer', assigneeName: 'Id Reviewer' }));
+  assert.equal(assigned.ok, true, assigned.message);
+  const assignment = state.assignments.find(a => a.type === 'review-push' && a.opId === op.id && a.status === 'Open');
+  // Saved by a build that numbered from the list length and kept no push time: the pending push repeats PUSH-51.
+  op.atp.pushes[2].id = 'PUSH-51'; assignment.pushId = 'PUSH-51'; delete assignment.pushAt;
+  assert.equal(MES.validate(state), false, 'the repeated id fails validation as stored');
+  const upgraded = MES.upgrade(structuredClone(state));
+  assert.ok(upgraded && MES.validate(upgraded), 'the workspace loads');
+  const upOp = upgraded.orders.find(o => o.id === order.id).operations.find(x => x.id === op.id);
+  same(ids(upOp.atp.pushes), ['PUSH-50', 'PUSH-51', 'PUSH-52']);
+  const moved = upgraded.assignments.find(a => a.id === assignment.id);
+  assert.equal(moved.pushId, 'PUSH-52', 'the review follows the pending push it named');
+  assert.equal(moved.pushAt, at(4));
+  assert.equal(moved.status, 'Open');
+  // The baseline follows the push it was accepted from.
+  const accepted = structuredClone(state); const acceptedOp = accepted.orders.find(o => o.id === order.id).operations.find(x => x.id === op.id);
+  Object.assign(acceptedOp.atp.pushes[2], { status: 'Accepted', reviewedBy: by, reviewedAt: at(5) });
+  acceptedOp.atp.baseline = { sha: 'abc0002', version: 'v2', acceptedFrom: 'PUSH-51', acceptedBy: by, acceptedAt: at(5) };
+  const acceptedUp = MES.upgrade(accepted);
+  assert.ok(acceptedUp && MES.validate(acceptedUp));
+  assert.equal(acceptedUp.orders.find(o => o.id === order.id).operations.find(x => x.id === op.id).atp.baseline.acceptedFrom, 'PUSH-52', 'the baseline names the push it was accepted from');
+});
+
 console.log(`record ids: checks ${passed + FAILS.length} pass ${passed} fail ${FAILS.length}`);
 console.log(`FAILS ${JSON.stringify(FAILS)}`);
 if (FAILS.length) process.exitCode = 1;

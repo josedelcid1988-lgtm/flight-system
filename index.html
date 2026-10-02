@@ -4290,7 +4290,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // validation refuses.
   const normalizeRecordCounters = (holder, prefixes) => { if (holder.idCounters === undefined) return; const kept = {}; if (plain(holder.idCounters)) for (const prefix of prefixes) { const value = holder.idCounters[prefix]; if (Number.isSafeInteger(value) && value >= 0) kept[prefix] = value; } holder.idCounters = kept; };
   function repairRecordIds(state) {
-    const renumber = (holder, prefix, list, pad) => { if (!Array.isArray(list)) return; markRecordIds(holder, prefix, list); const seen = new Set(); list.forEach(item => { if (!plain(item) || typeof item.id !== 'string') return; if (seen.has(item.id)) item.id = nextRecordId(holder, prefix, list, pad); seen.add(item.id); }); };
+    // Returns the records sharing each repeated id, before renumbering, so references can follow the one they named.
+    const renumber = (holder, prefix, list, pad) => { if (!Array.isArray(list)) return new Map(); markRecordIds(holder, prefix, list); const shared = new Map(); list.forEach(item => { if (plain(item) && typeof item.id === 'string') shared.set(item.id, [...(shared.get(item.id) || []), item]); }); const seen = new Set(); list.forEach(item => { if (!plain(item) || typeof item.id !== 'string') return; if (seen.has(item.id)) item.id = nextRecordId(holder, prefix, list, pad); seen.add(item.id); }); return new Map([...shared].filter(([, items]) => items.length > 1)); };
     normalizeRecordCounters(state, RECORD_ID_LISTS.map(([, prefix]) => prefix));
     RECORD_ID_LISTS.forEach(([key, prefix]) => renumber(state, prefix, state[key], 4));
     // Every ATP push list with a stored mark, or with a repeated id, is normalized; a list with neither is left
@@ -4299,7 +4300,19 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       if (!plain(op?.atp) || !Array.isArray(op.atp.pushes)) return;
       if (op.atp.idCounters === undefined && recordIdsUnique(op.atp.pushes)) return;
       normalizeRecordCounters(op.atp, ['PUSH']);
-      renumber(op.atp, 'PUSH', op.atp.pushes, 0);
+      const shared = renumber(op.atp, 'PUSH', op.atp.pushes, 0);
+      if (!shared.size) return;
+      // The baseline follows the push it was accepted from (accepting sets reviewedAt and acceptedAt together).
+      const baseline = op.atp.baseline, accepted = plain(baseline) && shared.get(baseline.acceptedFrom);
+      if (accepted) { const from = accepted.find(x => x.status === 'Accepted' && x.reviewedAt === baseline.acceptedAt) || accepted.find(x => x.status === 'Accepted' && x.sha === baseline.sha && x.version === baseline.version); if (from) baseline.acceptedFrom = from.id; }
+      // A review assignment names its push by id and time; one saved before the time was kept names the only pending
+      // record under its id, or else the first (the record it resolved to before), and is pinned to it.
+      (Array.isArray(state.assignments) ? state.assignments : []).forEach(a => {
+        if (!plain(a) || a.type !== 'review-push' || a.orderId !== order.id || a.opId !== op.id || !shared.has(a.pushId)) return;
+        const items = shared.get(a.pushId), pending = items.filter(x => x.status === 'Pending');
+        const target = (a.pushAt && items.find(x => x.at === a.pushAt)) || (pending.length === 1 ? pending[0] : items[0]);
+        a.pushId = target.id; if (typeof target.at === 'string') a.pushAt = target.at;
+      });
     }));
   }
   const atpPending = op => (op && op.atp && Array.isArray(op.atp.pushes) ? op.atp.pushes : []).filter(push => push.status === 'Pending');
