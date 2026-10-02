@@ -122,11 +122,17 @@ ok('carry moves only unfinished accepted tasks into tomorrow as proposals, notin
   assert.equal(host.MES.validate(state), true);
 });
 
-ok('a day that is not a calendar date is refused', () => {
+ok('a day that is not a calendar date is refused (carry: known #620)', () => {
   const state = fresh();
   assert.equal(host.MES.createBigThreePlan(state, '2026-9-28').ok, false);
   assert.equal(host.MES.plannerStatus(state, 'tomorrow'), null);
   assert.equal(host.MES.decideBigThree(state, '28/09/2026', 0, 'accept').ok, false);
+  // Known defect #620: carry throws on a malformed date instead of refusing, and saves nothing. This check pins it so
+  // the fix fails here; the fix replaces it with `assert.equal(host.MES.carryBigThree(state, date).ok, false)`.
+  const before = snapshot(state);
+  for (const date of ['2026-9-28', 'tomorrow', '28/09/2026']) assert.throws(() => host.MES.carryBigThree(state, date), error => error?.name === 'RangeError', `known #620: carry on ${date} throws until it is fixed`);
+  assert.equal(snapshot(state), before, 'the throw saves nothing');
+  assert.equal(host.MES.carryBigThree(state, '2026-02-30').ok, false, 'a date that rolls over is refused');
 });
 
 console.log(`\nplanner: ${n} checks, ${n - failed} pass`);
