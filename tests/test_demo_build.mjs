@@ -179,9 +179,12 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  await p.reload();await p.waitForTimeout(700);
  let g=await closedState();
  ok('after a reload the browser is still closed, with no sign-in form and nothing to press',g.gate&&g.boot&&!g.login&&g.inputs===0,JSON.stringify(g));
+ // Each load is given its session by its address, set before the page's scripts run. A session written from the page
+ // just before a reload can be lost here, and that load then has no session to end and nothing to log.
+ await p.addInitScript(()=>{const m=/[?&]as=([^&]+)/.exec(location.search);if(m)sessionStorage.setItem('skyryse-mes-session-v1',decodeURIComponent(m[1]));});
  for(const who of ['ops1','mlee','qa2']){
-  await p.evaluate(u=>sessionStorage.setItem('skyryse-mes-session-v1',u),who);await p.reload();
-  // The ended session is logged once the page has loaded; wait for that entry, not a fixed time, before the next reload.
+  await p.goto('file://'+FIXTURES+'publish.html?as='+encodeURIComponent(who));
+  // The ended session is logged once the page has loaded; wait for that entry, not a fixed time, before the next load.
   await p.waitForFunction(u=>!!document.getElementById('sk-legacy-review')&&JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').some(e=>e.type==='signout'&&e.username===u&&/older demo build/.test(e.reason||'')),who,{timeout:15000}).catch(()=>{});
   g=await closedState();
   ok(`a session of ${who} is ended on a closed browser, a QA Manager or Master Access account included`,g.gate&&g.session===null&&g.user===null,JSON.stringify(g));}
