@@ -430,8 +430,10 @@ const prod = createHost(here('../index.html'));
     await page.getByRole('button', { name: 'Plan from master WI' }).first().click();
     check('planning with no released WI says what to do next', /No master WI is released yet\. Write one on the Master WI library or import WIs from a CSV/.test(await page.locator('#dialog').innerText()));
     await page.evaluate(() => document.getElementById('dialog').close());
-    await page.getByRole('button', { name: 'Your credentials', exact: true }).click();
-    check('the empty stamp register says how to load stamps', /No stamps issued\. Issue a stamp to each named person below, or import the current register from a CSV/.test(await page.locator('#dialog').innerText()));
+    // The stamp register is on the Admin page (#332), Stamps tab.
+    await page.evaluate(() => { const d = document.getElementById('dialog'); if (d && d.open) d.close(); view = 'admin'; render(); });
+    await page.click('[data-admin-tab="stamps"]');
+    check('the empty stamp register says how to load stamps', /No stamps issued\. Issue a stamp to each named person below, or import the current register from a CSV/.test(await page.locator('#admin-panel-stamps').innerText()));
     await loadSampleInPage(page, { wis: true });
     const firmed = await page.evaluate(() => { const wi = state.masterWIs.find(w => w.status === 'Released'); const r = FlightPlan.addPlannedOrder(state, { masterWI: `${wi.id}|${wi.revision}`, pedigree: 'Production', subcategory: 'Mfg.', aircraft: MES.AIRCRAFT[0], site: null, quantity: 1, needDate: '2026-12-01' }); const f = r.ok ? FlightPlan.firm(state, r.id) : r; if (typeof save === 'function') save(); return { ok: f.ok, message: f.message || r.message, netsuite: r.ok ? FlightPlan.get(state, r.id).netsuite : 'none' }; });
     const kanban = await show('plan-kanban');
