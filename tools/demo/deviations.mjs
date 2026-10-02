@@ -222,6 +222,11 @@ const LIST = [
     why: 'The message after an analysis draft is reviewed matches the relaxation D-41, so a solo walk-through is told its real next step. Production says a different qualified person must accept it.',
     find: 'reviewed. A different qualified person must accept it.', count: 1,
     replace: (ctx, m, id) => `reviewed.\${''/* DEMO ${id} */} In this demo the reviewer may accept it next.` },
+  { area: 'Separation of duties', title: 'Audit form text says the writer may close a finding',
+    why: 'The help text under Open audit matches the relaxations D-41 and D-44, which let the person who recorded a finding close it and its audit, so a solo walk-through is not told another person must sign. Production says a different person signs each closure.',
+    // MES.AUDIT_FINDING_CLOSE_HELP is a single-quoted string read by both the legacy and the React audit form.
+    find: "MES.AUDIT_FINDING_CLOSE_HELP = 'The person who records a finding cannot close it. A different person signs each closure.';", count: 1,
+    replace: (ctx, m, id) => `MES.AUDIT_FINDING_CLOSE_HELP = /* DEMO ${id} */ 'In this demo the person who records a finding may also sign it closed.';` },
 ];
 
 export const DEVIATIONS = LIST.map((d, i) => Object.freeze({ ...d, id: `D-${i + 1}` }));

@@ -957,6 +957,9 @@ const qms = {
     u.check('the calibration entry is signed by master with a SHA-256 hash', JSON.stringify(entry).includes('ACCT-master') && /"[a-f0-9]{64}"/.test(JSON.stringify(entry)), JSON.stringify(entry).slice(0, 400));
     await u.step('open an audit with a finding', async () => {
       const f = qmsForm(u, 'scope');
+      // D-49: the help text under the form does not tell the writer another person must close the finding.
+      const help = await f.innerText().catch(() => '');
+      u.check('the audit form tells the solo writer they may close the finding', !/A different person signs/.test(help) && /may also sign it closed/.test(help), help.slice(-200));
       await f.locator('[name=scope]').fill('Receiving inspection process audit');
       await f.locator('[name=findings]').fill('One bin label missing in receiving.');
       await f.locator('button[type=submit]').click(); await u.wait(450);

@@ -19,7 +19,7 @@ The accounts `tech`, `quality`, `mfgeng`, `operations`, `engineering` are pilot 
 their real role (Technician, Quality, Manufacturing Engineering, Operations, Engineering) so a pilot
 can rehearse the real hand-offs. Every other demo account (`demo`, `master`, `safety`,
 `certification` and any account a person creates) has full access (D-6 to D-36). The stamp,
-PIN and separation-of-duties relaxations (D-13 to D-19; D-20 to D-48) apply to every
+PIN and separation-of-duties relaxations (D-13 to D-19; D-20 to D-49) apply to every
 demo account so no scenario stalls. Sign in with any account and the password `demo1234`.
 
 Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-28 to D-29).
@@ -86,3 +86,4 @@ Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-2
 | D-46 | Separation of duties | Pedigree change text says one person may give both approvals | The pedigree change dialog, panel, request and approval messages and their history entries match the relaxations D-22 and D-39, so a solo walk-through is not told to find a second discipline. Production keeps the different discipline wording. | 6 |
 | D-47 | Separation of duties | Closure request text says the requester may review it | The pending closure banner matches the relaxation D-40, which shows Review closure to the requester, so it does not tell a solo walk-through to find another person. Production asks for Quality approval from a different person. | 1 |
 | D-48 | Separation of duties | Analysis draft review message says the reviewer may accept it | The message after an analysis draft is reviewed matches the relaxation D-41, so a solo walk-through is told its real next step. Production says a different qualified person must accept it. | 1 |
+| D-49 | Separation of duties | Audit form text says the writer may close a finding | The help text under Open audit matches the relaxations D-41 and D-44, which let the person who recorded a finding close it and its audit, so a solo walk-through is not told another person must sign. Production says a different person signs each closure. | 1 |
