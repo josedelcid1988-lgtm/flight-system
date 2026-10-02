@@ -29,7 +29,7 @@ function RecordDrawer({ order, MES, onClose, onOpen }) {
     return () => { if (dialog.current && dialog.current.open) dialog.current.close(); if (returnFocus.current) returnFocus.current.focus(); };
   }, [order]);
   if (!order) return null;
-  const holds = [...(MES && MES.blockingTickets ? MES.blockingTickets(order) : []), ...(MES && MES.sourceInspectionHolds ? MES.sourceInspectionHolds(null, order) : [])].map(holdText);
+  const holds = [...(MES && MES.blockingTickets ? MES.blockingTickets(order) : []), ...actionableSourceInspections(order, MES)].map(holdText);
   const next = (order.operations || []).find(operation => !operation.done);
   const close = () => { if (dialog.current && dialog.current.open) dialog.current.close(); onClose(); };
   return <dialog className="fr-drawer" ref={dialog} onCancel={event => { event.preventDefault(); close(); }} onClick={event => { if (event.target === dialog.current) close(); }}>
@@ -148,7 +148,7 @@ function Hangar({ state, MES, onOpen }) {
   }).sort((a, b) => asText(dueOf(a) || '9999').localeCompare(asText(dueOf(b) || '9999')));
   const holds = (state.orders || []).filter(orderIsOpen).flatMap(item => {
     const blockers = MES && MES.blockingTickets ? MES.blockingTickets(item) : [];
-    const sourceInspections = MES && MES.sourceInspectionHolds ? MES.sourceInspectionHolds(state, item) : [];
+    const sourceInspections = actionableSourceInspections(item, MES);
     const allHolds = [...blockers, ...sourceInspections];
     return allHolds.length ? [{ item, reason: holdText(allHolds[0]) }] : [];
   }).slice(0, 4);

@@ -278,7 +278,7 @@ try {
         const later = order.operations.filter(op => !op.done)[1];
         window.__later = [later, later.classification, later.sourceInspection];
         later.classification = MES.SOURCE_INSPECTION_CLASS; delete later.sourceInspection;
-        return { id: order.id, pending: MES.sourceInspectionHolds(null, order).length, refused: MES.recordSourceInspection(state, order.id, later.id, {}).ok === false, blocked: orderBlocked(order) };
+        return { id: order.id, holdTitle: MES.sourceInspectionHolds(null, order).find(h => h.operationId === later.id)?.title, pending: MES.sourceInspectionHolds(null, order).length, refused: MES.recordSourceInspection(state, order.id, later.id, {}).ok === false, blocked: orderBlocked(order) };
       });
       try {
         assert.ok(setup.pending > 0 && setup.refused, `the engine lists the later inspection and refuses its record (${JSON.stringify(setup)})`);
@@ -289,6 +289,16 @@ try {
           assert.equal(await card.locator('.fr-order-blocked').count(), 0, `${route}: the card is not Blocked by a later source inspection`);
           assert.ok(!/source inspection record/.test(await card.locator('.fr-wo-card-next dd').innerText()), `${route}: the next step does not ask for a record that cannot be made yet`);
           if (route === 'orders') assert.ok(!(await blockedFilterCards(page)).includes(setup.id), 'the Blocked filter leaves out an order whose source inspection is still ahead');
+          if (route === 'home') {
+            // The Hangar's Open holds panel and the order drawer do not list it either.
+            assert.ok(!(await page.locator('#main .fr-holds .fr-hold-row').allInnerTexts()).some(text => text.includes(setup.id)), 'the Hangar Open holds panel leaves out a source inspection still ahead');
+            await card.locator('.fr-wo-card-open').click();
+            const drawer = page.locator('dialog.fr-drawer[open]');
+            await drawer.waitFor();
+            const callout = await drawer.locator('.fr-hold-callout').allInnerTexts();
+            assert.ok(!callout.some(text => text.includes(setup.holdTitle)), `the drawer does not list the later source inspection as a hold (${JSON.stringify(callout)})`);
+            await drawer.locator('[data-close-drawer]').click();
+          }
         }
         const legacy = await page.evaluate(orderId => new DOMParser().parseFromString(`<table>${renderOrders()}</table>`, 'text/html').querySelector(`tr[data-order-row="${orderId}"]`)?.className ?? null, setup.id);
         assert.ok(legacy !== null && !/\bhold-row\b/.test(legacy), `legacy table: the row is not a hold row (${legacy})`);
