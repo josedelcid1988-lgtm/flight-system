@@ -249,12 +249,16 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  const H={salt:'01',hash:'ecad7597c83a96d133e45f9e9d271cbb0d1815dbae29b38b5148be7822799576'};
  const posts=[];await ctx.route(/mirror-full\.test|\/api\/v1\/writes/,route=>{try{posts.push(...(JSON.parse(route.request().postData()||'{}').records||[]));}catch(e){}route.fulfill({status:500,contentType:'application/json',body:'{"ok":false}'});});
  await ctx.addInitScript(H=>{window.SK_MIRROR={url:'http://mirror-full.test',token:'full-token',batchSize:50};const real=Storage.prototype.setItem;
-  Storage.prototype.setItem=function(k,v){if(this===window.localStorage&&k==='skyryse-mes-legacy-demo-review-v1')throw new DOMException('full','QuotaExceededError');return real.call(this,k,v);};
-  if(localStorage.getItem('seeded'))return;real.call(localStorage,'seeded','1');
-  real.call(localStorage,'skyryse-mes-auth-v1',JSON.stringify({users:[{username:'ops9',displayName:'Ops Nine',...H,role:'ops',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'mlee',displayName:'Morgan Lee',...H,role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'}]}));},H);
+  Storage.prototype.setItem=function(k,v){if(this===window.localStorage&&k==='skyryse-mes-legacy-demo-review-v1')throw new DOMException('full','QuotaExceededError');return real.call(this,k,v);};},H);
+ // The accounts are seeded once, by a page that then closes. A seed written from every page's init script could land
+ // late from one tab and replace the account list after the leftovers were added.
+ {const s=await ctx.newPage();s.on('pageerror',e=>errs.push(e.message));
+  await s.addInitScript(H=>{if(localStorage.getItem('seeded'))return;localStorage.setItem('seeded','1');
+   localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify({users:[{username:'ops9',displayName:'Ops Nine',...H,role:'ops',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'mlee',displayName:'Morgan Lee',...H,role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'}]}));},H);
+  await s.goto('file://'+FIXTURES+'publish.html');await s.waitForFunction(()=>!document.getElementById('sk-login').hidden,null,{timeout:20000});await s.close();}
  // A page already open on the sign-in screen (an active signed-in tab would rewrite shared storage from its own copy).
  const open=await ctx.newPage();open.on('pageerror',e=>errs.push(e.message));
- await open.goto('file://'+FIXTURES+'publish.html');await open.waitForFunction(()=>!document.getElementById('sk-login').hidden,null,{timeout:20000});
+ await open.goto('file://'+FIXTURES+'publish.html');await open.waitForFunction(()=>!document.getElementById('sk-login').hidden&&/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||''),null,{timeout:20000});
  // The leftovers are written by the finding page itself before it loads (a write from another tab arrives asynchronously).
  const leftovers=()=>{if(sessionStorage.getItem('left'))return;sessionStorage.setItem('left','1');const a=JSON.parse(localStorage.getItem('skyryse-mes-auth-v1'));if(!a.users.some(u=>u.username==='master')){a.users.push({username:'master',displayName:'Master Access',salt:'00',hash:'f'.repeat(64),role:'admin',createdAt:'2026-09-17T00:00:00.000Z',createdBy:'demo build'});localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify(a));localStorage.setItem('skyryse-mes-sync-queue-v1',JSON.stringify([{clientWriteId:'old-demo-w',storeKey:'skyryse-mes-work-order-qa100-v1',entityType:'order',entityId:'WO-10009',operation:'upsert',payloadJson:'{}'},{clientWriteId:'prod-w',storeKey:'skyryse-mes-work-order-v1',entityType:'order',entityId:'WO-1',operation:'upsert',payloadJson:'{}'}]));}};
  const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));await p.addInitScript(leftovers);
