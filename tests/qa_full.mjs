@@ -333,7 +333,7 @@ const S='Static';
 const prod=fs.readFileSync(FIXTURES+'publish.html','utf8'),demo=fs.readFileSync(FIXTURES+'demo_qa150_publish.html','utf8');
 add(S,'Build','Production build carries no demo relaxations',!/D-5|demo relaxation|DEMO_LIFT|__demoFullAccess/.test(prod)&&!/skDemoRelax/.test(prod),`${(prod.length/1024).toFixed(0)} KB`);
 add(S,'Build','Demo build is titled Flight System Demo',/<title>Flight System Demo<\/title>/.test(demo),'');
-add(S,'Build','Production build is titled Flight Control',/<title>Flight Control(?: · [^<]*)?<\/title>/.test(prod),'');
+add(S,'Build','Production build is titled Flight System',/^[\s\S]*?<head>[\s\S]*?<title>([^<]*)<\/title>/.exec(prod)?.[1]==='Flight System','');
 add(S,'Build','Both builds embed Inter from Google Fonts and no other external hosts',[prod,demo].every(h=>{const ext=[...h.matchAll(/(?:src|href)="(https?:\/\/[^"]+)"/g)].map(m=>new URL(m[1]).host);return ext.every(x=>/fonts\.(googleapis|gstatic)\.com/.test(x));}),'');
 add(S,'Build','No em dashes in UI copy',!/\u2014/.test(prod),'an em dash is in index.html');
 // Release zips: package the current build with tools/package-release.mjs and check both zips hold exactly
