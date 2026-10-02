@@ -36,7 +36,7 @@ try {
   await page.locator('[data-flight-skill-run] button[type=submit]').click();
   await page.getByText(/5-Why draft AID-0001 created/i).waitFor();
   // Codex review on #621: the run form hands the parsed object itself to MES.runSkill, so the engine measures it before
-  // anything copies it; a flat input with 200,000 keys is refused with the value-count message and no draft is added.
+  // anything copies it; a flat input with 200,000 keys is refused with the budget message and no draft is added.
   { const wide = JSON.stringify(Object.fromEntries(Array.from({ length: 200000 }, (_, i) => [`k${i}`, i])));
     await page.evaluate(text => {
       window.__watchedText = text; window.__parsedInput = null; window.__passedSame = null;
@@ -47,7 +47,7 @@ try {
     await page.locator('[data-flight-skill-run] [name=input]').fill(wide);
     await page.locator('[data-flight-skill-run] [name=reason]').fill('A run input wider than the value budget.');
     await page.locator('[data-flight-skill-run] button[type=submit]').click();
-    await page.locator('[data-flight-skill-error]').getByText(/holds more than 50,000 values/).waitFor();
+    await page.locator('[data-flight-skill-error]').getByText(/Keep it under 50 KB/).waitFor();
     assert.equal(await page.evaluate(() => window.__passedSame), true, 'the form passes the parsed object itself, not a copy');
     assert.equal(await page.evaluate(() => (state.aiSkillDrafts || []).length), draftsBefore, 'no draft is added');
     await page.locator('[data-flight-skill-run] [name=input]').fill(''); }

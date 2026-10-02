@@ -3506,21 +3506,24 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // The walk keeps its own stack, so it cannot overflow. Every value it reaches counts against the budget before it is
   // queued, and containers are read in place (arrays by index, objects key by key), so a wide value is refused once the
   // budget is spent, never after its children have been copied or queued.
-  const JSON_BODY_MAX_DEPTH = 64, JSON_BODY_MAX_VALUES = 50000;
-  // Returns null, or { message, wide }: wide is true when the value budget was exceeded. Passing the depth limit only
+  // Text counts too: every key and string value adds its length to a 50,000-character budget, so a body with few values
+  // but one huge string is refused as well, and any body that passes is small enough to serialize.
+  const JSON_BODY_MAX_DEPTH = 64, JSON_BODY_MAX_VALUES = 50000, JSON_BODY_MAX_CHARS = 50000;
+  // Returns null, or { message, wide }: wide is true when the value or text budget was exceeded. Passing the depth limit only
   // marks the body: the walk keeps counting, so a body both deep and wide is reported as wide and every refusal path
   // after it (the __proto__ check serializes the whole body) only ever sees a body within the value budget.
   const jsonShapeProblem = root => {
     const deep = `The JSON is nested too deeply to save: more than ${JSON_BODY_MAX_DEPTH} levels. Flatten it to ${JSON_BODY_MAX_DEPTH} levels or fewer and try again.`;
     const wide = `The JSON holds more than ${JSON_BODY_MAX_VALUES.toLocaleString('en-US')} values. Keep it under 50 KB and try again.`;
+    const long = `The JSON holds more than ${JSON_BODY_MAX_CHARS.toLocaleString('en-US')} characters of text. Keep it under 50 KB and try again.`;
     if (!root || typeof root !== 'object') return null;
-    const stack = [[root, 1]]; let values = 1, tooDeep = false;
+    const stack = [[root, 1]]; let values = 1, chars = 0, tooDeep = false, tooLong = false;
     while (stack.length) {
       const [value, depth] = stack.pop();
       if (depth > JSON_BODY_MAX_DEPTH) tooDeep = true;
-      const visit = child => { values += 1; if (values > JSON_BODY_MAX_VALUES) return false; if (child && typeof child === 'object') stack.push([child, depth + 1]); return true; };
-      if (Array.isArray(value)) { for (let i = 0; i < value.length; i += 1) if (!visit(value[i])) return { message: wide, wide: true }; }
-      else for (const key in value) { if (Object.hasOwn(value, key) && !visit(value[key])) return { message: wide, wide: true }; }
+      const visit = (child, key) => { values += 1; if (values > JSON_BODY_MAX_VALUES) return false; chars += (key ? key.length : 0) + (typeof child === 'string' ? child.length : 0); if (chars > JSON_BODY_MAX_CHARS) { tooLong = true; return false; } if (child && typeof child === 'object') stack.push([child, depth + 1]); return true; };
+      if (Array.isArray(value)) { for (let i = 0; i < value.length; i += 1) if (!visit(value[i])) return { message: tooLong ? long : wide, wide: true }; }
+      else for (const key in value) { if (Object.hasOwn(value, key) && !visit(value[key], key)) return { message: tooLong ? long : wide, wide: true }; }
     }
     return tooDeep ? { message: deep, wide: false } : null;
   };
