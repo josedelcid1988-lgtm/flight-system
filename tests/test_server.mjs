@@ -410,6 +410,59 @@ try {
     } finally { delete process.env.FLIGHT_TEST_MODEL_KEY; }
   });
 
+  await check('every refused action is audited with its name, status and reason, and never its arguments (#582)', async () => {
+    const refused = async () => (await server.store.auditRows(1000)).filter(row => row.action === 'action-refused');
+    const latest = async () => JSON.parse((await refused())[0].detail);
+    const before = server.store.getDoc('default'), count = (await refused()).length;
+    const secret = 'argument-text-that-must-not-be-recorded';
+    const unknown = await api('POST', '/workspace/actions/MES.noSuchCommand', { token, body: { args: [secret] }, headers: { 'If-Match': before.etag } });
+    assert.equal(unknown.status, 404);
+    assert.equal(unknown.json.error, 'No action named MES.noSuchCommand.', 'the response text is unchanged');
+    assert.deepEqual(await latest(), { action: 'MES.noSuchCommand', status: 404, reason: 'no such action' });
+    const noMatch = await api('POST', '/workspace/actions/MES.setPriority', { token, body: { args: ['WO-10001', 'High', secret] } });
+    assert.equal(noMatch.status, 428);
+    assert.deepEqual(await latest(), { action: 'MES.setPriority', status: 428, reason: 'missing If-Match', etag: before.etag });
+    const stale = await api('POST', '/workspace/actions/MES.setPriority', { token, body: { args: ['WO-10001', 'High', secret] }, headers: { 'If-Match': '"stale-etag"' } });
+    assert.equal(stale.status, 409);
+    assert.deepEqual(await latest(), { action: 'MES.setPriority', status: 409, reason: 'stale If-Match', etag: before.etag });
+    const notJson = await api('POST', '/workspace/actions/MES.setPriority', { token, raw: true, body: `{"args":["${secret}"`, headers: { 'Content-Type': 'application/json', 'If-Match': before.etag } });
+    assert.equal(notJson.status, 400);
+    assert.deepEqual(await latest(), { action: 'MES.setPriority', status: 400, reason: 'request body is not JSON' });
+    const tooLarge = await api('POST', '/workspace/actions/MES.setPriority', { token, headers: { 'Content-Length': String(MAX_REQUEST_BYTES + 1), 'If-Match': before.etag } });
+    assert.equal(tooLarge.status, 413);
+    assert.deepEqual(await latest(), { action: 'MES.setPriority', status: 413, reason: 'request body over the size limit' });
+    // A model adapter probe names the setting only when it looks like an environment variable name, never a value.
+    const probe = { enabled: true, provider: 'approved-model', rationale: 'Probe of an unlisted setting.' };
+    const unlisted = await api('POST', '/workspace/actions/MES.configureModelAdapter', { token, body: { args: [{ ...probe, settingName: 'PATH' }] }, headers: { 'If-Match': before.etag } });
+    assert.equal(unlisted.status, 422);
+    assert.deepEqual(await latest(), { action: 'MES.configureModelAdapter', status: 422, reason: 'model adapter setting not configured', settingName: 'PATH' });
+    await api('POST', '/workspace/actions/MES.configureModelAdapter', { token, body: { args: [{ ...probe, settingName: `x ${secret}` }] }, headers: { 'If-Match': before.etag } });
+    assert.equal((await latest()).settingName, '(not a setting name)');
+    // An engine refusal keeps its message and now carries its status too.
+    const s = '3333';
+    server.store.upsertAccount({ username: 'refused-basic', displayName: 'Refused basic user', role: 'general', salt: s, hash: sha(s, 'refused-basic-pass'), createdBy: 'one' });
+    const basic = await api('POST', '/auth/session', { body: { username: 'refused-basic', password: 'refused-basic-pass' } });
+    const engine = await api('POST', '/workspace/actions/MES.setPriority', { token: basic.json.token, body: { args: ['WO-10001', 'High'] }, headers: { 'If-Match': before.etag } });
+    assert.equal(engine.status, 403);
+    const engineRow = await latest();
+    assert.deepEqual([engineRow.action, engineRow.status, engineRow.reason], ['MES.setPriority', 403, 'refused by the engine']);
+    assert.equal(engineRow.message, engine.json.error);
+    // An action whose result would leave the workspace invalid (the post-action check) is refused and audited.
+    const resolveAction = server.host.resolveAction;
+    server.host.resolveAction = name => name === 'MES.setPriority' ? state => { state.orders = 'not a list'; return { ok: true, message: 'corrupted' }; } : resolveAction(name);
+    let invalid;
+    try { invalid = await api('POST', '/workspace/actions/MES.setPriority', { token, body: { args: ['WO-10001', 'High', secret] }, headers: { 'If-Match': before.etag } }); }
+    finally { server.host.resolveAction = resolveAction; }
+    assert.equal(invalid.status, 422);
+    assert.match(invalid.json.error, /^The action would leave the workspace invalid: /);
+    const invalidRow = await latest();
+    assert.deepEqual([invalidRow.action, invalidRow.status], ['MES.setPriority', 422]);
+    assert.match(invalidRow.reason, /^would leave the workspace invalid: /);
+    assert.equal((await refused()).length, count + 9, 'each refusal adds exactly one audit row');
+    assert.equal(JSON.stringify((await refused()).slice(0, 9)).includes(secret), false, 'no refusal row records the request arguments');
+    assert.equal(server.store.getDoc('default').etag, before.etag, 'the refused actions leave the shared workspace unchanged');
+    assert.equal(server.store.verifyAudit().ok, true, 'the audit chain still verifies');
+  });
   await check('bulk account writes reject client-supplied roles, grants, training and Support Access', async () => {
     const created = await api('PUT', '/auth/accounts', { token, body: { users: [
       { username: 'combined', displayName: 'Combined role account', role: 'technician', roles: ['technician'], salt: 'combined-salt', hash: sha('combined-salt', 'combined-pass-123') }

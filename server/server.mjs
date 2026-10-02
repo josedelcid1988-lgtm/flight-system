@@ -912,30 +912,35 @@ export function createServer(options = {}) {
       // -- actions: run an engine function server-side with the session's authority --
       const action = /^\/workspace\/actions\/([A-Za-z0-9_.]+)$/.exec(route);
       if (action && m === 'POST') {
+        // Every refusal on this route is audited, as PUT /workspace refusals are (#582): the action name, the status and
+        // a reason. The request arguments are never recorded; they can carry record content or a probe's payload.
+        const auditRefusal = async (status, reason, extra = {}) => { await store.audit(session.username, 'action-refused', { action: action[1].slice(0, 120), status, reason: String(reason).slice(0, 500), ...extra }); };
         const fn = host.resolveAction(action[1]);
-        if (!fn) { send(res, 404, { error: `No action named ${action[1]}.` }); return; }
-        const body = await readJson(req), args = Array.isArray(body.args) ? body.args : [];
+        if (!fn) { await auditRefusal(404, 'no such action'); send(res, 404, { error: `No action named ${action[1]}.` }); return; }
+        let body; try { body = await readJson(req); } catch (e) { if (e.status === 400 || e.status === 413) await auditRefusal(e.status, e.status === 413 ? 'request body over the size limit' : 'request body is not JSON'); throw e; }
+        const args = Array.isArray(body.args) ? body.args : [];
         if (action[1] === 'MES.configureModelAdapter' && args[0]?.enabled === true) {
           const settingName = String(args[0]?.settingName || '');
           // One answer for a setting that is not listed and one that is listed but empty: the check reveals nothing
           // about other environment variables.
-          if (!modelAdapterSettings.includes(settingName) || !String(process.env[settingName] || '').trim()) { send(res, 422, { error: 'The named server environment setting is not configured for the model adapter. Ask the server operator to set it and list it in FLIGHT_MODEL_ADAPTER_SETTINGS. The model adapter remains off.' }); return; }
+          // The audit names the setting only when it is shaped like an environment variable name, never its value.
+          if (!modelAdapterSettings.includes(settingName) || !String(process.env[settingName] || '').trim()) { await auditRefusal(422, 'model adapter setting not configured', { settingName: /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(settingName) ? settingName : '(not a setting name)' }); send(res, 422, { error: 'The named server environment setting is not configured for the model adapter. Ask the server operator to set it and list it in FLIGHT_MODEL_ADAPTER_SETTINGS. The model adapter remains off.' }); return; }
           args.push(true); // This flag is derived by the server, never accepted from the client.
         }
         const { state, etag, problem, raw, registers } = await loadState();
-        if (!state) { send(res, problem ? 422 : 404, { error: problem || 'No workspace yet.' }); return; }
-        if (registers) { send(res, 422, { error: registers }); return; }
+        if (!state) { await auditRefusal(problem ? 422 : 404, problem || 'no workspace yet'); send(res, problem ? 422 : 404, { error: problem || 'No workspace yet.' }); return; }
+        if (registers) { await auditRefusal(422, registers); send(res, 422, { error: registers }); return; }
         const ifMatch = req.headers['if-match'] || null;
-        if (!ifMatch) { send(res, 428, { error: 'Include the current workspace ETag in If-Match before running an action.' }); return; }
-        if (ifMatch && ifMatch !== etag) { send(res, 409, { error: 'The workspace changed on another device. Reload to continue.', etag }); return; }
+        if (!ifMatch) { await auditRefusal(428, 'missing If-Match', { etag }); send(res, 428, { error: 'Include the current workspace ETag in If-Match before running an action.' }); return; }
+        if (ifMatch && ifMatch !== etag) { await auditRefusal(409, 'stale If-Match', { etag }); send(res, 409, { error: 'The workspace changed on another device. Reload to continue.', etag }); return; }
         let result;
         try { result = host.withAccount(session.account, () => fn(state, ...args), state); } catch (e) { internalError(res, req, e, 'The action could not run. Nothing was saved.'); return; }
-        if (!result || result.ok === false) { await store.audit(session.username, 'action-refused', { action: action[1], message: result && result.message }); send(res, 403, { error: result ? result.message : 'Refused.', result }); return; }
-        const invalid = validState(state); if (invalid) { send(res, 422, { error: `The action would leave the workspace invalid: ${invalid}` }); return; }
-        { const bad = await evidenceProblem(raw, state, session); if (bad) { await store.audit(session.username, 'evidence-refused', { action: action[1], message: bad }); send(res, 422, { error: bad }); return; } }
+        if (!result || result.ok === false) { await auditRefusal(403, 'refused by the engine', { message: String(result && result.message || '').slice(0, 500) }); send(res, 403, { error: result ? result.message : 'Refused.', result }); return; }
+        const invalid = validState(state); if (invalid) { await auditRefusal(422, `would leave the workspace invalid: ${invalid}`); send(res, 422, { error: `The action would leave the workspace invalid: ${invalid}` }); return; }
+        { const bad = await evidenceProblem(raw, state, session); if (bad) { await store.audit(session.username, 'evidence-refused', { action: action[1], status: 422, message: bad }); send(res, 422, { error: bad }); return; } }
         const done = await commitState(state, etag, session.username, [{ action: 'action', detail: { action: action[1], message: result.message } }]);
-        if (done.problem) { send(res, 422, { error: `The action would leave the workspace invalid: ${done.problem}` }); return; }
-        if (done.conflict) { send(res, 409, { error: 'The workspace changed while the action ran. Try again.' }); return; }
+        if (done.problem) { await auditRefusal(422, `would leave the workspace invalid: ${done.problem}`); send(res, 422, { error: `The action would leave the workspace invalid: ${done.problem}` }); return; }
+        if (done.conflict) { await auditRefusal(409, 'workspace changed while the action ran'); send(res, 409, { error: 'The workspace changed while the action ran. Try again.' }); return; }
         res.writeHead(200, { 'Content-Type': MIME['.json'], ETag: done.etag, ...(done.archived.length ? { 'X-Flight-Archived': done.archived.join(',') } : {}) }); res.end(JSON.stringify({ result, etag: done.etag, archived: done.archived })); return;
       }
       // -- evidence: bytes in SQLite, addressed by the EV ID the record carries, checked by SHA-256 --
