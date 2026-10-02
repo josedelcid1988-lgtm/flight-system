@@ -316,7 +316,7 @@ try {
       const refused = MES.addPurchaseOrder(structuredClone(c), o.id, plain.id, { poNumber: 'PO-99003' });
       return { pending, ok: r.ok, message: r.message, po: op.externalPO?.number, valid: MES.validate(c), refused: !refused.ok && refused.message };
     });
-    ok('External Testing without its PO lists the PO as the blocker', !!po.pending && po.pending.includes('Add the NetSuite PO for this sub-processing operation.'), JSON.stringify(po));
+    ok('External Testing without its PO lists the PO as the blocker', !!po.pending && po.pending.includes('Add the NetSuite PO for this external operation.'), JSON.stringify(po));
     ok('a requested PO on External Testing can be filled and the workspace stays valid', po.ok && po.po === 'PO-99002' && po.valid, JSON.stringify(po));
     ok('adding a PO to a non-external operation is still refused', po.refused === 'This is not an external operation.', JSON.stringify(po));
     const stepGo = await page.evaluate(() => { const o = state.orders.find(x => x.id === 'WO-10006'), op = structuredClone(o.operations.find(x => !x.done)); op.requiresTooling = false; op.steps = [{ id: 's1', title: 'A', instruction: 'A' }, { id: 's2', title: 'B', instruction: 'B' }]; op.stepChecks = { s2: { torque: { tool: 'NOT-IN-LOG-2', value: '5', unit: 'in-lb' } } }; return buyoffPrereqs(o, op).find(x => /NOT-IN-LOG-2/.test(x.text)); });
@@ -404,13 +404,21 @@ try {
       const accepted = { status: 'Accepted', level: 'Full', erpReceipt: 'ERP-1', supplierInspectionLot: 'LOT-1', inspectionRef: 'RI-1', by: { name: 'Quality Inspector', role: 'Quality', credentialId: 'Q-1' }, at: new Date().toISOString() };
       return { missing: attempt(undefined), accepted: attempt(accepted) };
     });
+    // Jinx-A on d86229e: the PO refusal names the operation as external work, not sub-processing, so it reads right for External Testing.
+    const poWording = await page.evaluate(() => {
+      const s = structuredClone(state), o = s.orders.find(x => x.id === 'WO-10006'), op = o.operations.find(x => !x.done);
+      op.classification = MES.EXTERNAL_CLASSES.find(c => c !== MES.EXTERNAL_CLASS); op.externalPO = null; op.steps = []; op.stepChecks = {}; op.requiresRecording = false; op.evidence = [];
+      const engine = MES.completeOperation(s, o.id, op.id, '', { stampNumber: MES.buyoffCredential(s.profile, op.buyoffType).holder?.number }).message || '';
+      return { engine, dialog: buyoffPrereqs(o, op).map(x => x.text).join(' | ') };
+    });
+    ok('the External Testing PO refusal says external operation, in the engine and the dialog', /Add the NetSuite PO for this external operation before buy-off\./.test(poWording.engine) && /Add the NetSuite PO for this external operation\./.test(poWording.dialog) && !/sub-processing/i.test(poWording.engine + poWording.dialog), JSON.stringify(poWording));
     ok('an external work center buy-off with no receipt is refused by the engine', extGate.missing.valid && !extGate.missing.ok && /External work remains blocked/.test(extGate.missing.message), JSON.stringify(extGate.missing));
     ok('an accepted receipt clears the receiving gate', extGate.accepted.valid && !/External work remains blocked/.test(extGate.accepted.message), JSON.stringify(extGate.accepted));
     // An operation with no steps held by an external PO: Complete operation is disabled and says why next to the button.
     await page.evaluate(() => { const o = state.orders.find(x => x.id === 'WO-10006'), op = o.operations.find(x => !x.done); op.steps = []; op.stepChecks = {}; op.classification = MES.EXTERNAL_CLASS; op.externalPO = null; openOrder(o.id); });
     await page.waitForTimeout(400);
     const hold = await page.evaluate(() => { const b = document.querySelector('#operation-form .task-actions button[type=submit]'), r = document.getElementById('buyoff-hold-reason'); return { found: !!b, disabled: b?.disabled, described: b?.getAttribute('aria-describedby'), reason: r?.textContent.trim(), visible: !!r && r.offsetParent !== null }; });
-    ok('a held no-step buy-off shows its reason beside the disabled button', hold.found && hold.disabled && hold.visible && hold.reason.startsWith('Add the NetSuite PO for this sub-processing operation.') && hold.described === 'buyoff-hold-reason', JSON.stringify(hold));
+    ok('a held no-step buy-off shows its reason beside the disabled button', hold.found && hold.disabled && hold.visible && hold.reason.startsWith('Add the NetSuite PO for this external operation.') && hold.described === 'buyoff-hold-reason', JSON.stringify(hold));
     const goto = await page.evaluate(() => { const b = document.querySelector('#buyoff-hold-reason [data-action="buyoff-goto"]'); if (!b) return { found: false }; const target = b.dataset.target, text = b.textContent.trim(); b.click(); const el = document.querySelector(target); return { found: true, target, text, focusInside: !!el && (el === document.activeElement || el.contains(document.activeElement)) }; });
     ok('the hold reason has a Go to button that moves focus to the PO', goto.found && goto.target === '.po-request-block' && /^Go to the PO/.test(goto.text) && goto.focusInside, JSON.stringify(goto));
     await page.context().close();
