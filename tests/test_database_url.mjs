@@ -63,6 +63,15 @@ ok('--database-url without a password is accepted', storeSettings(argsOf({ 'data
   let error = null;
   try { storeSettings(argsOf({}), {}, ['node', 'server.mjs', `--database-url=postgresql://flight:${SECRET}@db/flight`]); } catch (e) { error = e; }
   ok('--database-url=<url> carrying a password is refused too', !!error && error.code === 'DATABASE_URL_PASSWORD' && !error.message.includes(SECRET));
+  for (const [label, argv] of [
+    ['a passwordless --database-url first and a second one with a password', ['--database-url', 'postgresql://flight@db/flight', `--database-url=postgresql://flight:${SECRET}@db/flight`]],
+    ['two --database-url= forms, the second with a password', ['--database-url=postgresql://flight@db/flight', `--database-url=postgresql://flight:${SECRET}@db/flight`]],
+    ['two --database-url <url> forms, the second with a password', ['--database-url', 'postgresql://flight@db/flight', '--database-url', `postgresql://flight:${SECRET}@db/flight`]]
+  ]) {
+    let refused = null;
+    try { storeSettings(name => name === 'database-url' ? 'postgresql://flight@db/flight' : null, {}, ['node', 'server.mjs', ...argv]); } catch (e) { refused = e; }
+    ok(`every --database-url is checked: ${label} is refused`, !!refused && refused.code === 'DATABASE_URL_PASSWORD' && !refused.message.includes(SECRET));
+  }
   ok('--database-url=<url> without a password is read', storeSettings(argsOf({}), {}, ['node', 'server.mjs', '--database-url=postgresql://flight@db/flight']).databaseUrl === 'postgresql://flight@db/flight');
 }
 ok('FLIGHT_DATABASE_URL with a password is accepted (the environment is not the process list)', storeSettings(argsOf({}), { FLIGHT_DATABASE_URL: `postgresql://flight:${SECRET}@db/flight` }).databaseUrl === `postgresql://flight:${SECRET}@db/flight`);

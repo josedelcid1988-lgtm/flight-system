@@ -946,7 +946,8 @@ export function createServer(options = {}) {
         try { result = host.withAccount(session.account, () => fn(state, ...args), state); } catch (e) { internalError(res, req, e, 'The action could not run. Nothing was saved.'); return; }
         if (!result || result.ok === false) { await auditRefusal(403, 'refused by the engine', { message: String(result && result.message || '').slice(0, 500) }); send(res, 403, { error: result ? result.message : 'Refused.', result }); return; }
         const invalid = validState(state); if (invalid) { await auditRefusal(422, `would leave the workspace invalid: ${invalid}`); send(res, 422, { error: `The action would leave the workspace invalid: ${invalid}` }); return; }
-        { const bad = await evidenceProblem(raw, state, session); if (bad) { await store.audit(session.username, 'evidence-refused', { action: action[1], status: 422, message: bad }); send(res, 422, { error: bad }); return; } }
+        // An evidence refusal keeps its own evidence-refused row (reports and tests read it) and joins the action trail.
+        { const bad = await evidenceProblem(raw, state, session); if (bad) { await store.audit(session.username, 'evidence-refused', { action: action[1], status: 422, message: bad }); await auditRefusal(422, `evidence: ${bad}`); send(res, 422, { error: bad }); return; } }
         const done = await commitState(state, etag, session.username, [{ action: 'action', detail: { action: action[1], message: result.message } }]);
         if (done.problem) { await auditRefusal(422, `would leave the workspace invalid: ${done.problem}`); send(res, 422, { error: `The action would leave the workspace invalid: ${done.problem}` }); return; }
         if (done.conflict) { await auditRefusal(409, 'workspace changed while the action ran'); send(res, 409, { error: 'The workspace changed while the action ran. Try again.' }); return; }
@@ -1210,8 +1211,11 @@ export const DATABASE_URL_PASSWORD_REFUSAL = 'The --database-url connection stri
 // FLIGHT_DATABASE_URL is the way to give a password. A --database-url that carries one is refused (#584): the
 // command line of a running process is readable from the process list for its whole life. The refusal never
 // repeats the string.
-// --database-url=<url> is read too, so a password written that way is refused instead of left unread in argv.
+// Every --database-url on the command line is checked, written as --database-url <url> or --database-url=<url> and
+// however many times it appears, so a password in one that does not win is refused too instead of left in argv.
 export function storeSettings(arg, env = process.env, argv = process.argv) {
+  const given = argv.flatMap((item, i) => item === '--database-url' ? [argv[i + 1]] : String(item).startsWith('--database-url=') ? [String(item).slice('--database-url='.length)] : []).filter(Boolean);
+  if (given.some(connectionStringHasPassword)) throw Object.assign(new Error(DATABASE_URL_PASSWORD_REFUSAL), { code: 'DATABASE_URL_PASSWORD' });
   const joined = argv.find(item => String(item).startsWith('--database-url='));
   const dbOverride = arg('db', null), cliUrl = arg('database-url', null) || (joined ? joined.slice('--database-url='.length) || null : null);
   if (cliUrl && connectionStringHasPassword(cliUrl)) throw Object.assign(new Error(DATABASE_URL_PASSWORD_REFUSAL), { code: 'DATABASE_URL_PASSWORD' });

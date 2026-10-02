@@ -12,7 +12,8 @@
 // through 'unsafe-hashes', and tests/test_server_headers.mjs fails if a new one appears in index.html. Styles keep
 // 'unsafe-inline': the app sets style attributes throughout its templates, and those cannot be listed by hash.
 // Every runtime dependency is local, so scripts, styles, fonts and images come from this server only; fonts and small
-// images may also be data: URLs, and recordings and prints are blob: URLs the page made itself.
+// images may also be data: URLs, and recordings, prints and the training certificate preview (an iframe) are blob:
+// URLs the page made itself.
 // connect-src is this server only, plus any origin the operator lists in FLIGHT_CSP_CONNECT_SRC (an identity provider,
 // the optional mirror or the integration bridge configured in index.html).
 import { createHash } from 'node:crypto';
@@ -39,14 +40,15 @@ export function inlineScriptHashes(html) {
   return list;
 }
 
-// FLIGHT_CSP_CONNECT_SRC: origins separated by spaces or commas, each http(s) or ws(s) with no path. Anything else is
-// refused, so a typo cannot widen the policy (a bare * or a scheme alone would allow any host).
+// FLIGHT_CSP_CONNECT_SRC: origins separated by spaces or commas, each http(s) or ws(s) with no credentials, path, query
+// or fragment. Anything else is refused, so a typo cannot widen the policy (a bare * or a scheme alone would allow any
+// host). A valid spelling that is not canonical (a default port, capitals in the host) is stored as its origin.
 export function connectSources(value) {
   const origins = [];
   for (const item of String(value || '').split(/[\s,]+/).filter(Boolean)) {
     let url = null;
     try { url = new URL(item); } catch {}
-    if (!url || !['https:', 'http:', 'wss:', 'ws:'].includes(url.protocol) || url.origin === 'null' || item.replace(/\/$/, '') !== url.origin) {
+    if (!url || !['https:', 'http:', 'wss:', 'ws:'].includes(url.protocol) || url.origin === 'null' || !/^[a-z][a-z0-9+.-]*:\/\/[^/?#]+\/?$/i.test(item) || url.username || url.password) {
       throw new Error(`FLIGHT_CSP_CONNECT_SRC lists "${item.slice(0, 80)}", which is not an origin. List origins such as https://skyryse.okta.com, separated by spaces, with no path.`);
     }
     origins.push(url.origin);
@@ -61,6 +63,7 @@ export function pageCsp(scriptHashes, connect = []) {
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
     "media-src 'self' blob:",
+    "frame-src 'self' blob:",
     "font-src 'self' data:",
     `connect-src ${["'self'", ...connect].join(' ')}`,
     "object-src 'none'",

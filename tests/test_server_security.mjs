@@ -273,6 +273,12 @@ try {
     assert.match(forged.json.error, new RegExp(`^${victim} was uploaded by another account\\. Only the account that uploaded a recording, a QA Manager, or a Master Access account can attach it to a record\\.`));
     assert.equal((await server.store.getDoc('default')).etag, before.etag, 'the forged attach stores nothing');
     assert.ok((await server.store.auditRows(500)).some(row => row.action === 'evidence-refused' && row.username === 'sec-tech2'), 'the refusal is audited');
+    // It is also in the action refusal trail with the other refused actions (#582).
+    const trail = (await server.store.auditRows(500)).find(row => row.action === 'action-refused' && row.username === 'sec-tech2');
+    assert.ok(trail, 'the evidence refusal is in the action refusal trail');
+    const detail = JSON.parse(trail.detail);
+    assert.deepEqual([detail.action, detail.status], ['MES.attachEvidence', 422]);
+    assert.match(detail.reason, new RegExp(`^evidence: ${victim} was uploaded by another account`));
     assert.equal((await api('GET', `/evidence/${victim}`, { token: other })).status, 403, 'the recording stays unreadable to the other account');
     // An ID whose upload has not reached the server yet (still in flight, or never sent) cannot be referenced either:
     // otherwise the reference would authorize everyone the moment the owner's upload lands. The browser uploads before
