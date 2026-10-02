@@ -3464,10 +3464,12 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const qaFrozen = order => plain(order) && order.status === 'Quality' ? fail(qaFreezeMessage) : null;
   const SEND_BACK_MAX = 20;
   const SEND_BACK_MEANING = 'QA send back to Building';
+  // The linked NC must be on the order when the send back is signed (sendBackToBuilding checks it). A later NC split can
+  // move that NC to the new order, so validation checks its form here and the signature binds its id.
   // What the send-back signature binds: the work order, its revisions at the time, the rationale, the linked NC, the
   // from and to statuses, and who signed and when. verifyManifests and orderValid recompute it from the stored entry.
   const sendBackSubject = (order, entry) => ({ orderId: order.id, sendBackId: entry.id, revision: entry.revision, woRev: entry.woRev, rationale: entry.rationale, ticketId: entry.ticketId, from: entry.from, to: entry.to, by: entry.by && entry.by.credentialId, at: entry.at });
-  const sendBackValid = (order, entry) => plain(entry) && /^SB-\d{1,4}$/.test(entry.id) && entry.from === 'Quality' && entry.to === 'Building' && str(entry.rationale, 300) && entry.rationale.length >= 1 && entry.rationale === entry.rationale.trim() && (entry.ticketId === null || (typeof entry.ticketId === 'string' && order.tickets.some(t => t && t.id === entry.ticketId))) && str(entry.revision, 24) && str(entry.woRev, 40) && snapshotValid(entry.by) && timestamp(entry.at) && plain(entry.manifest) && entry.manifest.meaning === SEND_BACK_MEANING && entry.manifest.at === entry.at && entry.manifest.algorithm === 'SHA-256' && plain(entry.manifest.signer) && entry.manifest.signer.credentialId === entry.by.credentialId && entry.manifest.hash === sha256(canonical(sendBackSubject(order, entry)));
+  const sendBackValid = (order, entry) => plain(entry) && /^SB-\d{1,4}$/.test(entry.id) && entry.from === 'Quality' && entry.to === 'Building' && str(entry.rationale, 300) && entry.rationale.length >= 1 && entry.rationale === entry.rationale.trim() && (entry.ticketId === null || (typeof entry.ticketId === 'string' && /^(IDR|NC)-\d{4,8}$/.test(entry.ticketId))) && str(entry.revision, 24) && str(entry.woRev, 40) && snapshotValid(entry.by) && timestamp(entry.at) && plain(entry.manifest) && entry.manifest.meaning === SEND_BACK_MEANING && entry.manifest.at === entry.at && entry.manifest.algorithm === 'SHA-256' && plain(entry.manifest.signer) && entry.manifest.signer.credentialId === entry.by.credentialId && entry.manifest.hash === sha256(canonical(sendBackSubject(order, entry)));
   const sendBacksValid = order => order.sendBacks === undefined || (Array.isArray(order.sendBacks) && order.sendBacks.length <= SEND_BACK_MAX && unique(order.sendBacks.map(e => e && e.id)) && order.sendBacks.every(e => sendBackValid(order, e)));
   const correctiveOrder = order => ['Rework', 'Repair'].includes(order.subcategory);
   const releaseConfiguration = order => ({ partNumber: order.partNumber, revision: order.revision, pedigree: order.pedigree, subcategory: order.subcategory, quantity: order.quantity, site: order.site ?? null, sourceOrderId: order.sourceTicket?.orderId ?? null, sourceTicketId: order.sourceTicket?.ticketId ?? null });
@@ -7465,6 +7467,8 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     order.quantity -= qty;
     if (approvalReset) order.releaseApproval = null;
     delete child.closureRequest; delete child.pedigreeChange; delete child.sequenceChange; delete child.splitRequests;
+    // A QA send back is signed for the order it was made on (#542); it stays there and the new order starts without one.
+    delete child.sendBacks;
     const backToDraft = [];
     [order, child].forEach(o => { if (o.status !== 'Draft' && requiresReleaseQA(o) && !releaseApproval(o)) { o.status = 'Draft'; backToDraft.push(o.id); } });
     order.splitInto = [...(Array.isArray(order.splitInto) ? order.splitInto : []), id];
@@ -7503,6 +7507,8 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     Object.assign(child, { id, quantity: qty, serial: `${order.serial.replace(/-Split-\d+$/, '')}-Split-${seq}`, history: [], reports: [], tickets: [], splitFrom: order.id, splitAt: new Date().toISOString() });
     delete child.engineeringChanges; delete child.splitInto; delete child.splitRequests;
     delete child.closureRequest; delete child.pedigreeChange; delete child.sequenceChange;
+    // A QA send back is signed for the order it was made on (#542); it stays there and the new order starts without one.
+    delete child.sendBacks;
     // Completed work carries over: these units were built alongside the rest up to this point.
     // Evidence ids are unique workspace-wide, so the child's copies are re-keyed; the recordings
     // themselves stay stored against the parent order's ids.
@@ -8139,6 +8145,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
         return { where: id, detail: `${id} creation record (release approval, subcategory, or source) is malformed.`, fix: null };
       }
       if (!engineeringChangesValid(o)) return { where: id, detail: `${id} engineering change record is malformed.`, fix: null };
+      if (!sendBacksValid(o)) return { where: id, detail: `${id} QA send back to Building record is malformed or does not match its signature. The saved work order was not changed; a QA Manager must review it.`, fix: null };
       return { where: id, detail: `${id} fails validation (${!STATUSES.includes(o.status) ? 'status' : !PEDIGREES.includes(o.pedigree) ? 'pedigree' : !PRIORITIES.includes(o.priority) ? 'priority' : !str(o.due, 10) ? 'due date' : !Array.isArray(o.materials) || !o.materials.length ? 'materials' : 'state rules'}).`, fix: null };
     }
     const tix = state.orders.flatMap(o => o.tickets.map(t => t.id)); const dupT = tix.find((t, i) => tix.indexOf(t) !== i);

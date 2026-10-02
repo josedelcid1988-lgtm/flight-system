@@ -95,6 +95,7 @@ has('a send back is signed with a SHA-256 manifest',"entry.manifest = signManife
 has('validation rechecks every send back',"    if (!sendBacksValid(order)) return false;",1);
 has('manifest verification rechecks every send back',"recheck(`${order.id} ${e.id} send back`, e.manifest, sendBackSubject(order, e));",1);
 has('the order keeps a bounded send-back list',"const SEND_BACK_MAX = 20;",1);
+has('a split never copies the signed send backs onto the new order',"    delete child.sendBacks;",2);
 {const serverSrc=fs.readFileSync(path.join(ROOT,'server','mes-host.mjs'),'utf8');ok('the server allows MES.sendBackToBuilding as a reviewed action',serverSrc.split("'MES.sendBackToBuilding'").length-1===1&&src.split("'MES.sendBackToBuilding'").length-1===1);}
 
 // ---- the production build ----

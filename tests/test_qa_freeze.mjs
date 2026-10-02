@@ -148,9 +148,12 @@ const snap = (state, id = QA_ID) => JSON.stringify({ order: MES.getOrder(state, 
     const v = MES.verifyManifests(t);
     ok(`tamper (${label}) fails validation`, MES.validate(t) === false, 'still valid');
     ok(`tamper (${label}) fails manifest verification`, v.ok === false, JSON.stringify(v.failures));
+    const d = MES.diagnose(t);
+    ok(`tamper (${label}) is named by diagnose`, !!d && d.where === QA_ID && /QA send back to Building record is malformed or does not match its signature/.test(d.detail), JSON.stringify(d));
   };
   tamper('rationale edited', x => { x.rationale = 'Nothing to see.'; });
   tamper('linked NC removed', x => { x.ticketId = null; });
+  tamper('linked NC replaced with a value that is not an NC id', x => { x.ticketId = 'WO-10004'; });
   tamper('revision edited', x => { x.revision = 'Z'; });
   tamper('from status edited', x => { x.from = 'Closed'; });
   tamper('signer swapped', x => { x.by = { ...x.by, credentialId: 'ACCT-other' }; });
@@ -171,6 +174,27 @@ const snap = (state, id = QA_ID) => JSON.stringify({ order: MES.getOrder(state, 
   const over = structuredClone(s), oo = MES.getOrder(over, QA_ID);
   oo.sendBacks = [...oo.sendBacks, { ...oo.sendBacks[0], id: 'SB-99' }];
   ok('a 21-entry send-back list fails validation', MES.validate(over) === false);
+}
+
+// ---- Part 1: a split after a send back keeps the signed send backs on the order that signed them ----
+{
+  const admin = account('admin', 'Flight Master');
+  for (const linked of [false, true]) {
+    const state = MES.upgrade(fresh()), o = MES.getOrder(state, QA_ID);
+    const nc = linked ? host.withAccount(qe, () => MES.createTicket(state, QA_ID, o.operations.at(-1).id, { type: 'NC', title: 'Seal damaged', description: 'Seal nicked at J2.', hold: true }), state) : null;
+    const back = host.withAccount(qe, () => MES.sendBackToBuilding(state, QA_ID, { rationale: 'Seal at J2 must be replaced.', ...(nc ? { ticketId: nc.id } : {}) }), state);
+    Object.assign(o, { quantity: 3 });
+    o.splitRequests = [{ id: 'SPR-FREEZE-1', ticketId: nc ? nc.id : null, quantity: 1, of: 3, serials: [], reason: 'Split the affected unit', status: 'Open', requestedBy: { name: 'Quinn Quality', role: 'Quality Engineer', credentialId: 'QE-1' }, requestedAt: new Date().toISOString() }];
+    const label = linked ? 'a send back linked to an NC' : 'a send back';
+    ok(`the work order is back in Building with ${label} before the split`, back.ok && o.status === 'Building' && MES.validate(state), JSON.stringify(back));
+    const split = host.withAccount(admin, () => MES.splitRequestOrder(state, QA_ID, 'SPR-FREEZE-1'), state);
+    const child = split.ok ? MES.getOrder(state, split.id) : null;
+    ok(`a split request is fulfilled on an order with ${label}`, split.ok && !!child, JSON.stringify(split));
+    ok(`the split child carries no send backs signed for the parent (${label})`, !!child && child.sendBacks === undefined);
+    ok(`the parent keeps its signed send back (${label})`, o.sendBacks.length === 1 && o.sendBacks[0].id === 'SB-1');
+    const v = MES.verifyManifests(state);
+    ok(`the workspace validates and every manifest verifies after the split (${label})`, MES.validate(state) && v.ok, JSON.stringify(v.failures));
+  }
 }
 
 // ---- Part 2: the demo build keeps the freeze, and the UI flow end to end ----
