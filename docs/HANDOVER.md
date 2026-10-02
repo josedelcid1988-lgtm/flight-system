@@ -27,9 +27,13 @@ page and print says DEMO, NOT FOR ACCEPTANCE.
 Without server mode, the workspace and accounts live in browser storage. With server mode, the app
 hydrates a shared workspace from the authenticated Node server and mirrors accepted writes to local
 storage for recovery. The MES engine validates browser changes; the server also validates workspace
-shape and evidence and exposes role-gated action endpoints. **Known release blocker:** the browser
-still sends whole-workspace writes, and that route does not yet authorize each changed record by role.
-Do not use the authenticated server as the production system of record until all mutating screens use
+shape and evidence and exposes role-gated action endpoints. Whole-workspace snapshots only
+initialize an empty server (QA Manager or Master Access); once initialized, the server refuses every
+changed snapshot, so shared records change only through server-side engine writes (the MES action
+route, and the Jira record link when that connector is enabled). **Known release blocker:** some
+direct field edits and legacy workflows are not yet bridged to a server action. The server refuses
+them rather than saving them, so this is an availability gap, not an authorization bypass. Do not use
+the authenticated server as the production system of record until all mutating screens use
 server-side MES actions. Details are in [`SECURITY_REVIEW-v82.md`](SECURITY_REVIEW-v82.md).
 
 ## 2. The rules and why they exist
