@@ -29,7 +29,7 @@ await signIn('master');
 await phase('conformity-2',()=>E.conf2());
 await signIn('demo');
 await phase('wi-change',()=>E.wi());
-const T=await p.evaluate(()=>({trace:[],valid:MES.validate(state),diag:MES.validate(state)?null:MES.diagnose(state)}));
+const T=await p.evaluate(()=>({trace:[],valid:MES.validate(state),diag:MES.validate(state)?null:MES.diagnose(state),provenance:MES.verifyImportProvenance(state)}));
 T.trace=ALL;fs.writeFileSync(TESTS+'qa_e2e_results.json',JSON.stringify(T,null,1));
 const flows={};T.trace.forEach(s=>{const f=flows[s.flow]=flows[s.flow]||{actions:0,fields:0,roles:[],fails:[],gates:0,ms:0,end:''};f.actions+=s.gate?0:1;f.gates+=s.gate?1:0;f.fields+=s.fields||0;if(!s.gate&&(!f.roles.length||f.roles[f.roles.length-1]!==s.role))f.roles.push(s.role);if(!s.ok)f.fails.push(s.label+': '+s.msg);f.ms+=s.ms||0;if(s.end)f.end=s.end;});
 Object.entries(flows).forEach(([k,v])=>console.log((v.fails.length?'FAIL ':'ok   ')+k.padEnd(52),'actions',v.actions,'fields',v.fields,'handoffs',v.roles.length-1,'gates',v.gates,v.end?'| '+v.end:'',v.fails.length?'\n      '+v.fails.join('\n      '):''));
@@ -37,3 +37,6 @@ console.log('flows',Object.keys(flows).length,'failed',Object.values(flows).filt
 await b.close();
 // A run whose final workspace fails MES.validate is a failed run, whatever the flows reported.
 if(!T.valid)process.exitCode=1;
+// Every record these flows signed must also pass the check an empty server runs before it accepts the workspace (#481, #512).
+console.log('import provenance',T.provenance.ok?'ok':'FAIL',T.provenance.failures.length?JSON.stringify(T.provenance.failures.slice(0,3)):'');
+if(!T.provenance.ok)process.exitCode=1;

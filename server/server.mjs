@@ -258,6 +258,7 @@ export function createServer(options = {}) {
     host.MES.syncBlockers?.(state);
     return null;
   };
+  const importProvenanceProblem = state => { const r = host.MES.verifyImportProvenance(state); if (r.ok) return null; const f = r.failures[0]; return `The workspace was not loaded. The signed record at ${f.where} cannot be shown to be unchanged: ${f.reason}${r.failures.length > 1 ? ` (${r.failures.length} signed records in all)` : ''}. Initialize the server from the workspace exactly as Flight System saved or exported it. Nothing was saved.`; };
   const validState = state => { const unconverged = convergeDerivedState(state); if (unconverged) return unconverged; if (Array.isArray(state.orders) && state.orders.filter(order => order.status !== 'Closed').length > 1000) return 'The workspace exceeds the 1,000 open work order limit. Close or archive work before adding more orders.'; if (!host.MES.validate(state)) return (host.MES.diagnose(state) || {}).detail || 'The workspace is invalid.'; const manifested = host.MES.verifyManifests(state); if (!manifested.ok) { const f = manifested.failures[0] || {}; return `A signed record failed verification at ${f.where || 'an unknown record'}: ${f.reason || 'invalid manifest'}.`; } return null; };
 
   // Evidence integrity on every write, beside the engine's validation. The engine refuses a buy-off
@@ -903,6 +904,9 @@ export function createServer(options = {}) {
         const cur = await store.getDoc(TENANT);
         if (cur) { await auditRefusal(409, 'workspace initialized by another request', { etag: cur.etag }); res.writeHead(409, { 'Content-Type': MIME['.json'], ETag: cur.etag }); res.end(JSON.stringify({ error: 'The shared workspace was initialized by another request. Reload to continue.', etag: cur.etag })); return; }
         const problem = validState(state); if (problem) { await auditRefusal(422, problem); send(res, 422, { error: problem }); return; }
+        // A document from outside becomes the shared record here, so its signed records must still say what was signed
+        // and none may have been downgraded to the v81 manifest shape (#481, #512). The refusal is audited like every other.
+        { const provenance = importProvenanceProblem(state); if (provenance) { await auditRefusal(422, provenance, { code: 'SIGNATURE_PROVENANCE' }); send(res, 422, { error: provenance, code: 'SIGNATURE_PROVENANCE' }); return; } }
         { const bad = await evidenceProblem(null, state, session); if (bad) { await store.audit(session.username, 'evidence-refused', { message: bad }); send(res, 422, { error: bad }); return; } }
         const done = await commitState(state, null, session.username, [{ action: 'workspace-initialize', detail: etag => ({ etag }) }]);
         if (done.problem) { await auditRefusal(422, done.problem); send(res, 422, { error: done.problem }); return; }
