@@ -11971,7 +11971,7 @@ document.addEventListener('click', event => {
 <script>
 // Saved filter views in the sidebar, in place of a fixed quality queue.
 let flaggedOnly = false, aircraftFilter = 'All', activeViewId = null;
-const flaggedOrder = o => o.status === 'Quality' || openTickets(o).length > 0 || !!MES.engineeringChange(o) || (o.status === 'Draft' && MES.requiresReleaseQA(o) && !MES.releaseApproval(o)) || !!MES.pendingSequenceChange(o) || MES.aogActive(o);
+const flaggedOrder = o => o.status === 'Quality' || openTickets(o).length > 0 || !!MES.engineeringChange(o) || (o.status === 'Draft' && MES.requiresReleaseQA(o) && !MES.releaseApproval(o)) || !!MES.pendingSequenceChange(o) || actionableSourceInspections(o).length > 0 || MES.aogActive(o);
 const savedViews = () => Array.isArray(state.savedViews) ? state.savedViews: [];
 function activeViewName() {
   const current = savedViews().find(item => item.id === activeViewId);

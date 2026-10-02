@@ -274,15 +274,16 @@ try {
       const setup = await page.evaluate(() => {
         // An open order with an unfinished operation before the source inspection: the record is refused until that
         // earlier operation is done, so the inspection is not yet the next step.
-        const order = state.orders.find(o => o.status !== 'Closed' && !orderBlocked(o) && (o.operations || []).filter(op => !op.done).length >= 2);
-        const later = order.operations.filter(op => !op.done)[1];
-        window.__later = [later, later.classification, later.sourceInspection];
+        const order = state.orders.find(o => o.status !== 'Closed' && !orderBlocked(o) && !flaggedOrder(o) && (o.operations || []).filter(op => !op.done).length >= 2);
+        const [first, later] = order.operations.filter(op => !op.done);
+        window.__later = [later, later.classification, later.sourceInspection, first, first.classification, first.sourceInspection];
         later.classification = MES.SOURCE_INSPECTION_CLASS; delete later.sourceInspection;
-        return { id: order.id, holdTitle: MES.sourceInspectionHolds(null, order).find(h => h.operationId === later.id)?.title, pending: MES.sourceInspectionHolds(null, order).length, refused: MES.recordSourceInspection(state, order.id, later.id, {}).ok === false, blocked: orderBlocked(order) };
+        return { id: order.id, holdTitle: MES.sourceInspectionHolds(null, order).find(h => h.operationId === later.id)?.title, pending: MES.sourceInspectionHolds(null, order).length, refused: MES.recordSourceInspection(state, order.id, later.id, {}).ok === false, blocked: orderBlocked(order), flagged: flaggedOrder(order) };
       });
       try {
         assert.ok(setup.pending > 0 && setup.refused, `the engine lists the later inspection and refuses its record (${JSON.stringify(setup)})`);
         assert.equal(setup.blocked, false, 'orderBlocked does not count a source inspection that cannot be recorded yet');
+        assert.equal(setup.flagged, false, 'the Flagged view does not count a source inspection that cannot be recorded yet');
         for (const route of ['home', 'orders']) {
           await show(page, route);
           const card = page.locator(`#main [data-wo-card="${setup.id}"]`);
@@ -302,8 +303,11 @@ try {
         }
         const legacy = await page.evaluate(orderId => new DOMParser().parseFromString(`<table>${renderOrders()}</table>`, 'text/html').querySelector(`tr[data-order-row="${orderId}"]`)?.className ?? null, setup.id);
         assert.ok(legacy !== null && !/\bhold-row\b/.test(legacy), `legacy table: the row is not a hold row (${legacy})`);
+        // Once the source inspection is the next operation it is a hold, and the Flagged view keeps the order with the Blocked one.
+        const now = await page.evaluate(orderId => { const first = window.__later[3]; first.classification = MES.SOURCE_INSPECTION_CLASS; delete first.sourceInspection; const order = state.orders.find(o => o.id === orderId); return { blocked: orderBlocked(order), flagged: flaggedOrder(order) }; }, setup.id);
+        assert.deepEqual(now, { blocked: true, flagged: true }, 'an actionable source inspection both blocks and flags the order');
       } finally {
-        await page.evaluate(() => { const [op, classification, record] = window.__later; if (classification === undefined) delete op.classification; else op.classification = classification; if (record) op.sourceInspection = record; render(); });
+        await page.evaluate(() => { const [op, classification, record, first, firstClass, firstRecord] = window.__later; for (const [o, c, r] of [[op, classification, record], [first, firstClass, firstRecord]]) { if (c === undefined) delete o.classification; else o.classification = c; if (r) o.sourceInspection = r; else delete o.sourceInspection; } render(); });
       }
       assert.equal(await page.evaluate(() => MES.validate(state)), true, 'the restored workspace is valid');
     });
