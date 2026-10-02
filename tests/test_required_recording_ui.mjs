@@ -1,6 +1,7 @@
-// Issue #541: an operation that requires a recording shows the Installation evidence section on any work order,
-// not only on Installation orders, so it can be recorded or uploaded, reviewed and then bought off. Buy-off without
-// a saved, reviewed recording is still refused. Runs on the demo seed's WO-10009 (subcategory Mfg.), Op 030.
+// Issue #541: an operation that requires a recording shows the evidence section on any work order, not only on
+// Installation orders, so it can be recorded or uploaded, reviewed and then bought off. On other orders the section
+// says Operation evidence and the dialogs name the order's own pedigree and subcategory. Buy-off without a saved,
+// reviewed recording is still refused. Runs on the demo seed's WO-10009 (subcategory Mfg.), Op 030.
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 
@@ -78,6 +79,10 @@ async function attemptBuyoff(page) {
 async function uploadClip(page) {
   await page.locator('#evidence-file').setInputFiles(await webmClip(page));
   await page.locator('#save-media:not([disabled])').waitFor();
+  // The dialog names this order's own pedigree and subcategory, not a fixed Development / Installation line.
+  assert.equal(await page.locator('#dialog-title').textContent(), 'Link operation recording');
+  assert.match(await page.locator('#dialog .media-context').textContent(), /Development \/ Mfg\. · Record assembly completion/);
+  assert.doesNotMatch(await page.locator('#dialog').textContent(), /Development \/ Installation/);
   await page.locator('#media-description').fill('Assembly completed per WI; witness marks applied and visible.');
   await page.locator('#save-media').click();
   await page.waitForFunction(({ id, opId }) => MES.getOrder(state, id).operations.find(op => op.id === opId).evidence.length === 1, { id: ORDER, opId: OP });
@@ -90,7 +95,7 @@ try {
     const { context, page } = await openOperation();
     const section = page.locator('section.installation-evidence');
     await section.waitFor();
-    assert.equal(await section.locator('#media-heading').textContent(), 'Installation evidence');
+    assert.equal(await section.locator('#media-heading').textContent(), 'Operation evidence', 'a non-Installation order says Operation evidence');
     assert.match(await section.textContent(), /Recording required/, 'the section says a recording is required');
     assert.match(await section.textContent(), /Buy-off needs at least one saved, reviewed recording\./);
     assert.equal(await section.locator('[data-action="record-media"]').isVisible(), true, 'Record video is offered');
@@ -118,6 +123,8 @@ try {
     await uploadClip(page);
     await page.locator('section.installation-evidence [data-action="review-media"]').click();
     await page.locator('#confirm-media-review:not([disabled])').waitFor();
+    assert.equal(await page.locator('#dialog-title').textContent(), 'Review operation evidence');
+    assert.match(await page.locator('#dialog .media-context').textContent(), /Development \/ Mfg\./);
     await page.locator('#media-review-form input[name=acknowledge]').check();
     await page.locator('#confirm-media-review').click();
     await page.waitForFunction(({ id, opId }) => MES.getOrder(state, id).operations.find(op => op.id === opId).evidence[0].reviewedAt, { id: ORDER, opId: OP });
@@ -139,6 +146,21 @@ try {
     assert.equal(record.valid, true, 'the workspace is valid after the buy-off');
     await page.evaluate(opId => { selectedOp = opId; render(); }, OP);
     assert.match(await page.locator('section.installation-evidence').textContent(), /Evidence is locked after buy-off\./, 'the section stays visible and locked after buy-off');
+    await context.close();
+  }
+
+  // Installation orders keep the Installation wording, with their own pedigree in the dialog context.
+  {
+    const { context, page } = await openOperation();
+    // The small demo seed has no Installation order, so render an unsaved copy of WO-10009 marked Installation.
+    const installation = await page.evaluate(id => {
+      const o = { ...structuredClone(MES.getOrder(state, id)), subcategory: 'Installation' };
+      const op = o.operations.find(item => !item.done), box = document.createElement('div');
+      box.innerHTML = renderMediaEvidence(o, op) || '';
+      return { pedigree: o.pedigree, heading: box.querySelector('#media-heading')?.textContent, context: mediaContext(o, op).replace(/<[^>]+>/g, ' ') };
+    }, ORDER);
+    assert.equal(installation.heading, 'Installation evidence');
+    assert.match(installation.context, new RegExp(`${installation.pedigree} / Installation · `));
     await context.close();
   }
 
