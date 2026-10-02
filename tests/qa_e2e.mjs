@@ -12,7 +12,7 @@ import {chromium} from 'playwright'; import fs from 'fs';
 const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{});
 const p=await (await b.newContext({viewport:{width:1440,height:1000}})).newPage();
 const errs=[]; p.on('pageerror',e=>errs.push(e.message));
-async function signIn(u){await p.evaluate(()=>{try{sessionStorage.removeItem('skyryse-mes-session-v1');}catch(e){}}).catch(()=>{});await p.goto(new URL('demo_qa150_publish.html', FIXTURES).href);await p.waitForTimeout(900);
+async function signIn(u){await p.evaluate(()=>{try{sessionStorage.removeItem('skyryse-mes-demo-session-v1');}catch(e){}}).catch(()=>{});await p.goto(new URL('demo_qa150_publish.html', FIXTURES).href);await p.waitForTimeout(900);
  await p.evaluate(x=>{const un=document.querySelector('#sk-boot input[name=username]');if(!un)return;const pw=document.querySelector('#sk-boot input[type=password]');un.value=x;un.dispatchEvent(new Event('input',{bubbles:true}));pw.value='demo1234';pw.dispatchEvent(new Event('input',{bubbles:true}));un.closest('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));},u);await p.waitForTimeout(2800);
  await p.evaluate(()=>{window.__T=JSON.parse(localStorage.getItem('qa-e2e-trace')||'[]');});
  await p.evaluate(fs0=>eval(fs0),H);}

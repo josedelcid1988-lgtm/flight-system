@@ -3,7 +3,7 @@
 //   1. a new production workspace holds no sample work orders, WIs, planned orders, Flight Maneuver records,
 //      stamps, standard rework drafts, calibrated tools, NetSuite stock or default person, validates, and can be
 //      used (records are added through the normal paths), and its screens show plain empty states without errors;
-//   2. the demo build still carries every sample, through the numbered deviations D-37 to D-39;
+//   2. the demo build still carries every sample, through the numbered deviations D-37, D-47 and D-48;
 //   3. a workspace saved by the v82 production engine before the clean slate (tests/fixtures/
 //      workspace_v82_before_clean_slate.json, written once by that engine at commit e2e2bc3, with the sample WIs,
 //      placeholder stamps, the Morgan Lee profile, sample planned orders with a NetSuite read, and calibration
@@ -348,7 +348,7 @@ const prod = createHost(here('../index.html'));
   const demo = createHost(here('../demo.html'));
   const { MES, FlightPlan } = demo;
   check('the demo writes the sample snapshot label as a JSON string literal', demoHtml.includes(`(${JSON.stringify(JSON.parse(read('../tools/demo/cal-snapshot.json')).snapshot)},`));
-  check('the demo marks each sample deviation', ['DEMO D-37', 'DEMO D-38: sample data', 'DEMO D-39: sample data'].every(m => demoHtml.includes(m)));
+  check('the demo marks each sample deviation', ['DEMO D-37', 'DEMO D-47: sample data', 'DEMO D-48: sample data'].every(m => demoHtml.includes(m)));
   check('the demo carries the sample tool snapshot', MES.CAL_TOOLS.length === JSON.parse(read('../tools/demo/cal-snapshot.json')).tools.length && MES.CAL_TOOLS.length > 300 && MES.CAL_SNAPSHOT !== '');
   check('the demo carries the sample NetSuite lots', MES.availableLots('SR-2401').some(l => l.lot === 'LOT-2401-0088') && MES.NETSUITE_SNAPSHOT !== '');
   check('the demo carries the sample MRP tables', Object.keys(FlightPlan.DEMO_MBOM).length > 0 && FlightPlan.DEMO_COMPONENT_LOTS.length > 0);
@@ -358,7 +358,7 @@ const prod = createHost(here('../index.html'));
   const reset = load(demo, MES.seed());
   check('a reset demo workspace starts with the sample WIs, planned orders, stamps and rework drafts', reset.masterWIs.some(w => w.status === 'Released') && reset.plannedOrders.length > 0 && reset.stamps.some(s => s.number === 'SKY-0000') && reset.reworkLibrary.length === 6, `${reset.masterWIs.length} ${reset.plannedOrders.length} ${reset.stamps.length} ${reset.reworkLibrary.length}`);
   check('a reset demo workspace validates', MES.validate(reset) === true, JSON.stringify(MES.diagnose(reset)));
-  // The demo's three sample kit lines (D-38) count toward the kit limit too (Codex review on #331): a WI with 18 BOM
+  // The demo's three sample kit lines (D-47) count toward the kit limit too (Codex review on #331): a WI with 18 BOM
   // parts would make a 21-line kit, so the demo refuses it rather than creating an order that fails validation.
   const demoWide = load(demo, MES.seed()), demoWi = demoWide.masterWIs.find(w => w.status === 'Released');
   demoWi.operations[0].materials = Array.from({ length: 9 }, (_, n) => ({ partNumber: `DW-A${n}`, name: `Part A${n}`, required: 1 }));
