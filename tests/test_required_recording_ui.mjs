@@ -167,6 +167,39 @@ try {
     await context.close();
   }
 
+  // A Quality inspector (inspect-steps, not operate-steps) adds the recording on an inspection operation, which it
+  // buys off, and is told who adds it on a Technician operation. Uses the demo's real quality pilot account.
+  {
+    const { context, page } = await openOperation();
+    const quality = await page.evaluate(async ({ id, opId }) => {
+      const result = await window.skAuth.switchAccount('quality', 'demo1234');
+      selectedOp = opId; render();
+      const o = MES.getOrder(state, id), technicianOp = o.operations.find(op => op.id === opId);
+      const section = document.querySelector('section.installation-evidence');
+      // Unsaved copy with the earlier operations done and the next inspection operation requiring a recording.
+      const copy = structuredClone(o), at = copy.operations.findIndex(op => MES.isInspectionOp(op));
+      copy.operations.forEach((op, i) => { if (i < at) op.done = true; });
+      const inspection = copy.operations[at]; inspection.requiresRecording = true;
+      const box = document.createElement('div'); box.innerHTML = renderMediaEvidence(copy, inspection);
+      return {
+        ok: result.ok, role: document.body.dataset.role,
+        steps: document.body.getAttribute('data-can-operate-steps'), inspect: document.body.getAttribute('data-can-inspect-steps'),
+        technicianOp: { allowed: mediaCaptureAllowed(technicianOp), record: !!section?.querySelector('[data-action="record-media"]'), upload: !!section?.querySelector('[data-action="upload-media"]'), text: section?.textContent || '' },
+        inspectionOp: { found: at >= 0, allowed: mediaCaptureAllowed(inspection), record: !!box.querySelector('[data-action="record-media"]'), upload: !!box.querySelector('[data-action="upload-media"]'), text: box.textContent }
+      };
+    }, { id: ORDER, opId: OP });
+    assert.deepEqual([quality.ok, quality.role, quality.steps, quality.inspect], [true, 'qe', 'no', 'yes'], 'the quality account holds inspect-steps and not operate-steps');
+    assert.deepEqual([quality.technicianOp.allowed, quality.technicianOp.record, quality.technicianOp.upload], [false, false, false], 'Quality cannot add a recording to a Technician operation');
+    assert.match(quality.technicianOp.text, /Your role cannot add a recording to this operation\. A Technician working this operation adds it\./);
+    assert.equal(quality.inspectionOp.found, true, 'WO-10009 carries an inspection operation');
+    assert.deepEqual([quality.inspectionOp.allowed, quality.inspectionOp.record, quality.inspectionOp.upload], [true, true, true], 'Quality adds the recording on an inspection operation');
+    assert.doesNotMatch(quality.inspectionOp.text, /Your role cannot add a recording/);
+    // The dialog refuses too, not only the hidden buttons.
+    const refused = await page.evaluate(opId => { mediaEditor(opId, 'upload'); return document.getElementById('dialog').open; }, OP);
+    assert.equal(refused, false, 'the recording dialog does not open for a role that cannot add a recording');
+    await context.close();
+  }
+
   // Installation orders keep the Installation wording, with their own pedigree in the dialog context.
   {
     const { context, page } = await openOperation();
