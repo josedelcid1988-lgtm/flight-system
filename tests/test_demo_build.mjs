@@ -217,7 +217,12 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  await p.evaluate(()=>sessionStorage.removeItem('skyryse-mes-demo-session-v1'));
  // Clearing the browser's site data reopens it: production starts over with first-account setup.
  await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(600);
- await p.evaluate(()=>{localStorage.clear();sessionStorage.removeItem('skyryse-mes-session-v1');});await p.reload();await p.waitForTimeout(900);
+ // The data is cleared from a plain page of the same origin, as clearing site data does with no app page running: a
+ // clear made inside the app page can be lost when that page reloads soon after (#556), and the app page's own writes
+ // as it unloads have landed by the time the plain page has loaded. The app is then read once its first screen is up.
+ await p.goto('file://'+FIXTURES+BLANK);
+ await p.evaluate(()=>{localStorage.clear();sessionStorage.removeItem('skyryse-mes-session-v1');});await p.waitForFunction(()=>localStorage.length===0,null,{timeout:20000});
+ await p.goto('file://'+FIXTURES+'publish.html');await p.waitForFunction(()=>!!document.getElementById('sk-legacy-review')||/Set up Master Access/.test((document.getElementById('sk-login-title')||{}).textContent||''),null,{timeout:20000}).catch(()=>{});
  const fresh=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),login:!document.getElementById('sk-login').hidden,title:document.getElementById('sk-login-title').textContent}));
  ok('once the site data is cleared, production opens on first-account setup',!fresh.gate&&fresh.login&&/Set up Master Access/.test(fresh.title),JSON.stringify(fresh));
  await ctx.close();}
