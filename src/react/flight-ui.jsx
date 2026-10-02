@@ -74,7 +74,8 @@ function Hangar({ state, MES, onOpen }) {
     const itemHolds = hangarHolds(state, MES, item);
     return itemHolds.length ? [{ item, reason: holdText(itemHolds[0]) }] : [];
   });
-  // The panel shows the first four; "View all holds" opens All work orders filtered to On hold.
+  // The panel shows the first four; "View all holds", in the panel heading so it adds no height (the Hangar keeps the
+  // work queue heading above the fold, #360), opens All work orders filtered to On hold.
   const holds = allHolds.slice(0, 4);
   const milestoneRisks = MES.milestoneRisks ? MES.milestoneRisks(state) : [];
   const changeDensity = () => setCompact(value => {
@@ -88,9 +89,8 @@ function Hangar({ state, MES, onOpen }) {
     <section className="fr-top-row fr-hangar-top" aria-label="Work queue summary, today's priorities and open holds">
       <div className="fr-summary"><span className="fr-eyebrow">YOUR WORK QUEUE</span><strong>{rows.length} <small>{filter.toLowerCase()} work orders</small></strong><span>Sorted by due date from the current workspace.</span></div>
       <BigThree state={state} MES={MES} variant="hangar"/>
-      <div className="fr-holds"><div className="fr-section-heading"><h2>Open holds</h2><span className="fr-count">{allHolds.length}</span></div>
+      <div className="fr-holds"><div className="fr-section-heading"><h2>Open holds</h2><span className="fr-count">{allHolds.length}</span>{allHolds.length > 0 && <button type="button" className="fr-text-action fr-holds-all" data-action="nav" data-view="orders" data-status="On hold">View all holds{allHolds.length > holds.length ? ` (${allHolds.length})` : ''}<ChevronRight size={14}/></button>}</div>
         {holds.length ? holds.map(({ item, reason }) => <button className="fr-hold-row" key={item.id} onClick={() => open(item)}><span className="fr-hold-icon"><Boxes size={18}/></span><span><strong>{item.id} · {titleOf(item)}</strong><small>{reason}</small></span><ChevronRight size={16}/></button>) : <p className="fr-no-holds"><Check size={16}/> No blocking holds in open work orders.</p>}
-        {allHolds.length > 0 && <button type="button" className="fr-text-action fr-holds-all" data-action="nav" data-view="orders" data-status="On hold">View all holds{allHolds.length > holds.length ? ` (${allHolds.length})` : ''}<ChevronRight size={14}/></button>}
       </div>
     </section>
     {milestoneRisks.length > 0 && <section className="fr-milestone-watch" aria-label="Project milestones at risk"><div className="fr-section-heading"><h2>Project milestones at risk</h2><span className="fr-count">{milestoneRisks.length}</span></div>{milestoneRisks.map(item => <div className="fr-milestone-watch-row" key={item.id}><div><strong>{item.id} · {item.title}</strong><span>{item.risk} · due {new Date(`${item.dueDate}T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}{item.workOrderId ? ` · ${item.workOrderId}` : ''}</span></div>{item.workOrderId && <button className="fr-record-link" onClick={() => { const workOrder = state.orders.find(order => order.id === item.workOrderId); if (workOrder) onOpen(workOrder.id); }}>Open work order</button>}</div>)}</section>}
