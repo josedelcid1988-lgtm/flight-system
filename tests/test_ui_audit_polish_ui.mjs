@@ -20,8 +20,8 @@ const check = (name, ok, detail = '') => { if (ok) console.log(`ok   ${name}`); 
 const open = async (user = { username: 'admin', role: 'admin', displayName: 'Flight Master' }, fixture = 'demo_qa150_publish.html') => {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   await context.addInitScript(u => {
-    localStorage.setItem('skyryse-mes-auth-v1', JSON.stringify({ users: [{ ...u, salt: 'test', hash: 'unused', createdAt: new Date().toISOString() }] }));
-    sessionStorage.setItem('skyryse-mes-session-v1', u.username);
+    localStorage.setItem('skyryse-mes-demo-auth-v1', JSON.stringify({ users: [{ ...u, salt: 'test', hash: 'unused', createdAt: new Date().toISOString() }] }));
+    sessionStorage.setItem('skyryse-mes-demo-session-v1', u.username);
     sessionStorage.setItem('sk-boot-seen', '1');
   }, user);
   const page = await context.newPage();
