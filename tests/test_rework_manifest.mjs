@@ -263,5 +263,51 @@ const repair = walk('seed-curated', 'WO-10003', 'Repair', {}, state => { MES.get
   ok('Operation author: the signed release binds the ME author', rel.ok && t.manifest.subject.opAddedBy && t.manifest.subject.opAddedBy.credentialId === 'ACCT-rw-me' && MES.validate(state) && verify(state).ok, JSON.stringify([rel, t.manifest && t.manifest.subject.opAddedBy]));
 }
 
+// ---- Codex P1 on #602 (8a7cc4f): an approved Rework or Repair NC cannot lose its plan and release records ----
+{
+  const ticketIn = st => MES.getOrder(st, 'WO-10006').tickets.find(t => t.id === rework.ticketId);
+  const gone = structuredClone(rework.state);
+  { const t = ticketIn(gone); delete t.reworkPlan; delete t.manifest; }
+  const gV = verify(gone);
+  ok('Plan: deleting the plan and release of a closed Rework NC is refused by validate', MES.validate(gone) === false && new RegExp(`${rework.ticketId} is a closed Rework NC without its approved plan and signed release`).test(detail(gone)), detail(gone));
+  ok('Plan: verifyManifests fails it instead of treating it as an ordinary closed ticket', !gV.ok && gV.failures.some(f => f.where.endsWith(`${rework.ticketId} rework release`) && /plan is missing/.test(f.reason)), JSON.stringify(gV.failures));
+  const open = walk('seed-curated', 'WO-10006', 'Rework');
+  const openGone = structuredClone(open.state);
+  delete MES.getOrder(openGone, 'WO-10006').tickets.find(t => t.id === open.ticketId).reworkPlan;
+  ok('Plan: deleting the approved plan of an open Rework NC is refused', MES.validate(openGone) === false && new RegExp(`${open.ticketId} was approved for Rework but its approved plan is missing`).test(detail(openGone)) && failsAt(openGone, new RegExp(`${open.ticketId} rework approval`)), detail(openGone));
+  // A Rework NC closed without a plan by data from before #581 is sealed as legacy and still loads.
+  const raw = seed('seed-curated');
+  const rawOrder = raw.orders.find(o => o.id === 'WO-10005'), base = rawOrder.tickets.find(x => x.id === 'NC-0001');
+  const planless = { ...structuredClone(base), id: 'NC-0901', status: 'Resolved', resolution: 'Reworked before plans were recorded.', resolvedAt: new Date(Date.parse(base.createdAt) + 60000).toISOString(), resolvedBy: base.reworkPlan.approvedBy, hold: false };
+  delete planless.reworkPlan;
+  rawOrder.tickets.push(planless);
+  const st = MES.upgrade(raw), pv = st ? verify(st) : null;
+  ok('Plan: a pre-#581 Rework NC closed without a plan is sealed as a legacy release and loads', !!st && st.reworkLegacySeal.releases.includes(`NC-0901@${base.createdAt}`) && MES.validate(st) && pv.ok && pv.unsignedLegacy.includes('WO-10005 NC-0901 rework release'), JSON.stringify(st ? { seal: st.reworkLegacySeal, failures: pv.failures } : null));
+}
+
+// ---- Codex P2 on #602 (8a7cc4f): a reused operation id names the author of the current operation ----
+{
+  const state = MES.upgrade(structuredClone(seed('seed-curated')));
+  const as = (who, fn) => host.withAccount(who, fn, state);
+  const id = 'WO-10006', me2 = account('me', 'rw-me2', 'Morgan Two');
+  const before = new Set(MES.getOrder(state, id).operations.map(o => o.id));
+  const first = as(me, () => reworkOp(state, id, undefined, 'Manufacturing'));
+  const firstId = (MES.getOrder(state, id).operations.find(o => !before.has(o.id)) || {}).id;
+  const rel1 = as(qe2, () => MES.approveSequenceChange(state, id));
+  const removed = as(me, () => MES.removeOrderOperation(state, id, firstId, 'Added in error.'));
+  const rel2 = as(qe2, () => MES.approveSequenceChange(state, id));
+  const order = MES.getOrder(state, id), op = order.operations.find(item => !item.done) || order.operations[0];
+  const created = as(qm, () => MES.createTicket(state, id, op.id, { type: 'NC', title: 'Torque out of spec', description: 'J3 torque below the drawing value.', hold: true }));
+  as(me, () => MES.dispositionTicket(state, id, created.id, { decision: 'Rework', note: 'Rework J3.' }));
+  const before2 = new Set(MES.getOrder(state, id).operations.map(o => o.id));
+  const second = as(me2, () => reworkOp(state, id, created.id, 'Rework'));
+  const secondId = (MES.getOrder(state, id).operations.find(o => !before2.has(o.id)) || {}).id;
+  const rel3 = as(qe2, () => MES.approveSequenceChange(state, id));
+  const approved = as(qe, () => MES.resolveTicket(state, id, created.id, 'Rework approved.', { defectCode: 'DIM', subCode: 'DIM-02' }));
+  const plan = MES.getOrder(state, id).tickets.find(t => t.id === created.id).reworkPlan;
+  ok('Operation author: the replacement operation reuses the removed operation id', [first, rel1, removed, rel2, second, rel3, approved].every(r => r && r.ok) && secondId === firstId && plan.opId === secondId, JSON.stringify([first, rel1, removed, rel2, second, rel3, approved].map(r => r && r.message), null, 0) + ` ${firstId} ${secondId} ${plan.opId}`);
+  ok('Operation author: the plan names who added the current operation, not the removed one', plain(plan.opAddedBy) && plan.opAddedBy.credentialId === 'ACCT-rw-me2', JSON.stringify(plan.opAddedBy));
+}
+
 console.log(fails.length ? `FAILS ${JSON.stringify(fails)}` : 'FAILS []');
 process.exit(fails.length ? 1 : 0);
