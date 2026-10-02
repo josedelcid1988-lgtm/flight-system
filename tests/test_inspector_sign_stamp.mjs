@@ -114,6 +114,17 @@ for (const action of ACTIONS) {
   }
 }
 
+// The demo build keeps its stamp relaxation (D-47): an expired stamp still signs there, the production build refuses.
+{
+  const demo = createHost(fileURLToPath(new URL('../demo.html', import.meta.url)));
+  const state = fresh();
+  stampOf(state, verifier).issued = lastYear; stampOf(state, verifier).expires = yesterday;
+  const r = demo.withAccount(verifier, () => demo.MES.verifyFair(state, 'WO-10004', {}), state);
+  check('the demo build still signs the FAIR with an expired stamp (demo deviation), production refuses it', r.ok && fair(state).verified?.by?.stamp?.number === stampOf(state, verifier).number, JSON.stringify(r));
+  const none = fresh(); stampOf(none, verifier).status = 'Suspended';
+  check('the demo build still refuses an account with no Active stamp of an allowed type', !demo.withAccount(verifier, () => demo.MES.verifyFair(none, 'WO-10004', {}), none).ok);
+}
+
 // ---- the same refusal over the server action route: POST /api/workspace/actions/MES.verifyFair ----
 {
   const server = createServer({ dbPath: ':memory:', quiet: true, setupCode: 'inspector-sign-stamp' });

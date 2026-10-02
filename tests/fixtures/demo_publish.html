@@ -5940,7 +5940,7 @@ const OP_BOM_MAX = 12;
     // training does not sign. Any one current stamp of an allowed type is enough.
     const day = pacificDay(new Date().toISOString());
     const checked = mine.map(s => { const h = { ...holderFromStamp(s), training: personTraining(state, s.account) }; return { holder: h, problem: stampValidityProblem(h, day, state) }; });
-    const current = checked.find(c => !c.problem);
+    const current = checked.find(c => !c.problem) || checked[0]; /* DEMO D-47 */
     if (!current) return fail(`Signing needs a current ${types.join(' or ')} stamp issued to your account. ${checked.map(c => c.problem).join(' ')}`);
     const holder = current.holder;
     /* DEMO D-17: PIN step-up lifted for FAIR and 8130-9 signatures */
