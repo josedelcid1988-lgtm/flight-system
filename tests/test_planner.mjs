@@ -13,6 +13,8 @@ const fresh = () => { const state = host.MES.upgrade(JSON.parse(seed[1])); host.
 // The engine runs in a vm context, so its objects carry that realm's prototypes; compare them as plain data.
 const plain = value => JSON.parse(JSON.stringify(value));
 const snapshot = state => JSON.stringify({ planner: state.planner ?? null, blockers: state.blockers ?? null });
+// A must-start milestone ranks among the blockers but is marked as a milestone; a slot carries its candidate's source.
+const source = task => task.kind === 'must-start milestone' ? 'milestone' : 'blocker';
 const BLANK = { t: '', done: false, why: '', ref: null, goal: '', src: '', status: '' };
 const DAY = '2026-09-28', NEXT = '2026-09-29';
 
@@ -33,8 +35,6 @@ ok('planning fills the three slots with the top-ranked tasks as proposals', () =
   const plan = host.MES.createBigThreePlan(state, DAY);
   assert.equal(plan.ok, true);
   assert.deepEqual(plain(plan.day.big3.map(slot => slot.ref?.id)), plain(ranked.slice(0, 3).map(task => task.id)), 'slots take the candidates in rank order');
-  // A must-start milestone ranks among blockers but is marked as a milestone; each slot carries its candidate's kind.
-  const source = task => task.kind === 'must-start milestone' ? 'milestone' : 'blocker';
   assert.deepEqual(plain(plan.day.big3.map(slot => [slot.src, slot.ref.type])), plain(ranked.slice(0, 3).map(task => [source(task), source(task)])), 'each slot is marked with its candidate\'s source');
   assert.ok(plan.day.big3.every(slot => slot.t && slot.status === 'proposed' && slot.done === false));
   assert.equal(plan.top.length, 3);
@@ -44,7 +44,7 @@ ok('planning fills the three slots with the top-ranked tasks as proposals', () =
 ok('planning fills only empty slots, never repeats a task already set, and stops when the day is full', () => {
   const state = fresh();
   const status = host.MES.plannerStatus(state, DAY), ranked = status.candidates;
-  state.planner.days[status.username] = { [DAY]: { date: DAY, big3: [{ ...BLANK, t: 'Own task', status: 'accepted' }, { ...BLANK, t: ranked[0].title, ref: { type: 'blocker', id: ranked[0].id }, src: 'blocker', status: 'proposed' }, { ...BLANK }], win: '', notes: '' } };
+  state.planner.days[status.username] = { [DAY]: { date: DAY, big3: [{ ...BLANK, t: 'Own task', status: 'accepted' }, { ...BLANK, t: ranked[0].title, ref: { type: source(ranked[0]), id: ranked[0].id }, src: source(ranked[0]), status: 'proposed' }, { ...BLANK }], win: '', notes: '' } };
   const plan = host.MES.createBigThreePlan(state, DAY);
   assert.deepEqual(plain(plan.day.big3.map(slot => slot.t)), ['Own task', ranked[0].title, ranked[1].title], 'the one empty slot takes the next task, not the one already set');
   assert.equal(plan.day.big3.filter(slot => slot.ref?.id === ranked[0].id).length, 1, 'a task is never in two slots');
@@ -63,7 +63,9 @@ ok('accept marks a proposal accepted once; accepting an empty slot or twice is r
   assert.equal(snapshot(state), before);
   const username = accepted.username;
   state.planner.days[username][DAY].big3[2] = { ...BLANK };
-  state.planner.signals.push({ username, date: DAY, index: 2, decision: 'decline', ref: { type: 'blocker', id: accepted.candidates[2].id }, reason: 'Keep this slot open', at: new Date().toISOString() });
+  // Decline every task not already in another slot, so the planner has nothing left to refill slot 3 with.
+  const kept = new Set(accepted.day.big3.slice(0, 2).map(slot => slot.ref?.id));
+  for (const task of accepted.candidates.filter(item => !kept.has(item.id))) state.planner.signals.push({ username, date: DAY, index: 2, decision: 'decline', ref: { type: source(task), id: task.id }, reason: 'Keep this slot open', at: new Date().toISOString() });
   before = snapshot(state);
   const empty = host.MES.decideBigThree(state, DAY, 2, 'accept');
   assert.equal(empty.ok, false, 'an empty slot cannot be accepted');
@@ -75,13 +77,13 @@ ok('accept marks a proposal accepted once; accepting an empty slot or twice is r
 
 ok('decline needs a reason, clears the slot, records the signal, and the declined task is not proposed again that day', () => {
   const state = fresh();
-  const plan = host.MES.createBigThreePlan(state, DAY), declinedId = plan.day.big3[1].ref.id;
+  const plan = host.MES.createBigThreePlan(state, DAY), declinedRef = plain(plan.day.big3[1].ref), declinedId = declinedRef.id;
   const before = snapshot(state);
   assert.equal(host.MES.decideBigThree(state, DAY, 1, 'decline', ' x ').ok, false, 'a decline without a real reason is refused');
   assert.equal(snapshot(state), before);
   const declined = host.MES.decideBigThree(state, DAY, 1, 'decline', 'Waiting on the supplier');
   assert.equal(declined.ok, true);
-  assert.deepEqual(plain(state.planner.signals.at(-1)), { ...plain(state.planner.signals.at(-1)), username: plan.username, date: DAY, index: 1, decision: 'decline', reason: 'Waiting on the supplier', ref: { type: 'blocker', id: declinedId } });
+  assert.deepEqual(plain(state.planner.signals.at(-1)), { ...plain(state.planner.signals.at(-1)), username: plan.username, date: DAY, index: 1, decision: 'decline', reason: 'Waiting on the supplier', ref: declinedRef }, 'the signal records the declined slot\'s own reference');
   assert.ok(!declined.day.big3.some(slot => slot.ref?.id === declinedId), 'the declined task stays out of the day');
   assert.ok(host.MES.createBigThreePlan(state, NEXT).day.big3.some(slot => slot.ref?.id === declinedId), 'it can be proposed again on another day');
   assert.equal(host.MES.validate(state), true);
