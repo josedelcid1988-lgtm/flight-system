@@ -4,6 +4,8 @@
 // allowed; a primary QA Manager needs no role training.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import os from 'node:os';
+import path from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import { createServer } from '../server/server.mjs';
 
@@ -120,7 +122,7 @@ try {
   });
 
   await check('a lapsed extra QA Manager role cannot change record export settings; current training can', async () => {
-    const setting = { recordType: 'fair', enabled: false, destinationKind: 'folder', destination: '/tmp/flight-exports', namingPattern: '{recordType}-{recordId}-{exportId}.json', rationale: 'Training gate regression.' };
+    const setting = { recordType: 'fair', enabled: false, destinationKind: 'folder', destination: path.join(os.tmpdir(), 'flight-exports'), namingPattern: '{recordType}-{recordId}-{exportId}.json', rationale: 'Training gate regression.' };
     const refused = await api('PUT', '/record-exports/settings', { token: lapsed, body: setting });
     assert.equal(refused.status, 403, JSON.stringify(refused.json));
     const allowed = await api('PUT', '/record-exports/settings', { token: current, body: setting });
