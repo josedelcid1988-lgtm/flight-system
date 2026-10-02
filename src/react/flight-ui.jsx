@@ -192,6 +192,13 @@ function BigThreeSlotActions({ index, block, date }) {
   </>;
 }
 
+// The card title opens the record its task names. The page checks the record still exists before it navigates, so
+// the title is only a pointer: no engine command runs from it.
+function BigThreeTitle({ index, text, target }) {
+  const label = `${index + 1}. ${text}`;
+  return <strong>{target ? <button type="button" className="big3-open" data-action="open-big3-record" data-target-kind={target.kind} data-target-type={target.type} data-target-id={target.id} data-target-revision={target.revision} aria-label={`${label}. Opens ${target.label}`}>{label}</button> : label}</strong>;
+}
+
 function BigThree({ state, MES, variant = 'plan' }) {
   const hangar = variant === 'hangar';
   const date = new Date().toISOString().slice(0, 10);
@@ -230,7 +237,7 @@ function BigThree({ state, MES, variant = 'plan' }) {
       const title = item ? item.t : task.title;
       const why = item ? item.why : `${task.kind.replaceAll('-', ' ')} · ${task.priority}${task.aog && task.priority !== 'AOG' ? ' · AOG' : ''}`;
       return <li className={`big3-slot${resolved ? ' is-done' : ''}`} key={item?.ref?.id || task?.id || index}>
-        <div className="big3-slot-copy"><strong>{index + 1}. {title || 'Open priority slot'}</strong>{hangar ? (item ? why && <span>{why}</span> : <span>{why} · <time dateTime={task.due}>Due {displayDate(task.due)}</time></span>) : <>{why && <span>{why}</span>}
+        <div className="big3-slot-copy"><BigThreeTitle index={index} text={title || 'Open priority slot'} target={title ? MES.bigThreeTarget(source, item ? item.ref?.id : task?.id) : null}/>{hangar ? (item ? why && <span>{why}</span> : <span>{why} · <time dateTime={task.due}>Due {displayDate(task.due)}</time></span>) : <>{why && <span>{why}</span>}
           {task?.due && <time dateTime={task.due}>Due {displayDate(task.due)}</time>}</>}{resolved && <span>Resolved in the record</span>}
           {block && <span className={`pill${block.status === 'Accepted' ? ' accepted' : ''}`}>{block.status} time · {block.start} to {block.end}</span>}
         </div>
@@ -341,7 +348,7 @@ function PlanBoard({ state, MES, FlightPlan, onMutation, initialQuery = '', init
         </div>
       </div>
       <div className="fr-table-scroll"><table className={compact ? 'fr-compact' : ''}><thead><tr><th>Planned order</th><th>Master WI</th><th>Configuration</th><th>Quantity</th><th>Need date</th><th>NetSuite on hand</th><th>Status</th><th>Work order</th><th><span className="fr-visually-hidden">Actions</span></th></tr></thead><tbody>
-        {rows.map(item => { const c = item.configuration; const late = FlightPlan.overdue(item); return <tr key={item.id} className={late ? 'fr-overdue' : ''}>
+        {rows.map(item => { const c = item.configuration; const late = FlightPlan.overdue(item); return <tr key={item.id} className={late ? 'fr-overdue' : ''} data-plan-row={item.id}>
           <td><strong className="fr-mono">{item.id}</strong>{late && <small className="fr-overdue-label">Past need date</small>}</td>
           <td><strong className="fr-mono">{item.masterWI.id} Rev {item.masterWI.revision}</strong><small>{item.masterWI.title}</small></td>
           <td><strong className="fr-mono">{c.partNumber} / Rev {c.partRevision}</strong><small>{c.pedigree} · {c.subcategory}</small><small>{c.site || 'Unassigned'} · {c.aircraft}</small></td>
@@ -2203,13 +2210,13 @@ window.FlightReact = {
     }
     flushSync(() => root.render(<WorkOrderQueue state={state} MES={MES} rows={props.rows} initial={props.initial} callbacks={props.callbacks} onOpen={onOpen}/>));
   },
-  renderPlan(element, state, MES, FlightPlan, onMutation, initialQuery = '', initialStatus = 'All') {
+  renderPlan(element, state, MES, FlightPlan, onMutation, initialQuery = '', initialStatus = 'All', navKey = 0) {
     if (!root || rootElement !== element) {
       if (root) root.unmount();
       root = createRoot(element);
       rootElement = element;
     }
-    flushSync(() => root.render(<PlanBoard state={state} MES={MES} FlightPlan={FlightPlan} onMutation={onMutation} initialQuery={initialQuery} initialStatus={initialStatus}/>));
+    flushSync(() => root.render(<PlanBoard key={navKey} state={state} MES={MES} FlightPlan={FlightPlan} onMutation={onMutation} initialQuery={initialQuery} initialStatus={initialStatus}/>));
   },
   renderPlanKanban(element, state, MES, FlightPlan) {
     if (!root || rootElement !== element) {
