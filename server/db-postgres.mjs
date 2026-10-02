@@ -200,6 +200,9 @@ const SSL_PASSWORD_REFUSAL = 'carries a client key passphrase (sslpassword), whi
 export function pgRestoreTarget(connectionString, env = process.env) {
   const raw = String(connectionString);
   const refuse = why => { throw new Error(`The PostgreSQL connection string ${why}. Nothing was run. Fix FLIGHT_DATABASE_URL and try again.`); };
+  // libpq matches setting names exactly, so Password= or SSLPASSWORD= is not a setting it reads, and the value would
+  // reach --dbname untouched. A secret-bearing name in any other case is refused before it can (Cursor 4162958234).
+  const caseCheck = key => { const lower = key.toLowerCase(); if (['password', 'sslpassword', 'service'].includes(lower) && key !== lower) refuse(`names ${lower} as "${key}"; libpq reads only the lowercase name, so write it as ${lower}`); };
   const pct = text => { try { return decodeURIComponent(text); } catch { return refuse('has a malformed percent-encoded part'); } };
   let dbname = raw, password = null, service = false, found = false;
   // A bare database name (no = and not a URI) holds no password: libpq reads it as the dbname alone.
@@ -227,6 +230,7 @@ export function pgRestoreTarget(connectionString, env = process.env) {
     const kept = [];
     for (const part of query === undefined ? [] : query.split('&')) {
       const eq = part.indexOf('='), key = pct(eq >= 0 ? part.slice(0, eq) : part);
+      caseCheck(key);
       if (key === 'password') { found = true; password = pct(eq >= 0 ? part.slice(eq + 1) : ''); continue; }
       if (key === 'service') service = true;
       if (key === 'sslpassword') refuse(SSL_PASSWORD_REFUSAL);
@@ -248,6 +252,7 @@ export function pgRestoreTarget(connectionString, env = process.env) {
       if (!match) refuse('is not a list of keyword=value settings libpq can read');
       index = pair.lastIndex;
       const [, key, value] = match;
+      caseCheck(key);
       if (key === 'password') { found = true; password = (value.startsWith("'") ? value.slice(1, -1) : value).replace(/\\(.)/g, '$1'); continue; }
       if (key === 'service') service = true;
       if (key === 'sslpassword') refuse(SSL_PASSWORD_REFUSAL);

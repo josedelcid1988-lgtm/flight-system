@@ -69,6 +69,12 @@ const refusals = [
   ['a password beside service=', 'host=db service=prod password=Hidden-1', {}, /connection service/],
   ['a URI password beside ?service=', 'postgresql://flight:Hidden-1@db/flight?service=prod', {}, /connection service/],
   ['a password with PGSERVICE set', 'postgresql://flight:Hidden-1@db/flight', { PGSERVICE: 'prod' }, /connection service/],
+  // Cursor 4162958234: a secret-bearing setting name in another case is not one libpq reads, so it would reach --dbname
+  // as it was; it is refused instead.
+  ['a mixed-case URI password parameter', 'postgresql://flight@db/flight?Password=Hidden-1', {}, /libpq reads only the lowercase name/],
+  ['an upper-case keyword password', 'host=db PASSWORD=Hidden-1 dbname=flight', {}, /libpq reads only the lowercase name/],
+  ['an upper-case URI client key passphrase', 'postgresql://flight@db/flight?SSLPASSWORD=Hidden-1', {}, /libpq reads only the lowercase name/],
+  ['a mixed-case keyword service beside a password', 'host=db Service=prod password=Hidden-1', {}, /libpq reads only the lowercase name/],
   // Codex 4161235803: libpq has no environment variable for sslpassword, so it is refused, with or without a password.
   ['a URI client key passphrase', 'postgresql://flight:pw@db/flight?sslkey=client.key&sslpassword=Hidden-1', {}, /client key passphrase/],
   ['a URI client key passphrase with no password', 'postgresql://flight@db/flight?sslpassword=Hidden-1', {}, /client key passphrase/],
