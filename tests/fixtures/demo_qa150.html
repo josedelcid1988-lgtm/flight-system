@@ -1862,7 +1862,9 @@ function skBoot(){
  function hashPassword(salt,password){if(!(window.crypto&&crypto.subtle))return Promise.reject(new Error('Secure hashing is not available in this browser context.'));return crypto.subtle.digest('SHA-256',new TextEncoder().encode(salt+':'+password)).then(toHex);}
  function currentUser(){try{if(SERVER&&!serverToken())return null;var u=sessionStorage.getItem(SESSION_KEY);if(!u)return null;var a=loadAuth();return a.users.find(function(x){return x.username===u;})||null;}catch(e){return null;}}
  // Security events for the audit log kept by the hardening layer (sign-in, failures, lockouts, role changes).
- function secEvent(type,detail){try{window.dispatchEvent(new CustomEvent('sk-security',{detail:Object.assign({type:type,at:new Date().toISOString()},detail||{})}));}catch(e){}}
+ // The sign-in form works while the rest of the page is still loading, before that layer listens: an event raised
+ // then is held and the layer records it when it starts, so a lockout is recorded like the lock it applies.
+ function secEvent(type,detail){var d=Object.assign({type:type,at:new Date().toISOString()},detail||{});if(!window.skSecurityLog){(window.skSecurityPending=window.skSecurityPending||[]).push(d);return;}try{window.dispatchEvent(new CustomEvent('sk-security',{detail:d}));}catch(e){}}
  var LOCK_KEY='skyryse-mes-demo-lockout-v1'/* DEMO D-41 */,LOCK_AFTER=5,LOCK_MINUTES=5;
  function lockState(username){try{var all=JSON.parse(localStorage.getItem(LOCK_KEY)||'{}');return all[username]||{fails:0,until:0};}catch(e){return {fails:0,until:0};}}
  function lockWrite(username,st){try{var all=JSON.parse(localStorage.getItem(LOCK_KEY)||'{}');all[username]=st;localStorage.setItem(LOCK_KEY,JSON.stringify(all));}catch(e){}}
@@ -14920,6 +14922,8 @@ window.SK_INTEGRATIONS = window.SK_INTEGRATIONS || {
   function secLog(entry) { var list = readLog(); list.push(Object.assign({ at: new Date().toISOString(), page: location.pathname }, entry)); writeLog(list); }
   window.addEventListener('sk-security', function (ev) { secLog(ev.detail || {}); });
   window.skSecurityLog = { read: readLog, add: secLog };
+  // Sign-in events (failures, lockouts) the gate raised before this layer loaded, in the order they happened.
+  (window.skSecurityPending || []).splice(0).forEach(secLog);
 
   // ---- idle lock and hard session expiry ---------------------------------------------------------
   var lastActivity = Date.now(), warned = false, warnEl = null;
