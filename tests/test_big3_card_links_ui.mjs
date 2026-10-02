@@ -139,11 +139,47 @@ try {
   at = await where(page);
   check(at.view === 'order' && at.selectedId === legacy.id, `the page template title opens the record (${JSON.stringify(at)})`);
 
-  // 5. A record that is gone gets a plain notice instead of navigation, and nothing changes.
+  // 5. #562: a must-start milestone card opens its work order on the tab for the order's stage, and a milestone whose
+  // work order is gone gets the notice. Test setup only: the milestone is added to the in-memory workspace, not saved.
+  const milestone = await page.evaluate(() => {
+    const order = state.orders.find(item => item.status !== 'Closed'), date = new Date().toISOString().slice(0, 10);
+    const project = MES.createProject(state, { name: 'Big Three link check', startDate: date, dueDate: date });
+    const added = project.ok && MES.addProjectMilestone(state, { title: 'Start the Big Three link check', projectId: project.id, dueDate: date, workOrderId: order.id, mustStart: true });
+    if (!added?.ok) return { error: added?.message || project.message };
+    const id = added.id;
+    const username = window.skAuth.actor().account, blank = { t: '', done: false, why: '', ref: null, goal: '', src: '', status: '' };
+    MES.plannerStatus(state, date);
+    state.planner.days[username] = { ...(state.planner.days[username] || {}), [date]: { date, big3: [{ t: 'Must start: Start the Big Three link check', done: false, why: 'Normal', ref: { type: 'milestone', id: `MST-${id}` }, goal: '', src: 'milestone', status: 'proposed' }, blank, blank], win: '', notes: '' } };
+    document.querySelectorAll('.mnv-landing').forEach(item => item.remove());
+    view = 'home'; render(); window.scrollTo(0, 0);
+    return { orderId: order.id, tab: stageTab(order) };
+  });
+  check(!milestone.error, `the test milestone is recorded through the engine (${milestone.error || 'ok'})`);
+  const milestoneButton = hangarCard(page).locator('button.big3-open');
+  check(await milestoneButton.count() === 1 && (await milestoneButton.getAttribute('aria-label')).endsWith(`Opens work order ${milestone.orderId}`), `a must-start milestone card title is a button that says it opens work order ${milestone.orderId}`);
+  let before = await snapshot(page);
+  await milestoneButton.click();
+  at = await where(page);
+  check(at.view === 'order' && at.selectedId === milestone.orderId && at.tab === milestone.tab, `a must-start milestone card opens ${milestone.orderId} on its ${milestone.tab} tab (${JSON.stringify(at)})`);
+  let after = await snapshot(page);
+  check(after.memory === before.memory && after.stored === before.stored, 'opening a milestone card changes nothing');
+  await page.evaluate(() => { view = 'home'; render(); window.scrollTo(0, 0); });
+  await page.evaluate(id => { state.orders = state.orders.filter(order => order.id !== id); }, milestone.orderId);
+  before = await snapshot(page);
+  await hangarCard(page).locator('button.big3-open').click();
+  at = await where(page);
+  const milestoneNotice = (await page.locator('#toast p').innerText()).trim();
+  check(at.view === 'home' && /^Work order \S+ is no longer in this workspace, so it cannot be opened\./.test(milestoneNotice), `a milestone whose work order is gone shows the notice and does not navigate (${milestoneNotice} ${JSON.stringify(at)})`);
+  after = await snapshot(page);
+  check(after.memory === before.memory && after.stored === before.stored, 'the milestone missing-record notice changes nothing');
+
+  // 6. A record that is gone gets a plain notice instead of navigation, and nothing changes.
   const removals = [
     ['po-release', 'state.plannedOrders = state.plannedOrders.filter(po => po.id !== id)', /^Planned order \S+ is no longer in this workspace, so it cannot be opened\./],
     ['kit', 'state.orders = state.orders.filter(order => order.id !== id)', /^Work order \S+ is no longer in this workspace, so it cannot be opened\./],
-    ['nc-disposition', 'for (const order of state.orders) order.tickets = order.tickets.filter(ticket => ticket.id !== id)', /^NC \S+ is no longer in this workspace, so it cannot be opened\./]
+    ['nc-disposition', 'for (const order of state.orders) order.tickets = order.tickets.filter(ticket => ticket.id !== id)', /^NC \S+ is no longer in this workspace, so it cannot be opened\./],
+    // #562: a WI release card whose master WI is gone gets the notice too.
+    ['wi-release', 'state.masterWIs = state.masterWIs.filter(wi => wi.id !== id)', /^Master WI \S+ Rev \S+ is no longer in this workspace, so it cannot be opened\./]
   ];
   for (const [kind, removal, words] of removals) {
     await plantDay(page, [kinds[kind].id]);
@@ -157,6 +193,7 @@ try {
     const after = await snapshot(page);
     check(after.memory === before.memory && after.stored === before.stored, `${kind}: the missing-record notice changes nothing`);
   }
+
   await page.close();
 } finally {
   await browser.close();
