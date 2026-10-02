@@ -3374,6 +3374,9 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const same = (a, b) => canonicalPayload(a === undefined ? null : a) === canonicalPayload(b === undefined ? null : b);
     const field = Object.keys(was).find(k => !LEGACY_ESCAPE_LINKS.includes(k) && !same(was[k], t[k]));
     if (field) return field;
+    // A field the stored record does not hold may appear only empty (a later build's default), never with content.
+    const added = Object.keys(t).find(k => !Object.hasOwn(was, k) && !LEGACY_ESCAPE_LINKS.includes(k) && !(t[k] === null || t[k] === undefined || (Array.isArray(t[k]) && !t[k].length)));
+    if (added) return added;
     const wa = Array.isArray(was.attachments) ? was.attachments : [], ta = Array.isArray(t.attachments) ? t.attachments : [];
     if (ta.length < wa.length || wa.some((a, i) => !same(a, ta[i]))) return 'attachments';
     const wh = Array.isArray(was.history) ? was.history : [], th = Array.isArray(t.history) ? t.history : [];
@@ -5396,6 +5399,7 @@ const OP_BOM_MAX = 12;
   function linkOpToTicket(state, orderId, opId, ticketId) {
     { const d = denied('adjust-wo', 'link an operation to an NC'); if (d) return d; }
     const { order, error } = target(state, orderId); if (error) return fail(error);
+    { const locked = fairLockRefusal(state, order); if (locked) return locked; }
     const op = order.operations.find(x => x.id === opId); if (!op) return fail('Operation not found.');
     if (!['Rework', 'Repair'].includes(op.classification)) return fail('Only Rework and Repair operations link to an NC.');
     if (op.done) return fail('The operation is already bought off.');
@@ -8283,6 +8287,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const withdraw = mode === 'withdraw';
     if (withdraw) { if (!pending.entries.some(e => isRequester(state, e.by)) && !can('approve-wo')) return fail('Only the person who changed the sequence, or Quality, can withdraw it.'); }
     else { const d = denied('approve-wo', 'reject a sequence change'); if (d) return d; }
+    { const locked = fairLockRefusal(state, order); if (locked) return locked; }
     if (!Array.isArray(order.sequenceBaseline)) return fail('The original sequence was not captured, so this change cannot be rolled back automatically. Edit the operations back, then release.');
     const text = reasonText(reason); if (!text) return fail('Enter a reason of 5 to 500 characters.');
     const who = actor(state), at = new Date().toISOString();

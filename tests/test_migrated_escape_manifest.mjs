@@ -166,6 +166,7 @@ try {
     ['escape data', t => { t.escape = { ...t.escape, detectedAt: t.escape.detectedAt === 'Customer' ? 'Receiving inspection' : 'Customer' }; }, 'escape'],
     ['migration history entry', t => { t.history = t.history.map(e => /^Migrated from escape/.test(e.action) ? { ...e, at: '2020-01-01T00:00:00.000Z' } : e); }, 'history'],
     ['history (an entry dropped)', t => { t.history = t.history.slice(1); }, 'history'],
+    ['a field it did not hold', t => { t.disposition = 'Use as is'; }, 'disposition'],
   ]) {
     await check(`r4161912794 the server refuses a change to the ${label} of a stored migrated-escape NC`, async () => {
       const live = await started(raw);

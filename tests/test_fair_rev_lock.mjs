@@ -80,6 +80,8 @@ const CASES=[
   {name:'remove an operation',cap:'adjust-wo',act:"MES.removeOrderOperation(c,id,o.operations[0].id,'Not needed')"},
   {name:'edit an operation instruction',cap:'adjust-wo',act:"MES.editOrderOperation(c,id,o.operations[0].id,{description:'Edited after the FAIR.'})"},
   {name:'release a sequence change',cap:'approve-wo',prep:'building',prepSeq:true,act:'MES.approveSequenceChange(c,id)'},
+  {name:'reject a sequence change',cap:'approve-wo',prep:'building',prepSeq:true,act:"MES.rejectSequenceChange(c,id,'Not needed','reject')"},
+  {name:'link an operation to an NC',cap:'adjust-wo',act:"MES.linkOpToTicket(c,id,o.operations[0].id,(o.tickets[0]||{id:'NC-0000'}).id)"},
   {name:'assign a serial number',cap:'operate',prepVoid:true,act:'MES.assignSerial(c,id)'},
   {name:'void a serial number',cap:'operate',act:"MES.voidSerial(c,id,MES.orderSerials(c,o)[0].serial,'Damaged tag')"},
   {name:'reopen the FAIR',cap:'approve-wo',act:"MES.reopenFair(c,id,'Delta FAI needed')",lockText:'This FAIR is signed. Only a QA Manager can reopen it.'},

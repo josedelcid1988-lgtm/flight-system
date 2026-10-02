@@ -89,7 +89,7 @@ const SOD=[
   ['the FAIR lock refusal text',"const FAIR_LOCK_MESSAGE = \"This work order's FAIR is signed. Only a QA Manager can change it.\";",1],
   ['only the QA Manager role lifts the FAIR lock; Master Access does not count',"const fairLockRefusal = (state, order) => fairSigned(order) && !qaManagerSignedIn(state) ? fail(FAIR_LOCK_MESSAGE) : null;",1],
   ['the QA Manager test is the account role list, not Master Access',"    return roles.includes('qm');\n",1],
-  ['the FAIR lock guards engineering change submit, ECR approval, QA re-release, operation add, remove and edit, sequence release and serial assign and void',"    { const locked = fairLockRefusal(state, order); if (locked) return locked; }",9],
+  ['the FAIR lock guards engineering change submit, ECR approval, QA re-release, operation add, remove and edit, rework links, sequence release, reject and withdraw, and serial assign and void',"    { const locked = fairLockRefusal(state, order); if (locked) return locked; }",11],
   ['the FAIR lock guards standard rework',"{ const o0 = state.orders.find(x => x.id === orderId), locked = o0 ? fairLockRefusal(state, o0) : null; if (locked) return locked; }",1],
   ['a signed FAIR is reopened only by a QA Manager',"if (!qaManagerSignedIn(state)) return fail('This FAIR is signed. Only a QA Manager can reopen it.');",1],
   ['only a QA Manager signs a FAIR impact assessment',"if (!qaManagerSignedIn(state)) return fail('Only a QA Manager can sign a FAIR impact assessment.');",1],
