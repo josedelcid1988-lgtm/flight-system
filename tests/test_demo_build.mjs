@@ -64,15 +64,19 @@ ok('the demo reads and writes accounts only under skyryse-mes-demo-auth-v1',!/['
  ok('the demo keeps its session, lockout, security log, sign-in tokens, drafts and evidence under demo keys',shared.every(k=>!new RegExp(`['"]skyryse-mes-${k}-v1['"]`).test(curated)&&new RegExp(`['"]skyryse-mes-demo-${k}-v1['"]`).test(curated)),shared.filter(k=>new RegExp(`['"]skyryse-mes-${k}-v1['"]`).test(curated)).join(','));
  ok('production keeps those keys unchanged',shared.every(k=>new RegExp(`['"]skyryse-mes-${k}-v1['"]`).test(prod)));}
 
-// ---- solo hand-off text (D-55 to D-58): the demo never tells one person to find another; production still does ----
+// ---- solo hand-off text (D-55 to D-59): the demo never tells one person to find another; production still does ----
 {const HANDOFF=['First approval recorded. A second approval from a different discipline is needed.','One more approval from a different discipline required.',
    'Second approval must come from a different discipline; General User accounts cannot approve.','Two approvals from different disciplines required. Reason: ${','Two approvals from different disciplines are needed.',
    'two approvals from two different disciplines (','Needs Quality approval from a different person.','reviewed. A different qualified person must accept it.',
    'The person who records a finding cannot close it. A different person signs each closure.',
-   'The audit author cannot close it.','The author, reviewer, and releaser must be three different people.'];
+   'The audit author cannot close it.','The author, reviewer, and releaser must be three different people.',
+   'A second person reviews and approves it in box 22 next.','a second person signs box 22','approved by (a second person)',
+   'someone other than the verifier reviews and approves the FAIR here.','Waiting for a second person'];
  const SOLO=['in this demo the same person may give it.','in this demo one person may give both.','in this demo the requester may review it.','In this demo the reviewer may accept it next.',
    'In this demo the person who records a finding may also sign it closed.','In this demo the audit author may close it.',
-   'In this demo one person may author, review and release a revision.'];
+   'In this demo one person may author, review and release a revision.',
+   'FAIR verified. In this demo the verifier may also sign box 22 next.','in this demo the verifier may sign box 22','(in this demo the verifier may sign)',
+   'In this demo the verifier may sign it.','Waiting for box 22; in this demo the verifier may sign it'];
  ok('production keeps every different-person hand-off line',HANDOFF.every(s=>prod.includes(s)),HANDOFF.filter(s=>!prod.includes(s)).join(' | '));
  ok('the demo shows none of the different-person hand-off lines',HANDOFF.every(s=>!curated.includes(s)&&!qa150.includes(s)),HANDOFF.filter(s=>curated.includes(s)).join(' | '));
  ok('the demo shows the solo next step instead',SOLO.every(s=>curated.includes(s)),SOLO.filter(s=>!curated.includes(s)).join(' | '));

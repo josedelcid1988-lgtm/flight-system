@@ -356,6 +356,14 @@ const fai = {
     await u.step('FAIR Form 2 material', () => fairForm2(u, id));
     await u.step('FAIR Form 3 characteristics and results', () => fairForm3(u, id));
     await u.step('verify the FAIR (blocks 20 and 21)', () => fairSign(u, id, 'fair-verify', 'verified'));
+    await u.step('the verify message and the box 22 panel tell one person the next step', async () => {
+      const msg = await u.toast();
+      if (!msg.includes('In this demo the verifier may also sign box 22 next.')) throw new Error('verify message: ' + msg);
+      await fairTab(u, 'Review and sign');
+      const panel = await u.page.locator('#main form[data-form=fair-review]').locator('xpath=..').innerText();
+      if (!panel.includes('(in this demo the verifier may sign)') || !panel.includes('In this demo the verifier may sign it.')) throw new Error('box 22 panel: ' + panel);
+      if (/second person|other than the verifier/i.test(panel)) throw new Error('the box 22 panel still asks for a second person: ' + panel);
+    });
     await u.step('box 22 review by the same person', () => fairSign(u, id, 'fair-review', 'reviewed'));
     await u.step('Skyryse QA approval', () => fairSign(u, id, 'fair-approve', 'approved'));
     await u.step('print the FAIR', () => u.expectPrint('FAIR print', () => u.clickLoc(u.page.locator('#main [data-action=fair-print]').first())));

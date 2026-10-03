@@ -19,7 +19,7 @@ The accounts `tech`, `quality`, `mfgeng`, `operations`, `engineering` are pilot 
 their real role (Technician, Quality, Manufacturing Engineering, Operations, Engineering) so a pilot
 can rehearse the real hand-offs. Every other demo account (`demo`, `master`, `safety`,
 `certification` and any account a person creates) has full access (D-6 to D-36). The stamp,
-PIN and separation-of-duties relaxations (D-13 to D-19; D-20 to D-58) apply to every
+PIN and separation-of-duties relaxations (D-13 to D-19; D-20 to D-59) apply to every
 demo account so no scenario stalls. Sign in with any account and the password `demo1234`.
 
 Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-28 to D-29).
@@ -96,3 +96,4 @@ Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-2
 | D-56 | Separation of duties | Closure request text says the requester may review it | The pending closure banner matches the relaxation D-49, which shows Review closure to the requester, so it does not tell a solo walk-through to find another person. Production asks for Quality approval from a different person. | 1 |
 | D-57 | Separation of duties | Analysis draft review message says the reviewer may accept it | The message after an analysis draft is reviewed matches the relaxation D-50, so a solo walk-through is told its real next step. Production says a different qualified person must accept it. | 1 |
 | D-58 | Separation of duties | System QMS text says one person may close findings and audits and sign every document role | The help text under Open audit, the note on an open audit card and the controlled document summary match the relaxations D-50, D-52 and D-53, which let the person who recorded a finding close it and its audit, and let one person author, review and release a document, so a solo walk-through is not told another person must sign. Production says a different person signs each closure, the audit author cannot close the audit, and the author, reviewer and releaser are three different people. | 1 |
+| D-59 | Separation of duties | FAIR box 22 text says the verifier may sign it | The message after a FAIR is verified, the Hangar task, the box 22 panel heading, help and waiting text match the relaxation D-33, which lets the verifier sign box 22, so a solo walk-through is not told another person must sign. Production says a second person, other than the verifier, reviews and approves the FAIR in box 22. | 1 |
