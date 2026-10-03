@@ -209,7 +209,9 @@ realm('globalThis.Date = globalThis.__RealDate;')();
     // Twenty-sixth review: a prohibition does not hide a torque action or a part name.
     'Do not exceed torque seal nut per WI-123', 'Do not retorque; torque seal nut per drawing', 'Avoid scratching the housing and torque seal plug per WI-123', 'Do not disturb torque stripe, then torque nut to 35 in-lb',
     // Twenty-seventh review: a prohibition ends at its clause, so a later tightening still records.
-    'Do not overtighten; tighten bolts to spec and apply torque stripe', 'Do not loosen, tighten bolts at specified torque points', 'If not damaged tighten the nut and inspect torque stripe'];
+    'Do not overtighten; tighten bolts to spec and apply torque stripe', 'Do not loosen, tighten bolts at specified torque points', 'If not damaged tighten the nut and inspect torque stripe',
+    // Review of 9d72913: a prohibition ends at a coordinated positive action.
+    'Work without disturbing the harness and tighten the B-nut; inspect torque stripe', 'Avoid scratching the housing or tighten the B-nut, inspect torque stripe', 'Never disturb the harness but tighten the B-nut and inspect torque stripe'];
   check('MES.stepRecordsTorque: a torque action records a torque value, also on marked, paint-marked, sealed or seal-named parts', actions.every(t => MES.stepRecordsTorque(t) === true), actions.filter(t => !MES.stepRecordsTorque(t)).join(', '));
   const state = fresh(), order = state.orders.find(o => o.status === 'Draft' && o.operations.length), op = order.operations[0];
   op.steps = [{ id: 'step-1', title: 'Install bracket', instruction: 'Install bracket', recordsTorque: true }];
@@ -238,26 +240,36 @@ realm('globalThis.Date = globalThis.__RealDate;')();
 }
 
 // Codex P1 on PR #605: a workspace saved under the old add rule holds recordsTorque false for a real torque step such as
-// "Torque sealing plug to 35 in-lb". Loading raises an unfinished step of an open operation. It never touches a step that is
-// already checked, a step of a closed order or a released master WI, and it never lowers a true setting.
+// "Torque sealing plug to 35 in-lb". Loading raises an unfinished step of an operation that was added to an open order (op-add-N),
+// because those settings always came from the rule. It never touches a step cloned from a master WI (its author chose the setting),
+// a step that is already checked, a step of a closed order or a released master WI, and it never lowers a true setting.
 {
-  const state = MES.upgrade(JSON.parse(DEMO));
-  const open = state.orders.find(o => o.status !== 'Closed' && o.operations.some(op => !op.done)), closed = state.orders.find(o => o.status === 'Closed');
-  const op = open.operations.find(item => !item.done), closedOp = closed.operations[0];
-  const step = (title, instruction, recordsTorque) => ({ id: `step-mig-${title.replace(/\W+/g, '-').toLowerCase()}`, title, instruction, recordsTorque });
-  const real = step('Torque sealing plug', 'Tighten to 35 in-lb with a calibrated driver.', false), marker = step('Apply torque stripe', 'Stripe across the nut and housing.', false);
-  const done = step('Torque seal retaining nut', 'Torque per drawing.', false), kept = step('Torque jam nut', 'Torque to 20 in-lb.', true), markerTrue = step('Apply torque stripe again', 'Stripe the nut.', true);
-  const closedReal = step('Torque sealing plug', 'Tighten to 35 in-lb with a calibrated driver.', false);
-  op.steps.push(real, marker, done, kept, markerTrue);
-  op.stepChecks[done.id] = { checked: true, at: '2026-09-01T00:00:00.000Z' };
+  const state = fresh();
+  const open = state.orders.find(o => o.status === 'Draft' && o.operations.length), closed = state.orders.find(o => o.status === 'Closed');
+  const addOp = (order, title) => {
+    const res = run(state, me, () => MES.addOrderOperation(state, order.id, { classification: 'Manufacturing', title, description: 'Legacy added operation', buyoffType: 'Technician', steps: 'Install bracket', position: MES.getOrder(state, order.id).operations.length }));
+    return { res, op: MES.getOrder(state, order.id).operations.find(item => item.title === title) };
+  };
+  const { res, op } = addOp(open, 'Legacy added operation');
+  check('an operation is added to the order for the migration check', res.ok && /^op-add-\d+$/.test(op.id), res.message);
+  const step = (title, instruction, recordsTorque, id) => ({ id, title, instruction, recordsTorque });
+  const real = step('Torque sealing plug', 'Tighten to 35 in-lb with a calibrated driver.', false, 'step-mig-1'), marker = step('Apply torque stripe', 'Stripe across the nut and housing.', false, 'step-mig-2');
+  const done = step('Torque seal retaining nut', 'Torque per drawing.', false, 'step-mig-3'), kept = step('Torque jam nut', 'Torque to 20 in-lb.', true, 'step-mig-4'), markerTrue = step('Apply torque stripe again', 'Stripe the nut.', true, 'step-mig-5');
+  op.steps = [real, marker, done, kept, markerTrue];
+  op.stepChecks = { [done.id]: { checked: true, at: '2026-09-01T00:00:00.000Z' } };
+  const doc = step('Verify torque report is attached', 'Confirm the torque report is attached to the traveler.', false, 'step-mig-6');
+  const cloned = open.operations.find(item => !/^op-add-/.test(item.id) && !item.done);
+  cloned.steps.push(doc);
+  const closedOp = closed.operations[0], closedReal = step('Torque sealing plug', 'Tighten to 35 in-lb with a calibrated driver.', false, 'step-mig-7');
   closedOp.steps.push(closedReal);
-  const masterWI = state.masterWIs[0].operations[0], masterReal = step('Torque sealing plug', 'Tighten to 35 in-lb with a calibrated driver.', false);
-  masterWI.steps.push(masterReal);
+  const masterOp = state.masterWIs[0].operations[0], masterReal = step('Torque sealing plug', 'Tighten to 35 in-lb with a calibrated driver.', false, 'step-mig-8');
+  masterOp.steps.push(masterReal);
   check('the migration fixture is a valid workspace', MES.validate(state));
   MES.ensureMasterWIs(state);
-  check('an unfinished real torque step with a false setting is raised to recording torque', real.recordsTorque === true);
+  check('an unfinished real torque step of an added operation with a false setting is raised to recording torque', real.recordsTorque === true);
   check('a marker-only step with a false setting stays false', marker.recordsTorque === false);
   check('a step that is already checked keeps the setting it was checked under', done.recordsTorque === false);
+  check('a step cloned from a master WI keeps the setting its author chose', doc.recordsTorque === false);
   check('a step of a closed order keeps its setting', closedReal.recordsTorque === false);
   check('a released master WI step keeps its setting', masterReal.recordsTorque === false);
   check('a true setting is never lowered, even when the rule would say marker-only', kept.recordsTorque === true && markerTrue.recordsTorque === true);

@@ -2385,7 +2385,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // "Specified torque locations" names where torque was applied; it is not itself a torque action. Tightening is.
   const TORQUE_TIGHTEN = /\b(?:tighten|tightens|tightened|tightening|re-tighten|retighten)\b/gi;
   // A tighten verb that follows a prohibition in the same clause ("Do not tighten the B-nut; inspect torque stripe") applies no torque.
-  const TORQUE_PROHIBITION = /\b(?:do\s+not|don't|never|avoid|avoiding|without|must\s+not|shall\s+not|should\s+not)\b[^.;:!?,]*$/i;
+  // The prohibition ends at a coordinating or sequencing word, so "Work without disturbing the harness and tighten the B-nut" still tightens.
+  const TORQUE_PROHIBITION = /\b(?:do\s+not|don't|never|avoid|avoiding|without|must\s+not|shall\s+not|should\s+not)\b(?:(?!\b(?:and|or|but|then|also|while|before|after|so|until|once|when|if)\b)[^.;:!?,])*$/i;
   const tightens = text => [...text.matchAll(TORQUE_TIGHTEN)].some(m => !TORQUE_PROHIBITION.test(text.slice(0, m.index)));
   const TORQUE_PLACE = /\bspecified\s+$/i, TORQUE_PLACE_AFTER = /^torque\s+(?:locations?|points?|positions?)\b/i;
   const TORQUE_MARKER = '(?:witness\\s+)?(?:stripes?|striping|seals?|sealing|sealant|paints?|painting|marks?|marking)';
@@ -4929,9 +4930,11 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       if (!Array.isArray(operation.steps) || !operation.steps.length || !operation.steps.every(stepValid)) operation.steps = defaultSteps(operation.id, operation.title);
       if (!plain(operation.stepChecks)) operation.stepChecks = {};
       // Workspaces saved under the old add rule hold a false setting for real torque steps ("Torque sealing plug to 35 in-lb").
-      // An unfinished step of an open operation is raised to true when the rule now requires a reading. A finished step, a
-      // closed order and a released master WI keep what was recorded, and a true setting is never lowered.
-      if (order.status !== 'Closed' && !operation.done) operation.steps.forEach(step => { if (step.recordsTorque === false && !step.locked && !Object.hasOwn(operation.stepChecks, step.id) && stepRecordsTorque(`${step.title ?? ''}. ${step.instruction ?? ''}`)) step.recordsTorque = true; });
+      // Only an operation added to the order (op-add-N) is touched: its settings always came from the rule, while a step cloned
+      // from a master WI carries the setting its author chose. An unfinished step of an open operation is raised to true when the
+      // rule now requires a reading. A finished step, a closed order and a released master WI keep what was recorded, and a true
+      // setting is never lowered.
+      if (/^op-add-\d+$/.test(operation.id) && order.status !== 'Closed' && !operation.done) operation.steps.forEach(step => { if (step.recordsTorque === false && !step.locked && !Object.hasOwn(operation.stepChecks, step.id) && stepRecordsTorque(`${step.title ?? ''}. ${step.instruction ?? ''}`)) step.recordsTorque = true; });
       if (!Array.isArray(operation.attachments)) operation.attachments = [];
       if (!BUYOFF_TYPES.includes(operation.buyoffType)) operation.buyoffType = defaultBuyoffType(operation.id);
       if (typeof operation.inspectionPoint !== 'boolean') operation.inspectionPoint = operation.id === 'op-040' && INSPECTION_BUYOFF_TYPES.includes(operation.buyoffType);
