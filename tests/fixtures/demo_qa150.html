@@ -4349,9 +4349,11 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const recordIdsUnique = list => unique(list.filter(item => plain(item) && typeof item.id === 'string').map(item => item.id));
   // Each list holds an id once, and a stored mark is never below an id in its list.
   const recordCountersValid = (holder, prefixes, lists) => holder.idCounters === undefined || (plain(holder.idCounters) && Object.entries(holder.idCounters).every(([prefix, value]) => prefixes.includes(prefix) && Number.isSafeInteger(value) && value >= 0) && prefixes.every((prefix, i) => recordCounter(holder, prefix) >= highestRecordId(lists[i], prefix)));
+  // The operations an order holds now and, while a sequence change waits for QA, the copies it would restore.
+  const recordIdOperations = order => [order?.operations, order?.sequenceBaseline].flatMap(list => (Array.isArray(list) ? list.filter(plain) : []));
   const pushIdsValid = op => !plain(op?.atp) || !Array.isArray(op.atp.pushes) || (recordIdsUnique(op.atp.pushes) && recordCountersValid(op.atp, ['PUSH'], [op.atp.pushes]));
   const recordIdsValid = state => RECORD_ID_LISTS.every(([key]) => !Array.isArray(state[key]) || recordIdsUnique(state[key])) && recordCountersValid(state, RECORD_ID_LISTS.map(([, prefix]) => prefix), RECORD_ID_LISTS.map(([key]) => state[key])) &&
-    (Array.isArray(state.orders) ? state.orders : []).every(order => (Array.isArray(order?.operations) ? order.operations : []).every(pushIdsValid));
+    (Array.isArray(state.orders) ? state.orders : []).every(order => recordIdOperations(order).every(pushIdsValid));
   // A workspace saved with repeated ids (#585) keeps its first record under each id; each later repeat, whatever its
   // old form, gets a new id in the list's format from the mark, so every id names one record. Then the marks are set from the highest ids held.
   // Keeps only the prefixes a holder may carry, each a whole number of 0 or more, so repair never leaves a mark that
@@ -4362,9 +4364,9 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const renumber = (holder, prefix, list, pad) => { if (!Array.isArray(list)) return new Map(); markRecordIds(holder, prefix, list); const shared = new Map(); list.forEach(item => { if (plain(item) && typeof item.id === 'string') shared.set(item.id, [...(shared.get(item.id) || []), item]); }); const seen = new Set(); list.forEach(item => { if (!plain(item) || typeof item.id !== 'string') return; if (seen.has(item.id)) item.id = nextRecordId(holder, prefix, list, pad); seen.add(item.id); }); return new Map([...shared].filter(([, items]) => items.length > 1)); };
     normalizeRecordCounters(state, RECORD_ID_LISTS.map(([, prefix]) => prefix));
     RECORD_ID_LISTS.forEach(([key, prefix]) => renumber(state, prefix, state[key], 4));
-    // Every ATP push list with a stored mark, or with a repeated id, is normalized; a list with neither is left
+    // Every ATP push list with a stored mark, or with a repeated id, is normalized, on the operations and on the copies a pending sequence change holds; a list with neither is left
     // untouched, so a signed operation gains no new field.
-    (Array.isArray(state.orders) ? state.orders : []).forEach(order => (Array.isArray(order?.operations) ? order.operations : []).forEach(op => {
+    (Array.isArray(state.orders) ? state.orders : []).forEach(order => recordIdOperations(order).forEach(op => {
       if (!plain(op?.atp) || !Array.isArray(op.atp.pushes)) return;
       if (op.atp.idCounters === undefined && recordIdsUnique(op.atp.pushes)) return;
       normalizeRecordCounters(op.atp, ['PUSH']);

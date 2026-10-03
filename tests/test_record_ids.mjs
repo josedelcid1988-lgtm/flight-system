@@ -206,6 +206,24 @@ await check('a review saved before push times were kept stays on the held push w
   }
 });
 
+await check('repeated push ids on an operation held by a pending sequence change are refused and repaired, so a rejection restores it', async () => {
+  // Codex review on #629: validation and repair walked only the current operations, so an older workspace whose removed
+  // ATP operation repeated a push id loaded as valid, and rejecting the removal restored an invalid operation.
+  const { state, order, op } = removalSetup();
+  const held = order.sequenceBaseline.find(x => x.id === op.id);
+  held.atp.pushes = [held.atp.pushes[0], { ...structuredClone(held.atp.pushes[0]), sha: 'abc0009', version: 'v9.9', at: new Date(Date.parse(held.atp.pushes[0].at) + 60000).toISOString() }];
+  assert.equal(MES.validate(state), false, 'the repeated id on the held operation is refused');
+  assert.equal(MES.diagnose(state).where, 'record ids');
+  const upgraded = MES.upgrade(structuredClone(state));
+  assert.ok(upgraded && MES.validate(upgraded), 'upgrade repairs it');
+  const upOrder = upgraded.orders.find(o => o.id === order.id);
+  same(ids(upOrder.sequenceBaseline.find(x => x.id === op.id).atp.pushes), ['PUSH-1', 'PUSH-2']);
+  const rejected = as(reviewer, upgraded, s => MES.rejectSequenceChange(s, order.id, 'Keep the ATP operation.'));
+  assert.equal(rejected.ok, true, rejected.message);
+  same(ids(upOrder.operations.find(x => x.id === op.id).atp.pushes), ['PUSH-1', 'PUSH-2'], 'the restored operation holds each push id once');
+  assert.equal(MES.validate(upgraded), true);
+});
+
 await check('validation refuses a repeated id in any of the four lists and a mark below an id it holds', async () => {
   const base = fresh();
   for (let n = 0; n < 3; n += 1) notice(base, n);
