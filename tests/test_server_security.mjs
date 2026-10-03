@@ -18,7 +18,9 @@ const check = async (name, fn) => {
   try { await fn(); checks += 1; console.log(`ok ${name}`); } catch (error) { fails.push(name); console.log(`FAIL ${name} -> ${error.message}`); }
 };
 const SETUP_CODE = 'security-test-setup-code';
-const server = createServer({ dbPath: ':memory:', quiet: true, setupCode: SETUP_CODE });
+// The clock runs in real time unless a check freezes it (the refused-action rate limit check below).
+let frozenClock = null;
+const server = createServer({ dbPath: ':memory:', quiet: true, setupCode: SETUP_CODE, clock: () => frozenClock ?? Date.now() });
 const handler = server.listeners('request')[0];
 const request = async (url, { method = 'GET', headers = {}, body } = {}) => {
   const incoming = Readable.from(body === undefined ? [] : [Buffer.isBuffer(body) ? body : Buffer.from(String(body))]);
@@ -279,6 +281,24 @@ try {
     const detail = JSON.parse(trail.detail);
     assert.deepEqual([detail.action, detail.status], ['MES.attachEvidence', 422]);
     assert.match(detail.reason, new RegExp(`^evidence: ${victim} was uploaded by another account`));
+    // Repeated evidence refusals are rate limited with the action trail (Codex security review on #606): past 30 per
+    // account per minute neither row is written, and the suppressed count is recorded in the next minute.
+    frozenClock = Date.now() + 61 * 1000;
+    try {
+      const count = async name => (await server.store.auditRows(5000)).filter(row => row.action === name && row.username === 'sec-tech2').length;
+      const [evidenceStart, actionStart, suppressedStart] = [await count('evidence-refused'), await count('action-refused'), await count('action-refused-suppressed')];
+      for (let i = 0; i < 40; i += 1) {
+        const again = await api('POST', '/workspace/actions/MES.attachEvidence', { token: other, body: { args: [order.id, opId, input(victim)] }, headers: { 'If-Match': before.etag } });
+        assert.equal(again.status, 422, 'every repeated forged attach is still refused');
+      }
+      assert.equal(await count('evidence-refused'), evidenceStart + 30, 'only 30 evidence-refused rows are written in a minute');
+      assert.equal(await count('action-refused'), actionStart + 30, 'and only 30 action-refused rows');
+      frozenClock += 61 * 1000;
+      assert.equal((await api('POST', '/workspace/actions/MES.attachEvidence', { token: other, body: { args: [order.id, opId, input(victim)] }, headers: { 'If-Match': before.etag } })).status, 422);
+      assert.equal(await count('action-refused-suppressed'), suppressedStart + 1, 'the next minute records the suppressed count once');
+      assert.equal(await count('evidence-refused'), evidenceStart + 31, 'and writes its evidence refusal again');
+      assert.equal(server.store.verifyAudit().ok, true, 'the audit chain still verifies');
+    } finally { frozenClock = null; }
     assert.equal((await api('GET', `/evidence/${victim}`, { token: other })).status, 403, 'the recording stays unreadable to the other account');
     // An ID whose upload has not reached the server yet (still in flight, or never sent) cannot be referenced either:
     // otherwise the reference would authorize everyone the moment the owner's upload lands. The browser uploads before

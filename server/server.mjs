@@ -208,7 +208,9 @@ export function createServer(options = {}) {
   const refusalWindows = new Map();
   // The window bookkeeping is done synchronously before any audit write is awaited, so concurrent refusals at a minute
   // boundary see one window: one summary row, and at most ACTION_REFUSAL_LIMIT refusal rows, per account per minute.
-  const auditActionRefusal = async (username, detail) => {
+  // Companion rows (the evidence-refused row of an evidence refusal) count as part of the same refusal: written with it
+  // while under the limit, and suppressed with it past the limit.
+  const auditActionRefusal = async (username, detail, companions = []) => {
     const at = clock(); let w = refusalWindows.get(username), summary = null;
     if (w && at - w.start >= ACTION_REFUSAL_WINDOW_MS) {
       if (w.suppressed) summary = { suppressed: w.suppressed, windowStart: new Date(w.start).toISOString(), limit: ACTION_REFUSAL_LIMIT };
@@ -221,7 +223,7 @@ export function createServer(options = {}) {
     const write = w.written < ACTION_REFUSAL_LIMIT;
     if (write) w.written += 1; else w.suppressed += 1;
     if (summary) await store.audit(username, 'action-refused-suppressed', summary);
-    if (write) await store.audit(username, 'action-refused', detail);
+    if (write) { for (const row of companions) await store.audit(username, row.action, row.detail); await store.audit(username, 'action-refused', detail); }
   };
   const send = (res, status, body, headers = {}) => { const json = body === undefined ? '' : JSON.stringify(body); res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers }); res.end(json); };
   // An unexpected failure is logged here with its detail and a reference. The caller gets the reference and a
@@ -947,7 +949,7 @@ export function createServer(options = {}) {
         // Every refusal on this route is audited, as PUT /workspace refusals are (#582): the action name, the status and
         // a reason. The request arguments themselves are never recorded; reasons and engine messages are capped at 500
         // characters.
-        const auditRefusal = async (status, reason, extra = {}) => { await auditActionRefusal(session.username, { action: action[1].slice(0, 120), status, reason: String(reason).slice(0, 500), ...extra }); };
+        const auditRefusal = async (status, reason, extra = {}, companions = []) => { await auditActionRefusal(session.username, { action: action[1].slice(0, 120), status, reason: String(reason).slice(0, 500), ...extra }, companions); };
         const fn = host.resolveAction(action[1]);
         if (!fn) { await auditRefusal(404, 'no such action'); send(res, 404, { error: `No action named ${action[1]}.` }); return; }
         let body; try { body = await readJson(req); } catch (e) { if (e.status === 400 || e.status === 413) await auditRefusal(e.status, e.status === 413 ? 'request body over the size limit' : 'request body is not JSON'); throw e; }
@@ -972,7 +974,7 @@ export function createServer(options = {}) {
         if (!result || result.ok === false) { await auditRefusal(403, 'refused by the engine', { message: String(result && result.message || '').slice(0, 500) }); send(res, 403, { error: result ? result.message : 'Refused.', result }); return; }
         const invalid = validState(state); if (invalid) { await auditRefusal(422, `would leave the workspace invalid: ${invalid}`); send(res, 422, { error: `The action would leave the workspace invalid: ${invalid}` }); return; }
         // An evidence refusal keeps its own evidence-refused row (reports and tests read it) and joins the action trail.
-        { const bad = await evidenceProblem(raw, state, session); if (bad) { await store.audit(session.username, 'evidence-refused', { action: action[1], status: 422, message: bad }); await auditRefusal(422, `evidence: ${bad}`); send(res, 422, { error: bad }); return; } }
+        { const bad = await evidenceProblem(raw, state, session); if (bad) { await auditRefusal(422, `evidence: ${bad}`, {}, [{ action: 'evidence-refused', detail: { action: action[1], status: 422, message: bad } }]); send(res, 422, { error: bad }); return; } }
         const done = await commitState(state, etag, session.username, [{ action: 'action', detail: { action: action[1], message: result.message } }]);
         if (done.problem) { await auditRefusal(422, `would leave the workspace invalid: ${done.problem}`); send(res, 422, { error: `The action would leave the workspace invalid: ${done.problem}` }); return; }
         if (done.conflict) { await auditRefusal(409, 'workspace changed while the action ran'); send(res, 409, { error: 'The workspace changed while the action ran. Try again.' }); return; }
