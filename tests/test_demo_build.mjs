@@ -276,11 +276,15 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  // If the record did not survive that reload, a second page of the origin writes it, as another tab would, and stays
  // open until this tab sees it: a write from a page that reloaded or closed just after can be lost (#556).
  {const other=await ctx.newPage();await other.goto('file://'+FIXTURES+BLANK);
-  await other.evaluate(v=>{if(!localStorage.getItem('skyryse-mes-legacy-demo-review-v1'))localStorage.setItem('skyryse-mes-legacy-demo-review-v1',v);},v);
-  for(const end=Date.now()+60000;Date.now()<end;){if(await p.evaluate(()=>!!localStorage.getItem('skyryse-mes-legacy-demo-review-v1')).catch(()=>false))break;await p.waitForTimeout(250);}
   // The page is read once it has decided (the gate shown, or a signed-in user), not a fixed 900 ms after the reload.
-  // A reload can itself be lost in this harness and leave a blank page; reload again, up to three times, until it decides.
-  for(let i=0;i<3;i++){await p.reload().catch(()=>{});if(await p.waitForFunction(()=>!!document.getElementById('sk-legacy-review')||!!(window.skAuth&&skAuth.user()),null,{timeout:20000}).then(()=>true,()=>false))break;}
+  // The harness can lose the record again across that reload, or lose the reload itself, so up to three times the
+  // other page puts the record back if it is missing, this tab waits until it sees it, and reloads.
+  for(let i=0;i<3;i++){
+   await other.evaluate(v=>{if(!localStorage.getItem('skyryse-mes-legacy-demo-review-v1'))localStorage.setItem('skyryse-mes-legacy-demo-review-v1',v);},v);
+   for(const end=Date.now()+60000;Date.now()<end;){if(await p.evaluate(()=>!!localStorage.getItem('skyryse-mes-legacy-demo-review-v1')).catch(()=>false))break;await p.waitForTimeout(250);}
+   await p.reload().catch(()=>{});
+   await p.waitForFunction(()=>!!document.getElementById('sk-legacy-review')||!!(window.skAuth&&skAuth.user()),null,{timeout:20000}).catch(()=>{});
+   if(await p.evaluate(()=>!!document.getElementById('sk-legacy-review')).catch(()=>false))break;}
   await other.close();}
  const open=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),user:window.skAuth&&skAuth.user()&&skAuth.user().username}));
  ok('that tab is then closed and its Operations session ends',open.gate&&!open.user,JSON.stringify(open));
