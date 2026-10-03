@@ -155,7 +155,9 @@ realm('globalThis.Date = globalThis.__RealDate;')();
     // Twentieth review: nominal inspections and long coordinated objects.
     'Perform visual inspection of torque stripe', 'Conduct an inspection of torque seal', 'Apply torque stripe across each of the four forward mounting nuts and torque seal across the aft nuts',
     // Twenty-second review: perfect passive conditions.
-    'Torque stripe has been damaged', 'Torque seal has been inspected', 'Torque stripes have been applied to all B-nuts'];
+    'Torque stripe has been damaged', 'Torque seal has been inspected', 'Torque stripes have been applied to all B-nuts',
+    // Twenty-third review: removal and replacement forms.
+    'Torque seal must be removed', 'Torque stripe replacement', 'Torque stripe removal on the jam nut', 'Torque seal touch-up'];
   check('MES.stepRecordsTorque: a step that is only torque stripe, seal, paint or mark work records no torque', stripes.every(t => MES.stepRecordsTorque(t) === false), stripes.filter(t => MES.stepRecordsTorque(t)).join(', '));
   // Review of PR #605: a torque action on marked or sealed parts still records the value, tool and unit.
   // Second review: a torque action on seal-named hardware with a torque target records it too.
@@ -189,7 +191,9 @@ realm('globalThis.Date = globalThis.__RealDate;')();
     // Twentieth review: a nominal inspection of seal-named hardware, or an action inside a long object, still records.
     'Perform inspection of torque seal nut per WI-123', 'Apply torque stripe to the nut clean the fitting and torque seal per WI-123',
     // Twenty-second review: a part after a perfect passive still records.
-    'Torque seal has been nut per WI-123'];
+    'Torque seal has been nut per WI-123',
+    // Twenty-third review: a part after a removal form still records.
+    'Torque seal removal tool per WI-123'];
   check('MES.stepRecordsTorque: a torque action records a torque value, also on marked, paint-marked, sealed or seal-named parts', actions.every(t => MES.stepRecordsTorque(t) === true), actions.filter(t => !MES.stepRecordsTorque(t)).join(', '));
   const state = fresh(), order = state.orders.find(o => o.status === 'Draft' && o.operations.length), op = order.operations[0];
   op.steps = [{ id: 'step-1', title: 'Install bracket', instruction: 'Install bracket', recordsTorque: true }];
