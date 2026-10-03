@@ -4351,6 +4351,10 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const recordCountersValid = (holder, prefixes, lists) => holder.idCounters === undefined || (plain(holder.idCounters) && Object.entries(holder.idCounters).every(([prefix, value]) => prefixes.includes(prefix) && Number.isSafeInteger(value) && value >= 0) && prefixes.every((prefix, i) => recordCounter(holder, prefix) >= highestRecordId(lists[i], prefix)));
   // The operations an order holds now and, while a sequence change waits for QA, the copies it would restore.
   const recordIdOperations = order => [order?.operations, order?.sequenceBaseline].flatMap(list => (Array.isArray(list) ? list.filter(plain) : []));
+  // The record a reference saved before #585 named, among the records sharing its id (in list order). The old lookups
+  // took the first match, so it named the first record, unless only one of them existed when the reference was made.
+  const recordTime = value => { const t = Date.parse(value); return Number.isFinite(t) ? t : null; };
+  const legacyRecordTarget = (items, madeAt) => { const made = recordTime(madeAt); const before = made === null ? [] : items.filter(x => recordTime(x.at) !== null && recordTime(x.at) <= made); return before.length === 1 ? before[0] : items[0]; };
   const pushIdsValid = op => !plain(op?.atp) || !Array.isArray(op.atp.pushes) || (recordIdsUnique(op.atp.pushes) && recordCountersValid(op.atp, ['PUSH'], [op.atp.pushes]));
   const recordIdsValid = state => RECORD_ID_LISTS.every(([key]) => !Array.isArray(state[key]) || recordIdsUnique(state[key])) && recordCountersValid(state, RECORD_ID_LISTS.map(([, prefix]) => prefix), RECORD_ID_LISTS.map(([key]) => state[key])) &&
     (Array.isArray(state.orders) ? state.orders : []).every(order => recordIdOperations(order).every(pushIdsValid));
@@ -4363,15 +4367,13 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     // Returns the records sharing each repeated id, before renumbering, so references can follow the one they named.
     const renumber = (holder, prefix, list, pad) => { if (!Array.isArray(list)) return new Map(); markRecordIds(holder, prefix, list); const shared = new Map(); list.forEach(item => { if (plain(item) && typeof item.id === 'string') shared.set(item.id, [...(shared.get(item.id) || []), item]); }); const seen = new Set(); list.forEach(item => { if (!plain(item) || typeof item.id !== 'string') return; if (seen.has(item.id)) item.id = nextRecordId(holder, prefix, list, pad); seen.add(item.id); }); return new Map([...shared].filter(([, items]) => items.length > 1)); };
     normalizeRecordCounters(state, RECORD_ID_LISTS.map(([, prefix]) => prefix));
-    const sharedRequests = RECORD_ID_LISTS.map(([key, prefix]) => [key, renumber(state, prefix, state[key], 4)]).find(([key]) => key === 'woRequests')[1];
-    // A work order request assignment follows the request that existed when it was made: the only open one, else the latest.
-    const time = value => { const t = Date.parse(value); return Number.isFinite(t) ? t : null; };
-    (Array.isArray(state.assignments) ? state.assignments : []).forEach(a => {
-      if (!plain(a) || a.type !== 'wo-request' || !sharedRequests.has(a.worId)) return;
-      const all = sharedRequests.get(a.worId), made = time(a.at), before = made === null ? [] : all.filter(r => time(r.at) !== null && time(r.at) <= made);
-      const candidates = before.length ? before : all, open = candidates.filter(r => r.status === 'Open');
-      const target = open.length === 1 ? open[0] : [...candidates].sort((x, y) => (time(y.at) || 0) - (time(x.at) || 0))[0];
-      if (target) a.worId = target.id;
+    const shared = Object.fromEntries(RECORD_ID_LISTS.map(([key, prefix]) => [key, renumber(state, prefix, state[key], 4)]));
+    const assignments = Array.isArray(state.assignments) ? state.assignments.filter(plain) : [];
+    assignments.forEach(a => {
+      // A work order request assignment keeps the request it named.
+      if (a.type === 'wo-request' && shared.woRequests.has(a.worId)) a.worId = legacyRecordTarget(shared.woRequests.get(a.worId), a.at).id;
+      // A reassigned task links to the assignment that replaced it, made at the moment it was reassigned.
+      if (shared.assignments.has(a.reassignedTo)) { const items = shared.assignments.get(a.reassignedTo); const made = items.filter(x => x !== a && x.at === a.doneAt); a.reassignedTo = (made.find(x => x.type === a.type) || made[0] || items[0]).id; }
     });
     // Every ATP push list with a stored mark, or with a repeated id, is normalized, on the operations and on the copies a pending sequence change holds; a list with neither is left
     // untouched, so a signed operation gains no new field.
@@ -4379,17 +4381,17 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       if (!plain(op?.atp) || !Array.isArray(op.atp.pushes)) return;
       if (op.atp.idCounters === undefined && recordIdsUnique(op.atp.pushes)) return;
       normalizeRecordCounters(op.atp, ['PUSH']);
-      const shared = renumber(op.atp, 'PUSH', op.atp.pushes, 0);
-      if (!shared.size) return;
+      const pushes = renumber(op.atp, 'PUSH', op.atp.pushes, 0);
+      if (!pushes.size) return;
       // The baseline follows the push it was accepted from (accepting sets reviewedAt and acceptedAt together).
-      const baseline = op.atp.baseline, accepted = plain(baseline) && shared.get(baseline.acceptedFrom);
+      const baseline = op.atp.baseline, accepted = plain(baseline) && pushes.get(baseline.acceptedFrom);
       if (accepted) { const from = accepted.find(x => x.status === 'Accepted' && x.reviewedAt === baseline.acceptedAt) || accepted.find(x => x.status === 'Accepted' && x.sha === baseline.sha && x.version === baseline.version); if (from) baseline.acceptedFrom = from.id; }
-      // A review assignment names its push by id and time; one saved before the time was kept names the only pending
-      // record under its id, or else the first (the record it resolved to before), and is pinned to it.
-      (Array.isArray(state.assignments) ? state.assignments : []).forEach(a => {
-        if (!plain(a) || a.type !== 'review-push' || a.orderId !== order.id || a.opId !== op.id || !shared.has(a.pushId)) return;
-        const items = shared.get(a.pushId), pending = items.filter(x => x.status === 'Pending');
-        const target = (a.pushAt && items.find(x => x.at === a.pushAt)) || (pending.length === 1 ? pending[0] : items[0]);
+      // A review assignment names its push by id and time; one saved before the time was kept keeps the push it named
+      // and is pinned to it.
+      assignments.forEach(a => {
+        if (a.type !== 'review-push' || a.orderId !== order.id || a.opId !== op.id || !pushes.has(a.pushId)) return;
+        const items = pushes.get(a.pushId);
+        const target = (a.pushAt && items.find(x => x.at === a.pushAt)) || legacyRecordTarget(items, a.at);
         a.pushId = target.id; if (typeof target.at === 'string') a.pushAt = target.at;
       });
     }));
@@ -4411,18 +4413,16 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const heldOp = (order, opId) => pendingSequenceChange(order) && Array.isArray(order.sequenceBaseline) ? order.sequenceBaseline.find(x => plain(x) && x.id === opId) || null : null;
   // A review assignment saved before pushAt was kept names its push by id alone. Where a removed operation held by a
   // pending sequence change and its replacement share the operation id, that id can name a push on either, so the
-  // assignment is pinned to the push that existed when it was made: the only pending one, else the latest.
+  // assignment is pinned to the push it named: the one that existed when it was made, else the current operation's,
+  // which the old lookup found first.
   function pinLegacyPushAssignments(state) {
-    const time = value => { const t = Date.parse(value); return Number.isFinite(t) ? t : null; };
     (Array.isArray(state.assignments) ? state.assignments : []).forEach(a => {
       if (!plain(a) || a.type !== 'review-push' || a.status !== 'Open' || a.pushAt || typeof a.pushId !== 'string') return;
       const order = (Array.isArray(state.orders) ? state.orders : []).find(o => plain(o) && o.id === a.orderId);
       const current = order && Array.isArray(order.operations) && order.operations.find(x => plain(x) && x.id === a.opId), held = order && heldOp(order, a.opId);
       if (!current || !held) return;
       const all = [current, held].flatMap(op => (plain(op.atp) && Array.isArray(op.atp.pushes) ? op.atp.pushes : []).filter(x => plain(x) && x.id === a.pushId && typeof x.at === 'string'));
-      const made = time(a.at), before = made === null ? all : all.filter(x => time(x.at) !== null && time(x.at) <= made);
-      const candidates = before.length ? before : all, pending = candidates.filter(x => x.status === 'Pending');
-      const target = pending.length === 1 ? pending[0] : [...candidates].sort((x, y) => (time(y.at) || 0) - (time(x.at) || 0))[0];
+      const target = all.length ? legacyRecordTarget(all, a.at) : null;
       if (target) a.pushAt = target.at;
     });
   }

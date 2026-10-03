@@ -224,29 +224,53 @@ await check('repeated push ids on an operation held by a pending sequence change
   assert.equal(MES.validate(upgraded), true);
 });
 
-await check('repairing a repeated work order request id moves its open assignment with the request it named', async () => {
+await check('repairing a repeated work order request id keeps its assignment on the request it named', async () => {
   // Codex review on #629: repair renumbered the later of two requests sharing an id but left the wo-request assignment on
-  // the old id, so it resolved to the first request and could send Manufacturing Engineering to the wrong work order.
+  // the old id. The old lookup (find) took the first request under an id, so the assignment named the first request
+  // unless only one of them existed when it was made; repair keeps it there and the later request gets a new id.
   const state = fresh();
   assert.equal(request(state).ok, true);
   assert.equal(request(state).ok, true);
   const [first, second] = state.woRequests.slice(-2);
-  first.at = new Date(Date.parse(second.at) - 60000).toISOString();
-  first.status = 'Declined';
-  const assigned = as(admin, state, s => MES.assignWork(s, { type: 'wo-request', worId: second.id, assigneeUsername: 'tech-a', assigneeName: 'Tech A' }));
+  const assigned = as(admin, state, s => MES.assignWork(s, { type: 'wo-request', worId: first.id, assigneeUsername: 'tech-a', assigneeName: 'Tech A' }));
   assert.equal(assigned.ok, true, assigned.message);
   const assignment = state.assignments.find(a => a.id === assigned.id);
-  // Saved by a build that numbered from the list length: the open request repeats the first request's id.
-  second.id = first.id; assignment.worId = first.id;
+  // Saved by a build that numbered from the list length: a later open request repeats the assigned request's id.
+  const base = Date.parse(first.at);
+  assignment.at = new Date(base + 60000).toISOString();
+  second.at = new Date(base + 120000).toISOString();
+  second.id = first.id;
+  assert.equal(MES.validate(state), false, 'the repeated id fails validation as stored');
+  for (const [label, madeAt] of [['made before the later request', assignment.at], ['made after both requests', new Date(base + 180000).toISOString()]]) {
+    const copy = structuredClone(state); copy.assignments.find(a => a.id === assignment.id).at = madeAt;
+    const upgraded = MES.upgrade(copy);
+    assert.ok(upgraded && MES.validate(upgraded), `the workspace loads (${label})`);
+    const later = upgraded.woRequests.find(r => r.at === second.at);
+    assert.notEqual(later.id, first.id, `the later request gets a new id (${label})`);
+    assert.equal(upgraded.assignments.find(a => a.id === assignment.id).worId, first.id, `the assignment keeps the request it named (${label})`);
+  }
+});
+
+await check('repairing a repeated assignment id keeps a reassigned task linked to the assignment that replaced it', async () => {
+  // Codex review on #629: a reassigned task's reassignedTo named the replacing assignment by an id that repair gave to
+  // another record. The replacing assignment was made at the moment of reassignment, so the link follows that record.
+  const state = fresh();
+  const make = (username, extra = {}) => as(admin, state, s => MES.assignWork(s, { type: 'create-wo', assigneeUsername: username, assigneeName: username, ...extra }));
+  const original = make('tech-a'); assert.equal(original.ok, true, original.message);
+  const other = make('tech-b'); assert.equal(other.ok, true, other.message);
+  const replacing = make('tech-c', { replaces: original.id }); assert.equal(replacing.ok, true, replacing.message);
+  const old = state.assignments.find(a => a.id === original.id), next = state.assignments.find(a => a.id === replacing.id);
+  assert.equal(old.reassignedTo, next.id);
+  const other_ = state.assignments.find(a => a.id === other.id);
+  other_.at = new Date(Date.parse(next.at) - 60000).toISOString();
+  // Saved by a build that numbered from the list length: the replacing assignment repeats the other one's id.
+  next.id = other.id; old.reassignedTo = other.id;
   assert.equal(MES.validate(state), false, 'the repeated id fails validation as stored');
   const upgraded = MES.upgrade(structuredClone(state));
   assert.ok(upgraded && MES.validate(upgraded), 'the workspace loads');
-  const renamed = upgraded.woRequests.find(r => r.status === 'Open' && r.at === second.at);
-  assert.notEqual(renamed.id, first.id, 'the later request gets a new id');
-  const moved = upgraded.assignments.find(a => a.id === assignment.id);
-  assert.equal(moved.worId, renamed.id, 'the assignment follows the open request it named');
-  MES.syncAssignments(upgraded);
-  assert.equal(upgraded.assignments.find(a => a.id === assignment.id).status, 'Open', 'the request is still open, so its assignment stays open');
+  const renamed = upgraded.assignments.find(a => a.assignee.username === 'tech-c');
+  assert.notEqual(renamed.id, other.id, 'the later assignment gets a new id');
+  assert.equal(upgraded.assignments.find(a => a.id === original.id).reassignedTo, renamed.id, 'the reassigned task links to the assignment that replaced it');
 });
 
 await check('validation refuses a repeated id in any of the four lists and a mark below an id it holds', async () => {
@@ -318,36 +342,45 @@ await check('a workspace saved before the marks loads, its marks start from its 
   assert.equal(MES.verifyManifests(cleanUp).ok, true, 'every signature still verifies');
 });
 
-await check('repairing a repeated push id moves its review assignment and the baseline with the record they named', async () => {
-  // Codex review on #629: repair renumbered the later of two pushes sharing an id but left the review assignment and
-  // the baseline's acceptedFrom on the old id, so an old assignment (saved without pushAt) resolved to the first record.
+await check('repairing a repeated push id keeps its review assignment on the push it named and moves the baseline with its push', async () => {
+  // Codex review on #629: repair renumbered the later of two pushes sharing an id but left references on the old id.
+  // The old lookup (find) took the first push under an id, so a review saved without pushAt named the first push unless
+  // only one of them existed when it was made; it keeps that push and is pinned to it.
   const state = fresh();
   const by = { name: 'Old Poster', role: 'Software Engineer', credentialId: 'ACCT-old' };
   const { order, op } = atpOp(state);
   const at = n => new Date(Date.UTC(2026, 0, 1, 0, n)).toISOString();
   op.atp.pushes = [
     { id: 'PUSH-50', sha: 'abc0000', version: 'v0', message: '', by, at: at(0), status: 'Accepted', reviewedBy: by, reviewedAt: at(1) },
-    { id: 'PUSH-51', sha: 'abc0001', version: 'v1', message: '', by, at: at(2), status: 'Rejected', reviewedBy: by, reviewedAt: at(3), reviewNote: 'Fails ATP.' },
+    { id: 'PUSH-51', sha: 'abc0001', version: 'v1', message: '', by, at: at(2), status: 'Pending' },
     { id: 'PUSH-52', sha: 'abc0002', version: 'v2', message: '', by, at: at(4), status: 'Pending' }
   ];
-  const assigned = as(admin, state, s => MES.assignWork(s, { type: 'review-push', orderId: order.id, opId: op.id, pushId: 'PUSH-52', assigneeUsername: 'id-reviewer', assigneeName: 'Id Reviewer' }));
+  const assigned = as(admin, state, s => MES.assignWork(s, { type: 'review-push', orderId: order.id, opId: op.id, pushId: 'PUSH-51', assigneeUsername: 'id-reviewer', assigneeName: 'Id Reviewer' }));
   assert.equal(assigned.ok, true, assigned.message);
-  const assignment = state.assignments.find(a => a.type === 'review-push' && a.opId === op.id && a.status === 'Open');
-  // Saved by a build that numbered from the list length and kept no push time: the pending push repeats PUSH-51.
-  op.atp.pushes[2].id = 'PUSH-51'; assignment.pushId = 'PUSH-51'; delete assignment.pushAt;
+  const assignment = state.assignments.find(a => a.id === assigned.id);
+  // Saved by a build that numbered from the list length and kept no push time: the review was made for the first
+  // PUSH-51, which was later rejected, and the next push repeated its id.
+  assignment.at = at(3); delete assignment.pushAt;
+  Object.assign(op.atp.pushes[1], { status: 'Rejected', reviewedBy: by, reviewedAt: at(5), reviewNote: 'Fails ATP.' });
+  op.atp.pushes[2].id = 'PUSH-51';
   assert.equal(MES.validate(state), false, 'the repeated id fails validation as stored');
   const upgraded = MES.upgrade(structuredClone(state));
   assert.ok(upgraded && MES.validate(upgraded), 'the workspace loads');
   const upOp = upgraded.orders.find(o => o.id === order.id).operations.find(x => x.id === op.id);
   same(ids(upOp.atp.pushes), ['PUSH-50', 'PUSH-51', 'PUSH-52']);
-  const moved = upgraded.assignments.find(a => a.id === assignment.id);
-  assert.equal(moved.pushId, 'PUSH-52', 'the review follows the pending push it named');
-  assert.equal(moved.pushAt, at(4));
-  assert.equal(moved.status, 'Open');
+  const kept = upgraded.assignments.find(a => a.id === assignment.id);
+  assert.equal(kept.pushId, 'PUSH-51', 'the review keeps the push it was made for');
+  assert.equal(kept.pushAt, at(2), 'and is pinned to it');
+  MES.syncAssignments(upgraded);
+  assert.notEqual(upgraded.assignments.find(a => a.id === assignment.id).status, 'Open', 'its push was rejected, so the review closes; the new push is not handed to it');
+  // A review made after both pushes existed named the first one too.
+  const both = structuredClone(state); both.assignments.find(a => a.id === assignment.id).at = at(6);
+  const bothUp = MES.upgrade(both);
+  assert.equal(bothUp.assignments.find(a => a.id === assignment.id).pushAt, at(2), 'with both pushes present the old lookup named the first');
   // The baseline follows the push it was accepted from.
   const accepted = structuredClone(state); const acceptedOp = accepted.orders.find(o => o.id === order.id).operations.find(x => x.id === op.id);
-  Object.assign(acceptedOp.atp.pushes[2], { status: 'Accepted', reviewedBy: by, reviewedAt: at(5) });
-  acceptedOp.atp.baseline = { sha: 'abc0002', version: 'v2', acceptedFrom: 'PUSH-51', acceptedBy: by, acceptedAt: at(5) };
+  Object.assign(acceptedOp.atp.pushes[2], { status: 'Accepted', reviewedBy: by, reviewedAt: at(7) });
+  acceptedOp.atp.baseline = { sha: 'abc0002', version: 'v2', acceptedFrom: 'PUSH-51', acceptedBy: by, acceptedAt: at(7) };
   const acceptedUp = MES.upgrade(accepted);
   assert.ok(acceptedUp && MES.validate(acceptedUp));
   assert.equal(acceptedUp.orders.find(o => o.id === order.id).operations.find(x => x.id === op.id).atp.baseline.acceptedFrom, 'PUSH-52', 'the baseline names the push it was accepted from');
