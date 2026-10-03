@@ -7,7 +7,7 @@
     "test": "node tools/run-suites.mjs",
     "build:react": "node tools/build-react.mjs",
     "test:server": "node tests/test_server.mjs",
-    "test:postgres": "node tests/postgres/integration.mjs && node tests/postgres/backup_restore.mjs && node tests/postgres/archive_proto_scan.mjs",
+    "test:postgres": "node tests/postgres/integration.mjs && node tests/postgres/backup_restore.mjs && node tests/postgres/archive_proto_scan.mjs && node tests/postgres/training_claim.mjs",
     "test:migration": "node tests/test_migration.mjs",
     "test:react": "node tests/test_react_build.mjs",
     "check:paths": "node tests/check_no_machine_paths.mjs",

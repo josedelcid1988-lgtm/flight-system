@@ -144,6 +144,142 @@ export function servedIndex(indexPath) {
   return html;
 }
 
+// Training mode (--training, FLIGHT_TRAINING=1 or options.training) runs the production build with every gate on and
+// marks it as training: a strip on every page, the sign-in screen included, a mark at the top of every print and
+// HTML download, and the tab title. The mark is added to the page this server sends, so it is there before any
+// script runs and a browser cannot opt out of it. Production default: off, and the served page is unchanged.
+export const TRAINING_MARK = 'TRAINING, NOT THE RECORD';
+export const TRAINING_DESIGNATION = 'training-database';
+// Every workspace a training server saves carries this, and a production server refuses to load a workspace that
+// does, so a training workspace downloaded from GET /api/workspace cannot initialize a production server.
+export const TRAINING_PROVENANCE = Object.freeze({ mark: TRAINING_MARK, note: 'Saved by a Flight System training server. Not a quality record.' });
+const TRAINING_STRIP = 24;
+const TRAINING_PRINT_MARK = `<div class="training-print-mark" style="margin:0 0 8px;padding:6px 10px;border:2px solid #0b3a6e;color:#0b3a6e;font:700 14px/18px sans-serif;text-align:center;letter-spacing:.06em">${TRAINING_MARK}</div>`
+  // On screen the print preview's fixed Print button sits at the top right; start the mark below it. Print is unchanged.
+  + '<style>@media screen{.training-print-mark{margin-top:56px!important}}</style>';
+export const trainingPrintMark = html => /<body[^>]*>/i.test(html) ? html.replace(/<body[^>]*>/i, b => b + TRAINING_PRINT_MARK) : TRAINING_PRINT_MARK + html;
+// Runs before the app's scripts: the browser-side connectors and the identity provider stay off on a training server
+// whatever the deployed build configures. The persistence mirror always sees an empty url, and the integration bridge always reads mode
+// local with no endpoint, so no training record is posted to a mirror, NetSuite, GitHub or Slack.
+const TRAINING_CONNECTORS = '<script id="flight-training-connectors">(function(){'
+  + 'var mirror={url:"",token:"",batchSize:50};'
+  + 'Object.defineProperty(window,"SK_MIRROR",{configurable:false,get:function(){return mirror;},set:function(v){mirror=Object.assign({},v&&typeof v==="object"?v:{},{url:"",token:""});}});'
+  + 'var bridge=null;function local(o){if(!o||typeof o!=="object")return o;'
+  + 'Object.defineProperty(o,"mode",{configurable:false,enumerable:true,get:function(){return "local";},set:function(){}});'
+  + 'Object.defineProperty(o,"endpoint",{configurable:false,enumerable:true,get:function(){return "";},set:function(){}});return o;}'
+  + 'Object.defineProperty(window,"SK_INTEGRATIONS",{configurable:false,get:function(){return bridge;},set:function(v){bridge=local(v);}});'
+  // Sign-in stays on this server's own accounts: the identity provider always reads local with no issuer, so the page
+  // never contacts or redirects to the production identity provider.
+  + 'var identity=null;function idLocal(o){if(!o||typeof o!=="object")return o;'
+  + 'Object.defineProperty(o,"provider",{configurable:false,enumerable:true,get:function(){return "local";},set:function(){}});'
+  + 'if(o.okta&&typeof o.okta==="object"){Object.defineProperty(o.okta,"issuer",{configurable:false,enumerable:true,get:function(){return "";},set:function(){}});Object.defineProperty(o.okta,"clientId",{configurable:false,enumerable:true,get:function(){return "";},set:function(){}});}return o;}'
+  + 'Object.defineProperty(window,"SK_IDENTITY",{configurable:false,get:function(){return identity;},set:function(v){identity=idLocal(v);}});'
+  + '})();</script>';
+const TRAINING_HEAD = TRAINING_CONNECTORS + '<style id="flight-training-style">'
+  + `.training-banner{position:fixed;left:var(--fs-rail,0px);right:0;bottom:0;height:${TRAINING_STRIP}px;z-index:2147483000;pointer-events:none;display:flex;align-items:center;justify-content:center;background:#0b3a6e;color:#fff;font:700 12px/16px -apple-system,BlinkMacSystemFont,sans-serif;letter-spacing:.06em;white-space:nowrap}`
+  + `body{padding-bottom:${TRAINING_STRIP}px}html .next-action{bottom:${TRAINING_STRIP}px}html .toast,html .sk-idle-warning{bottom:${TRAINING_STRIP + 24}px}`
+  + `@media(min-width:1181px){html .next-action{bottom:${TRAINING_STRIP + 28}px}}`
+  + 'body:has(#sk-boot)>.training-banner{visibility:visible!important;left:0}'
+  + '.training-print-top{display:none}'
+  // Printing the page itself: the mark is the first thing on the first sheet, and the strip, fixed to the foot, is
+  // repeated on every sheet, so no printed page of a training screen is unmarked.
+  + '@media print{.training-print-top{display:block;margin:0 0 8px;padding:4px;text-align:center;color:#0b3a6e;border:2px solid #0b3a6e;font:700 12px/16px sans-serif;letter-spacing:.06em}'
+  + '.training-banner{position:fixed;left:0;right:0;bottom:0;height:auto;padding:2px;background:#fff;color:#0b3a6e;border-top:2px solid #0b3a6e}body{padding-bottom:24px}}'
+  + '</style>';
+const TRAINING_BODY = `<div class="training-banner" role="note">${TRAINING_MARK}</div>`;
+const TRAINING_PRINT_TOP = `<div class="training-print-top" aria-hidden="true">${TRAINING_MARK}</div>`;
+// Runs after the app's own scripts. Prints and HTML downloads go through markDocument, dlFile or saveFile, so the mark
+// is added there, once. Any other HTML file the page saves through a download link (a controlled document, for
+// example) gets the mark ahead of its own bytes. Every file the page saves is named TRAINING-<name>; the strip is put
+// back if a render removes it, and the tab title keeps the word Training. A document counts as marked only when it
+// holds the mark element itself: record text is escaped in every print, so it cannot fake the start tag.
+const TRAINING_TAIL = `<script id="flight-training">(function(){var MARK=${JSON.stringify(TRAINING_PRINT_MARK)};`
+  + 'var TAG=\'<div class="training-print-mark"\';'
+  + 'function mark(html){html=String(html);if(html.indexOf(TAG)>=0)return html;return /<body[^>]*>/i.test(html)?html.replace(/<body[^>]*>/i,function(b){return b+MARK;}):MARK+html;}'
+  + 'var isHtml=function(type){return !type||/html/i.test(String(type));};'
+  // A JSON file the page saves carries the mark in its own content, not only in its name: a JSON object gains
+  // training and trainingNote as its first fields (one that already carries the mark, the governance export, is
+  // left as it is, so its manifest still verifies). Renaming the file does not remove the mark.
+  + `var NOTE=${JSON.stringify(TRAINING_PROVENANCE.note)},TEXT=${JSON.stringify(TRAINING_MARK)};`
+  + 'var isJson=function(type,name){return /json/i.test(String(type||""))||/\\.json$/i.test(String(name||""));};'
+  + 'function markJson(text){var o;try{o=JSON.parse(String(text));}catch(e){return null;}if(!o||typeof o!=="object"||Array.isArray(o))return null;if(o.training===TEXT)return String(text);'
+  + 'return JSON.stringify(Object.assign({training:TEXT,trainingNote:NOTE},o,{training:TEXT,trainingNote:NOTE}),null,/\\n/.test(String(text))?2:0);}'
+  // A CSV file the page saves (trace report, As-Built BOM, metrics, stamp register) starts with a row that carries the
+  // mark, so it shows first when the file is opened. A file that already starts with that row is left as it is. An
+  // import that reads a header row refuses a marked file, so a training register is never loaded as a real one.
+  + 'var isCsv=function(type,name){return /csv/i.test(String(type||""))||/\\.csv$/i.test(String(name||""));};'
+  + 'var CSVROW="\\""+TEXT+"\\",\\""+NOTE+"\\"";'
+  + 'function markCsv(text){var t=String(text),bom=t.charAt(0)==="\\ufeff"?"\\ufeff":"",body=bom?t.slice(1):t;if(body.indexOf(CSVROW)===0)return t;return bom+CSVROW+(/\\r\\n/.test(body)?"\\r\\n":"\\n")+body;}'
+  + 'function readText(b){return b.arrayBuffer().then(function(x){return new TextDecoder("utf-8",{ignoreBOM:true}).decode(x);});}'
+  // An iCalendar file names the calendar TRAINING, NOT THE RECORD and puts the mark at the start of every event's
+  // summary and description, so events imported into another calendar still show it.
+  + 'var isIcs=function(type,name){return /calendar/i.test(String(type||""))||/\\.ics$/i.test(String(name||""));};'
+  + 'var ICSTEXT="TRAINING\\\\, NOT THE RECORD";'
+  + 'function markIcs(text){var t=String(text);if(/^X-FLIGHT-TRAINING:/m.test(t))return t;var nl=/\\r\\n/.test(t)?"\\r\\n":"\\n";'
+  + 'return t.replace(/^BEGIN:VCALENDAR(?=\\r?$)/m,function(l){return l+nl+"X-WR-CALNAME:"+ICSTEXT+nl+"X-FLIGHT-TRAINING:TRUE";})'
+  + '.replace(/^SUMMARY:/mg,"SUMMARY:"+ICSTEXT+": ").replace(/^DESCRIPTION:/mg,"DESCRIPTION:"+ICSTEXT+". ");}'
+  + 'function markData(text,type,name){return isJson(type,name)?markJson(text):isCsv(type,name)?markCsv(text):isIcs(type,name)?markIcs(text):null;}'
+  // Object URLs made while the page synchronously builds an already marked file, and the URL of the exact blob saveFile
+  // marked, are trusted; any other HTML file is marked on download. saveFile can wait on a downloads service, so it
+  // trusts its own blob only, never every blob made while it waits.
+  + 'var blobs=new Map(),trusted=new Set(),saved=new WeakSet(),trust=0,make=URL.createObjectURL,revoke=URL.revokeObjectURL;'
+  + 'URL.createObjectURL=function(o){var u=make.call(URL,o);if(o instanceof Blob){blobs.set(u,o);if(trust||saved.has(o))trusted.add(u);}return u;};'
+  + 'URL.revokeObjectURL=function(u){blobs.delete(u);trusted.delete(u);return revoke.call(URL,u);};'
+  + 'function trusting(f){return function(){trust++;try{return f.apply(this,arguments);}finally{trust--;}};}'
+  + 'var md=window.markDocument;if(typeof md==="function")window.markDocument=function(html){return mark(md(html));};'
+  + 'var df=window.dlFile;if(typeof df==="function")window.dlFile=trusting(function(name,text,type){var d=markData(text,type,name);return df(name,d!==null?d:isHtml(type)?mark(text):text,type);});'
+  + 'if(typeof window.printRecord==="function")window.printRecord=trusting(window.printRecord);'
+  + 'if(typeof window.deliverTraveler==="function")window.deliverTraveler=trusting(window.deliverTraveler);'
+  + 'var sf=window.saveFile;if(typeof sf==="function")window.saveFile=async function(blob,name){var n=/^TRAINING-/.test(String(name))?name:"TRAINING-"+name;if(blob&&/html/i.test(blob.type||"")){try{blob=new Blob([mark(await blob.text())],{type:blob.type});}catch(e){}}else if(blob&&(isJson(blob.type,name)||isCsv(blob.type,name)||isIcs(blob.type,name))){try{var j=markData(await readText(blob),blob.type,name);if(j!==null)blob=new Blob([j],{type:blob.type||(isCsv(blob.type,name)?"text/csv":isIcs(blob.type,name)?"text/calendar":"application/json")});}catch(e){}}if(blob instanceof Blob)saved.add(blob);return sf(blob,n);};'
+  // A controlled document is saved as the approved file, byte for byte, so it still matches its released SHA-256:
+  // a JSON or CSV file saved from a controlled-document download keeps its bytes (and its TRAINING- name).
+  + 'var verbatim=0;document.addEventListener("click",function(e){var t=e.target;if(t&&t.closest&&t.closest("[data-controlled-doc-download]")){verbatim++;setTimeout(function(){verbatim--;},0);}},true);'
+  + 'var click=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){'
+  + 'if(this.hasAttribute("download")){if(this.download&&!/^TRAINING-/.test(this.download))this.download="TRAINING-"+this.download;'
+  // Any other HTML file, or other active markup (SVG, XHTML, XML), is saved as a wrapper page: the mark, then the
+  // original document escaped into a sandboxed
+  // frame with no permissions, so its own CSS or script cannot hide or remove the mark.
+  + 'var jb=blobs.get(this.href);if(jb&&!verbatim&&!trusted.has(this.href)&&(isJson(jb.type,this.download)||isCsv(jb.type,this.download)||isIcs(jb.type,this.download))){var jname=this.download;'
+  + 'readText(jb).then(function(t){var j=markData(t,jb.type,jname);var a=document.createElement("a");trust++;try{a.href=URL.createObjectURL(j===null?jb:new Blob([j],{type:jb.type||(isCsv(jb.type,jname)?"text/csv":isIcs(jb.type,jname)?"text/calendar":"application/json")}));}finally{trust--;}a.download=jname;click.call(a);var u=a.href;setTimeout(function(){URL.revokeObjectURL(u);},60000);});return;}'
+  + 'var b=blobs.get(this.href);if(b&&!trusted.has(this.href)&&(/html|svg|xml/i.test(b.type||"")||/\\.(html?|xhtml|svg|xml)$/i.test(this.download))){var name=this.download;'
+  + 'b.text().then(function(t){var src=t.replace(/&/g,"&amp;").replace(/"/g,"&quot;");'
+  + 'var page="<!doctype html><html><head><meta charset=\\"utf-8\\"><title>TRAINING, NOT THE RECORD</title><style>html,body{margin:0;height:100%}iframe{display:block;border:0;width:100%;height:calc(100vh - 120px)}</style></head><body>"+MARK+"<iframe sandbox title=\\"Downloaded document\\" srcdoc=\\""+src+"\\"></iframe></body></html>";'
+  + 'var a=document.createElement("a");trust++;try{a.href=URL.createObjectURL(new Blob([page],{type:"text/html"}));}finally{trust--;}a.download=name;click.call(a);var u=a.href;setTimeout(function(){URL.revokeObjectURL(u);},60000);});return;}}'
+  + 'return click.apply(this,arguments);};'
+  + `function strip(){if(document.body&&!document.querySelector(".training-banner")){var d=document.createElement("div");d.className="training-banner";d.setAttribute("role","note");d.textContent=${JSON.stringify(TRAINING_MARK)};document.body.appendChild(d);}}`
+  + 'function title(){if(!/^Training \\u00b7 /.test(document.title))document.title="Training \\u00b7 "+document.title;}'
+  + 'strip();title();try{new MutationObserver(strip).observe(document.body,{childList:true});var t=document.querySelector("title");if(t)new MutationObserver(title).observe(t,{childList:true,characterData:true,subtree:true});}catch(e){}'
+  + '})();</script>';
+// FLIGHT_TRAINING: 1, true, yes or on turns training mode on; empty, 0, false, no or off leaves it off. Anything else
+// stops the server, so a misspelled setting never starts an unmarked training server.
+export function parseTrainingSetting(value) {
+  const text = String(value ?? '').trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(text)) return true;
+  if (['', '0', 'false', 'no', 'off'].includes(text)) return false;
+  throw new Error(`FLIGHT_TRAINING is "${String(value).slice(0, 40)}". Set it to 1 to mark this server as a training server, or remove it.`);
+}
+// The deployed build may carry a mirror or integration bridge token, url or endpoint, or an identity provider issuer. A training page never sends
+// them, and since the page is served before sign-in it must not carry them either: their literal values are blanked
+// in the HTML this server sends, not only switched off at run time.
+const CONNECTOR_BLOCKS = ['window.SK_MIRROR = window.SK_MIRROR || {', 'window.SK_INTEGRATIONS = window.SK_INTEGRATIONS || {', 'window.SK_IDENTITY = window.SK_IDENTITY || {'];
+const CONNECTOR_SECRET = /\b(token|url|endpoint|baseUrl|issuer|clientId|redirectUri)(\s*:\s*)(['"`])(?:\\.|(?!\3)[^\\\n])*\3/g;
+export const redactConnectors = html => {
+  let out = String(html);
+  for (const opening of CONNECTOR_BLOCKS) {
+    const start = out.indexOf(opening);
+    if (start < 0) continue;
+    const close = out.indexOf('\n};', start), end = close < 0 ? out.length : close;
+    out = out.slice(0, start) + out.slice(start, end).replace(CONNECTOR_SECRET, "$1$2''").replace(/\bprovider(\s*:\s*)(['"`])[^'"`\n]*\2/, "provider$1'local'") + out.slice(end);
+  }
+  return out;
+};
+export const trainingPage = source => {
+  const html = redactConnectors(source);
+  const end = html.lastIndexOf('</body>');
+  const withTail = end >= 0 ? `${html.slice(0, end)}${TRAINING_BODY}${TRAINING_TAIL}${html.slice(end)}` : `${html}${TRAINING_BODY}${TRAINING_TAIL}`;
+  return withTail.replace('<head>', `<head>${TRAINING_HEAD}`).replace(/<body[^>]*>/i, body => body + TRAINING_PRINT_TOP);
+};
+
 export function createServer(options = {}) {
   const indexPath = options.indexPath || path.join(ROOT, 'index.html');
   const dbPath = options.dbPath || process.env.FLIGHT_DB || path.join(ROOT, 'data', 'flight.sqlite');
@@ -159,10 +295,20 @@ export function createServer(options = {}) {
   const host = createHost(indexPath, servedIndex(indexPath));
   // Expanded roles, named grants and new trained accounts all cite a training: it must be an active catalog
   // entry and the person must hold a current record of it on the shared workspace.
+  // A governance evidence export from a training server carries the training mark inside the document its manifest
+  // hashes, so removing the mark (or renaming the file) breaks the hash the page and any reader check.
+  const trainingGovernance = document => {
+    const { manifest, ...content } = document, marked = { ...content, training: TRAINING_MARK };
+    return { ...marked, manifest: { ...manifest, hash: host.MES.sha256(host.MES.canonical(marked)), meaning: `${manifest.meaning}, ${TRAINING_MARK}` } };
+  };
   const trainingQualifies = (state, username, code) => !!state && !!code && host.MES.trainingCatalog(state).some(item => item.status === 'Active' && item.code === code) && host.MES.trainingCurrentFor(state, username, code).ok;
   // demo.html relaxes separation of duties, PINs and the stamp gate. It is a training page, not part of the
   // production server: served only when the operator asks (options.serveDemo, FLIGHT_SERVE_DEMO=1 or --serve-demo).
   const serveDemo = options.serveDemo !== undefined ? options.serveDemo === true : process.env.FLIGHT_SERVE_DEMO === '1';
+  const training = options.training !== undefined ? options.training === true : parseTrainingSetting(process.env.FLIGHT_TRAINING);
+  // The demo build lifts the separation-of-duties, PIN and stamp gates, so a training server, which enforces every gate,
+  // never serves it beside the training page.
+  if (training && serveDemo) throw new Error('Training mode enforces every gate, and the demo build relaxes them, so a training server does not serve demo.html. Start the training server without --serve-demo (and without FLIGHT_SERVE_DEMO=1), and offer the demo from a separate server if it is needed.');
   const jira = options.jira || {};
   const jiraConfig = {
     baseUrl: String(jira.baseUrl || process.env.FLIGHT_JIRA_BASE_URL || '').replace(/\/$/, ''),
@@ -171,6 +317,8 @@ export function createServer(options = {}) {
   };
   let jiraConfigured = false;
   try { const u = new URL(jiraConfig.baseUrl); jiraConfigured = !!(jiraConfig.email && jiraConfig.apiToken && u.protocol === 'https:' && /(^|\.)atlassian\.net$/i.test(u.hostname) && !u.username && !u.password && !u.search && !u.hash && (!u.pathname || u.pathname === '/')); } catch {}
+  // A training server sends nothing outward: no Jira issues and no configured record exports.
+  if (training) jiraConfigured = false;
   const jiraFetch = options.jiraFetch || globalThis.fetch;
   if (host.MES.MAX_EVIDENCE_BYTES && host.MES.MAX_EVIDENCE_BYTES > MAX_REQUEST_BYTES) throw new Error(`index.html allows ${host.MES.MAX_EVIDENCE_BYTES} byte recordings but the server's request limit is ${MAX_REQUEST_BYTES}. Raise MAX_REQUEST_BYTES and the proxy's client_max_body_size together.`);
   const log = options.quiet ? () => {} : (...a) => console.log(new Date().toISOString(), ...a);
@@ -185,8 +333,13 @@ export function createServer(options = {}) {
   const hashReport = async () => { const out = { current: 0, weak: 0, wrapped: 0, sha256: 0, unknown: 0, sso: 0 }; for (const a of await store.accounts()) { if (a.sso) out.sso += 1; else out[hashKind(a.hash)] += 1; } return out; };
   // No SHA-256-only password hash is left at rest: each is wrapped in scrypt at startup (and on receipt),
   // and replaced with a plain scrypt hash of the password at that person's next sign-in.
+  // It starts only once the database's training designation has been checked and accepted, so a server pointed at
+  // the wrong database writes nothing to it before refusing to start.
+  let acceptDatabase, refuseDatabase;
+  const databaseAccepted = new Promise((resolve, reject) => { acceptDatabase = resolve; refuseDatabase = reject; });
   const wrapped = (async () => {
     await storeReady;
+    await databaseAccepted;
     let n = 0;
     for (const a of await store.accounts()) if (!a.sso && hashKind(a.hash) === 'sha256') { await store.upsertAccount({ ...a, hash: await wrapLegacy(a.hash) }); n += 1; }
     if (n) await store.audit(null, 'password-wrap', { accounts: n });
@@ -194,9 +347,14 @@ export function createServer(options = {}) {
     log(`password hashes: ${r.current} current scrypt, ${r.wrapped} legacy wrapped in scrypt (replaced at next sign-in), ${r.weak} below current parameters, ${r.sha256} SHA-256 only`);
     return r;
   })();
+  wrapped.catch(() => {});
 
   // ---- helpers ----
-  const send = (res, status, body, headers = {}) => { const json = body === undefined ? '' : JSON.stringify(body); res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers }); res.end(json); };
+  // On a training server every JSON object the API sends carries the training mark first (a record view, a listing,
+  // an archive or calibration entry, a report), so a saved or renamed response is still marked. A body that already
+  // carries the mark (the governance export, whose manifest covers it; an archive extract) is sent as it is.
+  const trainingBody = body => training && body && typeof body === 'object' && !Array.isArray(body) && !Object.hasOwn(body, 'training') ? { training: TRAINING_MARK, trainingNote: TRAINING_PROVENANCE.note, ...body } : body;
+  const send = (res, status, body, headers = {}) => { const json = body === undefined ? '' : JSON.stringify(trainingBody(body)); res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers }); res.end(json); };
   // An unexpected failure is logged here with its detail and a reference. The caller gets the reference and a
   // plain next step, never the error text: it can name files, SQL, or engine internals.
   const internalError = (res, req, error, what = 'The server could not complete this request.') => {
@@ -239,7 +397,26 @@ export function createServer(options = {}) {
   const registerProblem = state => host.MES.stampRegisterProblem?.(state) || host.FlightPlan.plannedOrdersProblem?.(state) || null;
   // A damaged planned-order value can make MES.upgrade itself throw (planning blockers read it as a list); that is
   // reported as the same plain register problem, not an unexpected failure (Codex review of #220).
-  const loadState = async () => { const row = await store.getDoc(TENANT); if (!row) return { state: null, etag: null }; const parsed = JSON.parse(row.json); let state; try { state = host.MES.upgrade(structuredClone(parsed)); } catch (e) { const damaged = registerProblem(parsed); if (damaged) return { state: null, etag: row.etag, raw: parsed, registers: damaged, problem: damaged }; throw e; } return { state, etag: row.etag, raw: parsed, registers: state ? registerProblem(state) : null, problem: state ? null : (host.MES.diagnose(parsed) || {}).detail || 'The document does not match the current record format.' }; };
+  // A production server never serves or acts on a workspace a training server saved, whatever reached its store.
+  const trainingRefusal = 'This workspace was saved by a training server. A production server does not serve or change training records.';
+  const trainingDoc = json => !training && json.includes('"trainingServer"') && Object.hasOwn(JSON.parse(json), 'trainingServer');
+  // A production server started on an empty database can be overtaken by a training server that designates it later.
+  // The first audit row never changes once written, so until that row exists every API request re-reads it; a row that
+  // is not the training designation settles the question for the life of the process, and the designation refuses
+  // every API route from then on (archives, trace, audit and exports included, not only the workspace).
+  let firstRowSettled = training, claimed = false;
+  const claimedRefusal = 'This database was claimed by a training server after this production server started. A production server does not serve or change training records. Stop this server and start it on its own database.';
+  const claimedForTraining = async () => {
+    if (claimed) return true;
+    if (firstRowSettled || typeof store.firstAuditRow !== 'function') return false;
+    const first = await store.firstAuditRow();
+    if (!first) return false;
+    firstRowSettled = true;
+    claimed = first.action === TRAINING_DESIGNATION;
+    if (claimed) log('refusing every API request: a training server designated this database after startup');
+    return claimed;
+  };
+  const loadState = async () => { const row = await store.getDoc(TENANT); if (!row) return { state: null, etag: null }; if (trainingDoc(row.json)) return { state: null, etag: row.etag, problem: trainingRefusal }; const parsed = JSON.parse(row.json); let state; try { state = host.MES.upgrade(structuredClone(parsed)); } catch (e) { const damaged = registerProblem(parsed); if (damaged) return { state: null, etag: row.etag, raw: parsed, registers: damaged, problem: damaged }; throw e; } return { state, etag: row.etag, raw: parsed, registers: state ? registerProblem(state) : null, problem: state ? null : (host.MES.diagnose(parsed) || {}).detail || 'The document does not match the current record format.' }; };
   // Derived-state convergence: the browser engine recomputes these on boot, refresh and render
   // without ever queuing them as commands (planning blockers, assignment auto-close, master WI /
   // plan / maneuver defaults). The server runs them here, inside every commit path, before
@@ -379,6 +556,7 @@ export function createServer(options = {}) {
   // whose detail may be a function of the new ETag) are written in the same transaction: a change is never kept
   // without its audit row, and an audit row never names a change that was rolled back.
   const commitState = async (state, expectedEtag, username, audits = []) => {
+    if (training) state.trainingServer = { ...TRAINING_PROVENANCE };
     const exportState = structuredClone(state);
     const beforeRow = await store.getDoc(TENANT);
     // An initialization (expectedEtag null) that finds a stored workspace lost the race to another request: report the
@@ -445,9 +623,10 @@ export function createServer(options = {}) {
     // Nor the account directory: a visitor who has not signed in learns only whether the first account still has
     // to be set up. A signed-in page reads the list from GET /api/auth/accounts with its session.
     const accounts = await store.accounts();
-    const ctx = { api: '/api', etag: null, workspace: null, workspaceAvailable: !!row, jiraConfigured, auth: { users: session ? accounts.map(publicAccount) : [], setupRequired: accounts.length === 0 }, account: session ? publicAccount(session.account) : null, served: new Date().toISOString() };
+    const ctx = { api: '/api', etag: null, workspace: null, workspaceAvailable: !!row, jiraConfigured, auth: { users: session ? accounts.map(publicAccount) : [], setupRequired: accounts.length === 0 }, account: session ? publicAccount(session.account) : null, served: new Date().toISOString(), ...(training ? { training: true, trainingMark: TRAINING_MARK } : {}) };
     const script = `<script id="flight-server">window.FLIGHT_SERVER=${JSON.stringify(ctx).replace(/</g, '\\u003c')};</script>`;
-    return host.html.replace('<head>', `<head>${script}`);
+    const html = training ? trainingPage(host.html) : host.html;
+    return html.replace('<head>', `<head>${script}`);
   };
   // Writes the archive export JSON with each recording's bytes base64-encoded in bounded chunks, one recording at a
   // time and respecting backpressure, so an evidence-heavy archive never has to fit in memory as one object.
@@ -506,6 +685,7 @@ export function createServer(options = {}) {
     return `HTTPS destination accepted ${job.exportId}`;
   };
   const drainExports = () => {
+    if (training) return Promise.resolve();
     if (exportDrain) return exportDrain;
     exportDrain = (async () => {
       // Keep taking batches until nothing new is pending: one commit can finalize more records than one batch holds.
@@ -528,6 +708,7 @@ export function createServer(options = {}) {
     return exportDrain;
   };
   const queueNewFinalRecords = async (previous, next, username, tx) => {
+    if (training) return [];
     const before = finalizedRecords(previous), after = finalizedRecords(next), queued = [];
     for (const [key, item] of after) {
       if (before.has(key)) continue;
@@ -566,6 +747,7 @@ export function createServer(options = {}) {
       if (p.startsWith('/assets/') || (p === '/demo.html' && serveDemo) || p === '/favicon.ico') { serveStatic(req, res, p); return; }
       if (!p.startsWith('/api/')) { send(res, 404, { error: 'Not found' }); return; }
       const route = p.slice(4);
+      if (await claimedForTraining()) { send(res, 422, { error: claimedRefusal }); return; }
 
       // Liveness for anyone (a load balancer or monitor needs no account); the operating detail only with a session.
       if (route === '/health' && m === 'GET') {
@@ -710,6 +892,14 @@ export function createServer(options = {}) {
             await tx.lockAuthority();
             const current = await tx.accounts();
             if (firstRun && current.length) { refusal = { status: 409, error: 'An account was created on this server while you were setting it up. Sign in with it instead.' }; return false; }
+            // A production server's first account is created only if no training server has claimed the database: the
+            // check runs here, under the workspace lock and the audit lock the training claim takes, so a claim that
+            // commits after the per-request check is still seen and nothing is written beside it.
+            if (firstRun && !training && typeof tx.lockAudit === 'function') {
+              await tx.lockAudit();
+              const first = await tx.firstAuditRow();
+              if (first && first.action === TRAINING_DESIGNATION) { claimed = true; refusal = { status: 422, error: claimedRefusal }; return false; }
+            }
             for (const u of incoming) {
               const username = String(u.username || '').trim().toLowerCase();
               if (!/^[a-z0-9._-]{3,40}$/.test(username) || !String(u.displayName || '').trim()) { refusal = { status: 400, error: `Account ${username || '(blank)'}: username is 3 to 40 characters and the name is required.` }; return false; }
@@ -871,7 +1061,7 @@ export function createServer(options = {}) {
       }
 
       // -- workspace --
-      if (route === '/workspace' && m === 'GET') { const row = await store.getDoc(TENANT); if (!row) { send(res, 404, { error: 'No workspace yet.' }); return; } res.writeHead(200, { 'Content-Type': MIME['.json'], ETag: row.etag, 'Cache-Control': 'no-store' }); res.end(row.json); return; }
+      if (route === '/workspace' && m === 'GET') { const row = await store.getDoc(TENANT); if (!row) { send(res, 404, { error: 'No workspace yet.' }); return; } if (trainingDoc(row.json)) { send(res, 422, { error: trainingRefusal }); return; } res.writeHead(200, { 'Content-Type': MIME['.json'], ETag: row.etag, 'Cache-Control': 'no-store' }); res.end(row.json); return; }
       if (route === '/workspace' && m === 'PUT') {
         // Snapshot replacement is permitted exactly once, to initialize an empty server or apply
         // a preflighted migration. Existing shared records can only change through MES actions.
@@ -883,6 +1073,7 @@ export function createServer(options = {}) {
         let doc;
         try { doc = await readJson(req); } catch (e) { if (e.status === 400 || e.status === 413) await auditRefusal(e.status, e.status === 413 ? 'request body over the size limit' : 'request body is not JSON'); throw e; }
         const ifMatch = req.headers['if-match'] || null;
+        if (!training && doc && typeof doc === 'object' && Object.hasOwn(doc, 'trainingServer')) { await auditRefusal(422, 'training workspace'); send(res, 422, { error: 'This workspace was saved by a training server. Training records cannot be loaded into a production server.' }); return; }
         if (!manages(session.account)) { await auditRefusal(403, currentWorkspace ? 'initialized workspace is action-only' : 'only QA Manager or Master Access may initialize'); send(res, 403, { error: currentWorkspace ? 'The shared workspace is initialized and cannot be replaced as a snapshot. Use a server-authorized record action or the approved migration procedure.' : 'Only QA Manager or Master Access can initialize the shared workspace.' }); return; }
         if (currentWorkspace) {
           if (!ifMatch) { await auditRefusal(428, 'missing If-Match', { etag: currentWorkspace.etag }); send(res, 428, { error: 'Include the current workspace ETag in If-Match.' }); return; }
@@ -1031,7 +1222,12 @@ export function createServer(options = {}) {
       if (calArc && m === 'GET') {
         const a = await store.calibrationArchived(calArc[1]);
         if (!a) { send(res, 404, { error: `${calArc[1]} is not in the calibration archive. An entry that was never archived is in the live calibration log under System QMS records.` }); return; }
-        send(res, 200, { entry: a.entry, sha256: a.sha256, recordId: a.recordId, archivedAt: a.archivedAt, archivedBy: a.archivedBy, readOnly: true }); return;
+        const body = { entry: a.entry, sha256: a.sha256, recordId: a.recordId, archivedAt: a.archivedAt, archivedBy: a.archivedBy, readOnly: true };
+        // On a training server the response also carries an extract hash over the entry, its archive hash and the training
+        // mark, so removing the mark breaks that hash; the entry and its own signature are unchanged.
+        if (!training) { send(res, 200, body); return; }
+        const covered = { entry: a.entry, sha256: a.sha256, training: TRAINING_MARK };
+        send(res, 200, { training: TRAINING_MARK, trainingNote: TRAINING_PROVENANCE.note, ...body, extractSha256: createHash('sha256').update(JSON.stringify(covered)).digest('hex'), extractHashCovers: 'entry, sha256, training' }); return;
       }
       const arc = /^\/archive\/(WO-[A-Za-z0-9-]+)(\/print|\/export)?$/.exec(route);
       if (arc && m === 'GET') {
@@ -1042,8 +1238,9 @@ export function createServer(options = {}) {
           const mode = url.searchParams.get('mode') === 'external' ? 'external' : 'internal';
           let html; try { html = host.MESPrint.document(a.entry.order, mode); } catch (e) { internalError(res, req, e, 'The record could not be printed.'); return; }
           const summary = { orderId: a.id, partNumber: a.entry.order.partNumber, status: a.entry.order.status, operationCount: (a.entry.order.operations || []).length, closedAt: a.entry.order.closure && a.entry.order.closure.at || null };
-          const stamp = await recordExtract(a.id, 'print', session.username, { order: a.entry.order, activity: a.entry.activity, archiveSha256: a.sha256, mode }, summary);
+          const stamp = await recordExtract(a.id, 'print', session.username, { order: a.entry.order, activity: a.entry.activity, archiveSha256: a.sha256, mode, ...(training ? { training: TRAINING_MARK } : {}) }, summary);
           html = html.replace('</body>', `${printExtractStamp(stamp)}</body>`);
+          if (training) html = trainingPrintMark(html);
           await store.audit(session.username, 'archive-print', { orderId: a.id, mode });
           res.writeHead(200, { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-store' }); res.end(html); return;
         }
@@ -1056,17 +1253,19 @@ export function createServer(options = {}) {
           evidence[key] = meta;
         }
         const summary = { orderId: a.id, partNumber: a.entry.order.partNumber, status: a.entry.order.status, operationCount: (a.entry.order.operations || []).length, activityCount: (a.entry.activity || []).length, evidenceCount: Object.keys(evidence).length, closedAt: a.entry.order.closure && a.entry.order.closure.at || null };
-        const content = { order: a.entry.order, activity: a.entry.activity, evidence, archiveSha256: a.sha256, archivedAt: a.archivedAt, archivedBy: a.archivedBy, schema: a.schema };
+        // A training extract carries its training mark inside the hashed content, so removing it breaks the extract hash.
+        const content = { order: a.entry.order, activity: a.entry.activity, evidence, archiveSha256: a.sha256, archivedAt: a.archivedAt, archivedBy: a.archivedBy, schema: a.schema, ...(training ? { training: TRAINING_MARK } : {}) };
         const stamp = await recordExtract(a.id, 'json-download', session.username, content, summary);
         await store.audit(session.username, 'archive-export', { orderId: a.id, exportId: stamp.exportId, sha256: stamp.sha256 });
         const head = { application: 'Flight System', kind: 'archived-work-order', exportId: stamp.exportId, exportedAt: stamp.exportedAt, exportedBy: stamp.exportedBy, hashAlgorithm: 'SHA-256', extractSha256: stamp.sha256, extractHashCovers: 'order, activity, evidence metadata including each recording SHA-256, archiveSha256, archivedAt, archivedBy, schema', dataSummary: summary, ...content, evidence: undefined };
-        res.writeHead(200, { 'Content-Type': MIME['.json'], 'Content-Disposition': `attachment; filename="${a.id}-archive.json"`, 'Cache-Control': 'no-store' });
+        if (training) head.extractHashCovers += ', training';
+        res.writeHead(200, { 'Content-Type': MIME['.json'], 'Content-Disposition': `attachment; filename="${training ? 'TRAINING-' : ''}${a.id}-archive.json"`, 'Cache-Control': 'no-store' });
         await streamArchiveExport(res, head, evidence);
         return;
       }
 
       // -- read-only reports the engine already computes --
-      if (route === '/governance' && m === 'GET') { const { state } = await loadState(); if (!state) { send(res, 404, { error: 'No workspace yet.' }); return; } const r = host.withAccount(session.account, () => host.MES.governanceExport ? host.MES.governanceExport(state) : { ok: false, message: 'Not in this build.' }, state); if (!r.ok) { send(res, 403, { error: r.message }); return; } await store.audit(session.username, 'governance-export', {}); send(res, 200, r.document); return; }
+      if (route === '/governance' && m === 'GET') { const { state } = await loadState(); if (!state) { send(res, 404, { error: 'No workspace yet.' }); return; } const r = host.withAccount(session.account, () => host.MES.governanceExport ? host.MES.governanceExport(state) : { ok: false, message: 'Not in this build.' }, state); if (!r.ok) { send(res, 403, { error: r.message }); return; } await store.audit(session.username, 'governance-export', training ? { training: true } : {}); send(res, 200, training ? trainingGovernance(r.document) : r.document); return; }
       if (route === '/b2mml' && m === 'GET') { const { state } = await loadState(); if (!state) { send(res, 404, { error: 'No workspace yet.' }); return; } send(res, 200, host.withAccount(session.account, () => host.MES.b2mml ? host.MES.b2mml(state) : { error: 'Not in this build.' }, state)); return; }
       if (route === '/big-three' && m === 'GET') { const { state } = await loadState(); if (!state) { send(res, 404, { error: 'No workspace yet.' }); return; } send(res, 200, host.withAccount(session.account, () => host.MES.bigThree(state), state)); return; }
       // -- configured final-record delivery. Secret values remain server environment variables; the
@@ -1077,6 +1276,7 @@ export function createServer(options = {}) {
         if (!manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can configure record exports.' }); return; }
         if (m === 'GET') { send(res, 200, { recordTypes: EXPORT_RECORD_TYPES, settings: await store.exportSettings() }); return; }
         if (m === 'PUT') {
+          if (training) { send(res, 409, { error: 'Record exports are off on a training server: training records are never sent to a records system.' }); return; }
           const body = await readJson(req), recordType = String(body.recordType || ''), enabled = body.enabled;
           const destinationKind = String(body.destinationKind || ''), destination = String(body.destination || '').trim();
           const tokenSetting = String(body.tokenSetting || '').trim() || null, namingPattern = String(body.namingPattern || '').trim(), rationale = String(body.rationale || '').trim();
@@ -1156,7 +1356,40 @@ export function createServer(options = {}) {
   };
 
   server = http.createServer((req, res) => { handle(req, res); });
-  server.store = store; server.host = host; server.validState = validState; server.ready = storeReady.then(async () => { await wrapped; await verifyStoredCalibrationArchive(); void drainExports(); });
+  // A training server opens only a training database: a new store, which it designates with its first audit row, or
+  // a store that row already designates. A production server refuses a designated training database. The audit chain
+  // makes the designation part of the record, so training data cannot pass as production data or the reverse.
+  const checkTrainingDesignation = async () => {
+    if (typeof store.firstAuditRow !== 'function' || typeof store.lockAudit !== 'function') {
+      if (training) throw new Error('Training mode needs a store that can record its training designation.');
+      return;
+    }
+    const designatedRow = row => !!row && row.action === TRAINING_DESIGNATION;
+    if (!training) {
+      if (designatedRow(await store.firstAuditRow())) throw new Error('This database was created for a training server. Start it with --training (or FLIGHT_TRAINING=1), or start the production server on its own database.');
+      return;
+    }
+    // The check and the designation are one transaction under the workspace lock and the audit lock (an exclusive
+    // write transaction in SQLite, advisory locks in PostgreSQL), so two servers starting on the same new database
+    // cannot both claim it, and no other audit row can come first once the check has found the database empty.
+    let refusal = null, designated = false;
+    await store.transaction(async tx => {
+      await tx.lockDoc(TENANT);
+      // Every audit writer takes the audit lock before it reads the chain head, so holding it from this read to the
+      // designation write means no other row (a failed sign-in, say) can land between them: the designation is row 1
+      // or the start is refused.
+      await tx.lockAudit();
+      const first = await tx.firstAuditRow();
+      if (designatedRow(first)) return true;
+      if (first || (await tx.accounts()).length || await tx.getDoc(TENANT)) { refusal = 'Training mode opens only a training database, and this database already holds records. Start the training server on a new database file, for example --db training.sqlite.'; return false; }
+      await tx.audit(null, TRAINING_DESIGNATION, { mark: TRAINING_MARK });
+      designated = true;
+      return true;
+    });
+    if (refusal) throw new Error(refusal);
+    if (designated) log(`designated this new database as a training database (${TRAINING_MARK})`);
+  };
+  server.store = store; server.host = host; server.training = training; server.validState = validState; server.ready = storeReady.then(checkTrainingDesignation).then(acceptDatabase, error => { refuseDatabase(error); throw error; }).then(async () => { await wrapped; await verifyStoredCalibrationArchive(); void drainExports(); });
   // Bind address: 127.0.0.1 unless options.host, FLIGHT_HOST or --host names another.
   // Once listening, the archive check starts on a later turn of the event loop, so startup does not wait for it.
   server.listenAsync = async (port, host = options.host || process.env.FLIGHT_HOST || DEFAULT_HOST) => {
@@ -1207,11 +1440,14 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
     catch (e) { console.error(`Restore failed: ${e.message} The restore runs as one transaction, so it left the database unchanged.`); process.exit(1); }
   } else {
   const host = arg('host', process.env.FLIGHT_HOST || DEFAULT_HOST);
-  const server = createServer({ dbPath, databaseUrl, host, ...(process.argv.includes('--serve-demo') ? { serveDemo: true } : {}) });
+  let server;
+  try { server = createServer({ dbPath, databaseUrl, host, ...(process.argv.includes('--serve-demo') ? { serveDemo: true } : {}), ...(process.argv.includes('--training') ? { training: true } : {}) }); }
+  catch (e) { console.error(`Flight System server did not start: ${e.message}`); process.exit(1); }
   server.listenAsync(Number(arg('port', process.env.PORT || 8080)), host).then(port => {
     const a = server.address();
     console.log(`Flight System server listening on ${a.address}:${port} (${a.address === '127.0.0.1' || a.address === '::1' ? 'loopback only: this machine and its reverse proxy' : 'bound as --host or FLIGHT_HOST asked: allow it only behind a firewall or on a trusted network'}) (db ${server.store.db.location ? server.store.db.location() : 'sqlite'})`);
+    if (server.training) console.log(`Training mode: every page, print and download is marked ${TRAINING_MARK}. Every rule and gate is enforced as in production.`);
     server.firstRunSetupCode().then(code => { if (code) console.log(`First-run setup code: ${code}\nEnter it on the Set up Master Access screen to create the first account. It is not needed again once that account exists.`); }).catch(() => {});
-  }, e => { console.error(`Flight System server could not listen on ${host}: ${e.message}. Check --host names an address on this machine and the port is free.`); process.exit(1); });
+  }, e => { console.error(e.code ? `Flight System server could not listen on ${host}: ${e.message}. Check --host names an address on this machine and the port is free.` : `Flight System server did not start: ${e.message}`); process.exit(1); });
   }
 }

@@ -124,6 +124,8 @@ export function openDb(path) {
     async lockAuthority() {},
     // A write already holds the database lock (BEGIN IMMEDIATE), so the workspace lock is a no-op here.
     async lockDoc() {},
+    // BEGIN IMMEDIATE already holds the only write lock, so the audit chain cannot move under a transaction.
+    async lockAudit() {},
     putDoc(tenant, json, expectedEtag, by) {
       const cur = this.getDoc(tenant);
       if (cur && expectedEtag === null) return null; // null: the document must not exist yet (first initialization)
@@ -247,6 +249,8 @@ export function openDb(path) {
       return { ...row, prevHash: row.prev_hash };
     },
     auditRows(limit = 200) { return db.prepare('SELECT id, at, username, action, detail, prev_hash AS prevHash, hash FROM audit ORDER BY id DESC LIMIT ?').all(limit); },
+    // The oldest audit row: a training database is designated by its first row (see server training mode).
+    firstAuditRow() { return db.prepare('SELECT id, action FROM audit ORDER BY id ASC LIMIT 1').get() || null; },
     verifyAudit() {
       let previous = null, checked = 0;
       for (const row of db.prepare('SELECT id, at, username, action, detail, prev_hash, hash FROM audit ORDER BY id').all()) {

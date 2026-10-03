@@ -243,6 +243,9 @@ function makeStore(pool, query, inTransaction, connectionString) {
     },
     // The per-workspace advisory lock putDoc takes, taken earlier in a transaction so the archive probes run under it.
     async lockDoc(tenant) { if (!inTransaction) throw new Error('The workspace lock is taken inside a transaction.'); await query('SELECT pg_advisory_xact_lock(hashtext($1))', [tenant]); },
+    // The lock every audit append takes before reading the chain head, taken earlier in a transaction so a read of the
+    // chain and a later append in the same transaction see no other append between them.
+    async lockAudit() { if (!inTransaction) throw new Error('The audit lock is taken inside a transaction.'); await query('SELECT pg_advisory_xact_lock($1)', [78124031]); },
     async putDoc(tenant, value, expectedEtag, by) {
       if (!inTransaction) return store.transaction(tx => tx.putDoc(tenant, value, expectedEtag, by));
       await query('SELECT pg_advisory_xact_lock(hashtext($1))', [tenant]);
@@ -353,6 +356,7 @@ function makeStore(pool, query, inTransaction, connectionString) {
       });
     },
     async audit(username, action, detail) { if (inTransaction) return appendAudit(username, action, detail); return store.transaction(tx => tx.audit(username, action, detail)); },
+    async firstAuditRow() { const row = (await query('SELECT id,action FROM audit ORDER BY id ASC LIMIT 1')).rows[0]; return row ? { id: Number(row.id), action: row.action } : null; },
     async auditRows(limit = 200) { return (await query('SELECT id,at,username,action,detail,prev_hash AS "prevHash",hash FROM audit ORDER BY id DESC LIMIT $1', [limit])).rows.map(r => ({ ...r, id: Number(r.id) })); },
     async verifyAudit() {
       const rows = (await query('SELECT id,at,username,action,detail,prev_hash,hash FROM audit ORDER BY id')).rows;

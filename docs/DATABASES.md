@@ -74,8 +74,38 @@ The server also runs this scan once each time it starts, against the store it wa
 ## Demo build
 
 `demo.html` relaxes separation of duties, PIN entry and the stamp gate, so the production server does
-not serve it. To offer it from a training server, start that server with `--serve-demo` or
-`FLIGHT_SERVE_DEMO=1`. Every page of the demo still says DEMO, NOT FOR ACCEPTANCE.
+not serve it. To offer it from a separate demo server, start that server with `--serve-demo` or
+`FLIGHT_SERVE_DEMO=1`. Every page of the demo still says DEMO, NOT FOR ACCEPTANCE. A `--training` server enforces
+every gate, so it refuses to start with `--serve-demo` or `FLIGHT_SERVE_DEMO=1`.
+
+## Training mode
+
+`--training` or `FLIGHT_TRAINING=1` runs the production build, with every rule and gate enforced, for a training
+session on its own database (`--db training.sqlite`). The server adds TRAINING, NOT THE RECORD to the page it sends:
+a strip on every screen, the sign-in screen included, the word Training in the tab title, and a mark at the top of
+every print and HTML download, the archive print included; printing a screen puts the mark first on the first sheet
+and repeats the strip at the foot of every sheet. Every file the page saves is named `TRAINING-<name>`, and an archive
+print or export carries `"training": "TRAINING, NOT THE RECORD"` inside the content its extract hash covers, so the
+mark cannot be removed without breaking the hash. A training server sends nothing outward: the Jira connector reads as
+not configured, record exports are neither configured, queued nor delivered, and in the browser the persistence
+mirror and the integration bridge (NetSuite, GitHub, Slack) stay off whatever the deployed build configures. Every
+workspace a training server saves carries a `trainingServer` mark, and a production server refuses to initialize from
+a workspace that carries it. Without the option nothing is added
+and the page is served as before. `FLIGHT_TRAINING` accepts 1, true,
+yes or on, and 0, false, no or off; any other value stops the server so a misspelled setting never starts an unmarked
+training server.
+
+A training server opens only a training database. On a new, empty database it writes a `training-database` row as the
+first row of the audit chain; it refuses any database that already holds records without that row. A production
+server refuses a database that carries it, and never serves or changes a workspace a training server saved. The
+designation is checked and written in one transaction under the workspace lock, so two servers starting on the same
+new database cannot both claim it. A production server already running on a new database that a training server
+then claims refuses every API request from that moment, archives, prints and exports included. These marks stop
+mix-ups. They do not stop a QA Manager or Master Access holder who edits a saved file by hand before initializing an
+empty production workspace: signature manifests are unkeyed SHA-256 hashes until the server countersigns them, so
+that person could equally write signed records from scratch. The audit row of every workspace initialization is
+the control for that case. Give the training server its own `--db` file. Setup steps for a laptop rehearsal and an IT machine are in
+[`TRAINING_SERVER_SETUP.md`](TRAINING_SERVER_SETUP.md).
 
 ## Health check
 
