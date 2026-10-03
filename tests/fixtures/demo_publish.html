@@ -2373,23 +2373,20 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // The site calendar day. Date checks on records compare against this, never the UTC day (#587, #588).
   const siteToday = () => pacificDay(new Date().toISOString());
   // A step that mentions torque records a torque value (#589). Missing a reading is the worse error, so a mention is
-  // marker work, and needs no value, only when a stripe, seal, paint or mark word follows it and either a noun or
-  // passive form follows that ("Torque stripe inspection", "Torque seal is intact") or a marker verb comes within three
-  // words before it in the same clause ("Apply red torque stripe", "Remove the existing torque seal"). Anything else is
-  // a torque action and records the value: "Torque sealing plug per WI-123", "Carefully torque seal nut per drawing",
-  // "Retorque seal nut", "Inspect threads, then torque seal nut". So does any step that names a torque target: a number
-  // with a torque unit, or the drawing, WI or specified value. A bare number ("to 3 fasteners") is not a target.
+  // marker work, and needs no value, only in one closed shape: a stripe, seal, paint or mark word follows "torque", then
+  // only known inspection, condition or passive words ("visual inspection", "is intact", "missing", "damage") up to the
+  // end of the clause or a preposition, and either a marker verb comes before it in the same clause ("Apply red torque
+  // stripe to the B-nut") or at least one of those words follows ("Torque stripe adhesion check"). Any other word after
+  // the marker, such as the part ("torque seal retaining nut", "torque seal electrical connector"), makes it a torque
+  // action, so an unlisted word records the value rather than skipping it. "Torque sealing plug per WI-123", "Carefully
+  // torque seal nut", "Retorque seal nut" and any step that names a torque target (a number with a torque unit, or the
+  // drawing, WI or specified value) record it too. A bare number ("to 3 fasteners") is not a target.
   const TORQUE_TARGET = /\d\s*(?:in|ft)[- .]?(?:lbs?|lbf|oz)\b|\d\s*(?:inch|foot)[- ]?(?:pounds?|lbs?)\b|\d\s*lbf[- .]?(?:in|ft)\b|\d\s*(?:n[·.]?m|nm)\b|\b(?:drawing|wi|specified)\s+(?:torque\s+)?value\b|\bspecified\s+torque\b(?!\s+(?:locations?|points?|positions?)\b)/i;
   // "Specified torque locations" names where torque was applied; it is not itself a torque action.
   const TORQUE_PLACE = /\bspecified\s+$/i, TORQUE_PLACE_AFTER = /^torque\s+(?:locations?|points?|positions?)\b/i;
   const TORQUE_MARKER = '(?:witness\\s+)?(?:stripes?|striping|seals?|sealing|sealant|paints?|painting|marks?|marking)';
-  const TORQUE_MARKER_AFTER = new RegExp(`^torque\\s*${TORQUE_MARKER}\\b(?!-)`, 'i');
-  // A noun after the marker counts only when it closes the phrase ("Torque stripe inspection", "torque seal condition on
-  // each nut"), so hardware named "Torque seal check valve" or "inspection port cap" stays a torque action.
-  const TORQUE_MARKER_NOUN_AFTER = new RegExp(`^torque\\s*${TORQUE_MARKER}\\s+(?:(?:applied|shall|should|must|is|are|was|to\\s+be|present|intact|unbroken|only|missing|absent|broken|damaged|cracked|disturbed|misaligned|not)\\b|(?:inspection|check|verification|application|witness|condition|damage)(?=\\s*(?:$|[.;:!?,)]|\\s(?:of|for|on|at|per|across|to|with|before|after)\\b)))`, 'i');
-  // A marker word followed by hardware within two words names the hardware ("torque seal retaining nut", "torque seal
-  // check valve"), so the step is a torque action whatever verb comes before it.
-  const TORQUE_MARKER_HARDWARE = new RegExp(`^torque\\s*${TORQUE_MARKER}(?:\\s+(?!(?:to|on|onto|across|at|of|for|over|from|with|between|per|and|or|the|a|an|each|all|is|are|was|be)\\b)[a-z-]+){0,2}?\\s+(?:retaining|retainer|nuts?|bolts?|plugs?|fittings?|screws?|studs?|valves?|caps?|washers?|rings?|o-rings?|glands?|housings?)\\b`, 'i');
+  const TORQUE_MARKER_WORDS = 'inspections?|inspected|checks?|checked|verification|verified|application|applied|witness(?:ed)?|condition|damage|damaged|visual|visually|adhesion|integrity|presence|present|continuity|alignment|aligned|misaligned|intact|unbroken|missing|absent|broken|cracked|disturbed|smeared|faded|only|not|shall|should|must|is|are|was|were|be|been|to\\s+be|remains?';
+  const TORQUE_MARKER_PHRASE = new RegExp(`^torque\\s*${TORQUE_MARKER}((?:\\s+(?:${TORQUE_MARKER_WORDS})\\b)*)(?=\\s*(?:$|[.;:!?,)])|\\s+(?:of|for|on|onto|at|per|across|to|with|before|after|from|over|between|in|and|or|then)\\b)`, 'i');
   const TORQUE_MARKER_VERB_BEFORE = /\b(?:apply|applying|applied|reapply|re-apply|inspect|inspecting|verify|verifying|check|checking|confirm|confirming|remove|removing|replace|replacing|add|adding|touch[- ]up|witness|witnessing|document|documenting|record|recording|note|noting|report|reporting)(?:\s+(?!(?:then|and|or|torque|to|per|with|after|before|install|installing|tighten|tightening)\b)[a-z][a-z-]*)*\s+$/i;
   const stepRecordsTorque = text => {
     const t = String(text ?? ''), mentions = [...t.matchAll(/torque/gi)];
@@ -2398,10 +2395,9 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     return mentions.some(m => {
       const before = t.slice(0, m.index), after = t.slice(m.index);
       if (/[a-z-]$/i.test(before)) return true;
-      if (TORQUE_MARKER_HARDWARE.test(after)) return true;
-      if (TORQUE_MARKER_NOUN_AFTER.test(after)) return false;
       if (TORQUE_PLACE.test(before) && TORQUE_PLACE_AFTER.test(after)) return false;
-      return !(TORQUE_MARKER_AFTER.test(after) && TORQUE_MARKER_VERB_BEFORE.test(before));
+      const phrase = TORQUE_MARKER_PHRASE.exec(after);
+      return !(phrase && (phrase[1].trim() || TORQUE_MARKER_VERB_BEFORE.test(before)));
     });
   };
   // ---- Stamp and qualification register -----------------------------------------------------
@@ -4802,7 +4798,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     'op-050': [['Collect records', 'Confirm every prior operation has a stamp, date, and completion note.'], ['Check evidence', 'Verify linked reports, photos, or recordings are attached and reviewed.']],
     'op-060': [['Review the traveler', 'Read through the full traveler for open items, holds, or missing entries.'], ['Hand off to QA', 'Notify Quality that the work order is ready for final review.']]
   });
-  const defaultSteps = (opId, title) => (DEFAULT_STEPS[opId] || [['Perform the operation', `Complete “${title}” per the master work instruction.`], ['Verify the result', 'Check the work against the WI before buy-off.']]).map(([stepTitle, instruction], index) => ({ id: `step-${index + 1}`, title: stepTitle, instruction, recordsTorque: stepRecordsTorque(`${stepTitle} ${instruction}`) }));
+  const defaultSteps = (opId, title) => (DEFAULT_STEPS[opId] || [['Perform the operation', `Complete “${title}” per the master work instruction.`], ['Verify the result', 'Check the work against the WI before buy-off.']]).map(([stepTitle, instruction], index) => ({ id: `step-${index + 1}`, title: stepTitle, instruction, recordsTorque: stepRecordsTorque(`${stepTitle}. ${instruction}`) }));
   const MAX_STEP_IMAGE = 300000, MAX_IMAGE_TOTAL = 2600000;
   const stepImageValid = image => plain(image) && typeof image.dataUrl === 'string' && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(image.dataUrl) && image.dataUrl.length <= MAX_STEP_IMAGE && str(image.caption, 200, 0) && str(image.name, 120, 0);
   const STD_INSPECTION = Object.freeze({ title: 'Standard inspection', text: 'Inspect all operations performed since the last inspection point. Check for FOD, FOD damage and workmanship.' });
@@ -4910,7 +4906,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       });
     } else if (!masterWIsValid(state.masterWIs)) return state;
     state.orders.forEach(order => { if (!AIRCRAFT.includes(order.aircraft)) order.aircraft = AIRCRAFT[parseInt(order.id.slice(3), 10) % AIRCRAFT.length]; if (!order.start || order.start > order.due) order.start = new Date(Date.parse(order.due) - 7 * 86400000).toISOString().slice(0, 10); if (aogActive(order) && !plain(order.aog)) order.aog = { startedAt: new Date().toISOString(), startedBy: { name: 'Assembly operator', role: 'Assembly technician', credentialId: 'SR-OP-001' }, notified: 0, lastNotifiedAt: null, nextNotifyAt: new Date().toISOString() }; if (!aogActive(order)) order.aog = null; });
-    state.masterWIs.forEach(wi => wi.operations.forEach(op => { if (typeof op.requiresTooling !== 'boolean') op.requiresTooling = ['op-030', 'op-040'].includes(op.id); op.steps.forEach(step => { if (typeof step.recordsTorque !== 'boolean') step.recordsTorque = stepRecordsTorque(`${step.title ?? ''} ${step.instruction ?? ''}`); }); }));
+    state.masterWIs.forEach(wi => wi.operations.forEach(op => { if (typeof op.requiresTooling !== 'boolean') op.requiresTooling = ['op-030', 'op-040'].includes(op.id); op.steps.forEach(step => { if (typeof step.recordsTorque !== 'boolean') step.recordsTorque = stepRecordsTorque(`${step.title ?? ''}. ${step.instruction ?? ''}`); }); }));
     state.orders.forEach(order => order.operations.forEach(operation => {
       if (!Array.isArray(operation.steps) || !operation.steps.length || !operation.steps.every(stepValid)) operation.steps = defaultSteps(operation.id, operation.title);
       if (!plain(operation.stepChecks)) operation.stepChecks = {};
@@ -4918,7 +4914,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       if (!BUYOFF_TYPES.includes(operation.buyoffType)) operation.buyoffType = defaultBuyoffType(operation.id);
       if (typeof operation.inspectionPoint !== 'boolean') operation.inspectionPoint = operation.id === 'op-040' && INSPECTION_BUYOFF_TYPES.includes(operation.buyoffType);
       if (typeof operation.requiresTooling !== 'boolean') operation.requiresTooling = ['op-030', 'op-040'].includes(operation.id) || (Array.isArray(operation.buyoff?.tools) && operation.buyoff.tools.length > 0);
-      operation.steps.forEach(step => { if (typeof step.recordsTorque !== 'boolean') step.recordsTorque = stepRecordsTorque(`${step.title ?? ''} ${step.instruction ?? ''}`); });
+      operation.steps.forEach(step => { if (typeof step.recordsTorque !== 'boolean') step.recordsTorque = stepRecordsTorque(`${step.title ?? ''}. ${step.instruction ?? ''}`); });
     }));
     ensureInventory(state);
     ensureSavedViews(state);
@@ -5469,7 +5465,7 @@ const OP_BOM_MAX = 12;
     if (!Number.isInteger(position) || position < min || position > order.operations.length) return fail('New operations can’t be inserted before completed or in-progress work.');
     let n = 1;
     while (order.operations.some(op => op.id === `op-add-${n}`)) n++;
-    const op = { id: `op-add-${n}`, title, description, done: false, note: '', buyoff: null, evidence: [], requiresRecording: false, steps: structured ? structured.map((step, i) => ({ id: `step-${i + 1}`, title: step.title, instruction: step.instruction, recordsTorque: stepRecordsTorque(step.title + ' ' + step.instruction), ...(step.consumables.length ? { consumables: step.consumables } : {}), ...(step.image ? { image: { dataUrl: step.image.dataUrl, caption: String(step.image.caption ?? '').trim().slice(0, 200), name: String(step.image.name ?? '').slice(0, 120) } } : {}) })) : lines.map((line, i) => ({ id: `step-${i + 1}`, title: line.length > 80 ? `${line.slice(0, 77)}…` : line, instruction: line, recordsTorque: stepRecordsTorque(line) })), stepChecks: {}, buyoffType: input.buyoffType, inspectionPoint, requiresTooling, classification, ...operationType(classification), ...(registeredSubcode ? { subCode: registeredSubcode.code } : {}), ...(sourceCode ? { subCode: sourceCode.code, sourceInspectionPlan: { code: sourceCode.code, name: sourceCode.name, leadDays: sourceCode.leadDays, notificationText: sourceCode.notificationText } } : {}), ...(poCheck?.po ? { externalPO: poCheck.po } : {}), ...(poCheck?.request ? { poRequest: { ...poCheck.request, requestedBy: actor(state), requestedAt: new Date().toISOString() } } : {}), ...(atpCheck?.atp ? { atp: atpCheck.atp } : {}), ...(atpCheck?.deferred ? { atpLinkDeferred: true } : {}), addedToSequence: true, callouts: calloutList(input.callouts), ...(trainingList(input.training, state).length ? { training: trainingList(input.training, state) } : {}), ...(calloutList(input.callouts).includes('ESD') ? { grounding: groundingFor(calloutList(input.callouts), input.grounding) } : {}), ...(calloutList(input.callouts).includes('FOD') ? { fodLevel: fodLevelFor(calloutList(input.callouts), input.fodLevel) } : {}), ...(calloutList(input.callouts).includes('MSDS') && msdsLinksFor(input.msdsLinks).links ? { msdsLinks: msdsLinksFor(input.msdsLinks).links } : {}) };
+    const op = { id: `op-add-${n}`, title, description, done: false, note: '', buyoff: null, evidence: [], requiresRecording: false, steps: structured ? structured.map((step, i) => ({ id: `step-${i + 1}`, title: step.title, instruction: step.instruction, recordsTorque: stepRecordsTorque(step.title + '. ' + step.instruction), ...(step.consumables.length ? { consumables: step.consumables } : {}), ...(step.image ? { image: { dataUrl: step.image.dataUrl, caption: String(step.image.caption ?? '').trim().slice(0, 200), name: String(step.image.name ?? '').slice(0, 120) } } : {}) })) : lines.map((line, i) => ({ id: `step-${i + 1}`, title: line.length > 80 ? `${line.slice(0, 77)}…` : line, instruction: line, recordsTorque: stepRecordsTorque(line) })), stepChecks: {}, buyoffType: input.buyoffType, inspectionPoint, requiresTooling, classification, ...operationType(classification), ...(registeredSubcode ? { subCode: registeredSubcode.code } : {}), ...(sourceCode ? { subCode: sourceCode.code, sourceInspectionPlan: { code: sourceCode.code, name: sourceCode.name, leadDays: sourceCode.leadDays, notificationText: sourceCode.notificationText } } : {}), ...(poCheck?.po ? { externalPO: poCheck.po } : {}), ...(poCheck?.request ? { poRequest: { ...poCheck.request, requestedBy: actor(state), requestedAt: new Date().toISOString() } } : {}), ...(atpCheck?.atp ? { atp: atpCheck.atp } : {}), ...(atpCheck?.deferred ? { atpLinkDeferred: true } : {}), addedToSequence: true, callouts: calloutList(input.callouts), ...(trainingList(input.training, state).length ? { training: trainingList(input.training, state) } : {}), ...(calloutList(input.callouts).includes('ESD') ? { grounding: groundingFor(calloutList(input.callouts), input.grounding) } : {}), ...(calloutList(input.callouts).includes('FOD') ? { fodLevel: fodLevelFor(calloutList(input.callouts), input.fodLevel) } : {}), ...(calloutList(input.callouts).includes('MSDS') && msdsLinksFor(input.msdsLinks).links ? { msdsLinks: msdsLinksFor(input.msdsLinks).links } : {}) };
     if (calloutList(input.callouts).includes('MSDS') && msdsLinksFor(input.msdsLinks).error) return fail(msdsLinksFor(input.msdsLinks).error);
     const bom = readBOM(input.bom);
     if (bom.error) return fail(bom.error);

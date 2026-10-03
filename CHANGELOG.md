@@ -26,16 +26,16 @@ numbers and record number formats have not changed in any entry below.
   signature blocks and the certification notice date each signature on the site day too, so an evening AQI signature
   and the DAR acceptance it allows carry the same date.
 - **One torque rule (#589, #659).** `MES.stepRecordsTorque` decides whether a step records a torque value. A step
-  that mentions torque records one unless every mention is marker work: a stripe, seal, paint, mark or witness mark word follows
-  it and either a noun, passive or condition form follows that ("Torque stripe inspection", "Torque seal is intact",
-  "Torque stripe missing on B-nut", "Document torque stripe damage") or a
-  marker verb comes before it in the same clause, with any modifiers between ("Apply red torque stripe"). Anything else is a
-  torque action ("Carefully torque seal nut", "Record installation torque seal retaining nut per WI-123", where hardware
-  follows the marker word, "Retorque seal nut", "Torque sealing plug per
-  WI-123", "Torque marked fasteners") and any step that names a torque target always record the value, tool and
-  unit. Adding and editing an operation, default steps and the migration of older steps (from the title and
-  instruction together) all use it, so "Apply torque stripe" no longer asks for a torque reading after an edit. An
-  unchanged step keeps its saved setting.
+  that mentions torque records one unless every mention is marker work in one closed shape: a stripe, seal, paint,
+  mark or witness mark word follows "torque", then only known inspection, condition or passive words ("visual
+  inspection", "is intact", "missing on", "damage") up to the end of the clause or a preposition, and either a marker
+  verb comes before it in the same clause ("Apply red torque stripe to the B-nut") or one of those words follows
+  ("Torque stripe adhesion check"). Any other word after the marker, such as the part ("torque seal retaining nut",
+  "torque seal electrical connector"), makes it a torque action, so an unlisted word records the value instead of
+  skipping it. A torque action ("Carefully torque seal nut", "Retorque seal nut", "Torque sealing plug per WI-123")
+  and any step that names a torque target always record the value, tool and unit. Adding and editing an operation,
+  default steps and the migration of older steps (title and instruction read as two sentences) all use it, so "Apply
+  torque stripe" no longer asks for a torque reading after an edit. An unchanged step keeps its saved setting.
 - **Inspection buy-off on edit (#590).** Two checks that could never fail were removed. Editing an Inspection or
   Source Inspection operation to a buy-off that is not an inspection buy-off is refused before anything changes
   (the edit already refused it for Inspection, later in the function; Source Inspection was not covered). The
