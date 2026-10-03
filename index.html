@@ -5526,6 +5526,9 @@ const OP_BOM_MAX = 12;
   function removeOrderOperation(state, orderId, opId, reason) {
     const o0 = state.orders.find(x => x.id === orderId), op0 = o0 && o0.operations.find(x => x.id === opId);
     const partner = op0 && op0.stdPair ? o0.operations.find(x => x.id !== opId && x.stdPair === op0.stdPair) : null;
+    // A standard pair goes together or not at all: if either member is the operation a QA release closed an NC on,
+    // nothing is removed, so the pair is never left half removed (#581).
+    if (partner) { const closed = o0.tickets.find(t => t.status === 'Resolved' && plain(t.reworkPlan) && (t.reworkPlan.opId === opId || t.reworkPlan.opId === partner.id)); if (closed) return fail(`QA released ${closed.reworkPlan.opId === opId ? 'this operation' : 'its standard rework pair operation'} to close ${closed.id} (${closed.reworkPlan.decision}), so the pair can’t be removed. Complete it, or raise a new NC if the work changes.`); }
     const r = removeOrderOperationBase(state, orderId, opId, reason);
     if (!r.ok || !partner || !o0.operations.some(x => x.id === partner.id)) return r;
     const r2 = removeOrderOperationBase(state, orderId, partner.id, `${String(reason ?? '').trim()} (removed with its standard rework pair)`.slice(0, 300));

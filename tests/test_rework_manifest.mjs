@@ -387,5 +387,22 @@ const repair = walk('seed-curated', 'WO-10003', 'Repair', {}, state => { MES.get
   ok('Released operation: reclassifying it is refused', MES.validate(recl) === false && /no longer on the work order/.test(detail(recl)), detail(recl));
 }
 
+// ---- Codex P1 on #602 (d60417a): a standard rework pair is not half removed when one member closed an NC ----
+{
+  const state = structuredClone(rework.state);
+  const order = MES.getOrder(state, 'WO-10006'), t = order.tickets.find(x => x.id === rework.ticketId);
+  const released = order.operations.find(op => op.id === t.reworkPlan.opId);
+  // Its partner: another incomplete operation, added and released by the sequence change flow.
+  const before = new Set(order.operations.map(o => o.id));
+  const addedInspection = host.withAccount(me, () => reworkOp(state, 'WO-10006', undefined, 'Manufacturing'));
+  host.withAccount(qe2, () => MES.approveSequenceChange(state, 'WO-10006'));
+  const inspection = MES.getOrder(state, 'WO-10006').operations.find(o => !before.has(o.id));
+  // Pair them as a standard rework pair would be.
+  released.stdPair = 'STD-TEST'; inspection.stdPair = 'STD-TEST';
+  const r = host.withAccount(me, () => MES.removeOrderOperation(state, 'WO-10006', inspection.id, 'No longer needed.'));
+  const ops = MES.getOrder(state, 'WO-10006').operations;
+  ok('Pair: removing the partner of a released operation is refused and removes nothing', addedInspection.ok && r.ok === false && /standard rework pair operation to close/.test(r.message) && ops.some(o => o.id === inspection.id) && ops.some(o => o.id === released.id), JSON.stringify([addedInspection, r]));
+}
+
 console.log(fails.length ? `FAILS ${JSON.stringify(fails)}` : 'FAILS []');
 process.exit(fails.length ? 1 : 0);
