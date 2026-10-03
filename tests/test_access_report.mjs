@@ -106,7 +106,7 @@ const BUYOFF='Operation buy-off is blocked: no stamp in force is assigned to thi
 const expect={
   kqe:[`Inspection is paused: Quality stamp ${kNum} expired on Jan 1, 2026. Ask the QA Manager to renew it.`,'Conformity inspection is not granted: a QA Manager grants it to a named person against a current training.','AQI signature is not granted: a QA Manager grants it to a named person against a current training.'],
   tamp:[`Inspection is paused: Quality stamp ${tNum} is suspended. Ask the QA Manager to reinstate it.`,'Conformity inspection is not active: the grant record does not verify (granted to oneself, altered or incomplete), so it does not count. A QA Manager must grant it again.','AQI signature is not granted: a QA Manager grants it to a named person against a current training.'],
-  paus:['Conformity inspection is paused: TORQUE training is not on record. Record current TORQUE training to resume it.','AQI signature is not granted: a QA Manager grants it to a named person against a current training.'],
+  paus:[`Operation buy-off is blocked: stamp ${setup.qNumber} has no PIN yet. The stamp holder sets it in Your credentials.`,'Conformity inspection is paused: TORQUE training is not on record. Record current TORQUE training to resume it.','AQI signature is not granted: a QA Manager grants it to a named person against a current training.'],
   selfg:['Inspection is paused: no Quality stamp is assigned to this account. Ask the QA Manager to issue and assign one.','Conformity inspection is not granted: a QA Manager grants it to a named person against a current training.','AQI signature is not active: the grant record does not verify (granted to oneself, altered or incomplete), so it does not count. A QA Manager must grant it again.'],
   xtra:['Quality role is paused: FOD training is not on record. Record current FOD training to resume it.',BUYOFF],
   ttech:[BUYOFF]
@@ -133,10 +133,13 @@ await run(()=>profileDialog());
 const own=await run(()=>document.querySelector('#dialog .own-blocked')?.textContent||'');
 ok('Your credentials lists the signed-in person\'s own reasons',own.includes('Why some permissions are blocked')&&expect.kqe.every(t=>own.includes(t))&&!EM.test(own),own);
 await run(()=>document.getElementById('dialog').close());
-// A Technician stamp in force clears the buy-off block: then nothing is blocked for ttech.
+// A Technician stamp in force with no PIN still blocks buy-off (the PIN step-up refuses it); once its PIN is set,
+// nothing is blocked for ttech.
 await as('jdoe');
-const tst=await run(([f])=>{const s=MES.issueStamp(state,{name:'Toni Tech',buyoffType:'Technician',account:'ttech',expires:f});save();return {s,why:skAuth.blockedReasons('ttech')};},[future()]);
-ok('a stamp in force of any buy-off type clears the operation buy-off block',tst.s&&tst.s.ok&&JSON.stringify(tst.why)==='[]',JSON.stringify(tst));
+const tst=await run(([f])=>{const s=MES.issueStamp(state,{name:'Toni Tech',buyoffType:'Technician',account:'ttech',expires:f});const noPin=skAuth.blockedReasons('ttech');
+  const p=MES.setStampPin(state,s.id,'4826','4826');save();return {s,noPin,p,why:skAuth.blockedReasons('ttech')};},[future()]);
+ok('a stamp in force with no PIN set: buy-off is blocked until the holder sets it',tst.s&&tst.s.ok&&JSON.stringify(tst.noPin)===JSON.stringify([`Operation buy-off is blocked: stamp ${tst.s&&tst.s.number} has no PIN yet. The stamp holder sets it in Your credentials.`]),JSON.stringify(tst));
+ok('a stamp in force of any buy-off type, with its PIN set, clears the operation buy-off block',tst.p&&tst.p.ok&&JSON.stringify(tst.why)==='[]',JSON.stringify(tst));
 await as('ttech');
 await run(()=>profileDialog());
 ok('nothing blocked: no reasons block in Your credentials',await run(()=>!document.querySelector('#dialog .own-blocked')));

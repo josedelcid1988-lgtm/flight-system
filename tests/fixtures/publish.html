@@ -1928,8 +1928,10 @@ function skBoot(){
    if(!qs.length)out.push('Inspection is paused: no Quality stamp is assigned to this account. Ask the QA Manager to issue and assign one.');
    else out.push('Inspection is paused: '+qs.map(function(s){var w=stampWhy(u,s);return 'Quality stamp '+s.number+' '+w.text+'. '+w.fix;}).join(' '));}
   // Running operations is a role capability, but each buy-off also needs a stamp in force of the operation's buy-off
-  // type (MES.stampCheck at buy-off); only Master Access is exempt.
-  if(caps.indexOf('operate-steps')>=0&&rolesOf(u).indexOf('admin')<0&&!stampsOf(u).some(function(s){return stampInForce(u,s);}))out.push('Operation buy-off is blocked: no stamp in force is assigned to this account, and each buy-off needs one of the operation\'s buy-off type. Ask the QA Manager to issue and assign one.');
+  // type (MES.stampCheck) with its PIN set (MES identity step-up refuses a stamp with no PIN); only Master Access is exempt.
+  if((caps.indexOf('operate-steps')>=0||caps.indexOf('inspect-steps')>=0)&&rolesOf(u).indexOf('admin')<0){var live=stampsOf(u).filter(function(s){return stampInForce(u,s);});
+   if(!live.length){if(caps.indexOf('operate-steps')>=0)out.push('Operation buy-off is blocked: no stamp in force is assigned to this account, and each buy-off needs one of the operation\'s buy-off type. Ask the QA Manager to issue and assign one.');}
+   else if(!live.some(function(s){return !!s.pin;}))out.push('Operation buy-off is blocked: '+(live.length===1?'stamp '+live[0].number+' has':'stamps '+live.map(function(s){return s.number;}).join(' and ')+' have')+' no PIN yet. The stamp holder sets it in Your credentials.');}
   GRANTED.forEach(function(cap){if(caps.indexOf(cap)>=0)return;var st=authorityStatus(u,cap),name=authorityName(cap);
    if(st.status==='Not granted'){if(eligibleFor(u,cap))out.push(name+' is not granted: a QA Manager grants it to a named person against a current training.');return;}
    if(st.status==='Not active'){out.push(name+' is not active: '+st.reason+'. A QA Manager must grant it again.');return;}
