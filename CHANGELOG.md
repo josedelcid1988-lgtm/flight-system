@@ -30,7 +30,8 @@ numbers and record number formats have not changed in any entry below.
   it and either a noun, passive or condition form follows that ("Torque stripe inspection", "Torque seal is intact",
   "Torque stripe missing on B-nut", "Document torque stripe damage") or a
   marker verb comes before it in the same clause, with any modifiers between ("Apply red torque stripe"). Anything else is a
-  torque action ("Carefully torque seal nut", "Retorque seal nut", "Torque sealing plug per
+  torque action ("Carefully torque seal nut", "Record installation torque seal retaining nut per WI-123", where hardware
+  follows the marker word, "Retorque seal nut", "Torque sealing plug per
   WI-123", "Torque marked fasteners") and any step that names a torque target always record the value, tool and
   unit. Adding and editing an operation, default steps and the migration of older steps (from the title and
   instruction together) all use it, so "Apply torque stripe" no longer asks for a torque reading after an edit. An

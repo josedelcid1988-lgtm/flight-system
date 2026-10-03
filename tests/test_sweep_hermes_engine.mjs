@@ -165,7 +165,9 @@ realm('globalThis.Date = globalThis.__RealDate;')();
     // Twelfth review: a torque action next to a witness mark still records torque.
     'Torque nut to 35 in-lb and apply torque witness mark', 'Torque witness bolt per drawing',
     // Thirteenth review: specified torque as a value, or a torque action at specified torque locations, still records.
-    'Tighten to specified torque', 'Apply specified torque to bolt', 'Torque all specified torque locations', 'Torque fasteners at specified torque points to 35 in-lb'];
+    'Tighten to specified torque', 'Apply specified torque to bolt', 'Torque all specified torque locations', 'Torque fasteners at specified torque points to 35 in-lb',
+    // Codex security review: a recorded or verified reading on seal-named hardware is a torque action.
+    'Record installation torque seal retaining nut per WI-123', 'Verify torque seal nut per drawing', 'Inspect torque seal check valve per WI-123', 'Record torque sealing plug per WI-123'];
   check('MES.stepRecordsTorque: a torque action records a torque value, also on marked, paint-marked, sealed or seal-named parts', actions.every(t => MES.stepRecordsTorque(t) === true), actions.filter(t => !MES.stepRecordsTorque(t)).join(', '));
   const state = fresh(), order = state.orders.find(o => o.status === 'Draft' && o.operations.length), op = order.operations[0];
   op.steps = [{ id: 'step-1', title: 'Install bracket', instruction: 'Install bracket', recordsTorque: true }];

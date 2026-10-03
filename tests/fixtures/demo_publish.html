@@ -2387,6 +2387,9 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // A noun after the marker counts only when it closes the phrase ("Torque stripe inspection", "torque seal condition on
   // each nut"), so hardware named "Torque seal check valve" or "inspection port cap" stays a torque action.
   const TORQUE_MARKER_NOUN_AFTER = new RegExp(`^torque\\s*${TORQUE_MARKER}\\s+(?:(?:applied|shall|should|must|is|are|was|to\\s+be|present|intact|unbroken|only|missing|absent|broken|damaged|cracked|disturbed|misaligned|not)\\b|(?:inspection|check|verification|application|witness|condition|damage)(?=\\s*(?:$|[.;:!?,)]|\\s(?:of|for|on|at|per|across|to|with|before|after)\\b)))`, 'i');
+  // A marker word followed by hardware within two words names the hardware ("torque seal retaining nut", "torque seal
+  // check valve"), so the step is a torque action whatever verb comes before it.
+  const TORQUE_MARKER_HARDWARE = new RegExp(`^torque\\s*${TORQUE_MARKER}(?:\\s+(?!(?:to|on|onto|across|at|of|for|over|from|with|between|per|and|or|the|a|an|each|all|is|are|was|be)\\b)[a-z-]+){0,2}?\\s+(?:retaining|retainer|nuts?|bolts?|plugs?|fittings?|screws?|studs?|valves?|caps?|washers?|rings?|o-rings?|glands?|housings?)\\b`, 'i');
   const TORQUE_MARKER_VERB_BEFORE = /\b(?:apply|applying|applied|reapply|re-apply|inspect|inspecting|verify|verifying|check|checking|confirm|confirming|remove|removing|replace|replacing|add|adding|touch[- ]up|witness|witnessing|document|documenting|record|recording|note|noting|report|reporting)(?:\s+(?!(?:then|and|or|torque|to|per|with|after|before|install|installing|tighten|tightening)\b)[a-z][a-z-]*)*\s+$/i;
   const stepRecordsTorque = text => {
     const t = String(text ?? ''), mentions = [...t.matchAll(/torque/gi)];
@@ -2395,6 +2398,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     return mentions.some(m => {
       const before = t.slice(0, m.index), after = t.slice(m.index);
       if (/[a-z-]$/i.test(before)) return true;
+      if (TORQUE_MARKER_HARDWARE.test(after)) return true;
       if (TORQUE_MARKER_NOUN_AFTER.test(after)) return false;
       if (TORQUE_PLACE.test(before) && TORQUE_PLACE_AFTER.test(after)) return false;
       return !(TORQUE_MARKER_AFTER.test(after) && TORQUE_MARKER_VERB_BEFORE.test(before));
