@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 import { Readable, Writable } from 'node:stream';
 import { createServer } from '../server/server.mjs';
 
@@ -205,13 +206,18 @@ try {
     const original = { transaction: server.store.transaction, retry: server.store.retryExportJob };
     let open = 0; const calls = [];
     server.store.transaction = async fn => { open += 1; try { return await original.transaction.call(server.store, fn); } finally { open -= 1; } };
-    server.store.retryExportJob = function (...args) { calls.push({ insideTransaction: open > 0 && server.store.db.isTransaction }); return original.retry.apply(this, args); };
+    server.store.retryExportJob = function (...args) { calls.push({ insideTransaction: open > 0 }); return original.retry.apply(this, args); };
     try {
       const r = await api('POST', `/record-exports/jobs/${jobId}/retry`, { token: current });
       assert.equal(r.status, 202, JSON.stringify(r.json));
       assert.deepEqual(calls, [{ insideTransaction: true }], 'the retry runs inside the authority transaction');
       assert.ok(server.store.exportLog(jobId, 100).some(entry => entry.status === 'queued' && /Manual retry requested by current-qm/.test(entry.detail)), 'the retry is logged');
     } finally { server.store.transaction = original.transaction; server.store.retryExportJob = original.retry; }
+    // Codex review on #633: DatabaseSync.isTransaction only exists from Node 22.16, and server/package.json supports
+    // 22.13. The property cannot be hidden on a newer Node, so this guards the store itself: it keeps its own count of
+    // open transactions and never reads isTransaction, so the retry above joins the open transaction on every
+    // supported Node.
+    assert.doesNotMatch(readFileSync(new URL('../server/db.mjs', import.meta.url), 'utf8'), /isTransaction/, 'the SQLite store does not depend on DatabaseSync.isTransaction');
   });
 
   await check('authority is decided again inside the account transaction: training that lapses before the commit refuses the change', async () => {

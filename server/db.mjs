@@ -109,6 +109,9 @@ export function openDb(path) {
     priorAuditHash = row.hash;
   }
   const now = () => new Date().toISOString();
+  // Whether store.transaction holds the connection's transaction. node:sqlite reports that only from Node 22.16,
+  // and the server supports 22.13, so the store keeps its own count.
+  let openTransactions = 0;
   const tokenHash = token => createHash('sha256').update(String(token)).digest('hex');
   const etagFor = (json, revision) => `"${revision}-${createHash('sha256').update(json).digest('hex').slice(0, 16)}"`;
   return {
@@ -120,7 +123,7 @@ export function openDb(path) {
     },
     // Whole-document write with optimistic concurrency. Returns the new etag, or null on a mismatch.
     // Runs fn inside one transaction; rolls back if it throws or returns false.
-    async transaction(fn) { db.exec('BEGIN IMMEDIATE'); try { const r = await fn(this); if (r === false) { db.exec('ROLLBACK'); return r; } db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; } },
+    async transaction(fn) { db.exec('BEGIN IMMEDIATE'); openTransactions += 1; try { const r = await fn(this); if (r === false) { db.exec('ROLLBACK'); return r; } db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; } finally { openTransactions -= 1; } },
     async lockAuthority() {},
     // A write already holds the database lock (BEGIN IMMEDIATE), so the workspace lock is a no-op here.
     async lockDoc() {},
@@ -227,7 +230,7 @@ export function openDb(path) {
     // Inside store.transaction the caller already holds the lock, so the retry joins that transaction.
     retryExportJob(id, by) {
       const queue = () => { const job = this.exportJob(id); if (!job || job.status !== 'failed') return null; db.prepare("UPDATE record_export_jobs SET status='pending',attempts=0,updated_at=?,last_error=NULL WHERE id=?").run(now(), id); db.prepare("INSERT INTO record_export_log (job_id,at,attempt,status,detail) VALUES (?,?,0,'queued',?)").run(id, now(), `Manual retry requested by ${by}.`); return this.exportJob(id); };
-      if (db.isTransaction) return queue();
+      if (openTransactions > 0) return queue();
       db.exec('BEGIN IMMEDIATE'); try { const job = queue(); db.exec(job ? 'COMMIT' : 'ROLLBACK'); return job; } catch (error) { db.exec('ROLLBACK'); throw error; }
     },
     exportLog(jobId, limit = 100) { return db.prepare('SELECT job_id,at,attempt,status,detail FROM record_export_log WHERE job_id=? ORDER BY id DESC LIMIT ?').all(jobId,limit); },
