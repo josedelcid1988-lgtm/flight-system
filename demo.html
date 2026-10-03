@@ -2372,11 +2372,13 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const pacificDay = at => new Date(at).toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
   // The site calendar day. Date checks on records compare against this, never the UTC day (#587, #588).
   const siteToday = () => pacificDay(new Date().toISOString());
-  // A torque step records a torque value; a step about the torque stripe, seal, paint or mark itself does not (#589).
-  // A step that names a torque target (a value with its unit, or the drawing or WI value) always records one, so
-  // "Torque sealing plug to 35 in-lb" and "Torque marked fasteners to 35 in-lb" keep the value, tool and unit.
+  // A step that mentions torque records a torque value (#589). The only exception is a step whose every mention is a
+  // marker action named by its verb ("Apply torque stripe", "Inspect torque seal", "Remove the existing torque stripe").
+  // "Torque" as the verb ("Torque sealing plug per WI-123", "Torque paint-marked bolts") records the value, and so does
+  // any step that names a torque target (a value with its unit, or the drawing or WI value).
   const TORQUE_TARGET = /\bto\s+\d|\d\s*(?:in|ft)[- ]?(?:lbs?|oz)\b|\d\s*(?:n[·.]?m|nm)\b|\b(?:drawing|wi|specified)\s+(?:torque\s+)?value\b|\bspecified\s+torque\b/i;
-  const stepRecordsTorque = text => { const t = String(text ?? ''); return /torque(?!\s*(?:stripes?|striping|seals?|sealing|sealant|paints?|painting|marks?|marking)\b(?!-))/i.test(t) || (/torque/i.test(t) && TORQUE_TARGET.test(t)); };
+  const TORQUE_MARKER_ACTION = /\b(?:apply|applying|reapply|re-apply|inspect|inspecting|verify|verifying|check|checking|confirm|remove|removing|replace|replacing|add|adding|touch[- ]up|witness)\s+(?:(?:the|a|an|new|fresh|existing|each|all)\s+)*torque\s*(?:stripes?|striping|seals?|sealing|sealant|paints?|painting|marks?|marking)\b(?!-)/gi;
+  const stepRecordsTorque = text => { const t = String(text ?? ''); const mentions = (t.match(/torque/gi) || []).length; if (!mentions) return false; return (t.match(TORQUE_MARKER_ACTION) || []).length < mentions || TORQUE_TARGET.test(t); };
   // ---- Stamp and qualification register -----------------------------------------------------
   // Replaces the embedded Stamp Control Log snapshot with a managed register: the QA Manager
   // issues, assigns, suspends and expires stamps; one stamp belongs to one account; buy-offs and

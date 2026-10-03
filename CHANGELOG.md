@@ -23,12 +23,13 @@ numbers and record number formats have not changed in any entry below.
   past") and the problem report date ("cannot be in the future"). The source-inspection dialog's date limit
   follows the same day, and so do the defaults of Raise SPR, Create work order and Ad hoc work order (planned
   start the site day, planned finish a week later).
-- **One torque rule (#589).** `MES.stepRecordsTorque` decides whether a step records a torque value. Adding and
-  editing an operation, default steps and the upgrade of older steps all use it, so "Apply torque stripe",
-  torque seal, paint and mark steps no longer ask for a torque reading after an edit. A torque action on marked,
-  paint-marked or sealed parts ("Torque marked fasteners to 35 in-lb") still records the value, tool and unit, and so
-  does any step that names a torque target (a value with its unit, or the drawing or WI value), including one on
-  seal-named hardware ("Torque sealing plug to 35 in-lb"). An unchanged step keeps its saved setting.
+- **One torque rule (#589, #659).** `MES.stepRecordsTorque` decides whether a step records a torque value. A step
+  that mentions torque records one unless every mention is a marker action named by its verb ("Apply torque stripe",
+  "Inspect torque seal", "Remove the existing torque stripe"). "Torque" as the verb ("Torque sealing plug per
+  WI-123", "Torque marked fasteners") and any step that names a torque target always record the value, tool and
+  unit. Adding and editing an operation, default steps and the migration of older steps (from the title and
+  instruction together) all use it, so "Apply torque stripe" no longer asks for a torque reading after an edit. An
+  unchanged step keeps its saved setting.
 - **Inspection buy-off on edit (#590).** Two checks that could never fail were removed. Editing an Inspection or
   Source Inspection operation to a buy-off that is not an inspection buy-off is refused before anything changes
   (the edit already refused it for Inspection, later in the function; Source Inspection was not covered). The
