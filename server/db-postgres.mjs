@@ -260,6 +260,9 @@ export function pgRestoreTarget(connectionString, env = process.env) {
       if (part !== '' && !/^[A-Za-z0-9_]+$/.test(key)) refuse('has a URI parameter name libpq cannot read; use only letters, digits and underscores in parameter names');
       // libpq refuses a parameter with no =, so a bare ?password is refused rather than read as an empty password.
       if (eq < 0 && SECRET_NAMES.includes(key)) refuse(`has ${key} with no value; write ${key}= followed by its value`);
+      // A password both in the user info and as ?password= is read differently by libpq (the query one wins, and an
+      // empty one means none) and by node-pg (an empty one leaves the user info's), so it is refused (Codex 4171254409).
+      if (key === 'password' && found) refuse('carries a password both in the user info and as ?password=, which libpq and the server read differently; give the password once');
       if (key === 'password') { found = true; password = pct(part.slice(eq + 1)); continue; }
       if (key === 'service') service = true;
       if (key === 'sslpassword') refuse(SSL_PASSWORD_REFUSAL);

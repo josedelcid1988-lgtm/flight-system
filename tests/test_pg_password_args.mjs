@@ -21,8 +21,6 @@ const cases = [
   ['a URI with no password', 'postgresql://flight@db/flight', { dbname: 'postgresql://flight@db/flight', env: {} }],
   // Codex 4160965073: libpq allows a URI with no host (a local socket); the password still leaves the argument.
   ['an empty-host socket URI', 'postgresql://flight:secret@/flight', { dbname: 'postgresql://flight@/flight', env: { PGPASSWORD: 'secret' } }],
-  // Codex 4160965098: a ?password= after the user info is the one libpq uses.
-  ['a URI whose query password overrides its user info', 'postgresql://flight:old@db/flight?password=rotated', { dbname: 'postgresql://flight@db/flight', env: { PGPASSWORD: 'rotated' } }],
   // Codex 4160965088: the other query parameters are kept byte for byte (%20 stays %20, never +).
   ['a URI with percent-encoded options', 'postgresql://flight@db/flight?options=-c%20synchronous_commit%3Doff&password=pw', { dbname: 'postgresql://flight@db/flight?options=-c%20synchronous_commit%3Doff', env: { PGPASSWORD: 'pw' } }],
   ['a multi-host URI', 'postgres://flight:pw@h1:5432,h2/flight', { dbname: 'postgres://flight@h1:5432,h2/flight', env: { PGPASSWORD: 'pw' } }],
@@ -53,7 +51,6 @@ const cases = [
   ['a URI database name with an encoded @ behind a port', 'postgresql://db:5432/my%40db?password=pw', { dbname: 'postgresql://db:5432/my%40db', env: { PGPASSWORD: 'pw' } }],
   // Codex 4161788875: an empty password is no password to libpq, so the inherited PGPASSWORD is left alone.
   ['a URI with an empty user-info password', 'postgresql://flight:@db/flight', { dbname: 'postgresql://flight@db/flight', env: {} }],
-  ['a URI whose empty query password overrides the user info', 'postgresql://flight:old@db/flight?password=', { dbname: 'postgresql://flight@db/flight', env: {} }],
   ['keywords with an empty quoted password', "host=db password=''", { dbname: 'host=db', env: {} }],
   ['an IPv6 host with a port', 'postgresql://flight:pw@[::1]:5432/flight', { dbname: 'postgresql://flight@[::1]:5432/flight', env: { PGPASSWORD: 'pw' } }],
   ['a bare database name', 'flight', { dbname: 'flight', env: {} }],
@@ -117,6 +114,10 @@ const refusals = [
   ['a URI password with an unencoded @ inside', 'postgresql://flight:Hid@den-1@db/flight', {}, /more than one @/],
   ['a URI host that starts with @ behind user info', 'postgresql://flight:Hidden-1@@flight-socket/flight', {}, /more than one @/],
   ['a URI with two @ and no database name', 'postgresql://flight:Hid@den-1@db', {}, /more than one @/],
+  // Codex 4171254409: libpq and node-pg read a password given both in the user info and as ?password= differently, so it is
+  // refused (this replaces letting the query password win, Codex 4160965098).
+  ['a URI password in both the user info and the query', 'postgresql://flight:Hidden-1@db/flight?password=rotated', {}, /both in the user info and as \?password=/],
+  ['a URI user-info password with an empty query password', 'postgresql://flight:Hidden-1@db/flight?password=', {}, /both in the user info and as \?password=/],
   // Codex 4170446394: an all-digit password cut short by an unencoded / reads as a port, and is refused the same way.
   ['an all-digit password cut short by an unencoded /', 'postgresql://flight:123/Tail@db/flight', {}, /cut-off password/],
   ['an all-digit password cut short beside a second host', 'postgresql://other:5432,flight:4567/x@db/flight', {}, /cut-off password/],
