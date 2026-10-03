@@ -29,7 +29,7 @@ function RecordDrawer({ order, MES, onClose, onOpen }) {
     return () => { if (dialog.current && dialog.current.open) dialog.current.close(); if (returnFocus.current) returnFocus.current.focus(); };
   }, [order]);
   if (!order) return null;
-  const holds = [...(MES && MES.blockingTickets ? MES.blockingTickets(order) : []), ...(MES && MES.sourceInspectionHolds ? MES.sourceInspectionHolds(null, order) : [])].map(holdText);
+  const holds = orderHoldItems(order, MES).map(holdText);
   const next = (order.operations || []).find(operation => !operation.done);
   const close = () => { if (dialog.current && dialog.current.open) dialog.current.close(); onClose(); };
   return <dialog className="fr-drawer" ref={dialog} onCancel={event => { event.preventDefault(); close(); }} onClick={event => { if (event.target === dialog.current) close(); }}>
@@ -50,6 +50,96 @@ function RecordDrawer({ order, MES, onClose, onOpen }) {
   </dialog>;
 }
 
+const nextStepOf = order => { const next = (order.operations || []).find(operation => !operation.done); return next && (next.title || next.name) || order.status || 'Review record'; };
+const ownerOf = order => order.owner || order.assignedTo || 'Unassigned';
+
+// Gate facts for a card: the All work orders queue passes them in (reactOrderQueueProps); the Hangar derives the
+// same ones from MES so both card lists say the same thing.
+const cardGateOf = (order, MES) => {
+  const blockers = MES && MES.blockingTickets ? MES.blockingTickets(order) : [];
+  const engineering = !!(MES && MES.engineeringChange && MES.engineeringChange(order));
+  return {
+    held: blockers.length > 0 || engineering, engineering, blockingTickets: blockers.length,
+    openTickets: (order.tickets || []).filter(ticket => ticket.status === 'Open').length,
+    aog: order.priority === 'AOG' || !!(MES && MES.aogActive && MES.aogActive(order)),
+    superseded: !!(MES && MES.revisionLabel && MES.revisionLabel(order) === 'Superseded'),
+    qaPending: order.status === 'Draft' && !!(MES && MES.requiresReleaseQA && MES.requiresReleaseQA(order)) && !(MES.releaseApproval && MES.releaseApproval(order)),
+    overdue: order.status !== 'Closed' && !!order.due && order.due < new Date().toISOString().slice(0, 10)
+  };
+};
+// Two more holds stop work that the list rows do not carry: a source-inspection operation with no inspection record
+// (the Hangar holds panel and the drawer list it; buy-off is refused until it is recorded) and an operation sequence
+// change awaiting QA release (buy-off and MES.advance both refuse the order). Both card lists add them to the gate here,
+// so the card is Blocked and names what clears it. A source inspection counts once every earlier operation is done:
+// MES.recordSourceInspection refuses the record before then, so a later one is not yet the next step. The order must
+// also be Building: the record is made there, so on a Draft or Kitting order the inspection is not yet the work to do.
+const actionableSourceInspections = (order, MES) => {
+  const ops = order.operations || [];
+  if (order.status !== 'Building') return [];
+  return (MES && MES.sourceInspectionHolds ? MES.sourceInspectionHolds(null, order) : []).filter(hold => {
+    const index = ops.findIndex(op => op.id === hold.operationId);
+    return index >= 0 && ops.slice(0, index).every(op => op.done);
+  });
+};
+// Every hold that stops an order, for the Hangar's Open holds panel and the order drawer: the same set the card gate
+// and the Blocked filter use (holding NCs, an engineering change, a sequence change awaiting QA, an actionable source
+// inspection), so no surface calls an order clear that another shows as Blocked.
+const orderHoldItems = (order, MES) => [
+  ...(MES && MES.blockingTickets ? MES.blockingTickets(order) : []),
+  ...(MES && MES.engineeringChange && MES.engineeringChange(order) ? ['Engineering change pending'] : []),
+  ...(MES && MES.pendingSequenceChange && MES.pendingSequenceChange(order) ? ['QA release of the updated operation sequence'] : []),
+  ...actionableSourceInspections(order, MES)
+];
+const withCardHolds = (gate, order, MES) => {
+  const sourceInspections = actionableSourceInspections(order, MES);
+  const sequenceChange = !!(MES && MES.pendingSequenceChange && MES.pendingSequenceChange(order));
+  return sourceInspections.length || sequenceChange ? { ...gate, held: true, sourceInspections, sequenceChange } : gate;
+};
+// What the card asks for next follows the workflow gates before the operation list: holds first, then release, then
+// whatever MES.canAdvance says blocks the stage (a pending pedigree change, kitting materials or kit list, the quality
+// review). A Building order without a pending pedigree change shows its next open operation, or, once every operation
+// is recorded, the handoff to QA; a Kitting order that is ready shows the start of the build.
+const cardNextStepOf = (order, gate, MES) => {
+  if (gate.held) {
+    // Only the NCs that hold the order are named here; every open NC is counted beside the status instead.
+    const why = [gate.engineering && 'engineering change', gate.blockingTickets && `${gate.blockingTickets} NC ${gate.blockingTickets === 1 ? 'hold' : 'holds'}`,
+      gate.sequenceChange && 'QA release of the updated operation sequence',
+      ...(gate.sourceInspections || []).map(hold => `source inspection record for ${hold.title}`)].filter(Boolean);
+    return `Resolve holds before continuing${why.length ? `: ${why.join(', ')}` : ''}`;
+  }
+  if (gate.qaPending) return 'QA approval of the release is pending';
+  const advance = MES && MES.canAdvance ? MES.canAdvance(order) : null;
+  if (advance && !advance.allowed && order.status !== 'Closed' && !(order.status === 'Building' && !order.pedigreeChange)) return advance.reason;
+  if (order.status === 'Draft') return 'Release the work order';
+  if (advance && advance.allowed && order.status === 'Kitting') return 'All materials are ready. Start the build.';
+  if (advance && advance.allowed && order.status === 'Building') return 'All operations recorded. Send to QA.';
+  return nextStepOf(order);
+};
+
+// Below 700px the work-order tables render as these cards instead (see the phone section of flight-ui.css).
+function WorkOrderCards({ orders, onOpen, meta, MES, compact, priority }) {
+  if (!orders.length) return null;
+  return <ul className={`fr-wo-cards${compact ? ' fr-compact' : ''}`} aria-label="Work orders">{orders.map((order, index) => {
+    const gate = withCardHolds(meta ? meta[index] : cardGateOf(order, MES), order, MES);
+    return <li key={order.id} className={`fr-wo-card${gate.held ? ' is-held' : ''}${gate.aog ? ' is-aog' : ''}`} data-wo-card={order.id}>
+      <div className="fr-wo-card-top"><strong className="fr-wo-card-id">{order.id}{order.fai?.required && <span className="fr-fai-tag">FAI</span>}</strong><span className="fr-wo-card-state">{gate.held ? <span className="fr-order-blocked">Blocked</span> : <span className="fr-status"><i/>{order.status || 'Draft'}</span>}{gate.openTickets ? <small className="fr-wo-card-nc">{gate.openTickets} open NC</small> : null}</span></div>
+      <p className="fr-wo-card-title">{titleOf(order)}</p>
+      <p className="fr-wo-card-part">{order.partNumber || 'Part not assigned'}{order.revision ? ` / Rev ${order.revision}` : ''}</p>
+      {order.aircraft && <p className="fr-wo-card-aircraft">Aircraft {order.aircraft}</p>}
+      {gate.superseded && <p className="fr-wo-card-warning">Superseded revision</p>}
+      <dl className="fr-wo-card-fields">
+        <div className="fr-wo-card-next"><dt>Next step</dt><dd>{cardNextStepOf(order, gate, MES)}</dd></div>
+        <div><dt>Owner</dt><dd>{ownerOf(order)}</dd></div>
+        <div><dt>Due</dt><dd className={gate.overdue ? 'is-overdue' : ''}><time dateTime={dueOf(order)}>{displayFlightDate(dueOf(order))}</time></dd></div>
+      </dl>
+      <div className="fr-wo-card-actions">
+        {priority && MES && <select key={`${order.id}:${order.priority}`} className={`fr-order-priority ${asText(order.priority).toLowerCase()}`} data-priority-order={order.id} aria-label={`Priority for ${order.id}`} disabled={order.status === 'Closed'} defaultValue={order.priority}>{MES.PRIORITIES.map(value => <option key={value}>{value}</option>)}</select>}
+        <button className="fr-wo-card-open" aria-label={'Open ' + order.id} onClick={() => onOpen(order)}>Open <ArrowUpRight size={16}/></button>
+      </div>
+    </li>;
+  })}</ul>;
+}
+
 function Hangar({ state, MES, onOpen }) {
   const [savedQueue] = useState(() => { try { return JSON.parse(localStorage.getItem(queueKey) || '{}'); } catch { return {}; } });
   const [query, setQuery] = useState(savedQueue.query || '');
@@ -68,9 +158,7 @@ function Hangar({ state, MES, onOpen }) {
     return (filter === 'All' || orderIsOpen(item)) && searchable.includes(query.trim().toLowerCase());
   }).sort((a, b) => asText(dueOf(a) || '9999').localeCompare(asText(dueOf(b) || '9999')));
   const holds = (state.orders || []).filter(orderIsOpen).flatMap(item => {
-    const blockers = MES && MES.blockingTickets ? MES.blockingTickets(item) : [];
-    const sourceInspections = MES && MES.sourceInspectionHolds ? MES.sourceInspectionHolds(state, item) : [];
-    const allHolds = [...blockers, ...sourceInspections];
+    const allHolds = orderHoldItems(item, MES);
     return allHolds.length ? [{ item, reason: holdText(allHolds[0]) }] : [];
   }).slice(0, 4);
   const milestoneRisks = MES.milestoneRisks ? MES.milestoneRisks(state) : [];
@@ -97,9 +185,11 @@ function Hangar({ state, MES, onOpen }) {
           <button className="fr-density" aria-pressed={compact} onClick={changeDensity}><SlidersHorizontal size={15}/>{compact ? 'Comfortable' : 'Compact'}</button>
         </div>
       </div>
-      <div className="fr-table-scroll"><table className={compact ? 'fr-compact' : ''}><thead><tr><th>Work order / Assembly</th><th>Next step</th><th>Owner</th><th>Due</th><th><span className="fr-visually-hidden">Details</span></th></tr></thead><tbody>
-        {rows.map(item => { const next = (item.operations || []).find(operation => !operation.done); const label = next && (next.title || next.name) || item.status || 'Review record'; return <tr key={item.id}><td><button className="fr-record-link" onClick={() => open(item)}><span className="fr-order-icon"><FileText size={18}/></span><span><strong>{titleOf(item)}</strong><small>{item.id}<i> · {item.partNumber || 'Part not assigned'}</i></small></span></button></td><td><span className="fr-status"><i/>{label}</span></td><td>{item.owner || item.assignedTo || 'Unassigned'}</td><td>{displayFlightDate(dueOf(item))}</td><td><button className="fr-open-button" aria-label={'Open ' + item.id} onClick={() => open(item)}><ArrowUpRight size={18}/></button></td></tr>; })}
-      </tbody></table>{!rows.length && <div className="fr-empty">No work orders match the current search and filter.</div>}</div>
+      <div className="fr-table-scroll fr-has-cards"><table className={compact ? 'fr-compact' : ''}><thead><tr><th>Work order / Assembly</th><th>Next step</th><th>Owner</th><th>Due</th><th><span className="fr-visually-hidden">Details</span></th></tr></thead><tbody>
+        {rows.map(item => { const label = nextStepOf(item); return <tr key={item.id}><td><button className="fr-record-link" onClick={() => open(item)}><span className="fr-order-icon"><FileText size={18}/></span><span><strong>{titleOf(item)}</strong><small>{item.id}<i> · {item.partNumber || 'Part not assigned'}</i></small></span></button></td><td><span className="fr-status"><i/>{label}</span></td><td>{ownerOf(item)}</td><td>{displayFlightDate(dueOf(item))}</td><td><button className="fr-open-button" aria-label={'Open ' + item.id} onClick={() => open(item)}><ArrowUpRight size={18}/></button></td></tr>; })}
+      </tbody></table>
+        <WorkOrderCards orders={rows} onOpen={open} MES={MES} compact={compact}/>
+        {!rows.length && <div className="fr-empty">No work orders match the current search and filter.</div>}</div>
       <footer><span>{rows.length} work order{rows.length === 1 ? '' : 's'}</span></footer>
     </section>
     <RecordDrawer order={order} MES={MES} onClose={() => setOrder(null)} onOpen={onOpen}/>
@@ -147,17 +237,18 @@ function WorkOrderQueue({ state, MES, rows: sourceRows, initial, callbacks, onOp
         </div>
       </div>
       <div className="fr-order-table-summary" dangerouslySetInnerHTML={{ __html: callbacks?.summary?.(rows.length) || '' }}/>
-      <div className="fr-table-scroll table-wrap" role="region" aria-label="Work orders table" tabIndex="0">
+      <div className="fr-table-scroll fr-has-cards table-wrap" role="region" aria-label="Work orders table" tabIndex="0">
         <table className={`fr-order-table${compact ? ' fr-compact' : ''}`}><thead><tr dangerouslySetInnerHTML={{ __html: initial.headers.join('') }}/></thead><tbody>{rows.map(item => { const order = item.record; return <tr key={order.id} className={`${item.held ? 'hold-row' : ''} ${item.aog ? 'aog-row' : ''}`} data-order-row={order.id}>
           <td><button className="fr-record-link" onClick={() => setSelected(order)}><strong>{order.id}</strong>{order.fai?.required && <span className="fr-fai-tag">FAI</span>}</button></td>
           <td><strong className="fr-mono">{order.partNumber} / Rev {order.revision}</strong><small>{titleOf(order)}</small>{order.aircraft && <small className="fr-mono">Aircraft {order.aircraft}</small>}{item.superseded && <small className="fr-revision-warning">Superseded revision</small>}</td>
-          <td>{item.held ? <><span className="fr-order-blocked">Blocked</span><small>{order.status}{item.engineering ? ' · engineering change' : ''}{item.openTickets ? ` · ${item.openTickets} open NC` : ''}</small></> : <><span className="fr-status"><i/>{order.status}</span>{item.qaPending && <small>QA approval pending</small>}{item.openTickets ? <small>{item.openTickets} open NC</small> : null}</>}</td>
+          <td>{item.held ? <><span className="fr-order-blocked">Blocked</span><small>{order.status}{item.engineering ? ' · engineering change' : ''}{item.openTickets ? ` · ${item.openTickets} open NC` : ''}{item.sequenceChange ? ' · sequence awaiting QA' : ''}{item.sourceInspections?.length ? ' · source inspection' : ''}</small></> : <><span className="fr-status"><i/>{order.status}</span>{item.qaPending && <small>QA approval pending</small>}{item.openTickets ? <small>{item.openTickets} open NC</small> : null}</>}</td>
           <td className="fr-mono fr-col-created"><time dateTime={item.created}>{displayFlightDate(item.created)}</time></td>
           <td className={`fr-mono${item.overdue ? ' is-overdue' : ''}`}><time dateTime={order.due || ''}>{displayFlightDate(order.due)}</time></td>
           <td className="fr-col-progress"><div dangerouslySetInnerHTML={{ __html: item.progress }}/></td>
           <td>{order.pedigree}{order.subcategory && <small>{order.subcategory}</small>}</td>
-          <td><select className={`fr-order-priority ${asText(order.priority).toLowerCase()}`} data-priority-order={order.id} aria-label={`Priority for ${order.id}`} disabled={order.status === 'Closed'} defaultValue={order.priority}>{MES.PRIORITIES.map(value => <option key={value}>{value}</option>)}</select></td>
+          <td><select key={`${order.id}:${order.priority}`} className={`fr-order-priority ${asText(order.priority).toLowerCase()}`} data-priority-order={order.id} aria-label={`Priority for ${order.id}`} disabled={order.status === 'Closed'} defaultValue={order.priority}>{MES.PRIORITIES.map(value => <option key={value}>{value}</option>)}</select></td>
         </tr>; })}</tbody></table>
+        <WorkOrderCards orders={rows.map(item => item.record)} onOpen={setSelected} meta={rows} MES={MES} compact={compact} priority/>
         {!rows.length && <div className="fr-empty">No matching work orders. Adjust the search or filters.</div>}
       </div>
       <footer><span>{rows.length} of {state.orders.length} work orders · {site === 'All' ? 'all sites' : site}</span><span><Check size={13}/> Flight progress and existing MES command gates are preserved</span></footer>

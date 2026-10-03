@@ -12062,7 +12062,7 @@ document.addEventListener('click', event => {
 <script>
 // Saved filter views in the sidebar, in place of a fixed quality queue.
 let flaggedOnly = false, aircraftFilter = 'All', activeViewId = null;
-const flaggedOrder = o => o.status === 'Quality' || openTickets(o).length > 0 || !!MES.engineeringChange(o) || (o.status === 'Draft' && MES.requiresReleaseQA(o) && !MES.releaseApproval(o)) || !!MES.pendingSequenceChange(o) || MES.aogActive(o);
+const flaggedOrder = o => o.status === 'Quality' || openTickets(o).length > 0 || !!MES.engineeringChange(o) || (o.status === 'Draft' && MES.requiresReleaseQA(o) && !MES.releaseApproval(o)) || !!MES.pendingSequenceChange(o) || actionableSourceInspections(o).length > 0 || MES.aogActive(o);
 const savedViews = () => Array.isArray(state.savedViews) ? state.savedViews: [];
 function activeViewName() {
   const current = savedViews().find(item => item.id === activeViewId);
@@ -12759,12 +12759,18 @@ function flightProgress(o, precomputedHeld) {
 const PRIORITY_WEIGHT={AOG:0,High:1,Normal:2,Low:3};
 function orderTier(o){
   if(o.priority==='AOG'||MES.aogActive(o))return 0;
-  if(MES.blockingTickets(o).length||openTickets(o).length)return 1;
+  if(orderBlocked(o)||openTickets(o).length)return 1;
   return 2;
 }
 // The day a work order was created: its first record event (or its baseline revision).
 function orderCreatedOn(o){const h=(Array.isArray(o.historyArchive)&&o.historyArchive[0])||(o.history||[])[0];const r=(o.revisions||[])[0];return String((h&&h.at)||(r&&r.at)||o.start||'').slice(0,10);}
-const orderBlocked=o=>MES.blockingTickets(o).length>0||!!MES.engineeringChange(o);
+// Blocked means work cannot continue: an open NC hold, an engineering change, an operation sequence change awaiting QA
+// release, or a source-inspection operation with no inspection record. Lists, filters, sorting and phone cards share it.
+// A source inspection blocks the order once it is the work to do: the order is Building (where the record can be made)
+// and every earlier operation is done, which is when MES.recordSourceInspection accepts the record and buy-off waits for
+// it. A later one, or one on an order not yet Building, is not yet a hold.
+const actionableSourceInspections=o=>o.status!=='Building'?[]:MES.sourceInspectionHolds(state,o).filter(h=>{const ops=o.operations||[],i=ops.findIndex(op=>op.id===h.operationId);return i>=0&&ops.slice(0,i).every(op=>op.done);});
+const orderBlocked=o=>MES.blockingTickets(o).length>0||!!MES.engineeringChange(o)||!!MES.pendingSequenceChange(o)||actionableSourceInspections(o).length>0;
 function logSortValue(o,col){
   switch(col){
     case 'Work order': return String(o.id);
@@ -12803,7 +12809,7 @@ function renderOrders() {
     && skTable.matchAny('orders','Status',[o.status,...(orderBlocked(o)?['Blocked']:[])])
     && skTable.match('orders','Pedigree',o.pedigree)
     && skTable.match('orders','Priority',(o.priority==='AOG'||MES.aogActive(o))?'AOG':o.priority)
-    && skTable.matchAny('orders','Work order',['site:'+MES.orderSite(o),'air:'+o.aircraft,...(MES.aogActive(o)||MES.blockingTickets(o).length?['flag:flagged']:[])])
+    && skTable.matchAny('orders','Work order',['site:'+MES.orderSite(o),'air:'+o.aircraft,...(flaggedOrder(o)?['flag:flagged']:[])])
     && matchesWiFilter(o)));
   return `<section aria-labelledby="list-heading"><div class="page-heading"><div><h1 id="list-heading">${esc(activeViewName())}</h1>${wiFilter ? `<p class="wi-filter-chip">${icon('file')} <span>Cloned from <strong>${esc(wiFilter.id)}</strong>${wiFilter.revision ? ` Rev ${esc(wiFilter.revision)}` : ' · all revisions'}</span><button class="btn quiet" data-action="wi-filter-clear">Show all work orders</button></p>` : ''}</div><div class="heading-actions log-heading-actions"><label class="search log-search"><span class="sr-only">Search work orders</span>${icon('search')}<input id="order-search" type="search" placeholder="Search orders" value="${esc(search)}"></label><div class="page-actions">${woListActions()}</div></div></div>
     
@@ -12818,14 +12824,14 @@ function renderOrders() {
       ${tblHead('orders',{col:'Pedigree',label:'Pedigree',filter:{label:'Pedigree',values:[...MES.PEDIGREES]}})}
       ${tblHead('orders',{col:'Priority',label:'Priority',filter:{label:'Priority',values:['AOG','High','Normal','Low']}})}
     </tr></thead><tbody>${orders.map(o => {
-      const held = MES.blockingTickets(o).length > 0 || !!MES.engineeringChange(o);
+      const held = orderBlocked(o);
       return `<tr class="${held ? 'hold-row' : ''} ${o.priority === 'AOG' ? 'aog-row' : ''}" data-order-row="${esc(o.id)}"><td><button class="order-link" data-action="open-order" data-order="${esc(o.id)}">${esc(o.id)}</button>${o.fai&&o.fai.required?'<span class="fai-tag">FAI</span>':''}</td><td><strong class="mono">${esc(o.partNumber)} / Rev ${esc(o.revision)}</strong><small>${esc(o.title)}</small>${o.aircraft?`<small class="mono">Aircraft ${esc(o.aircraft)}</small>`:''}${o.creationVersion&&MES.revisionLabel(o)==='Superseded'?'<small class="revision-warning">Superseded revision</small>':''}</td><td>${held?`<span class="pill high blocked-pill">Blocked</span><small>${esc(o.status)}${MES.engineeringChange(o)?' · engineering change':''}${openTickets(o).length?` · ${openTickets(o).length} open NC`:''}</small>`:`${badge(o.status)}${o.status==='Draft'&&MES.requiresReleaseQA(o)&&!MES.releaseApproval(o)?'<small>QA approval pending</small>':''}${openTickets(o).length?`<small>${openTickets(o).length} open NC</small>`:''}`}</td><td class="mono">${esc(orderCreatedOn(o))}</td><td class="mono ${o.status!=='Closed'&&o.due&&o.due<new Date().toISOString().slice(0,10)?'short':''}">${esc(o.due||'')}</td><td>${flightProgress(o, held)}</td><td>${esc(o.pedigree)}${o.subcategory?'<small>'+esc(o.subcategory)+'</small>':''}</td><td><select class="priority-select ${esc(o.priority.toLowerCase())}" data-priority-order="${esc(o.id)}" aria-label="Priority for ${esc(o.id)}" ${o.status === 'Closed' ? 'disabled' : ''}>${priorityOptions(o.priority)}</select></td></tr>`;
     }).join('')}</tbody></table></div><p class="table-count">${orders.length} ${orders.length === 1 ? 'order' : 'orders'} · ${siteFilter === 'All' ? 'all sites' : esc(siteFilter)}</p>` : `<div class="empty"><h2>No matching work orders</h2><p>Try another site, search term, or status.</p><button class="btn" data-action="clear-filters">Clear filters</button></div>`}</div></section>`;
 }
 
 function reactOrderQueueProps(){
-  const source=sortOrders(state.orders.filter(o=>(!flaggedOnly||flaggedOrder(o))&&skTable.match('orders','Part',o.partNumber)&&skTable.matchAny('orders','Status',[o.status,...(orderBlocked(o)?['Blocked']:[])])&&skTable.match('orders','Pedigree',o.pedigree)&&skTable.match('orders','Priority',(o.priority==='AOG'||MES.aogActive(o))?'AOG':o.priority)&&skTable.matchAny('orders','Work order',['site:'+MES.orderSite(o),'air:'+o.aircraft,...(MES.aogActive(o)||MES.blockingTickets(o).length?['flag:flagged']:[])])&&matchesWiFilter(o)));
-  const rows=source.map(o=>{const engineering=!!MES.engineeringChange(o),open= openTickets(o).length,held=MES.blockingTickets(o).length>0||engineering;return{record:o,held,engineering,openTickets:open,aog:o.priority==='AOG'||MES.aogActive(o),flagged:flaggedOrder(o),superseded:MES.revisionLabel(o)==='Superseded',qaPending:o.status==='Draft'&&MES.requiresReleaseQA(o)&&!MES.releaseApproval(o),overdue:o.status!=='Closed'&&!!o.due&&o.due<new Date().toISOString().slice(0,10),created:orderCreatedOn(o),progress:flightProgress(o,held)};});
+  const source=sortOrders(state.orders.filter(o=>(!flaggedOnly||flaggedOrder(o))&&skTable.match('orders','Part',o.partNumber)&&skTable.matchAny('orders','Status',[o.status,...(orderBlocked(o)?['Blocked']:[])])&&skTable.match('orders','Pedigree',o.pedigree)&&skTable.match('orders','Priority',(o.priority==='AOG'||MES.aogActive(o))?'AOG':o.priority)&&skTable.matchAny('orders','Work order',['site:'+MES.orderSite(o),'air:'+o.aircraft,...(flaggedOrder(o)?['flag:flagged']:[])])&&matchesWiFilter(o)));
+  const rows=source.map(o=>{const engineering=!!MES.engineeringChange(o),open= openTickets(o).length,held=orderBlocked(o);return{record:o,held,engineering,blockingTickets:MES.blockingTickets(o).length,openTickets:open,sequenceChange:!!MES.pendingSequenceChange(o),sourceInspections:actionableSourceInspections(o),aog:o.priority==='AOG'||MES.aogActive(o),flagged:flaggedOrder(o),superseded:MES.revisionLabel(o)==='Superseded',qaPending:o.status==='Draft'&&MES.requiresReleaseQA(o)&&!MES.releaseApproval(o),overdue:o.status!=='Closed'&&!!o.due&&o.due<new Date().toISOString().slice(0,10),created:orderCreatedOn(o),progress:flightProgress(o,held)};});
   const headers=[
     tblHead('orders',{col:'Work order',label:'Work order',filter:{label:'Site, aircraft and flags',values:[...MES.SITES.map(s=>({value:'site:'+s,label:s})),...MES.AIRCRAFT.map(a=>({value:'air:'+a,label:a})),{value:'flag:flagged',label:'Flagged only'}]}}),
     tblHead('orders',{col:'Part',label:'Part number / Rev / Description',filter:{label:'Part number',values:[...new Set(state.orders.map(o=>o.partNumber))].sort()}}),
@@ -12880,7 +12886,7 @@ document.addEventListener('change', event => {
       const scrollLeft = $('.table-wrap')?.scrollLeft || 0;
       render();
       if ($('.table-wrap')) $('.table-wrap').scrollLeft = scrollLeft;
-      document.querySelector(`[data-priority-order="${id}"]`)?.focus({ preventScroll: true });
+      [...document.querySelectorAll(`[data-priority-order="${id}"]`)].find(el => el.offsetParent)?.focus({ preventScroll: true });
       notify(result.message);
     } catch (error) {
       control.value = previous;
@@ -16215,6 +16221,22 @@ body .operation-btn[data-fs-status][aria-pressed="true"]{outline:2px solid var(-
 #sk-boot input{border-radius:10px!important;background:rgba(255,255,255,.07)!important;border-color:rgba(255,255,255,.35)!important;color:white!important}
 #sk-boot input:focus-visible{outline:3px solid #087cff!important;outline-offset:3px}
 #sk-boot .sk-veil{background:linear-gradient(90deg,rgba(4,8,14,.88),rgba(4,8,14,.12))!important}
+/* Phone, below 700px. Sign-in: the form sits on a solid panel with solid inputs so the photograph never shows through, and the kicker starts below the hangar light bar (about 12% down the photograph) on a darkened band. Work pages: grids and selects shrink to the screen so the page never scrolls sideways. */
+@media(max-width:699.98px){
+ #sk-boot .sk-veil{background:linear-gradient(180deg,rgba(4,8,14,.9) 0%,rgba(4,8,14,.55) 22%,rgba(4,8,14,.35) 45%,rgba(4,8,14,.85) 100%)!important}
+ #sk-boot:has(#sk-login:not([hidden])) .sk-mission{padding:calc(12vh + 44px) 16px 32px!important;padding:calc(12dvh + 44px) 16px 32px!important}
+ #sk-boot .sk-mission{max-width:100%;box-sizing:border-box}
+ #sk-boot .sk-eyebrow{max-width:100%;padding:4px 8px;border-radius:6px;background:#04080e;letter-spacing:.2em;white-space:normal}
+ #sk-boot .sk-login{max-width:none;padding:16px;border:1px solid rgba(255,255,255,.16);border-radius:14px;background:#0b121c}
+ #sk-boot .sk-login label{color:#c9dcf5}
+ #sk-boot input{background:#162232!important;border-color:rgba(255,255,255,.45)!important;color:#fff!important}
+ #sk-boot input::placeholder{color:#a9b6c7}
+ #sk-boot .sk-login-note{color:#b4c0cf}
+ #sk-boot .sk-mission .sk-sub{color:#b4c0cf}
+ .inventory-layout,.wi-layout,.execution-layout{grid-template-columns:minmax(0,1fr)!important}
+ .inventory-layout>*,.wi-layout>*{min-width:0}
+ .content select{max-width:100%}
+}
 /* Bright canvas, photographic identity, and explicit operator orientation. */
 :root{--surface:#f5f8ff;--paper:#fff;--canvas:#f5f8ff;--line:#dbe3f0;--line-2:#a9b9ce;--accent:#075ec9;--accent-press:#034694;--accent-soft:#e8f1ff}
 body{background:#f5f8ff!important}
@@ -16454,7 +16476,7 @@ body[data-view^="mnv-"] .page-heading:not(.fs-landing) .hero-eyebrow{display:blo
 .sequence-list .operation-btn .op-locked+.op-sub{display:none}
 @media screen and (max-width:1199px) and (min-width:901px){body[data-view="order"] .execution-layout{grid-template-columns:280px minmax(0,1fr)!important;gap:16px!important}}
 .topbar .floor-wakelock{width:auto!important;min-width:44px;padding:0 10px!important;gap:6px;display:inline-flex;align-items:center}.floor-wakelock .wakelock-label{font-size:12px;font-weight:600;white-space:nowrap}@media(max-width:700px){.floor-wakelock .wakelock-label{display:none}.topbar .floor-wakelock{padding:0!important}}
-@media(max-width:700px){#sk-boot .sk-login input{background:rgba(8,12,18,.9)!important;backdrop-filter:none}#sk-boot .sk-eyebrow{display:inline-flex;align-items:center;gap:8px;background:rgba(6,9,14,.88);padding:4px 8px;border-radius:4px}}
+@media(max-width:700px){#sk-boot .sk-login input{background:#162232!important;backdrop-filter:none}#sk-boot .sk-eyebrow{display:inline-flex;align-items:center;gap:8px;background:rgba(6,9,14,.88);padding:4px 8px;border-radius:4px}}
 /* Keyboard focus is always visible: a blue ring on light surfaces, a white ring on the dark sidebar. */
 :is(a,button,input,select,textarea,summary,[tabindex]:not([tabindex="-1"])):focus-visible{outline:3px solid #075ec9!important;outline-offset:2px!important}
 :is(.sidebar,.fs-utilities,#sk-boot) :is(a,button,input,select,textarea,summary,[tabindex]:not([tabindex="-1"])):focus-visible{outline-color:#fff!important}
