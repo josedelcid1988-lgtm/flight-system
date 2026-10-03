@@ -224,6 +224,31 @@ await check('repeated push ids on an operation held by a pending sequence change
   assert.equal(MES.validate(upgraded), true);
 });
 
+await check('repairing a repeated work order request id moves its open assignment with the request it named', async () => {
+  // Codex review on #629: repair renumbered the later of two requests sharing an id but left the wo-request assignment on
+  // the old id, so it resolved to the first request and could send Manufacturing Engineering to the wrong work order.
+  const state = fresh();
+  assert.equal(request(state).ok, true);
+  assert.equal(request(state).ok, true);
+  const [first, second] = state.woRequests.slice(-2);
+  first.at = new Date(Date.parse(second.at) - 60000).toISOString();
+  first.status = 'Declined';
+  const assigned = as(admin, state, s => MES.assignWork(s, { type: 'wo-request', worId: second.id, assigneeUsername: 'tech-a', assigneeName: 'Tech A' }));
+  assert.equal(assigned.ok, true, assigned.message);
+  const assignment = state.assignments.find(a => a.id === assigned.id);
+  // Saved by a build that numbered from the list length: the open request repeats the first request's id.
+  second.id = first.id; assignment.worId = first.id;
+  assert.equal(MES.validate(state), false, 'the repeated id fails validation as stored');
+  const upgraded = MES.upgrade(structuredClone(state));
+  assert.ok(upgraded && MES.validate(upgraded), 'the workspace loads');
+  const renamed = upgraded.woRequests.find(r => r.status === 'Open' && r.at === second.at);
+  assert.notEqual(renamed.id, first.id, 'the later request gets a new id');
+  const moved = upgraded.assignments.find(a => a.id === assignment.id);
+  assert.equal(moved.worId, renamed.id, 'the assignment follows the open request it named');
+  MES.syncAssignments(upgraded);
+  assert.equal(upgraded.assignments.find(a => a.id === assignment.id).status, 'Open', 'the request is still open, so its assignment stays open');
+});
+
 await check('validation refuses a repeated id in any of the four lists and a mark below an id it holds', async () => {
   const base = fresh();
   for (let n = 0; n < 3; n += 1) notice(base, n);

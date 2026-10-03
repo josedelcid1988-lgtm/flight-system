@@ -4363,7 +4363,16 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     // Returns the records sharing each repeated id, before renumbering, so references can follow the one they named.
     const renumber = (holder, prefix, list, pad) => { if (!Array.isArray(list)) return new Map(); markRecordIds(holder, prefix, list); const shared = new Map(); list.forEach(item => { if (plain(item) && typeof item.id === 'string') shared.set(item.id, [...(shared.get(item.id) || []), item]); }); const seen = new Set(); list.forEach(item => { if (!plain(item) || typeof item.id !== 'string') return; if (seen.has(item.id)) item.id = nextRecordId(holder, prefix, list, pad); seen.add(item.id); }); return new Map([...shared].filter(([, items]) => items.length > 1)); };
     normalizeRecordCounters(state, RECORD_ID_LISTS.map(([, prefix]) => prefix));
-    RECORD_ID_LISTS.forEach(([key, prefix]) => renumber(state, prefix, state[key], 4));
+    const sharedRequests = RECORD_ID_LISTS.map(([key, prefix]) => [key, renumber(state, prefix, state[key], 4)]).find(([key]) => key === 'woRequests')[1];
+    // A work order request assignment follows the request that existed when it was made: the only open one, else the latest.
+    const time = value => { const t = Date.parse(value); return Number.isFinite(t) ? t : null; };
+    (Array.isArray(state.assignments) ? state.assignments : []).forEach(a => {
+      if (!plain(a) || a.type !== 'wo-request' || !sharedRequests.has(a.worId)) return;
+      const all = sharedRequests.get(a.worId), made = time(a.at), before = made === null ? [] : all.filter(r => time(r.at) !== null && time(r.at) <= made);
+      const candidates = before.length ? before : all, open = candidates.filter(r => r.status === 'Open');
+      const target = open.length === 1 ? open[0] : [...candidates].sort((x, y) => (time(y.at) || 0) - (time(x.at) || 0))[0];
+      if (target) a.worId = target.id;
+    });
     // Every ATP push list with a stored mark, or with a repeated id, is normalized, on the operations and on the copies a pending sequence change holds; a list with neither is left
     // untouched, so a signed operation gains no new field.
     (Array.isArray(state.orders) ? state.orders : []).forEach(order => recordIdOperations(order).forEach(op => {
