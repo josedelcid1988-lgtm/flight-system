@@ -355,9 +355,13 @@ const TARGET = account('fx-target', 'qe');
   const setGrant = (who, target, reason) => asBrowser(who, (t, r) => skAuth.setGrant(t, 'conformity', false, r, ''), [target, reason]);
   const setRoles = (who, target, reason) => asBrowser(who, (t, r) => skAuth.setRoles(t, ['qe'], r, ''), [target, reason]);
   const setSupport = (who, target, reason) => asBrowser(who, (t, r) => skAuth.setSupportAccess(t, false, r), [target, reason]);
-  ok('browser: granting your own authority is refused with today\'s text', (await asBrowser(GRANTOR.username, u => skAuth.setGrant(u, 'conformity', true, 'Granting myself on purpose.', 'ESD'), [GRANTOR.username])).message === SELF_GRANT);
-  ok('browser: changing your own roles is refused with today\'s text', (await setRoles(GRANTOR.username, GRANTOR.username, 'Changing my own roles on purpose.')).message === SELF_ROLES);
-  ok('browser: Master Access granting itself Support Access is refused with today\'s text', (await asBrowser(MASTER.username, u => skAuth.setSupportAccess(u, true, 'Granting myself support.'), [MASTER.username])).message === SELF_SUPPORT);
+  const refusedWith = (result, text) => result.ok === false && result.message === text;
+  const selfGrantResult = await asBrowser(GRANTOR.username, u => skAuth.setGrant(u, 'conformity', true, 'Granting myself on purpose.', 'ESD'), [GRANTOR.username]);
+  ok('browser: granting your own authority is refused with today\'s text', refusedWith(selfGrantResult, SELF_GRANT), JSON.stringify(selfGrantResult));
+  const selfRolesResult = await setRoles(GRANTOR.username, GRANTOR.username, 'Changing my own roles on purpose.');
+  ok('browser: changing your own roles is refused with today\'s text', refusedWith(selfRolesResult, SELF_ROLES), JSON.stringify(selfRolesResult));
+  const selfSupportResult = await asBrowser(MASTER.username, u => skAuth.setSupportAccess(u, true, 'Granting myself support.'), [MASTER.username]);
+  ok('browser: Master Access granting itself Support Access is refused with today\'s text', refusedWith(selfSupportResult, SELF_SUPPORT), JSON.stringify(selfSupportResult));
   for (const [n, refused] of [[9, true], [10, false], [300, false], [301, true]]) {
     const g = await setGrant(GRANTOR.username, TARGET.username, reasonOf(n));
     ok(`browser: a grant reason of ${n} characters is ${refused ? 'refused' : 'accepted'}`, refused ? !g.ok && g.message === GRANT_REASON_BROWSER : g.ok === true, JSON.stringify(g));
