@@ -161,7 +161,9 @@ realm('globalThis.Date = globalThis.__RealDate;')();
     // Twenty-fourth review: nominal removal and replacement before the marker.
     'Removal of torque seal', 'Replacement of torque stripe', 'Perform removal of torque seal',
     // Twenty-fifth review: as found and as left conditions.
-    'Document torque stripe as found', 'Record torque seal as found', 'Record torque stripe as left on each B-nut', 'Inspect torque seal as received'];
+    'Document torque stripe as found', 'Record torque seal as found', 'Record torque stripe as left on each B-nut', 'Inspect torque seal as received',
+    // Twenty-sixth review: preservation and prohibition steps apply no torque.
+    'Do not disturb torque stripe', 'Avoid damaging torque seal', "Don't remove torque stripe", 'Preserve torque stripe on each B-nut', 'Keep torque seal intact'];
   check('MES.stepRecordsTorque: a step that is only torque stripe, seal, paint or mark work records no torque', stripes.every(t => MES.stepRecordsTorque(t) === false), stripes.filter(t => MES.stepRecordsTorque(t)).join(', '));
   // Review of PR #605: a torque action on marked or sealed parts still records the value, tool and unit.
   // Second review: a torque action on seal-named hardware with a torque target records it too.
@@ -201,7 +203,9 @@ realm('globalThis.Date = globalThis.__RealDate;')();
     // Codex security review on 5b1f1fe: an intervening action between coordinated markers ends the carry.
     'Inspect torque stripe on the forward nut and secure the fitting and torque seal per WI-123', 'Inspect torque stripe on nut and secure torque seal per WI-123', 'Removal of torque seal nut per WI-123',
     // Twenty-fifth review: a part after an as found condition still records.
-    'Record torque seal as found nut per WI-123'];
+    'Record torque seal as found nut per WI-123',
+    // Twenty-sixth review: a prohibition does not hide a torque action or a part name.
+    'Do not exceed torque seal nut per WI-123', 'Do not retorque; torque seal nut per drawing', 'Avoid scratching the housing and torque seal plug per WI-123', 'Do not disturb torque stripe, then torque nut to 35 in-lb'];
   check('MES.stepRecordsTorque: a torque action records a torque value, also on marked, paint-marked, sealed or seal-named parts', actions.every(t => MES.stepRecordsTorque(t) === true), actions.filter(t => !MES.stepRecordsTorque(t)).join(', '));
   const state = fresh(), order = state.orders.find(o => o.status === 'Draft' && o.operations.length), op = order.operations[0];
   op.steps = [{ id: 'step-1', title: 'Install bracket', instruction: 'Install bracket', recordsTorque: true }];
