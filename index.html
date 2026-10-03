@@ -3551,6 +3551,15 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const unsigned = (record, where, at = record && record.at) => { if (plain(record) && !plain(record.manifest) && recent(at)) refuse(where, 'the record says it was signed, but its signature manifest is missing'); };
     (state.orders || []).forEach(order => {
       (order.operations || []).forEach(op => { if (plain(op) && plain(op.buyoff)) unsigned(op.buyoff, `${order.id} ${op.id} buy-off`); });
+      // The order history records each buy-off with the build that made it. When a v82 build recorded more completions of
+      // an operation title than there are signed buy-offs with that title, an unsigned one with that title lost its manifest.
+      const ops = (order.operations || []).filter(op => plain(op) && plain(op.buyoff)), events = (order.history || []).concat(order.historyArchive || []);
+      ops.filter(op => !plain(op.buyoff.manifest)).forEach(op => {
+        const title = `Completed operation recorded: ${op.title}.`;
+        const v82 = events.filter(e => plain(e) && subjectEraBuild(e.build) && String(e.action || '').startsWith(title)).length;
+        const signed = ops.filter(o => o.title === op.title && plain(o.buyoff.manifest)).length;
+        if (v82 > signed) refuse(`${order.id} ${op.id} buy-off`, 'the order history records this buy-off by a build that signs every buy-off, but its signature manifest is missing');
+      });
       if (plain(order.closure) && order.closure.approvedAt) unsigned(order.closure, `${order.id} closure`, order.closure.approvedAt);
       // A rework or repair ticket is resolved by its approved plan, which signs nothing at resolution. Pre-release QA
       // approvals are not checked here: engineering changes and disposition approvals re-apply them unsigned.
@@ -3570,7 +3579,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       // The person shown is the person who signed: name, role and credential, and the account when both record one.
       const person = p => ({ name: p.name, role: p.role, credentialId: p.credentialId });
       if (m && plain(record.by) && plain(m.signer) && (!sameSigned(person(record.by), person(m.signer)) || (record.by.account && m.signer.account && record.by.account !== m.signer.account))) refuse(where, 'the signer shown on the record is not the person who signed');
-      if (!(m && plain(m.subject)) && before({ at }, after)) refuse(where, chronology);
+      // The signing time is not hashed, so the order of signed steps is checked whatever the manifest stores.
+      if (before({ at }, after)) refuse(where, chronology);
     };
     (fm.mrb || []).forEach(b => {
       if (!plain(b) || !plain(b.decision)) return;
@@ -3594,7 +3604,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       const f = order.fair; if (!plain(f) || !plain(f.verified)) return;
       const m = plain(f.verified.manifest) ? f.verified.manifest : null, where = `${order.id} FAIR verification`, at = m ? m.at : f.verified.at;
       signedStep(f.verified, where, [], '');
-      [['reviewed', 'FAIR review (box 22)'], ['approved', 'FAIR QA approval']].forEach(([k, label]) => signedStep(f[k], `${order.id} ${label}`, [f.verified.at], 'it is dated before the verification it approves'));
+      signedStep(f.reviewed, `${order.id} FAIR review (box 22)`, [f.verified.at], 'it is dated before the verification it reviews');
+      signedStep(f.approved, `${order.id} FAIR QA approval`, [f.verified.at, plain(f.reviewed) ? f.reviewed.at : null], 'it is dated before the verification or the box 22 review it approves');
       if (m && plain(m.subject)) { const by = plain(f.verified.by) ? f.verified.by : {}, live = fairBound({ ...fairSnapshot(state, order), ...(Object.hasOwn(m.subject, 'stamp') ? { stamp: by.stamp || null } : {}), ...(by.override ? { override: by.override } : {}) }); if (!live || !sameSigned(fairBound(m.subject), live)) refuse(where, 'Forms 1 to 3 no longer match what was verified'); return; }
       const days = (f.chars || []).map(c => plain(c) && /^\d{4}-\d{2}-\d{2}$/.test(c.date || '') ? c.date : null).filter(Boolean);
       const verifiedEvent = new RegExp(`^AS9102 FAIR ${escaped(order.id)}\\b.* verified`);

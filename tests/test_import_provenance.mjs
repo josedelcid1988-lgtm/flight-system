@@ -319,6 +319,30 @@ await check('a FAIR verification whose shown inspection stamp changed after sign
   assert.match((await refused(doc, 'WO-10004 FAIR verification')).json.error, /Forms 1 to 3 no longer match what was verified/);
 });
 
+// Codex review on #631 (cb10e25): the QA approval must follow the box 22 review, with the subject kept.
+await check('a FAIR QA approval re-dated before its box 22 review is refused', async () => {
+  const doc = exported(), f = MES.getOrder(doc, 'WO-10002').fair;
+  if (!f.reviewed) { f.reviewed = { by: f.approved.by, at: f.approved.at, manifest: { ...f.approved.manifest } }; }
+  const verified = Date.parse(f.verified.at), reviewed = Date.parse(f.reviewed.at);
+  const between = new Date(Math.max(verified + 1, reviewed - 1000)).toISOString();
+  f.reviewed.at = f.reviewed.manifest.at = new Date(reviewed + 5000).toISOString();
+  f.approved.at = f.approved.manifest.at = between;
+  assert.match((await refused(doc, 'WO-10002 FAIR QA approval')).json.error, /dated before the verification or the box 22 review it approves/);
+});
+
+// Codex security review on #631 (cb10e25): a v82 buy-off whose manifest is deleted, time backdated and signer replaced.
+await check('a v82 buy-off stripped of its manifest and backdated is refused by the order history', async () => {
+  // The order history entry record() writes for a buy-off, stamped by the build that made it.
+  const recorded = (order, op) => order.history.push({ id: `${order.id}-event-v82`, at: '2026-10-01T16:00:00.000Z', action: `Completed operation recorded: ${op.title}.`, actor: 'Ada Master · ACCT-prov-admin', build: { version: 'v82', sha256: 'unstamped' } });
+  const pick = s => { const order = s.orders.find(o => o.operations.some(op => op.buyoff && op.buyoff.manifest)); return { order, op: order.operations.find(op => op.buyoff && op.buyoff.manifest) }; };
+  const genuine = curated(), g = pick(genuine); recorded(g.order, g.op);
+  assert.equal(MES.verifyImportProvenance(genuine).ok, true, 'a v82 buy-off that keeps its manifest loads');
+  const forged = curated(), f = pick(forged); recorded(f.order, f.op);
+  delete f.op.buyoff.manifest; f.op.buyoff.at = '2026-09-10T16:00:00.000Z'; f.op.buyoff.name = 'Someone Else';
+  const res = MES.verifyImportProvenance(forged);
+  assert.ok(res.failures.some(x => x.where === `${f.order.id} ${f.op.id} buy-off` && /order history records this buy-off by a build that signs every buy-off/.test(x.reason)), JSON.stringify(res.failures));
+});
+
 await check('the browser migration dry run refuses the #481 forgery and accepts the unedited export', async () => {
   const forged = exported(), f = fairOf(forged);
   f.chars[1].result = '2.790'; f.verified.at = BACKDATED; downgrade(f.verified.manifest, BACKDATED);
