@@ -1,6 +1,7 @@
-// The access review report on the server: GET /api/auth/access-report is read only and opens only for a QA
-// Manager or Master Access account (the same manager gate as lockouts and the audit log). A Quality
-// Supervisor, an ordinary account and a caller without a session are refused with a plain message. The
+// The access review report on the server: GET /api/auth/access-report is read only and opens only for an
+// account whose active roles include QA Manager or Master Access. A Quality Supervisor, an ordinary account,
+// an account holding QA Manager only as an extra role whose training is not current, and a caller without a
+// session are refused with a plain message. The
 // report carries every account and the lockouts in force, and reading it writes no audit row and changes no
 // account.
 import assert from 'node:assert/strict';
@@ -50,23 +51,27 @@ try {
   await add('ar-qs', 'qs', 'ar-qs-pass-123');
   await add('ar-tech', 'technician', 'ar-tech-pass-1');
   await add('ar-locked', 'technician', 'ar-locked-pass');
+  // QA Manager held only as an extra role whose qualifying training is not on record: paused, so not a manager.
+  await server.store.upsertAccount({ username: 'ar-paused-qm', displayName: 'User ar-paused-qm', role: 'technician', roles: ['technician'], extraRoles: ['qm'], roleTraining: { qm: { code: 'ESD', at: new Date().toISOString(), by: 'ar-admin' } }, grants: {}, grantHistory: [], supportAccess: false, salt: '', hash: await makeHash('ar-paused-qm-pass'), createdBy: 'ar-admin' });
   for (let i = 0; i < 5; i += 1) await api('POST', '/auth/session', { body: { username: 'ar-locked', password: 'wrong-password' } });
   const qmToken = await signIn('ar-qm', 'ar-qm-pass-123');
   const qsToken = await signIn('ar-qs', 'ar-qs-pass-123');
   const techToken = await signIn('ar-tech', 'ar-tech-pass-1');
+  const pausedQmToken = await signIn('ar-paused-qm', 'ar-paused-qm-pass');
 
   for (const [who, token] of [['a QA Manager', qmToken], ['a Master Access account', adminToken]]) {
     await check(`${who} reads the access review: every account, no password material, the lockouts in force`, async () => {
       const r = await api('GET', '/auth/access-report', { token });
       assert.equal(r.status, 200, JSON.stringify(r.json));
-      assert.deepEqual(r.json.users.map(u => u.username).sort(), ['ar-admin', 'ar-locked', 'ar-qm', 'ar-qs', 'ar-tech']);
+      assert.deepEqual(r.json.users.map(u => u.username).sort(), ['ar-admin', 'ar-locked', 'ar-paused-qm', 'ar-qm', 'ar-qs', 'ar-tech']);
       assert.ok(r.json.users.every(u => !('hash' in u) && !('salt' in u)), 'no password hash or salt is sent');
       assert.deepEqual(r.json.lockouts.map(l => l.username), ['ar-locked']);
       assert.ok(Number.isFinite(Date.parse(r.json.lockouts[0].until)), 'the lockout says until when');
-      assert.ok(Number.isFinite(Date.parse(r.json.generatedAt)));
+      const at = Date.parse(r.json.generatedAt);
+      assert.ok(Number.isFinite(at) && Math.abs(at - Date.now()) < 60000, 'the server stamps the generation time');
     });
   }
-  for (const [who, token, status] of [['a Quality Supervisor', qsToken, 403], ['a technician', techToken, 403], ['a caller without a session', null, 401]]) {
+  for (const [who, token, status] of [['a Quality Supervisor', qsToken, 403], ['a technician', techToken, 403], ['an account whose QA Manager role is a paused extra role (training not current)', pausedQmToken, 403], ['a caller without a session', null, 401]]) {
     await check(`${who} is refused the access review with a plain message`, async () => {
       const r = await api('GET', '/auth/access-report', { token });
       assert.equal(r.status, status, JSON.stringify(r.json));
