@@ -273,6 +273,30 @@ await check('repairing a repeated assignment id keeps a reassigned task linked t
   assert.equal(upgraded.assignments.find(a => a.id === original.id).reassignedTo, renamed.id, 'the reassigned task links to the assignment that replaced it');
 });
 
+await check('repairing a held copy\'s push ids never moves a review of the current replacement onto the held copy', async () => {
+  // Codex review on #629: repair handled the operation and the copy a pending sequence change holds one at a time, so a
+  // legacy review of the current replacement's PUSH-1 was repinned to the held copy's first PUSH-1 when the held list
+  // was repaired. The target is now found once across both copies, as the old lookup found it: the current copy first.
+  const { state, order, op } = removalSetup();
+  const original = state.assignments.find(a => a.type === 'review-push' && a.opId === op.id && a.status === 'Open');
+  const heldPush = op.atp.pushes[0], base = Date.parse(heldPush.at), time = minutes => new Date(base + minutes * 60000).toISOString();
+  const held = order.sequenceBaseline.find(x => x.id === op.id);
+  held.atp.pushes = [held.atp.pushes[0], { ...structuredClone(held.atp.pushes[0]), at: time(1), sha: 'abc0008', version: 'v8.8' }];
+  const replacement = { ...structuredClone(op), atp: { ...structuredClone(op.atp), pushes: [{ ...structuredClone(heldPush), at: time(2), sha: 'abc0009', version: 'v9.9' }] } };
+  order.operations.push(replacement);
+  const later = { ...structuredClone(original), id: 'ASG-9001', at: time(3) };
+  delete original.pushAt; delete later.pushAt;
+  state.assignments.push(later);
+  const upgraded = MES.upgrade(structuredClone(state));
+  assert.ok(upgraded && MES.validate(upgraded), 'the workspace loads');
+  same(ids(upgraded.orders.find(o => o.id === order.id).sequenceBaseline.find(x => x.id === op.id).atp.pushes), ['PUSH-1', 'PUSH-2'], 'the held copy is repaired');
+  const pinned = upgraded.assignments.find(a => a.id === 'ASG-9001');
+  assert.equal(pinned.pushId, 'PUSH-1');
+  assert.equal(pinned.pushAt, time(2), 'the review made after the replacement stays on the replacement\'s push');
+  const first = upgraded.assignments.find(a => a.id === original.id);
+  assert.equal(first.pushAt, heldPush.at, 'the review made before the replacement stays on the held push');
+});
+
 await check('validation refuses a repeated id in any of the four lists and a mark below an id it holds', async () => {
   const base = fresh();
   for (let n = 0; n < 3; n += 1) notice(base, n);

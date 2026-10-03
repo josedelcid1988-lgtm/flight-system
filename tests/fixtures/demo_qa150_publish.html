@@ -4382,6 +4382,21 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       // A reassigned task links to the assignment that replaced it, made at the moment it was reassigned.
       if (shared.assignments.has(a.reassignedTo)) { const items = shared.assignments.get(a.reassignedTo); const made = items.filter(x => x !== a && x.at === a.doneAt); a.reassignedTo = (made.find(x => x.type === a.type) || made[0] || items[0]).id; }
     });
+    // A review assignment's push is found once, across the operation and the copy a pending sequence change holds,
+    // before any push is renumbered. One that names its push by time keeps it. One saved before the time was kept
+    // names what the old lookup found: the operation's own push (the first under its id), or the held copy's when
+    // only that one existed when the assignment was made. It is pinned to it only where its id is ambiguous.
+    const pushTargets = [];
+    (Array.isArray(state.orders) ? state.orders : []).forEach(order => assignments.forEach(a => {
+      if (!plain(order) || a.type !== 'review-push' || a.orderId !== order.id || typeof a.pushId !== 'string') return;
+      const current = Array.isArray(order.operations) ? order.operations.find(x => plain(x) && x.id === a.opId) : null;
+      const lists = [current, heldOp(order, a.opId)].map(op => (plain(op?.atp) && Array.isArray(op.atp.pushes) ? op.atp.pushes.filter(x => plain(x) && x.id === a.pushId) : []));
+      const all = lists.flat();
+      if (!all.length || (new Set(all.map(x => `${x.at}|${x.sha}`)).size < 2 && lists.every(list => list.length < 2))) return;
+      const made = recordTime(a.at), existed = list => made !== null && list.some(x => recordTime(x.at) !== null && recordTime(x.at) <= made);
+      const target = (a.pushAt && all.find(x => x.at === a.pushAt)) || legacyRecordTarget(lists.find(existed) || lists.find(list => list.length), a.at);
+      if (target) pushTargets.push([a, target]);
+    }));
     // Every ATP push list with a stored mark, or with a repeated id, is normalized, on the operations and on the copies a pending sequence change holds; a list with neither is left
     // untouched, so a signed operation gains no new field.
     (Array.isArray(state.orders) ? state.orders : []).forEach(order => recordIdOperations(order).forEach(op => {
@@ -4393,15 +4408,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       // The baseline follows the push it was accepted from (accepting sets reviewedAt and acceptedAt together).
       const baseline = op.atp.baseline, accepted = plain(baseline) && pushes.get(baseline.acceptedFrom);
       if (accepted) { const from = accepted.find(x => x.status === 'Accepted' && x.reviewedAt === baseline.acceptedAt) || accepted.find(x => x.status === 'Accepted' && x.sha === baseline.sha && x.version === baseline.version); if (from) baseline.acceptedFrom = from.id; }
-      // A review assignment names its push by id and time; one saved before the time was kept keeps the push it named
-      // and is pinned to it.
-      assignments.forEach(a => {
-        if (a.type !== 'review-push' || a.orderId !== order.id || a.opId !== op.id || !pushes.has(a.pushId)) return;
-        const items = pushes.get(a.pushId);
-        const target = (a.pushAt && items.find(x => x.at === a.pushAt)) || legacyRecordTarget(items, a.at);
-        a.pushId = target.id; if (typeof target.at === 'string') a.pushAt = target.at;
-      });
     }));
+    pushTargets.forEach(([a, target]) => { a.pushId = target.id; if (typeof target.at === 'string') a.pushAt = target.at; });
   }
   const atpPending = op => (op && op.atp && Array.isArray(op.atp.pushes) ? op.atp.pushes : []).filter(push => push.status === 'Pending');
   const atpValid = op => op.atp === undefined || (plain(op.atp) && REPO_RE.test(op.atp.repo) && plain(op.atp.baseline) && SHA_RE.test(op.atp.baseline.sha) && str(op.atp.baseline.version, 40) && Array.isArray(op.atp.pushes) && op.atp.pushes.length <= 50 && op.atp.pushes.every(push => plain(push) && str(push.id, 20) && SHA_RE.test(push.sha) && str(push.version, 40) && str(push.message ?? '', 200, 0) && ['Pending', 'Accepted', 'Rejected'].includes(push.status)));
@@ -4418,21 +4426,6 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // withdrawal puts it back. Its open assignments stay open until the change is released (#585). A push is matched by
   // id and by the time it was recorded, so a push on a later operation that reuses the id is never taken for it.
   const heldOp = (order, opId) => pendingSequenceChange(order) && Array.isArray(order.sequenceBaseline) ? order.sequenceBaseline.find(x => plain(x) && x.id === opId) || null : null;
-  // A review assignment saved before pushAt was kept names its push by id alone. Where a removed operation held by a
-  // pending sequence change and its replacement share the operation id, that id can name a push on either, so the
-  // assignment is pinned to the push it named: the one that existed when it was made, else the current operation's,
-  // which the old lookup found first.
-  function pinLegacyPushAssignments(state) {
-    (Array.isArray(state.assignments) ? state.assignments : []).forEach(a => {
-      if (!plain(a) || a.type !== 'review-push' || a.status !== 'Open' || a.pushAt || typeof a.pushId !== 'string') return;
-      const order = (Array.isArray(state.orders) ? state.orders : []).find(o => plain(o) && o.id === a.orderId);
-      const current = order && Array.isArray(order.operations) && order.operations.find(x => plain(x) && x.id === a.opId), held = order && heldOp(order, a.opId);
-      if (!current || !held) return;
-      const all = [current, held].flatMap(op => (plain(op.atp) && Array.isArray(op.atp.pushes) ? op.atp.pushes : []).filter(x => plain(x) && x.id === a.pushId && typeof x.at === 'string'));
-      const target = all.length ? legacyRecordTarget(all, a.at) : null;
-      if (target) a.pushAt = target.at;
-    });
-  }
   function syncAssignments(state) {
     if (!Array.isArray(state.assignments)) state.assignments = [];
     markRecordIds(state, 'ASG', state.assignments);
@@ -6995,7 +6988,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     try {
       state = renameKitOp(migrateEngineeringChanges(migrateSplitIds(state)));
       try { migrateChangeIds(state); } catch (e) {}
-      if (plain(state)) { sealCalibrationLog(state); markCalibrationStart(state); repairRecordIds(state); pinLegacyPushAssignments(state); }
+      if (plain(state)) { sealCalibrationLog(state); markCalibrationStart(state); repairRecordIds(state); }
       if (validate(state)) { const migrated = JSON.parse(JSON.stringify(state)); ['audits','certifications','supplierApprovals','qualityValues','qualityVerdicts'].forEach(key=>{if(!Array.isArray(migrated[key]))migrated[key]=[];}); migrateOperationTypes(migrated); return validate(migrated) ? migrated : JSON.parse(JSON.stringify(state)); }
       if (!validateVersion(state, 1) && !validateVersion(state, 2)) return null;
       const upgraded = JSON.parse(JSON.stringify(state));
