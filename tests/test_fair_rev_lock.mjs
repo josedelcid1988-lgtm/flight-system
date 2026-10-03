@@ -270,6 +270,17 @@ ok('with the assessment at the current revision, closure is no longer blocked by
 ok('a second assessment at the same revision is refused',!r.again.ok&&/already signed at WO Rev A/.test(r.again.message),JSON.stringify(r.again));
 r=await run(([id])=>{const C=structuredClone(window.__R);const d=MES.decideOrderClosure(C,id,true,'');return {d,status:C.orders.find(x=>x.id===id).status,valid:MES.validate(C),mv:MES.verifyManifests(C).ok};},[ID]);
 ok('decideOrderClosure closes the order once the assessment covers the current revision',r.d.ok&&r.status==='Closed'&&r.valid&&r.mv,JSON.stringify(r));
+// Codex r4171050282: stocking the closed FAI order adds its inventory lot to the FAIR identifier after box 22, the approval
+// and the impact assessment signed it, and the workspace still verifies.
+r=await run(([id])=>{const C=structuredClone(window.__R);const d=MES.decideOrderClosure(C,id,true,'');const o=C.orders.find(x=>x.id===id);const before=fairRevText(o);o.inventory={lotNumber:'LOT-261003-0001',stockedAt:new Date().toISOString()};const v=MES.verifyManifests(C);const t=structuredClone(C);t.orders.find(x=>x.id===id).fair.approved.manifest.hash='0'.repeat(64);return {d:d.ok,mv:v.ok,why:v.failures.map(f=>f.where+': '+f.reason),tamper:MES.verifyManifests(t).ok};},[ID]);
+ok('an Approved FAI order stocked into a lot (the lot joins the FAIR identifier) still verifies its box 22, approval and impact assessment',r.d&&r.mv,JSON.stringify(r));
+ok('a stocked FAI order still fails verification when its approval is forged',r.tamper===false,JSON.stringify(r));
+// Codex r4171050286: a kept impact assessment is rebuilt from its own record, so its text cannot change under the signature.
+r=await run(([id,a,pin])=>{const C=structuredClone(window.__R),o=C.orders.find(x=>x.id===id);const x=MES.reopenFair(C,id,'Delta FAI for the kept assessment check');if(!x.ok)return {x};
+  const base=JSON.stringify(C);const t=f=>{const s=JSON.parse(base),k=s.orders.find(q=>q.id===id).fair.superseded.at(-1).impactAssessments[0];f(k);const v=MES.verifyManifests(s);return {ok:v.ok,valid:MES.validate(s),why:v.failures.map(q=>q.where+': '+q.reason)};};
+  return {x,clean:MES.verifyManifests(JSON.parse(base)).ok,rationale:t(k=>{k.rationale='Edited after the reopen.';}),changes:t(k=>{k.changes=[];}),drawing:t(k=>{k.drawing={...k.drawing,revision:'Z'};}),statements:t(k=>{k.statements=k.statements.slice(0,2);})};},[ID]);
+ok('setup: the reopen keeps a signed impact assessment and the workspace verifies',r.x.ok&&r.clean,JSON.stringify(r.x));
+for(const k of ['rationale','changes','drawing','statements'])ok(`editing a kept impact assessment's ${k} fails verification`,!r[k].ok&&!r[k].valid&&r[k].why.some(w=>/superseded signature .+impact assessment/.test(w)),JSON.stringify(r[k].why));
 r=await run(([id])=>{const C=structuredClone(window.__R),o=C.orders.find(x=>x.id===id);delete o.closureRequest;return MES.closeOrder(C,id);},[ID]);
 ok('closeOrder is no longer refused for the FAIR once the assessment covers the current revision',r.ok||!/FAIR was signed at WO Rev/.test(r.message),JSON.stringify(r));
 r=await run(([id])=>{state=structuredClone(window.__R);const o=state.orders.find(x=>x.id===id);return {panel:fairPanel(o),print:fairHtml(o)};},[ID]);

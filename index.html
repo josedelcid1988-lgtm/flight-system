@@ -3675,8 +3675,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       if (plain(fair) && Array.isArray(fair.superseded) && fair.superseded.length) { recomputed += fair.superseded.length; failures.push(...fairSupersededProblems(order)); }
       // Box 22 chains to the verified FAIR, and an approval signed since box 22 was bound into it chains to box 22.
       // An approval signed before that carries no reviewed key and is checked as it was signed.
-      if (plain(fair) && plain(fair.reviewed) && plain(fair.reviewed.manifest) && plain(fair.verified) && plain(fair.verified.manifest)) { recomputed++; const rm = fair.reviewed.manifest, current = plain(rm.subject) && Object.hasOwn(rm.subject, 'reviewer'); const sub = current ? fairReviewSubject(order, fair, fair.reviewed.by, fair.reviewed.at, rm.override, Object.hasOwn(rm.subject, 'reviewerStamp'), Object.hasOwn(rm.subject, 'verifiedAt')) : { fair: fairId(order), verified: fair.verified.manifest.hash, ...(rm.override ? { override: rm.override } : {}) }; if (sha256(canonical(sub)) !== fair.reviewed.manifest.hash) failures.push({ where: `${order.id} FAIR box 22`, reason: 'box 22 does not chain to the verified FAIR' }); }
-      if (plain(fair) && plain(fair.approved) && plain(fair.approved.manifest) && plain(fair.verified) && plain(fair.verified.manifest)) { recomputed++; const bindsReview = plain(fair.approved.manifest.subject) && Object.hasOwn(fair.approved.manifest.subject, 'reviewed'); const sub = { fair: fairId(order), verified: fair.verified.manifest.hash, ...(bindsReview ? { reviewed: plain(fair.reviewed) && plain(fair.reviewed.manifest) ? fair.reviewed.manifest.hash : null } : {}), ...(plain(fair.approved.manifest.subject) && Object.hasOwn(fair.approved.manifest.subject, 'stamp') ? { stamp: plain(fair.approved.by) ? (fair.approved.by.stamp ?? null) : null } : {}), ...(bindsSigner(fair.approved.manifest) ? signedBy(fair.approved.by, fair.approved.at) : {}), ...(plain(fair.approved.manifest.subject) && Object.hasOwn(fair.approved.manifest.subject, 'verifiedAt') ? { verifiedAt: fair.verified.at ?? null } : {}), ...(fair.approved.manifest.override ? { override: fair.approved.manifest.override } : {}) }; if (sha256(canonical(sub)) !== fair.approved.manifest.hash) failures.push({ where: `${order.id} FAIR approval`, reason: bindsReview ? 'approval does not chain to the verified FAIR and its box 22 review' : 'approval does not chain to the verified FAIR' }); }
+      if (plain(fair) && plain(fair.reviewed) && plain(fair.reviewed.manifest) && plain(fair.verified) && plain(fair.verified.manifest)) { recomputed++; const rm = fair.reviewed.manifest, current = plain(rm.subject) && Object.hasOwn(rm.subject, 'reviewer'); const sub = current ? fairReviewSubject(order, fair, fair.reviewed.by, fair.reviewed.at, rm.override, Object.hasOwn(rm.subject, 'reviewerStamp'), Object.hasOwn(rm.subject, 'verifiedAt')) : { fair: fairId(order), verified: fair.verified.manifest.hash, ...(rm.override ? { override: rm.override } : {}) }; if (!fairHashMatches(order, sub, fair.reviewed.manifest.hash)) failures.push({ where: `${order.id} FAIR box 22`, reason: 'box 22 does not chain to the verified FAIR' }); }
+      if (plain(fair) && plain(fair.approved) && plain(fair.approved.manifest) && plain(fair.verified) && plain(fair.verified.manifest)) { recomputed++; const bindsReview = plain(fair.approved.manifest.subject) && Object.hasOwn(fair.approved.manifest.subject, 'reviewed'); const sub = { fair: fairId(order), verified: fair.verified.manifest.hash, ...(bindsReview ? { reviewed: plain(fair.reviewed) && plain(fair.reviewed.manifest) ? fair.reviewed.manifest.hash : null } : {}), ...(plain(fair.approved.manifest.subject) && Object.hasOwn(fair.approved.manifest.subject, 'stamp') ? { stamp: plain(fair.approved.by) ? (fair.approved.by.stamp ?? null) : null } : {}), ...(bindsSigner(fair.approved.manifest) ? signedBy(fair.approved.by, fair.approved.at) : {}), ...(plain(fair.approved.manifest.subject) && Object.hasOwn(fair.approved.manifest.subject, 'verifiedAt') ? { verifiedAt: fair.verified.at ?? null } : {}), ...(fair.approved.manifest.override ? { override: fair.approved.manifest.override } : {}) }; if (!fairHashMatches(order, sub, fair.approved.manifest.hash)) failures.push({ where: `${order.id} FAIR approval`, reason: bindsReview ? 'approval does not chain to the verified FAIR and its box 22 review' : 'approval does not chain to the verified FAIR' }); }
       // FAIR verification (blocks 20 and 21): the FAIR's own content (Forms 1 to 3 as entered on the FAIR) must still
       // match what the verifier signed. Order-level fields in the snapshot (serials, quantity) may change later.
       if (plain(fair) && plain(fair.verified) && plain(fair.verified.manifest) && plain(fair.verified.manifest.subject) && plain(fair.verified.manifest.subject.form1)) {
@@ -6146,6 +6146,10 @@ const OP_BOM_MAX = 12;
     return { order, fair: order.fair };
   }
   const fairId = order => `${order.id}${order.inventory ? `/${order.inventory.lotNumber}` : ''}${order.fair && order.fair.po ? `/${order.fair.po}` : ''}`;
+  // Stocking an order adds its inventory lot to the FAIR identifier, after box 22, the approval and any impact assessment
+  // signed the identifier without it. A signature rebuilt from the order matches either form (Codex r4171050282).
+  const fairIdUnstocked = order => `${order.id}${order.fair && order.fair.po ? `/${order.fair.po}` : ''}`;
+  const fairHashMatches = (order, sub, hash) => sha256(canonical(sub)) === hash || (!!order.inventory && plain(sub) && sha256(canonical({ ...sub, fair: fairIdUnstocked(order) })) === hash);
   function saveFairHeader(state, id, input) {
     { const d = denied('approve-wo', 'edit the FAIR'); if (d) return d; }
     const { order, fair, error } = fairOpen(state, id); if (error) return fail(error);
@@ -6384,7 +6388,17 @@ const OP_BOM_MAX = 12;
       const a = check('Skyryse QA approval', x.approved, x.status === 'Approved', RECORD_MEANINGS['FAIR approval']);
       chains('Skyryse QA approval', a, 'verified', vh);
       if (a && plain(a.subject) && Object.hasOwn(a.subject, 'reviewed') && a.subject.reviewed !== (r ? r.hash : null)) out.push({ where: where('Skyryse QA approval'), reason: 'does not chain to the kept box 22' });
-      (Array.isArray(x.impactAssessments) ? x.impactAssessments : []).forEach(ia => { const label = `impact assessment ${plain(ia) && ia.id || ''}`.trim(); chains(label, check(label, ia, true, [FAIR_IMPACT_MEANING]), 'verified', vh); });
+      // A kept impact assessment is rebuilt from its own record, against the kept verification and the revision log, as a live
+      // one is: its rationale, change list, drawing and statements cannot change under the signature (Codex r4171050286).
+      (Array.isArray(x.impactAssessments) ? x.impactAssessments : []).forEach(ia => {
+        const label = `impact assessment ${plain(ia) && ia.id || ''}`.trim(), m = check(label, ia, true, [FAIR_IMPACT_MEANING]);
+        chains(label, m, 'verified', vh);
+        if (!m) return;
+        if (!same(ia.changes, fairImpactChanges(order, ia.fromWoRev, ia.toWoRev))) out.push({ where: where(label), reason: 'the assessed change list does not match the work order revision log' });
+        if (!same(ia.drawing, fairImpactDrawing(order, ia.toWoRev))) out.push({ where: where(label), reason: 'the assessed drawing revision does not match the work order revision log' });
+        if (!plain(ia.drawing) || !same(ia.statements, fairImpactStatements(ia.drawing))) out.push({ where: where(label), reason: 'the assessed statements are not the three required statements' });
+        if (!fairHashMatches(order, fairImpactSubject(order, { verified: x.verified }, ia), m.hash)) out.push({ where: where(label), reason: 'the impact assessment does not match its signature' });
+      });
     });
     return out;
   };
@@ -6468,7 +6482,7 @@ const OP_BOM_MAX = 12;
       if (!same(a.changes, fairImpactChanges(order, a.fromWoRev, a.toWoRev))) out.push({ where: where(a), reason: 'the assessed change list does not match the work order revision log' });
       if (!same(a.drawing, fairImpactDrawing(order, a.toWoRev))) out.push({ where: where(a), reason: 'the assessed drawing revision does not match the work order revision log' });
       if (!same(a.statements, fairImpactStatements(a.drawing))) out.push({ where: where(a), reason: 'the assessed statements are not the three required statements' });
-      if (sha256(canonical(fairImpactSubject(order, fair, a))) !== m.hash) out.push({ where: where(a), reason: 'the impact assessment does not match its signature' });
+      if (!fairHashMatches(order, fairImpactSubject(order, fair, a), m.hash)) out.push({ where: where(a), reason: 'the impact assessment does not match its signature' });
     });
     return out;
   }
