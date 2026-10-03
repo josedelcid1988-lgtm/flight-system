@@ -1947,7 +1947,7 @@ function skBoot(){
    username:u.username,name:u.displayName,primaryRole:roleLabel(primaryRole(u)),
    extraRoles:listed.slice(1).map(function(k){var on=extraRoleActive(u,k);return {role:roleLabel(k),status:on?'Active':'Paused',reason:on?'':extraRoleWhy(u,k)};}).concat(held.map(function(k){return {role:roleLabel(k),status:'Active',reason:''};})),
    authorities:GRANTED.map(function(cap){var st=authorityStatus(u,cap);return {authority:authorityName(cap),status:st.status,reason:st.reason};}),
-   stamps:stampsOf(u).map(function(s){var valid=stampInForce(u,s);return {number:s.number,buyoffType:s.buyoffType,status:s.status,issued:s.issued||'',expires:s.expires||'',valid:valid,reason:valid?'':stampWhy(u,s).text};}),
+   stamps:stampsOf(u).map(function(s){var valid=stampInForce(u,s);return {number:s.number,buyoffType:s.buyoffType,status:s.status,issued:s.issued||'',expires:s.expires||'',valid:valid,pinSet:!!s.pin,reason:valid?(s.pin?'':'has no PIN yet, so it cannot be used for a buy-off until the holder sets it in Your credentials'):stampWhy(u,s).text};}),
    supportAccess:u.supportAccess===true,lockout:lockoutOf(u,serverLockouts),
    capabilities:ALL_CAPS.filter(function(c){return caps.indexOf(c)>=0;}),blocked:blockedReasons(u)};});}
  // The generator is named from the same account list as the report (with a server, the account the server read).
