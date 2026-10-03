@@ -207,6 +207,10 @@ const LIST = [
     why: 'Whatever server setting a deployment, proxy or page puts in front of the demo (window.FLIGHT_SERVER, which the Flight System server writes only into its production page), the demo removes it before any of its own scripts run and keeps it unset, so the demo never signs in to the production server, never loads or writes the shared production workspace, and always works on its own browser storage under its relaxed rules.',
     find: '<title>Flight System Demo</title>', count: 1,
     replace: (ctx, m, id) => `<script>/* DEMO ${id} */try{delete window.FLIGHT_SERVER;}catch(e){}try{Object.defineProperty(window,'FLIGHT_SERVER',{get:function(){return undefined;},set:function(){},configurable:false});}catch(e){window.FLIGHT_SERVER=undefined;}</script>\n${m}` },
+  { area: 'Stamps', title: 'FAIR and 8130-9 signatures accept a lapsed register stamp',
+    why: 'Production refuses a FAIR, 8130-9 or AQI signature when the signer has no current stamp of an allowed type (expired, not yet issued, or an additional stamp paused for training, #579). The demo signs with the account\'s first Active stamp of an allowed type, as it did before that rule, so a scenario is not stopped by stamp dates. An account with no Active stamp of an allowed type is still refused.',
+    find: '    const current = checked.find(c => !c.problem);\n', count: 1,
+    replace: (ctx, m, id) => `    const current = checked.find(c => !c.problem) || checked[0]; /* DEMO ${id} */\n` },
   { area: 'Separation of duties', title: 'The MRB board screen keeps the vote form open after your first vote',
     why: 'One person can vote every seat of a board from the board screen, matching the engine relaxation D-23, so a board can be walked to its decision alone. Production shows the person who already voted a notice to switch to the next voter instead of the vote form.',
     find: 'ownVote = m.votes.find(v => v.by?.credentialId === actorId);', count: 1,
@@ -240,7 +244,7 @@ const LIST = [
     find: 'item.closedBy.credentialId !== item.openedBy.credentialId', count: 1,
     replace: (ctx, m, id) => `(true /* DEMO ${id} */ || ${m})` },
   { area: 'Separation of duties', title: 'Pedigree change text says one person may give both approvals',
-    why: 'The pedigree change dialog, panel, request and approval messages and their history entries match the relaxations D-22 and D-48, so a solo walk-through is not told to find a second discipline. Production keeps the different discipline wording.',
+    why: 'The pedigree change dialog, panel, request and approval messages and their history entries match the relaxations D-22 and D-49, so a solo walk-through is not told to find a second discipline. Production keeps the different discipline wording.',
     find: /First approval recorded\. A second approval from a different discipline is needed\.|One more approval from a different discipline required\.|Second approval must come from a different discipline; General User accounts cannot approve\.|Two approvals from different disciplines required\. Reason: \$\{|Two approvals from different disciplines are needed\.|two approvals from two different disciplines \(/g, count: 6,
     // The first approval message is a single-quoted string; the others sit inside template literals.
     replace: (ctx, m, id) => m.startsWith('First') ? `First approval recorded. A second approval is needed; in this demo the same person may give it.'/* DEMO ${id} */+'`
@@ -251,15 +255,15 @@ const LIST = [
       : m.includes('Reason') ? 'Two approvals required; in this demo one person may give both. Reason: ${'
       : 'Two approvals are needed; in this demo one person may give both.') },
   { area: 'Separation of duties', title: 'Closure request text says the requester may review it',
-    why: 'The pending closure banner matches the relaxation D-49, which shows Review closure to the requester, so it does not tell a solo walk-through to find another person. Production asks for Quality approval from a different person.',
+    why: 'The pending closure banner matches the relaxation D-50, which shows Review closure to the requester, so it does not tell a solo walk-through to find another person. Production asks for Quality approval from a different person.',
     find: 'Needs Quality approval from a different person.', count: 1,
     replace: (ctx, m, id) => `\${''/* DEMO ${id} */}Needs Quality approval; in this demo the requester may review it.` },
   { area: 'Separation of duties', title: 'Analysis draft review message says the reviewer may accept it',
-    why: 'The message after an analysis draft is reviewed matches the relaxation D-50, so a solo walk-through is told its real next step. Production says a different qualified person must accept it.',
+    why: 'The message after an analysis draft is reviewed matches the relaxation D-51, so a solo walk-through is told its real next step. Production says a different qualified person must accept it.',
     find: 'reviewed. A different qualified person must accept it.', count: 1,
     replace: (ctx, m, id) => `reviewed.\${''/* DEMO ${id} */} In this demo the reviewer may accept it next.` },
   { area: 'Separation of duties', title: 'System QMS text says one person may close findings and audits and sign every document role',
-    why: 'The help text under Open audit, the note on an open audit card and the controlled document summary match the relaxations D-50, D-52 and D-53, which let the person who recorded a finding close it and its audit, and let one person author, review and release a document, so a solo walk-through is not told another person must sign. Production says a different person signs each closure, the audit author cannot close the audit, and the author, reviewer and releaser are three different people.',
+    why: 'The help text under Open audit, the note on an open audit card and the controlled document summary match the relaxations D-51, D-53 and D-54, which let the person who recorded a finding close it and its audit, and let one person author, review and release a document, so a solo walk-through is not told another person must sign. Production says a different person signs each closure, the audit author cannot close the audit, and the author, reviewer and releaser are three different people.',
     // The three sentences are single-quoted MES constants read by both the legacy and the React System QMS page.
     find: "MES.AUDIT_FINDING_CLOSE_HELP = 'The person who records a finding cannot close it. A different person signs each closure.';\n  MES.AUDIT_CLOSE_WAIT = 'Close every finding before closing this audit. The audit author cannot close it.';\n  MES.CONTROLLED_DOC_PEOPLE = 'The author, reviewer, and releaser must be three different people.';", count: 1,
     replace: (ctx, m, id) => `MES.AUDIT_FINDING_CLOSE_HELP = /* DEMO ${id} */ 'In this demo the person who records a finding may also sign it closed.';\n  MES.AUDIT_CLOSE_WAIT = /* DEMO ${id} */ 'Close every finding before closing this audit. In this demo the audit author may close it.';\n  MES.CONTROLLED_DOC_PEOPLE = /* DEMO ${id} */ 'In this demo one person may author, review and release a revision.';` },

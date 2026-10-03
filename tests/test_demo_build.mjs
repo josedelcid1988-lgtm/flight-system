@@ -64,7 +64,7 @@ ok('the demo reads and writes accounts only under skyryse-mes-demo-auth-v1',!/['
  ok('the demo keeps its session, lockout, security log, sign-in tokens, drafts and evidence under demo keys',shared.every(k=>!new RegExp(`['"]skyryse-mes-${k}-v1['"]`).test(curated)&&new RegExp(`['"]skyryse-mes-demo-${k}-v1['"]`).test(curated)),shared.filter(k=>new RegExp(`['"]skyryse-mes-${k}-v1['"]`).test(curated)).join(','));
  ok('production keeps those keys unchanged',shared.every(k=>new RegExp(`['"]skyryse-mes-${k}-v1['"]`).test(prod)));}
 
-// ---- solo hand-off text (D-55 to D-59): the demo never tells one person to find another; production still does ----
+// ---- solo hand-off text (D-56 to D-60): the demo never tells one person to find another; production still does ----
 {const HANDOFF=['First approval recorded. A second approval from a different discipline is needed.','One more approval from a different discipline required.',
    'Second approval must come from a different discipline; General User accounts cannot approve.','Two approvals from different disciplines required. Reason: ${','Two approvals from different disciplines are needed.',
    'two approvals from two different disciplines (','Needs Quality approval from a different person.','reviewed. A different qualified person must accept it.',
