@@ -275,8 +275,9 @@ export function pgRestoreTarget(connectionString, env = process.env) {
     // keyword=value pairs, as libpq's conninfo_parse reads them: a value that starts with ' runs to the closing quote;
     // any other value runs to whitespace, and a ' inside it is an ordinary character (Codex 4161531100). In both, a
     // backslash escapes the next character, so both are unescaped the same way (Codex 4161235788).
-    // White space is libpq's isspace set only, not every Unicode space JavaScript's \s takes.
-    const pair = /[ \t\n\r\f\v]*([A-Za-z_][A-Za-z0-9_]*)[ \t\n\r\f\v]*=[ \t\n\r\f\v]*('(?:\\.|[^'\\])*'|(?:\\.|[^ \t\n\r\f\v'\\])(?:\\.|[^ \t\n\r\f\v\\])*|)/y;
+    // White space is libpq's isspace set only, not every Unicode space JavaScript's \s takes. The s flag lets a backslash
+    // escape a line break too, as libpq allows (Codex 4171851670).
+    const pair = /[ \t\n\r\f\v]*([A-Za-z_][A-Za-z0-9_]*)[ \t\n\r\f\v]*=[ \t\n\r\f\v]*('(?:\\.|[^'\\])*'|(?:\\.|[^ \t\n\r\f\v'\\])(?:\\.|[^ \t\n\r\f\v\\])*|)/ys;
     const kept = [];
     let index = 0;
     while (index < raw.length) {
@@ -287,7 +288,7 @@ export function pgRestoreTarget(connectionString, env = process.env) {
       index = pair.lastIndex;
       const [, key, value] = match;
       caseCheck(key);
-      if (key === 'password') { found = true; password = (value.startsWith("'") ? value.slice(1, -1) : value).replace(/\\(.)/g, '$1'); continue; }
+      if (key === 'password') { found = true; password = (value.startsWith("'") ? value.slice(1, -1) : value).replace(/\\(.)/gs, '$1'); continue; }
       if (key === 'service') service = true;
       if (key === 'sslpassword') refuse(SSL_PASSWORD_REFUSAL);
       if (ARGUMENT_SECRETS.includes(key)) refuse(secretRefusal(key));

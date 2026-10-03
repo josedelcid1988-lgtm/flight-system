@@ -52,6 +52,9 @@ const cases = [
   // Codex 4161788875: an empty password is no password to libpq, so the inherited PGPASSWORD is left alone.
   ['a URI with an empty user-info password', 'postgresql://flight:@db/flight', { dbname: 'postgresql://flight@db/flight', env: {} }],
   ['keywords with an empty quoted password', "host=db password=''", { dbname: 'host=db', env: {} }],
+  // Codex 4171851670: a backslash escapes a line break as it does any other character, quoted or not.
+  ['keywords with an escaped line break in a password', 'password=pa\\\nss host=db', { dbname: 'host=db', env: { PGPASSWORD: 'pa\nss' } }],
+  ['keywords with an escaped line break in a quoted password', "password='pa\\\nss' host=db", { dbname: 'host=db', env: { PGPASSWORD: 'pa\nss' } }],
   ['an IPv6 host with a port', 'postgresql://flight:pw@[::1]:5432/flight', { dbname: 'postgresql://flight@[::1]:5432/flight', env: { PGPASSWORD: 'pw' } }],
   ['a bare database name', 'flight', { dbname: 'flight', env: {} }],
 ];
