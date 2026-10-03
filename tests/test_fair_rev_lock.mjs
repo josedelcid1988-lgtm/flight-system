@@ -165,8 +165,9 @@ r=await run(([id])=>{const t=f=>{const s=structuredClone(window.__C),o=s.orders.
     retime:t(k=>{const at='2026-01-02T00:00:00.000Z';k.verified.at=at;k.verified.manifest.at=at;}),
     relabel:t(k=>{k.approved.manifest.meaning='AS9102 FAIR reviewed and approved (blocks 22 and 23)';}),
     stamp:t(k=>{k.reviewed.by={...k.reviewed.by,stamp:{...(k.reviewed.by.stamp||{}),number:'Q-999'}};}),
-    override:t(k=>{k.verified.by={...k.verified.by,override:{by:'Master'}};})};},[ID]);
-for(const [k,label] of [['reattr','reattributing a kept approval to another person'],['retime','moving a kept verification to another time'],['relabel','relabeling a kept approval meaning'],['stamp','changing a kept box 22 stamp'],['override','adding an override to a kept verification']])
+    override:t(k=>{k.verified.by={...k.verified.by,override:{by:'Master'}};}),
+    worev:t(k=>{k.verified.woRev=k.verified.woRev==='A'?'B':'A';})};},[ID]);
+for(const [k,label] of [['reattr','reattributing a kept approval to another person'],['retime','moving a kept verification to another time'],['relabel','relabeling a kept approval meaning'],['stamp','changing a kept box 22 stamp'],['override','adding an override to a kept verification'],['worev','changing a kept verification\'s work order revision']])
   ok(`${label} fails verification`,!r[k].ok&&!r[k].valid&&r[k].why.some(w=>/superseded signature 1/.test(w)),JSON.stringify(r[k].why));
 r=await run(([id])=>{const C=structuredClone(window.__S),o=C.orders.find(x=>x.id===id);o.status='Building';o.fair.superseded=Array.from({length:50},()=>({reopenedAt:'2026-09-01T00:00:00.000Z',reason:'Earlier reopen.',status:o.fair.status,verified:o.fair.verified,reviewed:o.fair.reviewed??null,approved:o.fair.approved,impactAssessments:[]}));const before=JSON.stringify(C);const x=MES.reopenFair(C,id,'Another delta FAI');return {x,same:JSON.stringify(C)===before,valid:MES.validate(structuredClone(window.__S))};},[ID]);
 ok('a FAIR whose superseded list is full refuses another reopen and changes nothing',!r.x.ok&&/reopened 50 times and keeps every superseded signature/.test(r.x.message)&&r.same,JSON.stringify(r));
@@ -221,6 +222,7 @@ ok('a serial change with no signed FAIR does not roll the work order revision',r
 const fullLog=`const o=C.orders.find(x=>x.id===id);while(o.revisions.length<200)o.revisions.push({...o.revisions.at(-1)});`;
 for(const [name,prep,user,src] of [
   ['releasing a sequence change',{prepSeq:true},'qmb','MES.approveSequenceChange(C,id)'],
+  ['the QA re-release of an engineering change',{prepEc:true,ecrDone:true},'qmb','MES.approveEngineeringChange(C,id)'],
   ['voiding a serial',{},'uqm',"MES.voidSerial(C,id,MES.orderSerials(C,C.orders.find(x=>x.id===id))[0].serial,'Damaged tag')"],
   ['assigning a serial',{prepVoid:true},'uqm','MES.assignSerial(C,id)'],
 ]){

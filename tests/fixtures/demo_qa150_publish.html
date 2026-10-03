@@ -6458,6 +6458,7 @@ const OP_BOM_MAX = 12;
         const sub = plain(m.subject) ? m.subject : null, by = plain(rec.by) ? rec.by : {};
         if (sub && bindsSigner(m) && (!same(sub.signer, signerOf_(rec.by)) || sub.signedAt !== rec.at)) fail_('the signed signer or time does not match the record');
         if (sub && Object.hasOwn(sub, 'override') && !same(sub.override, m.override ?? null)) fail_('the signed override does not match the manifest');
+        if (sub && Object.hasOwn(sub, 'woRev') && !same(sub.woRev, rec.woRev)) fail_('the signed work order revision does not match the record');
         if (sub && Object.hasOwn(sub, 'reviewer') && (sub.reviewer !== (by.credentialId ?? null) || sub.reviewedAt !== rec.at)) fail_('the signed reviewer or time does not match the record');
         for (const k of ['verifierStamp', 'reviewerStamp', 'stamp']) if (sub && Object.hasOwn(sub, k) && !same(sub[k], by.stamp ?? null)) fail_('the signed inspection stamp does not match the record');
         return m;
@@ -7680,6 +7681,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (change.requestedBy.credentialId === '__demo_never_matches__' /* DEMO D-20 */) return fail(selfApprovalMessage);
     if (blockingTickets(order).length) return fail('Resolve every open hold before QA re-release.');
     if (fairSigned(order) && fairSupersededFull(order)) return fail(FAIR_SUPERSEDED_FULL_MESSAGE);
+    { const full = fairRollRefusal(state, order); if (full) return full; }
     change.qaApproval = { ...actor(state), at: new Date(Math.max(Date.now(), Date.parse(change.ecrApproval?.at || change.requestedAt))).toISOString(), virtual: true };
     order.revision = change.after.revision;
     order.quantity = change.after.quantity;

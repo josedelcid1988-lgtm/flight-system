@@ -91,7 +91,7 @@ const SOD=[
   ['the QA Manager test is the account role list, not Master Access',"    return roles.includes('qm');\n",1],
   ['the FAIR lock guards engineering change submit, ECR approval, QA re-release, operation add, remove and edit, rework links, sequence release, reject and withdraw, and serial assign and void',"    { const locked = fairLockRefusal(state, order); if (locked) return locked; }",11],
   ['the FAIR lock guards standard rework',"{ const o0 = state.orders.find(x => x.id === orderId), locked = o0 ? fairLockRefusal(state, o0) : null; if (locked) return locked; }",1],
-  ['a change on a signed FAIR is refused when the revision log is full: sequence release, serial assign and void',"    { const full = fairRollRefusal(state, order); if (full) return full; }",3],
+  ['a change on a signed FAIR is refused when the revision log is full: sequence release, engineering change QA re-release, serial assign and void',"    { const full = fairRollRefusal(state, order); if (full) return full; }",4],
   ['a reopened FAIR keeps the signatures it supersedes, in the manual and the automatic reopen',"    supersedeFairSignatures(order, ",2],
   ['verifyManifests rechecks the signatures a reopened FAIR kept',"failures.push(...fairSupersededProblems(order));",1],
   ['nobody signs a FAIR impact assessment for a change they released or made',"    if (fairImpactChangers(order, from, to).includes(actor(state).credentialId)) return fail(FAIR_IMPACT_SELF_MESSAGE);",1],
