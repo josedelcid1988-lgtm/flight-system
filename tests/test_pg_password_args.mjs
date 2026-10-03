@@ -45,8 +45,6 @@ const cases = [
   ['a URI user-info password with a #', 'postgresql://flight:Head#Tail@db/flight', { dbname: 'postgresql://flight@db/flight', env: { PGPASSWORD: 'Head#Tail' } }],
   // libpq takes the user info up to the first @ before any /, so an unencoded ? stays in the password (Codex 4161235818).
   ['a URI user-info password with an unencoded ?', 'postgresql://flight:Hidden-1?Tail@db/flight', { dbname: 'postgresql://flight@db/flight', env: { PGPASSWORD: 'Hidden-1?Tail' } }],
-  // Codex 4161788869: the first @ ends the user info, so a host that starts with @ (an abstract socket) stays the host.
-  ['a URI whose host starts with @', 'postgresql://flight:Secret-9@@flight-socket/flight', { dbname: 'postgresql://flight@@flight-socket/flight', env: { PGPASSWORD: 'Secret-9' } }],
   // Codex 4161788877: an @ in a query value is ordinary data.
   ['a URI query password with an @', 'postgresql://flight@db/flight?password=p@q', { dbname: 'postgresql://flight@db/flight', env: { PGPASSWORD: 'p@q' } }],
   // Jinx review 5387290877 (P3): an @ in the database name is ordinary data, with or without user info.
@@ -113,6 +111,12 @@ const refusals = [
   ['a socket:// URI with a password', 'socket://flight:Hidden-1@/run/postgresql', {}, /scheme other than postgresql/],
   ['a doubled postgresql:// scheme', 'postgresql://postgresql://flight:Hidden-1@db/flight', {}, /scheme other than postgresql/],
   ['a keyword string holding another URI', "host=db dbname='pg://flight:Hidden-1@db/flight'", {}, /scheme other than postgresql/],
+  // Codex 4170690274: libpq ends the user info at the first @ and node-pg at the last, so a second @ before the database
+  // name is refused (this replaces accepting an abstract-socket host written @name behind user info, Codex 4161788869).
+  ['a URI password starting with an unencoded @', 'postgresql://flight:@Hidden-1@db/flight', {}, /more than one @/],
+  ['a URI password with an unencoded @ inside', 'postgresql://flight:Hid@den-1@db/flight', {}, /more than one @/],
+  ['a URI host that starts with @ behind user info', 'postgresql://flight:Hidden-1@@flight-socket/flight', {}, /more than one @/],
+  ['a URI with two @ and no database name', 'postgresql://flight:Hid@den-1@db', {}, /more than one @/],
   // Codex 4170446394: an all-digit password cut short by an unencoded / reads as a port, and is refused the same way.
   ['an all-digit password cut short by an unencoded /', 'postgresql://flight:123/Tail@db/flight', {}, /cut-off password/],
   ['an all-digit password cut short beside a second host', 'postgresql://other:5432,flight:4567/x@db/flight', {}, /cut-off password/],

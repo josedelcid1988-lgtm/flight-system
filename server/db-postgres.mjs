@@ -231,6 +231,10 @@ export function pgRestoreTarget(connectionString, env = process.env) {
     // itself starts with @ (an abstract socket) stays the host (Codex 4161788869), and an unencoded ? in a password is
     // read the way libpq reads it (Codex 4161235818).
     const firstAt = rest.indexOf('@'), firstSlash = rest.indexOf('/');
+    // libpq ends the user info at the first @, but node-pg (the server's own client) at the last one, so with a second @
+    // before the first / the two read a different password and host. postgresql://flight:@Secret-9@db/flight would
+    // reach --dbname with @Secret-9 in it. Any second @ there is refused; percent-encode it as %40 (Codex 4170690274).
+    if ((firstSlash < 0 ? rest : rest.slice(0, firstSlash)).split('@').length > 2) refuse('has more than one @ before the database name, which libpq and the server read differently; percent-encode any @ in the user name, password or host as %40');
     if (firstAt >= 0 && (firstSlash < 0 || firstAt < firstSlash)) { userinfo = rest.slice(0, firstAt); rest = rest.slice(firstAt + 1); }
     const [, hosts, path, query] = rest.match(/^([^/?]*)([^?]*)(?:\?(.*))?$/s);
     // With no user info, a host:port whose port is not a number means an unencoded / cut the user info short and part of
