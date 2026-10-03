@@ -22,7 +22,9 @@ numbers and record number formats have not changed in any entry below.
   work order, the start of a work order converted from a planned order, the CAR due date ("cannot be in the
   past") and the problem report date ("cannot be in the future"). The source-inspection dialog's date limit
   follows the same day, and so do the defaults of Raise SPR, Create work order and Ad hoc work order (planned
-  start the site day, planned finish a week later).
+  start the site day, planned finish a week later). The printed 8130-9, the conformity package checklist, the FAIR
+  signature blocks and the certification notice date each signature on the site day too, so an evening AQI signature
+  and the DAR acceptance it allows carry the same date.
 - **One torque rule (#589, #659).** `MES.stepRecordsTorque` decides whether a step records a torque value. A step
   that mentions torque records one unless every mention is marker work: a stripe, seal, paint, mark or witness mark word follows
   it and either a noun, passive or condition form follows that ("Torque stripe inspection", "Torque seal is intact",

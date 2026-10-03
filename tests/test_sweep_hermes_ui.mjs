@@ -84,6 +84,13 @@ try {
     const options = [...document.querySelectorAll('#seq-edit-form select[name="buyoffType"] option')];
     out.offered = options.filter(item => !item.disabled).map(item => item.value);
     close();
+    // Codex P1 on #605: the printed 8130-9 and conformity checklist date each signature on the site day.
+    const at = new Date().toISOString(), by = { name: 'Quinn Quality' };
+    const pkg = { serial: 'SN-EVE', pdmPath: 'PDM-EVE', status: 'Accepted', voided: [], checks: Object.fromEntries(Object.keys(MES.CONF_CHECKS).map(k => [k, { by, at }])), findings: [], nc: 'No',
+      form: { section: 'Aircraft', partNumber: o.partNumber, revision: o.revision, serial: 'SN-EVE', item: Object.keys(MES.SOC_ITEMS)[0], basis: 'basis', prepared: { by, at, manifest: { hash: 'h' } } },
+      aqi: { by, at, manifest: { hash: 'h' } }, darApproval: { name: 'Dana DAR', designation: 'DAR-F', date: '2026-10-01' } };
+    const dated = html => [...html.matchAll(/\d{4}-\d{2}-\d{2}/g)].map(m => m[0]);
+    out.printDays = [...new Set([...dated(conf8130Html(o, pkg)), ...dated(confCoverHtml(o, pkg))])];
     return out;
   });
   assert.equal(forms.siteToday, '2026-10-01', `the page clock is 17:30 Pacific on 2026-10-01 (${JSON.stringify(forms)})`);
@@ -95,6 +102,7 @@ try {
   assert.equal(forms.adhocDue, '2026-10-08', 'Ad hoc work order defaults its planned finish to a week after the site day');
   assert.equal(forms.added, true, `a Source Inspection operation is added for the edit dialog check: ${forms.added}`);
   assert.deepEqual(forms.offered.sort(), [...(await late.evaluate(() => MES.INSPECTION_BUYOFF_TYPES))].sort(), `Edit operation offers only inspection buy-offs for Source Inspection: ${forms.offered.join(', ')}`);
+  assert.deepEqual(forms.printDays, ['2026-10-01'], `the printed 8130-9 and conformity checklist date the AQI, preparer and step signatures on the site day, matching the DAR date: ${forms.printDays.join(', ')}`);
   assert.deepEqual(lateErrors, []);
   console.log(`Pacific evening forms: SPR ${forms.spr}, work order ${forms.createStart} to ${forms.createDue}, ad hoc ${forms.adhocStart} to ${forms.adhocDue}; Source Inspection edit offers ${forms.offered.join(', ')}`);
   console.log('FAILS []');
