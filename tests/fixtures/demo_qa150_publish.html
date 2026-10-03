@@ -3547,12 +3547,15 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // recorded (wiReviewAt, selected by form.reviewAt); a buy-off signed before that is rebuilt without it. The current form
   // (form.release given) also binds the WI release the buy-off writes, each action owner's account (ownerBy), and who opened the
   // PFMEA and when (the opener is refused the buy-off, so the record cannot later be rewritten to show the signer as the opener).
+  // The opener is selected by form.opened: a release-form buy-off signed before it was bound (no opened in its stored subject) is
+  // rebuilt without it and still verifies.
   const pfmeaSafetySubject = (t, note, signed, wi, form) => { const cur = signed && plain(form) && form.release !== undefined; const who = signed ? snapOf : credOf; return { pfmea: t.id, wi: `${t.wiId} Rev ${t.wiRevision}`, note,
     ...(signed ? { part: t.partNumber ?? null, title: t.title ?? null } : {}),
     ...(signed && wi !== undefined ? { wiReview: plain(wi) ? { peer: snapOf(wi.peerReview), qa: snapOf(wi.qaReview) } : null,
       contributors: Array.isArray(t.contributors) ? [...t.contributors].sort() : null, contributorsComplete: t.contributorsComplete === true } : {}),
     ...(signed && wi !== undefined && plain(form) && form.reviewAt === true ? { wiReviewAt: plain(wi) ? { peer: atOf(wi.peerReview), qa: atOf(wi.qaReview) } : null } : {}),
-    ...(cur ? { release: form.release, opened: { by: snapOf(t.openedBy), at: t.openedAt ?? null } } : {}),
+    ...(cur ? { release: form.release } : {}),
+    ...(cur && form.opened === true ? { opened: { by: snapOf(t.openedBy), at: t.openedAt ?? null } } : {}),
     ...(signed ? { signedBy: plain(signed.by) ? { credentialId: signed.by.credentialId ?? null, name: signed.by.name ?? null, role: signed.by.role ?? null } : null, signedAt: signed.at ?? null } : {}),
     scope: plain(t.scope) ? { team: t.scope.team, boundaries: t.scope.boundaries ?? '', by: who(t.scope.by), ...(signed ? { at: atOf(t.scope) } : {}) } : null,
     analysisDone: plain(t.analysisDone) ? { by: who(t.analysisDone.by), at: t.analysisDone.at } : null,
@@ -3579,7 +3582,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const wiEcoReleaseSubject = wi => ({ wi: `${wi.id} Rev ${wi.revision}`, eco: wi.eco ?? null, by: snapOf(plain(wi.ecoRelease) ? wi.ecoRelease.by : null), at: plain(wi.ecoRelease) ? (wi.ecoRelease.at ?? null) : null, safetyRelease: pfmeaSafetyRelease(wi) });
   const wiEcoReleaseSigned = wi => { const er = plain(wi) ? wi.ecoRelease : null, m = plain(er) ? er.manifest : null; return plain(m) && m.meaning === WI_ECO_RELEASE_MEANING && m.algorithm === 'SHA-256' && m.at === er.at && releaseActorSame(m.signer, er.by) && typeof m.hash === 'string' && m.hash === sha256(canonical(wiEcoReleaseSubject(wi))) && plain(m.subject) && sha256(canonical(m.subject)) === m.hash; };
   const pfmeaReleaseShown = wi => { const sr = plain(wi) ? wi.safetyRelease : null; if (!plain(sr)) return false; if (wi.ecoRelease === undefined && releaseActorSame(wi.releasedBy, sr.by) && wi.releasedAt === sr.at) return (sr.status === 'Unreleased' ? ['Unreleased', 'Obsolete'] : ['Released', 'Obsolete']).includes(wi.status); return sr.status === 'Unreleased' && ['Released', 'Obsolete'].includes(wi.status) && wi.drawingReleased !== false && typeof wi.eco === 'string' && ECO_RE.test(wi.eco) && plain(wi.ecoRelease) && releaseActorSame(wi.releasedBy, wi.ecoRelease.by) && wi.releasedAt === wi.ecoRelease.at && wiEcoReleaseSigned(wi) && typeof sr.at === 'string' && String(wi.ecoRelease.at) >= sr.at; };
-  const pfmeaSafetyExpectedSubject = (t, state) => { const s = plain(t.safety) && plain(t.safety.manifest) ? t.safety.manifest.subject : undefined; return plain(s) && Object.hasOwn(s, 'note') ? pfmeaSafetySubject(t, t.safety.note, Object.hasOwn(s, 'signedBy') ? { by: t.safety.by, at: t.safety.at } : null, Object.hasOwn(s, 'wiReview') ? pfmeaSafetyWI(state, t) : undefined, { reviewAt: Object.hasOwn(s, 'wiReviewAt'), release: Object.hasOwn(s, 'release') ? pfmeaSafetyRelease(pfmeaSafetyWI(state, t)) : undefined }) : pfmeaSafetyLegacySubject(t); };
+  const pfmeaSafetyExpectedSubject = (t, state) => { const s = plain(t.safety) && plain(t.safety.manifest) ? t.safety.manifest.subject : undefined; return plain(s) && Object.hasOwn(s, 'note') ? pfmeaSafetySubject(t, t.safety.note, Object.hasOwn(s, 'signedBy') ? { by: t.safety.by, at: t.safety.at } : null, Object.hasOwn(s, 'wiReview') ? pfmeaSafetyWI(state, t) : undefined, { reviewAt: Object.hasOwn(s, 'wiReviewAt'), release: Object.hasOwn(s, 'release') ? pfmeaSafetyRelease(pfmeaSafetyWI(state, t)) : undefined, opened: Object.hasOwn(s, 'opened') }) : pfmeaSafetyLegacySubject(t); };
   // Everyone whose work the Safety Team buy-off accepts: the person who recorded the scope, failure-mode authors,
   // no-risk reviewers, action closers and the people who completed the analysis and the action step. None of them
   // may give the buy-off.
@@ -9626,7 +9629,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (t.contributorsComplete !== true && Array.isArray(t.history) && t.history.length < MES.PFMEA_HISTORY_CAP) t.contributorsComplete = true;
     const at = now(), by = actor(state);
     const release = MES.pfmeaSafetyRelease({ safetyRelease: { pfmea: t.id, by, at, status: MES.wiDrawingUnreleased(wi) ? 'Unreleased' : 'Released' } });
-    const subject = MES.pfmeaSafetySubject(t, note, { by, at }, wi, { reviewAt: true, release });
+    const subject = MES.pfmeaSafetySubject(t, note, { by, at }, wi, { reviewAt: true, release, opened: true });
     t.safety = { decision: 'Approved', note, by, at, manifest: MES.signManifest(state, MES.PFMEA_SAFETY_MEANING, subject, at) };
     t.status = 'Approved';
     const rel = MES.releaseWIFromPfmea(state, t.wiId, t.wiRevision, t.id);
