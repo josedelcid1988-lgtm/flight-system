@@ -24,7 +24,7 @@ numbers and record number formats have not changed in any entry below.
   follows the same day, and so do the defaults of Raise SPR, Create work order and Ad hoc work order (planned
   start the site day, planned finish a week later).
 - **One torque rule (#589, #659).** `MES.stepRecordsTorque` decides whether a step records a torque value. A step
-  that mentions torque records one unless every mention is marker work: a stripe, seal, paint or mark word follows
+  that mentions torque records one unless every mention is marker work: a stripe, seal, paint, mark or witness mark word follows
   it and either a noun, passive or condition form follows that ("Torque stripe inspection", "Torque seal is intact",
   "Torque stripe missing on B-nut", "Document torque stripe damage") or a
   marker verb comes before it in the same clause, with any modifiers between ("Apply red torque stripe"). Anything else is a
