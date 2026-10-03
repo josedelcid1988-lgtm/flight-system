@@ -282,26 +282,23 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  const posts=[];await ctx.route(/mirror-full\.test|\/api\/v1\/writes/,route=>{try{posts.push(...(JSON.parse(route.request().postData()||'{}').records||[]));}catch(e){}route.fulfill({status:500,contentType:'application/json',body:'{"ok":false}'});});
  await ctx.addInitScript(H=>{window.SK_MIRROR={url:'http://mirror-full.test',token:'full-token',batchSize:50};const real=Storage.prototype.setItem;
   Storage.prototype.setItem=function(k,v){if(this===window.localStorage&&k==='skyryse-mes-legacy-demo-review-v1')throw new DOMException('full','QuotaExceededError');return real.call(this,k,v);};},H);
- // The accounts are seeded once, by a page that closes once another page has seen them. A seed written from every page's init script could land
- // late from one tab and replace the account list after the leftovers were added.
- const s=await ctx.newPage();s.on('pageerror',e=>errs.push(e.message));
-  // It opens the blank page before its seeding script is added, so the seed is written by its second page, not by the
-  // first page of a fresh tab, whose writes can stay unseen by other pages for over a minute under load (#556).
-  await s.goto('file://'+FIXTURES+BLANK);
-  await s.addInitScript(H=>{if(localStorage.getItem('seeded'))return;localStorage.setItem('seeded','1');
-   localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify({users:[{username:'ops9',displayName:'Ops Nine',...H,role:'ops',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'mlee',displayName:'Morgan Lee',...H,role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'}]}));},H);
-  await s.goto('file://'+FIXTURES+'publish.html');await s.waitForFunction(()=>!document.getElementById('sk-login').hidden,null,{timeout:20000});
+ // The accounts are seeded once, by a page that stays on the blank page, where no app runs that could rewrite them, and
+ // writes them directly. A fresh page of the origin must then see them; if it does not, the seed is written again, up
+ // to three times, before any other page writes (#556). A seed written from every page's init script could land late
+ // from one tab and replace the account list after the leftovers were added.
+ const SEED=JSON.stringify({users:[{username:'ops9',displayName:'Ops Nine',...H,role:'ops',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'mlee',displayName:'Morgan Lee',...H,role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'}]});
+ const seedVisible=async()=>{const q=await ctx.newPage();try{await q.goto('file://'+FIXTURES+BLANK);await q.waitForFunction(()=>/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||''),null,{timeout:20000});return true;}catch(e){return false;}finally{await q.close().catch(()=>{});}};
+ const s=await ctx.newPage();s.on('pageerror',e=>errs.push(e.message));await s.goto('file://'+FIXTURES+BLANK);
+ let seedWrites=0,seedSeen=false;
+ while(!seedSeen&&seedWrites<3){await s.evaluate(v=>localStorage.setItem('skyryse-mes-auth-v1',v),SEED);seedWrites++;seedSeen=await seedVisible();}
  // A page already open on the sign-in screen (an active signed-in tab would rewrite shared storage from its own copy).
+ // It opens the blank page first: the first page of a fresh tab can miss the writes of other pages under load (#556).
  // The seeding page stays open until this page sees the seed: a page closed just after its write can lose it (#556).
- // Like the seeding page, it opens the blank page first: the first page of a fresh tab can miss the writes of other
- // pages for over a minute under load (#556). If the seed has still not reached it, the seeding page, the only writer
- // so far, writes it again.
  const open=await ctx.newPage();open.on('pageerror',e=>errs.push(e.message));
  await open.goto('file://'+FIXTURES+BLANK);await open.goto('file://'+FIXTURES+'publish.html');
- const seedSeen=()=>open.waitForFunction(()=>!document.getElementById('sk-login').hidden&&/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||''),null,{timeout:30000}).then(()=>true,()=>false);
- if(!(await seedSeen())){await s.evaluate(()=>{const v=localStorage.getItem('skyryse-mes-auth-v1');if(v){localStorage.removeItem('skyryse-mes-auth-v1');localStorage.setItem('skyryse-mes-auth-v1',v);}});await seedSeen();}
+ await open.waitForFunction(()=>!document.getElementById('sk-login').hidden&&/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||''),null,{timeout:30000}).catch(()=>{});
  {const st=await open.evaluate(()=>({login:!document.getElementById('sk-login').hidden,seeded:/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||'')}));
- ok('review record refused: the seeded accounts reach a page already open on the sign-in screen',st.login&&st.seeded,JSON.stringify(st));}
+ ok('review record refused: the seeded accounts reach a page already open on the sign-in screen',st.login&&st.seeded,JSON.stringify({...st,seedWrites,seedSeen}));}
  await s.close();
  // The leftovers are written by the finding page itself before it loads (a write from another tab arrives asynchronously).
  const leftovers=()=>{if(sessionStorage.getItem('left'))return;sessionStorage.setItem('left','1');const a=JSON.parse(localStorage.getItem('skyryse-mes-auth-v1'));if(!a.users.some(u=>u.username==='master')){a.users.push({username:'master',displayName:'Master Access',salt:'00',hash:'f'.repeat(64),role:'admin',createdAt:'2026-09-17T00:00:00.000Z',createdBy:'demo build'});localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify(a));localStorage.setItem('skyryse-mes-sync-queue-v1',JSON.stringify([{clientWriteId:'old-demo-w',storeKey:'skyryse-mes-work-order-qa100-v1',entityType:'order',entityId:'WO-10009',operation:'upsert',payloadJson:'{}'},{clientWriteId:'prod-w',storeKey:'skyryse-mes-work-order-v1',entityType:'order',entityId:'WO-1',operation:'upsert',payloadJson:'{}'}]));}};
