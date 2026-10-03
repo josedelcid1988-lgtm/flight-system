@@ -417,6 +417,10 @@ const repair = walk('seed-curated', 'WO-10003', 'Repair', {}, state => { MES.get
   const r = host.withAccount(me, () => MES.removeOrderOperation(state, 'WO-10006', inspection.id, 'No longer needed.'));
   const ops = MES.getOrder(state, 'WO-10006').operations;
   ok('Pair: removing the partner of a released operation is refused and removes nothing', addedInspection.ok && r.ok === false && /standard rework pair operation to close/.test(r.message) && ops.some(o => o.id === inspection.id) && ops.some(o => o.id === released.id), JSON.stringify([addedInspection, r]));
+  // The other direction (Jinx on 6f40c2f): removing the released operation itself while it has a pair partner.
+  const r2 = host.withAccount(me, () => MES.removeOrderOperation(state, 'WO-10006', released.id, 'No longer needed.'));
+  const ops2 = MES.getOrder(state, 'WO-10006').operations;
+  ok('Pair: removing the released operation of a pair is refused and removes nothing', r2.ok === false && /QA released this operation to close/.test(r2.message) && ops2.some(o => o.id === inspection.id) && ops2.some(o => o.id === released.id), JSON.stringify(r2));
 }
 
 console.log(fails.length ? `FAILS ${JSON.stringify(fails)}` : 'FAILS []');
