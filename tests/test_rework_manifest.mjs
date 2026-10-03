@@ -459,5 +459,30 @@ const repair = walk('seed-curated', 'WO-10003', 'Repair', {}, state => { MES.get
   ok('Bound release: a release signed by the operation\'s author is refused by validate and fails verifyManifests', MES.validate(forged) === false && /who added the rework operation it was released on/.test(detail(forged)) && failsAt(forged, new RegExp(`${created.id} rework release`)), JSON.stringify([detail(forged), verify(forged).failures]));
 }
 
+// ---- Codex P1 on #602 (4db0d45): a locked standard rework operation released before approval can be resubmitted ----
+{
+  const state = MES.upgrade(structuredClone(seed('seed-curated')));
+  const as = (who, fn) => host.withAccount(who, fn, state);
+  const id = 'WO-10006', order = MES.getOrder(state, id);
+  const op = order.operations.find(item => !item.done) || order.operations[0];
+  const created = as(qm, () => MES.createTicket(state, id, op.id, { type: 'NC', title: 'Torque out of spec', description: 'J3 torque below the drawing value.', hold: true }));
+  as(me, () => MES.dispositionTicket(state, id, created.id, { decision: 'Rework', note: 'Rework J3.' }));
+  { const draft = MES.reworkLibrary(state).find(t => t.ops[0] && t.ops[0].classification === 'Rework'); if (draft && draft.status !== 'Approved') as(qm, () => MES.approveReworkTemplate(state, draft.id)); }
+  const template = MES.reworkLibrary(state).find(t => t.status === 'Approved' && t.ops[0] && t.ops[0].classification === 'Rework');
+  const added = template ? as(me, () => MES.addStandardRework(state, id, { templateId: template.id, ticketId: created.id, position: MES.firstInsertIndex(MES.getOrder(state, id)) })) : { ok: false, message: 'no approved Rework standard in the seed' };
+  const earlyRel = as(qe2, () => MES.approveSequenceChange(state, id));
+  const approved = as(qe, () => MES.resolveTicket(state, id, created.id, 'Rework approved.', { defectCode: 'DIM', subCode: 'DIM-02' }));
+  const tk = () => MES.getOrder(state, id).tickets.find(x => x.id === created.id);
+  const bound = MES.getOrder(state, id).operations.find(o => o.id === tk().reworkPlan.opId);
+  ok('Standard resubmit: the standard pair is released before approval and the NC awaits QA release', added.ok && earlyRel.ok && approved.ok && tk().reworkPlan.stage === 'Awaiting QA release' && !!bound && !!bound.fromStandardRework, JSON.stringify([added, earlyRel, approved, tk().reworkPlan.stage]));
+  const before = JSON.stringify(bound);
+  const noReason = as(me, () => MES.editOrderOperation(state, id, bound.id, { reason: '' }));
+  ok('Standard resubmit: a resubmission needs a reason', noReason.ok === false && /reason for the resubmission/.test(noReason.message), JSON.stringify(noReason));
+  const edit = as(me, () => MES.editOrderOperation(state, id, bound.id, { title: 'Changed', description: 'Changed', buyoffType: bound.buyoffType, steps: 'Changed step', reason: 'Try to change it.' }));
+  ok('Standard resubmit: the locked operation\'s content still cannot be changed', edit.ok && JSON.stringify(MES.getOrder(state, id).operations.find(o => o.id === bound.id)) === before, JSON.stringify(edit));
+  const rel = as(qe2, () => MES.approveSequenceChange(state, id));
+  ok('Standard resubmit: QA releases the resubmission and the NC closes signed, content unchanged', rel.ok && tk().status === 'Resolved' && plain(tk().manifest) && tk().manifest.subject.opId === bound.id && JSON.stringify(MES.getOrder(state, id).operations.find(o => o.id === bound.id)) === before && MES.validate(state) && verify(state).ok, JSON.stringify([rel, tk().status, verify(state).failures]));
+}
+
 console.log(fails.length ? `FAILS ${JSON.stringify(fails)}` : 'FAILS []');
 process.exit(fails.length ? 1 : 0);

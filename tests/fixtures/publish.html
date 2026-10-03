@@ -987,7 +987,7 @@ body.has-next-action .app{padding-bottom:88px}
 body[data-can-edit-wi="no"] [data-action="wi-create"],body[data-can-edit-wi="no"] [data-action="wi-revise"],body[data-can-edit-wi="no"] [data-action="wi-op-add"],body[data-can-edit-wi="no"] [data-action="wi-op-move"],body[data-can-edit-wi="no"] [data-action="wi-op-remove"],body[data-can-edit-wi="no"] [data-action="wi-step-add"],body[data-can-edit-wi="no"] [data-action="wi-step-move"],body[data-can-edit-wi="no"] [data-action="wi-step-remove"],
 body[data-can-approve-wi="no"] [data-action="wi-release"],
 body[data-can-create-wo="no"] [data-action="create"],body[data-can-create-wo="no"] [data-action="wi-create-order"],
-body[data-can-adjust-wo="no"] [data-action="seq-add"],body[data-can-adjust-wo="no"] [data-action="seq-edit"],body[data-can-adjust-wo="no"] [data-action="seq-remove"],
+body[data-can-adjust-wo="no"] [data-action="seq-add"],body[data-can-adjust-wo="no"] [data-action="seq-edit"],body[data-can-adjust-wo="no"] [data-action="seq-resubmit"],body[data-can-adjust-wo="no"] [data-action="seq-remove"],
 body[data-can-split="no"] [data-action="split-order"],
 body[data-can-approve-wo="no"] [data-action="review-release"],body[data-can-approve-wo="no"] [data-action="seq-approve"],body[data-can-approve-wo="no"] [data-action="review"],
 body[data-can-request-pedigree="no"] [data-action="pedigree-change"],
@@ -1862,7 +1862,7 @@ function skBoot(){
   'wi-create':'edit-wi','wi-import':'edit-wi','wi-revise':'edit-wi','wi-op-add':'edit-wi','wi-op-move':'edit-wi','wi-op-remove':'edit-wi','wi-step-add':'edit-wi','wi-step-move':'edit-wi','wi-step-remove':'edit-wi','wi-step-image-remove':'edit-wi',
   'wi-peer-review':'peer-review-wi','wi-release':'approve-wi','wi-qa-pfmea':'approve-wi','wo-issue':'operate','wo-issue-return':'operate',
   'create':'create-wo','wo-import':'create-wo','create-master':'create-wo','create-adhoc':'create-wo','wi-create-order':'create-wo','plan-create':'create-wo','plan-firm':'create-wo','plan-cancel':'create-wo','plan-convert':'create-wo',
-  'seq-add':'adjust-wo','seq-edit':'adjust-wo','seq-remove':'adjust-wo',
+  'seq-add':'adjust-wo','seq-edit':'adjust-wo','seq-resubmit':'adjust-wo','seq-remove':'adjust-wo',
   'engineering-change':'submit-ecr','split-order':'split',
   'review-release':'approve-wo','seq-approve':'approve-wo','review':'approve-wo','send-back':'approve-wo','atp-push':'push-software','atp-review':'accept-software','atp-link':'adjust-wo','po-add':'adjust-wo','external-receive':'approve-nc',
   'open-admin':'manage-access','create-ticket':'raise-nc','mnv-car-new':'raise-nc','mnv-mrb-new':'dispo-nc','mnv-nc-new':'raise-nc','mnv-spr-new':'raise-nc','mnv-spr-jira':'raise-nc','mnv-spr-close':'approve-nc','mnv-scar-jira':'dispo-nc','mnv-scar-close':'approve-nc','ecr-feedback':'submit-ecr','mnv-close-record':'approve-nc','mnv-link-car':'dispo-nc','mnv-car-cancel':'approve-nc',
@@ -1871,7 +1871,7 @@ function skBoot(){
  };
  var FORM_CAP={'wi-create-form':'edit-wi','wi-import-form':'edit-wi','wi-header-form':'edit-wi','wi-ops-form':'edit-wi',
   'create-form':'create-wo','wo-import-form':'create-wo','adhoc-form':'create-wo','plan-form':'create-wo','plan-cancel-form':'create-wo','plan-convert-form':'create-wo',
-  'seq-add-form':'adjust-wo','seq-edit-form':'adjust-wo','seq-remove-form':'adjust-wo','split-form':'split','schedule-form':'operate',
+  'seq-add-form':'adjust-wo','seq-edit-form':'adjust-wo','seq-resubmit-form':'adjust-wo','seq-remove-form':'adjust-wo','split-form':'split','schedule-form':'operate',
   'closure-decide-form':'approve-wo',
   'atp-push-form':'push-software','atp-review-form':'accept-software','assign-form':'assign-work','notice-form':'post-notice','atp-link-form':'adjust-wo','po-add-form':'adjust-wo',
   'release-form':'approve-wo','review-form':'approve-wo','engineering-approval-form':'approve-wo','engineering-form':'submit-ecr',
@@ -5569,7 +5569,11 @@ const OP_BOM_MAX = 12;
   }
 
   function editOrderOperation(state, orderId, opId, input) {
-    { const o0 = state.orders.find(x => x.id === orderId), op0 = o0 && o0.operations.find(x => x.id === opId); if (op0 && op0.fromStandardRework && !op0.done) return fail(`This operation comes from standard rework ${op0.fromStandardRework} and is locked as approved. Remove the pair and add a custom rework to change it.`); }
+    // An operation QA released before Quality approved its NC is resubmitted unchanged, so QA can release it for the
+    // NC (#602). A locked standard rework operation can only be resubmitted that way: its approved content stays as is.
+    const o0 = state.orders.find(x => x.id === orderId), op0 = o0 && o0.operations.find(x => x.id === opId);
+    const resubmitFor = op0 && !op0.done ? (o0.tickets || []).find(t => t.status === 'Open' && plain(t.reworkPlan) && t.reworkPlan.stage === 'Awaiting QA release' && t.reworkPlan.opId === op0.id && !(pendingSequenceChange(o0) && pendingSequenceChange(o0).entries.some(entry => plain(entry) && entry.opId === op0.id))) : null;
+    if (op0 && op0.fromStandardRework && !op0.done && !resubmitFor) return fail(`This operation comes from standard rework ${op0.fromStandardRework} and is locked as approved. Remove the pair and add a custom rework to change it.`);
     { const d = denied('adjust-wo', 'edit an operation'); if (d) return d; }
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
@@ -5579,6 +5583,14 @@ const OP_BOM_MAX = 12;
     const op = order.operations.find(item => item.id === opId);
     if (!op) return fail('Operation not found.');
     if (op.done) return fail('A completed operation can’t be edited.');
+    if (op.fromStandardRework && resubmitFor) {
+      const why = String(input?.reason ?? '').trim();
+      if (!str(why, 300)) return fail('Enter a reason for the resubmission (up to 300 characters).');
+      const number = opNumber(order, op.id), changes = [`resubmitted for the QA release of ${resubmitFor.id}, standard rework ${op.fromStandardRework} unchanged`];
+      queueSequenceChange(state, order, { type: 'edit', opId: op.id, title: op.title, classification: op.classification || null, position: number, reason: why, changes });
+      record(state, order, `Operation Op ${number} resubmitted unchanged for the QA release of ${resubmitFor.id}. Reason: ${why}. QA release required.`);
+      return { ok: true, message: `Op ${number} resubmitted for the QA release of ${resubmitFor.id}. QA must release the sequence change.` };
+    }
     if (order.operations.indexOf(op) < firstInsertIndex(order)) return fail('This operation has checked-off steps. Uncheck them before editing it.');
     const title = String(input?.title ?? '').trim(), description = (String(input?.description ?? '').trim() || title).slice(0, 400);
     if (!str(title, 100)) return fail('Enter an operation title of 1 to 100 characters.');
@@ -5619,7 +5631,7 @@ const OP_BOM_MAX = 12;
       if (editPO.number !== op.externalPO?.number || (editPO.url || '') !== (op.externalPO?.url || '')) changes.push(`purchase order (${editPO.number})`);
     }
     // An operation QA released before Quality approved its NC is resubmitted unchanged, so QA can release it for the NC (#602).
-    { const waiting = order.tickets.find(t => t.status === 'Open' && plain(t.reworkPlan) && t.reworkPlan.stage === 'Awaiting QA release' && t.reworkPlan.opId === op.id); const queued = pendingSequenceChange(order); if (!changes.length && waiting && !(queued && queued.entries.some(entry => plain(entry) && entry.opId === op.id))) changes.push(`resubmitted for the QA release of ${waiting.id}`); }
+    if (!changes.length && resubmitFor) changes.push(`resubmitted for the QA release of ${resubmitFor.id}`);
     if (!changes.length) return fail('Nothing changed. Edit a field before saving.');
     Object.assign(op, { title, description, buyoffType: input.buyoffType, inspectionPoint, requiresTooling, steps, stepChecks: {}, callouts });
     if (training.length) op.training = training; else delete op.training;
@@ -10674,7 +10686,7 @@ function renderSequenceTools(o) {
   const canApprove = skCan('approve-wo') && pending && !pending.entries.some(e => e.by?.credentialId === skActorId());
   return `<div class="sequence-tools">
     ${pending ? `<div class="seq-pending" role="status"><details class="seq-pending-detail"><summary class="seq-pending-title">${icon('lock')}<strong>Sequence change awaiting QA release</strong><span class="seq-pending-count">${pending.entries.length}</span></summary><ul>${pending.entries.map(e => `<li><span class="seq-change ${e.type}">${e.type === 'add' ? 'Added' : e.type === 'edit' ? 'Edited' : 'Removed'}</span> Op ${esc(e.position)} · ${esc(e.title)}${e.classification ? ` <span class="op-class">${esc(e.classification)}</span>` : ''}${e.changes && e.changes.length ? `<small>Changed: ${esc(e.changes.join(', '))}</small>` : ''}${e.reason ? `<small>Reason: ${esc(e.reason)}</small>` : ''}</li>`).join('')}</ul><p class="small">Changed by ${esc(pending.requestedBy.name)}. Buy-offs and issue are held until QA releases the sequence.</p></details><div class="seq-actions"><button class="btn primary" data-action="seq-approve" ${canApprove ? '' : 'disabled'}>QA release sequence</button>${canApprove ? '' : `<p class="small seq-block" role="status">${pending.entries.some(e => e.by?.credentialId === skActorId()) ? 'You made this change, so you cannot release it. A different Quality Engineering or QA Manager account must release the sequence.' : 'Only a Quality Engineering or QA Manager account can release the sequence.'}</p>`}</div></div>` : ''}
-    ${editable ? `<div class="seq-edit"><button class="btn" data-action="seq-add">${icon('plus')} Add operation</button>${editableOp && !selected.fromStandardRework ? `<button class="btn" data-action="seq-edit" data-op="${esc(selected.id)}">Edit Op ${operationNumber(o, selected.id)}</button>` : ''}${editableOp && selected.fromStandardRework ? `<span class="pill" title="Added from a QA-approved standard rework; locked as approved">${icon('lock')} ${esc(selected.fromStandardRework)}${selected.standardRev ? ` Rev ${esc(selected.standardRev)}` : ''} · locked</span>` : ''}${selected && ['Rework', 'Repair'].includes(selected.classification) && skCan('adjust-wo') ? `<button class="btn quiet" data-action="std-rw-save-op" data-order="${esc(o.id)}" data-op="${esc(selected.id)}" title="Save this operation and its inspection to the standard rework library as a Draft pair for QA approval">Save as standard rework</button>` : ''}${removable ? `<button class="btn" data-action="seq-remove" data-op="${esc(selected.id)}">Remove Op ${operationNumber(o, selected.id)}</button>` : ''}</div>` : ''}
+    ${editable ? `<div class="seq-edit"><button class="btn" data-action="seq-add">${icon('plus')} Add operation</button>${editableOp && !selected.fromStandardRework ? `<button class="btn" data-action="seq-edit" data-op="${esc(selected.id)}">Edit Op ${operationNumber(o, selected.id)}</button>` : ''}${editableOp && selected.fromStandardRework ? `<span class="pill" title="Added from a QA-approved standard rework; locked as approved">${icon('lock')} ${esc(selected.fromStandardRework)}${selected.standardRev ? ` Rev ${esc(selected.standardRev)}` : ''} · locked</span>` : ''}${editableOp && selected.fromStandardRework && (o.tickets || []).some(t => t.status === 'Open' && t.reworkPlan && t.reworkPlan.stage === 'Awaiting QA release' && t.reworkPlan.opId === selected.id) && !((MES.pendingSequenceChange && MES.pendingSequenceChange(o) || {}).entries || []).some(e => e && e.opId === selected.id) ? `<button class="btn" data-action="seq-resubmit" data-op="${esc(selected.id)}">Resubmit Op ${operationNumber(o, selected.id)}</button>` : ''}${selected && ['Rework', 'Repair'].includes(selected.classification) && skCan('adjust-wo') ? `<button class="btn quiet" data-action="std-rw-save-op" data-order="${esc(o.id)}" data-op="${esc(selected.id)}" title="Save this operation and its inspection to the standard rework library as a Draft pair for QA approval">Save as standard rework</button>` : ''}${removable ? `<button class="btn" data-action="seq-remove" data-op="${esc(selected.id)}">Remove Op ${operationNumber(o, selected.id)}</button>` : ''}</div>` : ''}
   </div>`;
 }
 
@@ -11973,6 +11985,25 @@ function sequenceEditDialog(opId) {
     <div class="field wide"><label for="edit-reason">Reason for the change</label><textarea id="edit-reason" name="reason" maxlength="300" rows="2" required></textarea></div>
   </div><p id="seq-edit-error" class="form-error" role="alert"></p><div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Cancel</button><button class="btn primary" type="submit">Save changes</button></div></form>`);
 }
+// A locked standard rework operation QA released before Quality approved its NC is resubmitted unchanged (#602).
+function sequenceResubmitDialog(opId) {
+  const o = order(), op = o.operations.find(item => item.id === opId);
+  if (!op) return notify('Select an operation in the sequence first.');
+  openDialog(`Resubmit Op ${operationNumber(o, op.id)}`, `<p>QA released this standard rework operation before Quality approved its NC. Resubmit it unchanged so QA can release it for the NC. Its approved content stays as it is.</p><form id="seq-resubmit-form" data-order="${esc(o.id)}" data-op="${esc(op.id)}"><div class="form-grid"><div class="field wide"><label for="resubmit-reason">Reason for the resubmission</label><textarea id="resubmit-reason" name="reason" maxlength="300" rows="2" required></textarea></div></div><p id="seq-resubmit-error" class="form-error" role="alert"></p><div class="dialog-actions"><button class="btn" type="button" data-action="close-dialog">Cancel</button><button class="btn primary" type="submit">Resubmit for QA release</button></div></form>`);
+}
+document.addEventListener('click', event => {
+  const button = event.target.closest('[data-action="seq-resubmit"]');
+  if (button && !button.disabled) sequenceResubmitDialog(button.dataset.op);
+});
+document.addEventListener('submit', event => {
+  const form = event.target;
+  if (form.id !== 'seq-resubmit-form') return;
+  event.preventDefault();
+  const result = MES.editOrderOperation(state, form.dataset.order, form.dataset.op, { reason: new FormData(form).get('reason') });
+  if (!result.ok) { $('#seq-resubmit-error').textContent = result.message; return; }
+  if (!save()) return;
+  $('#dialog').close(); render(); notify(result.message);
+});
 document.addEventListener('click', event => {
   const button = event.target.closest('[data-action="seq-edit"]');
   if (button && !button.disabled) sequenceEditDialog(button.dataset.op);
@@ -14163,7 +14194,7 @@ function affectedFields(o,t){const serials=MES.orderSerials(state,o).map(e=>e.se
   const rr=['Rework','Repair'].includes(t.dispo.decision)?`<p class="small muted">Approving ${esc(t.dispo.decision)} keeps the hold. ME adds a ${esc(t.dispo.decision.toLowerCase())} operation, then QA releases it to close the ticket.</p>`:'';
   return `<div class="defect-pair"><div class="field"><label for="defect-code">Defect code</label><select id="defect-code" name="defectCode" required><option value="">Choose a defect code…</option>${codes}</select></div><div class="field"><label for="defect-subcode">Sub code</label><select id="defect-subcode" name="subCode" required disabled><option value="">Choose a defect code first</option></select></div></div>${qty}${rr}`;}
 function reworkPlanBlock(o,t){const p=t.reworkPlan;const sr=(o.splitRequests||[]).find(x=>x.id===t.splitRequestId);
-  const stage=p.stage==='Awaiting ME operation'?`<p><strong>Next: Manufacturing Engineering adds a ${esc(p.decision.toLowerCase())} operation.</strong> Add it from the Operations tab using the ${esc(p.decision)} classification. It links to this ticket automatically.</p>`:!(function(){var pend=MES.pendingSequenceChange&&MES.pendingSequenceChange(o);return pend&&(pend.entries||[]).some(function(e){return e&&e.type!=='remove'&&e.opId===p.opId;});})()?`<p><strong>Next: Manufacturing Engineering resubmits Op ${operationNumber(o,p.opId)}.</strong> QA released this ${esc(p.decision.toLowerCase())} operation before Quality approved the disposition, so it has not been released for ${esc(t.id)}. Edit Op ${operationNumber(o,p.opId)} on the Operations tab and save it with a reason, even with no other change. QA then releases that change, which closes this ticket and lifts the hold.</p>`:`<p><strong>Next: QA releases the updated sequence.</strong> ${esc(p.decision)} operation Op ${operationNumber(o,p.opId)} was added${p.opAddedBy?` by ${esc(p.opAddedBy.name)}`:''}. Releasing it closes this ticket and lifts the hold.</p><div class="media-actions"><button class="btn primary" data-action="goto-seq" data-op="${esc(p.opId)}">${icon('check')} Go to the QA release</button></div>${(function(){var pend=MES.pendingSequenceChange&&MES.pendingSequenceChange(o);if(!pend)return '';var mine=(pend.entries||[]).some(function(e){return e.by&&e.by.credentialId===skActorId();});return mine?`<p class="small">This sequence change was made under your account, so a different Quality Engineering or QA Manager account releases it.</p>`:'';})()}`;
+  const stage=p.stage==='Awaiting ME operation'?`<p><strong>Next: Manufacturing Engineering adds a ${esc(p.decision.toLowerCase())} operation.</strong> Add it from the Operations tab using the ${esc(p.decision)} classification. It links to this ticket automatically.</p>`:!(function(){var pend=MES.pendingSequenceChange&&MES.pendingSequenceChange(o);return pend&&(pend.entries||[]).some(function(e){return e&&e.type!=='remove'&&e.opId===p.opId;});})()?`<p><strong>Next: Manufacturing Engineering resubmits Op ${operationNumber(o,p.opId)}.</strong> QA released this ${esc(p.decision.toLowerCase())} operation before Quality approved the disposition, so it has not been released for ${esc(t.id)}. On the Operations tab, edit Op ${operationNumber(o,p.opId)} and save it with a reason, even with no other change, or use Resubmit Op ${operationNumber(o,p.opId)} for a locked standard rework operation. QA then releases that change, which closes this ticket and lifts the hold.</p>`:`<p><strong>Next: QA releases the updated sequence.</strong> ${esc(p.decision)} operation Op ${operationNumber(o,p.opId)} was added${p.opAddedBy?` by ${esc(p.opAddedBy.name)}`:''}. Releasing it closes this ticket and lifts the hold.</p><div class="media-actions"><button class="btn primary" data-action="goto-seq" data-op="${esc(p.opId)}">${icon('check')} Go to the QA release</button></div>${(function(){var pend=MES.pendingSequenceChange&&MES.pendingSequenceChange(o);if(!pend)return '';var mine=(pend.entries||[]).some(function(e){return e.by&&e.by.credentialId===skActorId();});return mine?`<p class="small">This sequence change was made under your account, so a different Quality Engineering or QA Manager account releases it.</p>`:'';})()}`;
   return `<div class="quality-review"><h3>Quality approved: ${esc(p.decision)}</h3><div class="inline-info warning" role="status">${icon('lock')}<div>${stage}<p><span class="small muted">Approval rationale:</span> ${esc(p.approval)}</p>${affectedLine(t)}<p class="small">${esc(p.approvedBy?.name||'')} · ${esc(p.approvedBy?.credentialId||'')} · ${date(p.approvedAt)}</p></div></div>${splitRequestBlock(o,sr)}</div>`;}
 document.addEventListener('click',event=>{const button=event.target.closest('[data-action="goto-seq"]');if(!button)return;$('#dialog').close();tab='operations';selectedOp=button.dataset.op||selectedOp;view='order';render();const release=$('.seq-pending');if(release){release.scrollIntoView({block:'center'});release.querySelector('[data-action="seq-approve"]')?.focus();}});
 function splitRequestBlock(o,sr){if(!sr)return '';if(sr.status!=='Open')return `<div class="inline-info" role="status">${icon('layers')}<p><strong>Split request ${esc(sr.id)}: ${esc(sr.status)}</strong><br>${esc(sr.note||'')}</p></div>`;
