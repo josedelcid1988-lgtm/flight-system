@@ -221,6 +221,11 @@ async function expectPrint(label, trigger) {
 
 // The "Start over" line in docs/DEMO_QUICK_START.md, run exactly as written: it must bring the sample data back and
 // leave every production key alone (the demo and production can share one browser storage origin).
+// Puts or reads one marker recording in the demo and production evidence databases (store 'recordings', out-of-line keys).
+const EVIDENCE_DBS = { demo: 'skyryse-mes-demo-evidence-v1', production: 'skyryse-mes-evidence-v1' };
+const EVIDENCE_PUT = `(async()=>{const dbs=${JSON.stringify(EVIDENCE_DBS)};for(const [k,name] of Object.entries(dbs)){const db=await new Promise((res,rej)=>{const r=indexedDB.open(name,1);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains('recordings'))r.result.createObjectStore('recordings');};r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});await new Promise((res,rej)=>{const t=db.transaction('recordings','readwrite');t.objectStore('recordings').put(new Blob(['reset test']),'EV-RESET-'+k);t.oncomplete=res;t.onerror=()=>rej(t.error);});db.close();}return true;})().catch(()=>false)`;
+const EVIDENCE_GET = `(async()=>{const dbs=${JSON.stringify(EVIDENCE_DBS)};const out={};for(const [k,name] of Object.entries(dbs)){const db=await new Promise((res,rej)=>{const r=indexedDB.open(name,1);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains('recordings'))r.result.createObjectStore('recordings');};r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});out[k]=await new Promise(res=>{const q=db.transaction('recordings').objectStore('recordings').get('EV-RESET-'+k);q.onsuccess=()=>res(!!q.result);q.onerror=()=>res(false);});db.close();}return out;})()`;
+
 async function quickStartReset(sample) {
   const doc = fs.readFileSync(path.join(TESTS, '..', 'docs', 'DEMO_QUICK_START.md'), 'utf8');
   const code = (doc.match(/## 4\. Start over[\s\S]*?```js\n([\s\S]*?)\n\s*```/) || [])[1];
@@ -228,10 +233,14 @@ async function quickStartReset(sample) {
   const changed = await read(() => ({ orders: (state.orders || []).length, users: skAuth.users().map(u => u.username).sort().join(',') }));
   check('the walk-through changed the demo data before the reset', changed.orders !== sample.orders || changed.users !== sample.users, JSON.stringify({ sample, changed }));
   await read(() => localStorage.setItem('skyryse-mes-work-order-v1', '{"production":"keep"}'));
+  // A recording in the demo's evidence database and one in production's: the reset removes only the demo's.
+  check('a demo and a production recording are stored before the reset', await page.evaluate(EVIDENCE_PUT), 'could not store the test recordings');
   await page.evaluate(code.trim());
   await page.goto(DEMO_URL, { waitUntil: 'domcontentloaded' });
   check('after the reset the demo opens on the sign-in screen', await page.waitForSelector('#sk-username', { timeout: 15000 }).then(() => true, () => false));
   check('the reset leaves the production workspace key alone', await read(() => localStorage.getItem('skyryse-mes-work-order-v1')) === '{"production":"keep"}');
+  const kept = await page.evaluate(EVIDENCE_GET);
+  check('the reset removes the demo recording and keeps the production recording', !kept.demo && kept.production, JSON.stringify(kept));
   await signIn('master');
   const after = await read(() => ({ orders: (state.orders || []).length, users: skAuth.users().map(u => u.username).sort().join(',') }));
   check('the reset brings back the original sample orders and accounts', after.orders === sample.orders && after.users === sample.users, JSON.stringify({ sample, after }));

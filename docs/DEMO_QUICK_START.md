@@ -42,12 +42,13 @@ records kept in this browser.
   then reload the page (if Chrome asks first, type `allow pasting` and press Enter):
 
   ```js
-  Object.keys(localStorage).filter(k=>k.startsWith('skyryse-mes-demo-')||k==='skyryse-mes-work-order-qa100-v1').forEach(k=>localStorage.removeItem(k));sessionStorage.removeItem('skyryse-mes-demo-session-v1')
+  Object.keys(localStorage).filter(k=>k.startsWith('skyryse-mes-demo-')||k==='skyryse-mes-work-order-qa100-v1').forEach(k=>localStorage.removeItem(k));sessionStorage.removeItem('skyryse-mes-demo-session-v1');indexedDB.deleteDatabase('skyryse-mes-demo-evidence-v1')
   ```
 
-  It removes only the keys the demo uses (they start with `skyryse-mes-demo-`, plus the demo
-  workspace `skyryse-mes-work-order-qa100-v1`). The demo then loads its sample data again and shows
-  the sign-in screen.
+  It removes only what the demo saved: the keys that start with `skyryse-mes-demo-`, the demo
+  workspace `skyryse-mes-work-order-qa100-v1`, and the demo's recordings database
+  `skyryse-mes-demo-evidence-v1`. Production keys and production recordings are left alone. The
+  demo then loads its sample data again and shows the sign-in screen.
 - Or use a private window (Incognito or InPrivate) when you want a throwaway session: nothing is
   kept when you close it.
 
