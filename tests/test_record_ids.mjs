@@ -187,6 +187,25 @@ await check('assigning a reused push id on a replacement operation does not reas
   assert.equal(state.assignments.find(a => a.id === original.id).status, 'Open');
 });
 
+await check('a review saved before push times were kept stays on the held push when a replacement shares its ids', async () => {
+  // Codex review on #629: a workspace saved by an earlier build could hold a removed operation and its replacement under
+  // one operation id, each with a PUSH-1; the review, saved without pushAt, matched the replacement's push first.
+  for (const replacementStatus of ['Accepted', 'Pending']) {
+    const { state, order, op } = removalSetup();
+    const original = state.assignments.find(a => a.type === 'review-push' && a.opId === op.id && a.status === 'Open');
+    const later = new Date(Date.parse(original.at) + 60000).toISOString();
+    const replacement = { ...structuredClone(op), atp: { ...structuredClone(op.atp), pushes: [{ ...structuredClone(op.atp.pushes[0]), at: later, sha: 'abc0009', version: 'v9.9', status: replacementStatus }] } };
+    order.operations.push(replacement);
+    delete original.pushAt;
+    const upgraded = MES.upgrade(structuredClone(state));
+    assert.ok(upgraded && MES.validate(upgraded), 'the workspace loads');
+    const pinned = upgraded.assignments.find(a => a.id === original.id);
+    assert.equal(pinned.pushAt, op.atp.pushes[0].at, `the review is pinned to the held push (replacement ${replacementStatus})`);
+    MES.syncAssignments(upgraded);
+    assert.equal(upgraded.assignments.find(a => a.id === original.id).status, 'Open', `the held push is still pending, so its review stays open (replacement ${replacementStatus})`);
+  }
+});
+
 await check('validation refuses a repeated id in any of the four lists and a mark below an id it holds', async () => {
   const base = fresh();
   for (let n = 0; n < 3; n += 1) notice(base, n);

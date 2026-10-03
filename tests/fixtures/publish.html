@@ -4330,6 +4330,23 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // withdrawal puts it back. Its open assignments stay open until the change is released (#585). A push is matched by
   // id and by the time it was recorded, so a push on a later operation that reuses the id is never taken for it.
   const heldOp = (order, opId) => pendingSequenceChange(order) && Array.isArray(order.sequenceBaseline) ? order.sequenceBaseline.find(x => plain(x) && x.id === opId) || null : null;
+  // A review assignment saved before pushAt was kept names its push by id alone. Where a removed operation held by a
+  // pending sequence change and its replacement share the operation id, that id can name a push on either, so the
+  // assignment is pinned to the push that existed when it was made: the only pending one, else the latest.
+  function pinLegacyPushAssignments(state) {
+    const time = value => { const t = Date.parse(value); return Number.isFinite(t) ? t : null; };
+    (Array.isArray(state.assignments) ? state.assignments : []).forEach(a => {
+      if (!plain(a) || a.type !== 'review-push' || a.status !== 'Open' || a.pushAt || typeof a.pushId !== 'string') return;
+      const order = (Array.isArray(state.orders) ? state.orders : []).find(o => plain(o) && o.id === a.orderId);
+      const current = order && Array.isArray(order.operations) && order.operations.find(x => plain(x) && x.id === a.opId), held = order && heldOp(order, a.opId);
+      if (!current || !held) return;
+      const all = [current, held].flatMap(op => (plain(op.atp) && Array.isArray(op.atp.pushes) ? op.atp.pushes : []).filter(x => plain(x) && x.id === a.pushId && typeof x.at === 'string'));
+      const made = time(a.at), before = made === null ? all : all.filter(x => time(x.at) !== null && time(x.at) <= made);
+      const candidates = before.length ? before : all, pending = candidates.filter(x => x.status === 'Pending');
+      const target = pending.length === 1 ? pending[0] : [...candidates].sort((x, y) => (time(y.at) || 0) - (time(x.at) || 0))[0];
+      if (target) a.pushAt = target.at;
+    });
+  }
   function syncAssignments(state) {
     if (!Array.isArray(state.assignments)) state.assignments = [];
     markRecordIds(state, 'ASG', state.assignments);
@@ -6886,7 +6903,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     try {
       state = renameKitOp(migrateEngineeringChanges(migrateSplitIds(state)));
       try { migrateChangeIds(state); } catch (e) {}
-      if (plain(state)) { sealCalibrationLog(state); markCalibrationStart(state); repairRecordIds(state); }
+      if (plain(state)) { sealCalibrationLog(state); markCalibrationStart(state); repairRecordIds(state); pinLegacyPushAssignments(state); }
       if (validate(state)) { const migrated = JSON.parse(JSON.stringify(state)); ['audits','certifications','supplierApprovals','qualityValues','qualityVerdicts'].forEach(key=>{if(!Array.isArray(migrated[key]))migrated[key]=[];}); migrateOperationTypes(migrated); return validate(migrated) ? migrated : JSON.parse(JSON.stringify(state)); }
       if (!validateVersion(state, 1) && !validateVersion(state, 2)) return null;
       const upgraded = JSON.parse(JSON.stringify(state));
