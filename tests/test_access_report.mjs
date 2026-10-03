@@ -101,13 +101,15 @@ ok('a lockout in force is shown, and failed sign-ins below the limit are not a l
 
 // ---------------- why blocked: one plain sentence per reason ----------------
 const kNum=setup.kNumber,tNum=setup.tNumber;
+// Running operations comes with the role, but each buy-off also needs a stamp in force of the operation's type.
+const BUYOFF='Operation buy-off is blocked: no stamp in force is assigned to this account, and each buy-off needs one of the operation\'s buy-off type. Ask the QA Manager to issue and assign one.';
 const expect={
   kqe:[`Inspection is paused: Quality stamp ${kNum} expired on Jan 1, 2026. Ask the QA Manager to renew it.`,'Conformity inspection is not granted: a QA Manager grants it to a named person against a current training.','AQI signature is not granted: a QA Manager grants it to a named person against a current training.'],
   tamp:[`Inspection is paused: Quality stamp ${tNum} is suspended. Ask the QA Manager to reinstate it.`,'Conformity inspection is not active: the grant record does not verify (granted to oneself, altered or incomplete), so it does not count. A QA Manager must grant it again.','AQI signature is not granted: a QA Manager grants it to a named person against a current training.'],
   paus:['Conformity inspection is paused: TORQUE training is not on record. Record current TORQUE training to resume it.','AQI signature is not granted: a QA Manager grants it to a named person against a current training.'],
   selfg:['Inspection is paused: no Quality stamp is assigned to this account. Ask the QA Manager to issue and assign one.','Conformity inspection is not granted: a QA Manager grants it to a named person against a current training.','AQI signature is not active: the grant record does not verify (granted to oneself, altered or incomplete), so it does not count. A QA Manager must grant it again.'],
-  xtra:['Quality role is paused: FOD training is not on record. Record current FOD training to resume it.'],
-  ttech:[]
+  xtra:['Quality role is paused: FOD training is not on record. Record current FOD training to resume it.',BUYOFF],
+  ttech:[BUYOFF]
 };
 for (const [u,want] of Object.entries(expect)) ok(`${u}: the why-blocked sentences`,JSON.stringify(acc[u].blocked)===JSON.stringify(want)&&JSON.stringify(await run(n=>skAuth.blockedReasons(n),u))===JSON.stringify(want),JSON.stringify(acc[u].blocked));
 ok('no em dash in any report text',!EM.test(JSON.stringify(rep)));
@@ -131,6 +133,10 @@ await run(()=>profileDialog());
 const own=await run(()=>document.querySelector('#dialog .own-blocked')?.textContent||'');
 ok('Your credentials lists the signed-in person\'s own reasons',own.includes('Why some permissions are blocked')&&expect.kqe.every(t=>own.includes(t))&&!EM.test(own),own);
 await run(()=>document.getElementById('dialog').close());
+// A Technician stamp in force clears the buy-off block: then nothing is blocked for ttech.
+await as('jdoe');
+const tst=await run(([f])=>{const s=MES.issueStamp(state,{name:'Toni Tech',buyoffType:'Technician',account:'ttech',expires:f});save();return {s,why:skAuth.blockedReasons('ttech')};},[future()]);
+ok('a stamp in force of any buy-off type clears the operation buy-off block',tst.s&&tst.s.ok&&JSON.stringify(tst.why)==='[]',JSON.stringify(tst));
 await as('ttech');
 await run(()=>profileDialog());
 ok('nothing blocked: no reasons block in Your credentials',await run(()=>!document.querySelector('#dialog .own-blocked')));
