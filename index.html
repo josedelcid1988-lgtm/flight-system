@@ -991,7 +991,7 @@ body[data-can-adjust-wo="no"] [data-action="seq-add"],body[data-can-adjust-wo="n
 body[data-can-split="no"] [data-action="split-order"],
 body[data-can-approve-wo="no"] [data-action="review-release"],body[data-can-approve-wo="no"] [data-action="seq-approve"],body[data-can-approve-wo="no"] [data-action="review"],
 body[data-can-request-pedigree="no"] [data-action="pedigree-change"],
-body[data-can-operate="no"] [data-action="schedule"],body[data-can-operate="no"] [data-action="advance"],body[data-can-operate="no"] [data-action="aog-resolve"],body[data-can-operate="no"] [data-action="open-inventory"],body[data-can-operate="no"] [data-action="serial-next"],body[data-can-operate="no"] [data-action="serial-void"],body[data-can-operate="no"] [data-action="record-media"],body[data-can-operate="no"] .att-btn,body[data-can-operate="no"] [data-material],body[data-can-operate="no"] [data-material-lot],body[data-can-operate="no"] [data-priority-order],body[data-can-operate="no"] .step-check{display:none!important}
+body[data-can-operate="no"] [data-action="schedule"],body[data-can-operate="no"] [data-action="advance"],body[data-can-operate="no"] [data-action="aog-resolve"],body[data-can-operate="no"] [data-action="open-inventory"],body[data-can-operate="no"] [data-action="serial-next"],body[data-can-operate="no"] [data-action="serial-void"],body[data-can-operate="no"] .att-btn,body[data-can-operate="no"] [data-material],body[data-can-operate="no"] [data-material-lot],body[data-can-operate="no"] [data-priority-order],body[data-can-operate="no"] .step-check{display:none!important}
 .access-panel{margin:16px 0 0;border:1px solid var(--line);border-radius:8px;padding:8px 16px}
 .access-panel summary{cursor:pointer;font-weight:600;font-size:14px;min-height:32px;display:flex;align-items:center;line-height:20px}
 .access-table th[scope=row]{font-weight:600;white-space:nowrap}
@@ -1809,7 +1809,9 @@ function skBoot(){
  function hashPassword(salt,password){if(!(window.crypto&&crypto.subtle))return Promise.reject(new Error('Secure hashing is not available in this browser context.'));return crypto.subtle.digest('SHA-256',new TextEncoder().encode(salt+':'+password)).then(toHex);}
  function currentUser(){try{if(SERVER&&!serverToken())return null;var u=sessionStorage.getItem(SESSION_KEY);if(!u)return null;var a=loadAuth();return a.users.find(function(x){return x.username===u;})||null;}catch(e){return null;}}
  // Security events for the audit log kept by the hardening layer (sign-in, failures, lockouts, role changes).
- function secEvent(type,detail){try{window.dispatchEvent(new CustomEvent('sk-security',{detail:Object.assign({type:type,at:new Date().toISOString()},detail||{})}));}catch(e){}}
+ // The sign-in form works while the rest of the page is still loading, before that layer listens: an event raised
+ // then is held and the layer records it when it starts, so a lockout is recorded like the lock it applies.
+ function secEvent(type,detail){var d=Object.assign({type:type,at:new Date().toISOString()},detail||{});if(!window.skSecurityLog){(window.skSecurityPending=window.skSecurityPending||[]).push(d);return;}try{window.dispatchEvent(new CustomEvent('sk-security',{detail:d}));}catch(e){}}
  var LOCK_KEY='skyryse-mes-lockout-v1',LOCK_AFTER=5,LOCK_MINUTES=5;
  function lockState(username){try{var all=JSON.parse(localStorage.getItem(LOCK_KEY)||'{}');return all[username]||{fails:0,until:0};}catch(e){return {fails:0,until:0};}}
  function lockWrite(username,st){try{var all=JSON.parse(localStorage.getItem(LOCK_KEY)||'{}');all[username]=st;localStorage.setItem(LOCK_KEY,JSON.stringify(all));}catch(e){}}
@@ -1865,7 +1867,7 @@ function skBoot(){
   'review-release':'approve-wo','seq-approve':'approve-wo','review':'approve-wo','send-back':'approve-wo','atp-push':'push-software','atp-review':'accept-software','atp-link':'adjust-wo','po-add':'adjust-wo','external-receive':'approve-nc',
   'open-admin':'manage-access','create-ticket':'raise-nc','mnv-car-new':'raise-nc','mnv-mrb-new':'dispo-nc','mnv-nc-new':'raise-nc','mnv-spr-new':'raise-nc','mnv-spr-jira':'raise-nc','mnv-spr-close':'approve-nc','mnv-scar-jira':'dispo-nc','mnv-scar-close':'approve-nc','ecr-feedback':'submit-ecr','mnv-close-record':'approve-nc','mnv-link-car':'dispo-nc','mnv-car-cancel':'approve-nc',
   'pedigree-change':'request-pedigree','pedigree-approve':'approve-pedigree',
-  'schedule':'operate','advance':'operate','aog-resolve':'operate','open-inventory':'operate','serial-next':'operate','serial-void':'operate','record-media':'operate-steps','upload-media':'operate-steps','start-recording':'operate-steps','add-tool':['operate-steps','inspect-steps']
+  'schedule':'operate','advance':'operate','aog-resolve':'operate','open-inventory':'operate','serial-next':'operate','serial-void':'operate','record-media':['operate-steps','inspect-steps'],'upload-media':['operate-steps','inspect-steps'],'start-recording':['operate-steps','inspect-steps'],'add-tool':['operate-steps','inspect-steps']
  };
  var FORM_CAP={'wi-create-form':'edit-wi','wi-import-form':'edit-wi','wi-header-form':'edit-wi','wi-ops-form':'edit-wi',
   'create-form':'create-wo','wo-import-form':'create-wo','adhoc-form':'create-wo','plan-form':'create-wo','plan-cancel-form':'create-wo','plan-convert-form':'create-wo',
@@ -1876,7 +1878,7 @@ function skBoot(){
   'ticket-form':'raise-nc','ticket-dispo-form':'dispo-nc','resolve-ticket-form':'approve-nc','return-dispo-form':'approve-nc',
   'mnv-car-form':'raise-nc','mnv-mrb-form':'dispo-nc','mnv-containment-form':'dispo-nc','mnv-rootcause-form':'dispo-nc','mnv-action-form':'dispo-nc','mnv-verify-form':'approve-nc','mnv-effect-form':'approve-nc','mnv-close-form':'approve-nc','mnv-cancel-form':'approve-nc','mnv-decide-form':'approve-nc','mnv-spr-form':'raise-nc','mnv-spr-jira-form':'raise-nc','mnv-spr-close-form':'approve-nc','mnv-scar-request-form':'dispo-nc','mnv-scar-jira-form':'dispo-nc','mnv-scar-close-form':'approve-nc','mnv-nc-form':'raise-nc','mnv-nc-dispo-form':'dispo-nc','mnv-nc-contain-form':'dispo-nc','mnv-nc-approve-form':'approve-nc','mnv-link-form':'dispo-nc',
   'pfm-safety-form':'safety-buyoff','wo-issue-form':'operate','wo-return-form':'operate',
-  'pedigree-form':'request-pedigree','inventory-form':'operate','serial-form':'operate','serial-void-form':'operate','aog-form':'operate','operation-form':['operate-steps','inspect-steps'],'external-receive-form':'approve-nc','record-note-form':'operate-steps','media-form':'operate-steps'};
+  'pedigree-form':'request-pedigree','inventory-form':'operate','serial-form':'operate','serial-void-form':'operate','aog-form':'operate','operation-form':['operate-steps','inspect-steps'],'external-receive-form':'approve-nc','record-note-form':'operate-steps','media-form':['operate-steps','inspect-steps']};
  function canManageAccess(u){var r=roleOf(u);return r==='admin'||r==='qm'||r==='qs';}
  function primaryRole(u){return (u&&ROLES.some(function(r){return r.key===u.role;}))?u.role:'general';}
  // An account holds a primary role and may hold more standard roles; its abilities are the union.
@@ -3331,33 +3333,40 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     }
     return STAMP_HOLDERS.find(holder => holder.name.toLowerCase() === name) || null;
   };
+  // One rule for whether an issued stamp can sign on a Pacific workday: it has a valid issue date that has been
+  // reached, it is Active, it has not expired, and the training behind an additional stamp is current. Operation
+  // buy-offs (stampCheck), the inspection capability (hasValidInspectionStamp) and the FAIR, 8130-9 and AQI
+  // signatures (inspectorSign) all use it, so the paths cannot disagree about a stamp (#579). Returns the refusal
+  // text, or null when the stamp is valid.
+  function stampValidityProblem(holder, day, state) {
+    const who = `Stamp ${holder.number} (${holder.name})`;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(holder.since || ''))) return `${who} has no valid issue date. Ask the QA Manager to correct the stamp record before it is used.`;
+    if (holder.since > day) return `${who} is not active until ${holder.since}. It cannot be used before its issue date; ask the QA Manager to correct the issue date if it is wrong.`;
+    if (holder.status === 'Suspended') return `${who} is suspended. The QA Manager must reinstate it before it can buy off work.`;
+    if (holder.status === 'Retired') return `${who} is retired and cannot be used.`;
+    if (holder.status && holder.status !== 'Active') return `${who} is not active and cannot be used.`;
+    if (holder.expires && (!/^\d{4}-\d{2}-\d{2}$/.test(String(holder.expires)) || holder.expires < day)) return `${who} expired on ${holder.expires}. Requalification must be recorded and the stamp renewed by the QA Manager before it can be used.`;
+    if (holder.expansionTraining) { const t = trainingStatus({ name: holder.name, training: holder.training }, holder.expansionTraining, day, state); if (!t.ok) return `${who} is an additional stamp issued on ${holder.expansionTraining} training that is ${t.state === 'expired' ? `expired (${t.expires})` : t.state === 'retrain' ? 'due for retraining' : 'not on record'}. It pauses until the training is current; ask the QA Manager to record current ${holder.expansionTraining} training.`; }
+    return null;
+  }
   function stampCheck(profile, at = new Date().toISOString()) {
     const holder = stampHolderFor(profile);
     if (!holder) return fail(`${profile?.name || 'This person'} does not hold an issued stamp in the Stamp Control Log, so cannot buy off operations. Switch to a stamp holder’s credentials.`);
     if (String(profile.credentialId).trim().toLowerCase() !== stampCredential(holder).toLowerCase()) return fail(`The credential ID does not match the stamp issued to ${holder.name}. Pick the holder again in Your credentials.`);
-    const day = pacificDay(at);
-    if (holder.since > day) return fail(`${holder.name}’s stamp is not active until ${holder.since}.`);
-    if (holder.status === 'Suspended') return fail(`Stamp ${holder.number} (${holder.name}) is suspended. The QA Manager must reinstate it before it can buy off work.`);
-    if (holder.status === 'Retired') return fail(`Stamp ${holder.number} (${holder.name}) is retired and cannot be used.`);
-    if (holder.expires && holder.expires < day) return fail(`Stamp ${holder.number} (${holder.name}) expired on ${holder.expires}. Requalification must be recorded by the QA Manager before it can be used.`);
     if (holder.id) {
       const acct = accountActor();
       if (acct && !holder.account) return fail(`Stamp ${holder.number} is not assigned to an account. Ask the QA Manager to assign it to ${holder.name}'s account before it is used.`);
       if (acct && holder.account !== acct.account) return fail(`Stamp ${holder.number} is issued to account ${holder.account}. You are signed in as ${acct.account}, so you cannot stamp as ${holder.name}.`);
-      if (holder.expansionTraining) { const t = trainingStatus({ name: holder.name, training: holder.training }, holder.expansionTraining, day); if (!t.ok) return fail(`Stamp ${holder.number} is an additional stamp for ${holder.name}, issued on ${holder.expansionTraining} training that is ${t.state === 'expired' ? `expired (${t.expires})` : t.state === 'retrain' ? 'due for retraining' : 'not on record'}. It pauses until the training is current.`); }
     }
+    { const problem = stampValidityProblem(holder, pacificDay(at)); if (problem) return fail(problem); }
     return { ok: true, holder };
   }
   function hasValidInspectionStamp(state, username, at = new Date().toISOString()) {
     const account = String(username || '').trim().toLowerCase();
     if (!plain(state) || !account || !Array.isArray(state.stamps)) return false;
     const day = pacificDay(at);
-    return state.stamps.some(stamp => {
-      if (!plain(stamp) || String(stamp.account || '').trim().toLowerCase() !== account || stamp.buyoffType !== 'Quality' || stamp.status !== 'Active') return false;
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(stamp.issued || '')) || stamp.issued > day) return false;
-      if (stamp.expires && (!/^\d{4}-\d{2}-\d{2}$/.test(String(stamp.expires)) || stamp.expires < day)) return false;
-      return !stamp.expansionTraining || trainingCurrentFor(state, account, stamp.expansionTraining).ok;
-    });
+    return state.stamps.some(stamp => plain(stamp) && String(stamp.account || '').trim().toLowerCase() === account && stamp.buyoffType === 'Quality' && stamp.status === 'Active' &&
+      !stampValidityProblem({ ...holderFromStamp(stamp), training: personTraining(state, account) }, day, state));
   }
 
 
@@ -5880,9 +5889,15 @@ const OP_BOM_MAX = 12;
     const override = masterOverride(types);
     if (override) return { ok: true, override };
     const acct = accountActor();
-    const stamp = (state.stamps || []).find(s => s.status === 'Active' && types.includes(s.buyoffType) && acct && s.account === acct.account);
-    if (!stamp) return fail(`Signing needs an active ${types.join(' or ')} stamp issued to your account.`);
-    const holder = holderFromStamp(stamp);
+    const mine = acct ? (state.stamps || []).filter(s => plain(s) && s.status === 'Active' && types.includes(s.buyoffType) && s.account === acct.account) : [];
+    if (!mine.length) return fail(`Signing needs an active ${types.join(' or ')} stamp issued to your account.`);
+    // The same validity rule as an operation buy-off (#579): a stamp that is not yet issued, expired or paused for
+    // training does not sign. Any one current stamp of an allowed type is enough.
+    const day = pacificDay(new Date().toISOString());
+    const checked = mine.map(s => { const h = { ...holderFromStamp(s), training: personTraining(state, s.account) }; return { holder: h, problem: stampValidityProblem(h, day, state) }; });
+    const current = checked.find(c => !c.problem);
+    if (!current) return fail(`Signing needs a current ${types.join(' or ')} stamp issued to your account. ${checked.map(c => c.problem).join(' ')}`);
+    const holder = current.holder;
     { const s2 = identityStepUp(holder, execution); if (!s2.ok) return fail(s2.message); }
     return { ok: true, holder };
   }
@@ -7505,7 +7520,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const rejectedClip = operation.evidence.find(item => item.rejectedAt);
     if (rejectedClip) return fail(`${rejectedClip.id} was rejected by ${rejectedClip.rejectedBy.name}: ${rejectedClip.rejectReason}. Remove it and attach a replacement recording before buy-off.`);
     const evidenceIds = operation.evidence.filter(item => item.reviewedAt !== null).map(item => item.id);
-    if (operation.requiresRecording && !evidenceIds.length) return fail('Attach and review at least one video before this installation operation can be bought off.');
+    if (operation.requiresRecording && !evidenceIds.length) return fail('Attach and review at least one video before this operation can be bought off.');
     const openSteps = (Array.isArray(operation.steps) ? operation.steps: []).filter(step => !(plain(operation.stepChecks) && operation.stepChecks[step.id]));
     if (openSteps.length) return fail(`Check off the remaining ${openSteps.length} operation step${openSteps.length === 1 ? '' : 's'} before buy-off.`);
     const at = new Date().toISOString();
@@ -13728,10 +13743,15 @@ const mediaSize = size => size < 1024 * 1024 ? Math.max(1, Math.round(size / 102
 const mediaOperation = (id, opId) => MES.getOrder(state, id)?.operations.find(op => op.id === opId);
 const mediaEditable = (o, op) => o.status === 'Building' && !MES.engineeringChange(o) && !op.done && o.operations.find(item => !item.done) === op && !MES.blockingTickets(o, op.id).length;
 
+// Installation orders keep the Installation wording; any other order with a required recording says Operation.
+const mediaKind = o => o.subcategory === 'Installation' ? 'Installation' : 'Operation';
+// Whoever works the operation adds its recording: operate-steps on any operation, inspect-steps on an inspection
+// operation (the Quality inspector who buys it off), the same split as step check-off.
+const mediaCaptureAllowed = op => skCan('operate-steps') || (MES.isInspectionOp(op) && skCan('inspect-steps'));
 function renderMediaEvidence(o, op) {
-  if (o.subcategory !== 'Installation' && !op.evidence?.length) return '';
+  if (o.subcategory !== 'Installation' && !op.requiresRecording && !op.evidence?.length) return '';
   const clips = op.evidence || [], editable = mediaEditable(o, op), reviewed = clips.filter(e => e.reviewedAt);
-  return `<section class="installation-evidence" aria-labelledby="media-heading"><div class="linked-heading"><h3 id="media-heading">Installation evidence</h3><span class="report-result ${reviewed.length ? 'pass' : ''}">${reviewed.length ? reviewed.length + 'Reviewed' : op.requiresRecording ? 'Recording required' : 'Optional recording'}</span></div>${clips.map(e => `<article class="media-item"><div class="media-item-heading">${icon('video')}<div><strong>${esc(e.fileName)}</strong><small>${esc(e.source === 'recording' ? 'Recorded here' : 'Uploaded recording')} · ${mediaSize(e.size)} · ${date(e.addedAt)}</small></div><span class="report-result ${e.rejectedAt ? 'fail' : e.reviewedAt ? 'pass' : ''}">${e.rejectedAt ? 'Rejected' : e.reviewedAt ? 'Reviewed' : 'Awaiting review'}</span></div><p>${esc(e.description)}</p><p class="media-credit">Linked by ${esc(e.capturedBy.name)} · ${esc(e.capturedBy.credentialId)}${e.reviewedAt ? '<br>Reviewed by ' + esc(e.reviewedBy.name) + ' · ' + date(e.reviewedAt) : ''}${e.rejectedAt ? '<br>Rejected by ' + esc(e.rejectedBy.name) + ' · ' + date(e.rejectedAt) : ''}</p>${e.rejectedAt ? `<div class="inline-info warning" role="status">${icon('lock')}<div><p><strong>Rejected: ${esc(e.rejectReason)}</strong></p><p class="small">Remove this clip and attach a replacement before buy-off.</p></div></div>` : ''}<div class="media-actions">${e.rejectedAt ? '' : `<button class="btn" data-action="review-media" data-op="${esc(op.id)}" data-evidence="${esc(e.id)}">Review recording</button>`}${!e.reviewedAt && !e.rejectedAt && editable ? `<button class="btn quiet" data-action="reject-media" data-op="${esc(op.id)}" data-evidence="${esc(e.id)}">Reject recording</button>` : ''}<button class="btn quiet" data-action="download-media" data-op="${esc(op.id)}" data-evidence="${esc(e.id)}">${icon('download')} Download</button>${editable ? '<button class="btn quiet" data-action="remove-media" data-op="' + esc(op.id) + '" data-evidence="' + esc(e.id) + '">Remove</button>' : ''}</div></article>`).join('')}${!clips.length ? '<div class="media-empty">' + icon('video') + '<div><strong>No recording linked yet</strong><p>Your video and description become the supporting evidence for this step.</p></div></div>' : ''}${editable && clips.length < 3 ? `<div class="media-actions"><button class="btn primary" data-action="record-media" data-op="${esc(op.id)}">${icon('video')} Record video</button><button class="btn" data-action="upload-media" data-op="${esc(op.id)}">${icon('upload')} Upload recording</button><input id="evidence-file" type="file" accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov" data-op="${esc(op.id)}" hidden></div>` : ''}<p class="media-footnote">${window.skServer&&window.skServer.active?'Stored on the shared evidence server with a browser offline cache.':'Local browser storage only, not a controlled evidence archive.'} Download a backup. Up to 3 clips, 100 MB each. ${op.done ? 'Evidence is locked after buy-off.' : clips.some(e => e.rejectedAt) ? 'A rejected recording is attached. Remove it and attach a replacement before buy-off.' : op.requiresRecording && !reviewed.length ? 'Buy-off needs at least one saved, reviewed recording.' : ''}</p></section>`;
+  return `<section class="installation-evidence" aria-labelledby="media-heading"><div class="linked-heading"><h3 id="media-heading">${mediaKind(o)} evidence</h3><span class="report-result ${reviewed.length ? 'pass' : ''}">${reviewed.length ? reviewed.length + 'Reviewed' : op.requiresRecording ? 'Recording required' : 'Optional recording'}</span></div>${clips.map(e => `<article class="media-item"><div class="media-item-heading">${icon('video')}<div><strong>${esc(e.fileName)}</strong><small>${esc(e.source === 'recording' ? 'Recorded here' : 'Uploaded recording')} · ${mediaSize(e.size)} · ${date(e.addedAt)}</small></div><span class="report-result ${e.rejectedAt ? 'fail' : e.reviewedAt ? 'pass' : ''}">${e.rejectedAt ? 'Rejected' : e.reviewedAt ? 'Reviewed' : 'Awaiting review'}</span></div><p>${esc(e.description)}</p><p class="media-credit">Linked by ${esc(e.capturedBy.name)} · ${esc(e.capturedBy.credentialId)}${e.reviewedAt ? '<br>Reviewed by ' + esc(e.reviewedBy.name) + ' · ' + date(e.reviewedAt) : ''}${e.rejectedAt ? '<br>Rejected by ' + esc(e.rejectedBy.name) + ' · ' + date(e.rejectedAt) : ''}</p>${e.rejectedAt ? `<div class="inline-info warning" role="status">${icon('lock')}<div><p><strong>Rejected: ${esc(e.rejectReason)}</strong></p><p class="small">Remove this clip and attach a replacement before buy-off.</p></div></div>` : ''}<div class="media-actions">${e.rejectedAt ? '' : `<button class="btn" data-action="review-media" data-op="${esc(op.id)}" data-evidence="${esc(e.id)}">Review recording</button>`}${!e.reviewedAt && !e.rejectedAt && editable ? `<button class="btn quiet" data-action="reject-media" data-op="${esc(op.id)}" data-evidence="${esc(e.id)}">Reject recording</button>` : ''}<button class="btn quiet" data-action="download-media" data-op="${esc(op.id)}" data-evidence="${esc(e.id)}">${icon('download')} Download</button>${editable ? '<button class="btn quiet" data-action="remove-media" data-op="' + esc(op.id) + '" data-evidence="' + esc(e.id) + '">Remove</button>' : ''}</div></article>`).join('')}${!clips.length ? '<div class="media-empty">' + icon('video') + '<div><strong>No recording linked yet</strong><p>Your video and description become the supporting evidence for this step.</p></div></div>' : ''}${editable && clips.length < 3 && !mediaCaptureAllowed(op) ? `<p class="media-footnote">Your role cannot add a recording to this operation. ${MES.isInspectionOp(op) ? 'A Quality inspector' : 'A Technician'} working this operation adds it.</p>` : ''}${editable && clips.length < 3 && mediaCaptureAllowed(op) ? `<div class="media-actions"><button class="btn primary" data-action="record-media" data-op="${esc(op.id)}">${icon('video')} Record video</button><button class="btn" data-action="upload-media" data-op="${esc(op.id)}">${icon('upload')} Upload recording</button><input id="evidence-file" type="file" accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov" data-op="${esc(op.id)}" hidden></div>` : ''}<p class="media-footnote">${window.skServer&&window.skServer.active?'Stored on the shared evidence server with a browser offline cache.':'Local browser storage only, not a controlled evidence archive.'} Download a backup. Up to 3 clips, 100 MB each. ${op.done ? 'Evidence is locked after buy-off.' : clips.some(e => e.rejectedAt) ? 'A rejected recording is attached. Remove it and attach a replacement before buy-off.' : op.requiresRecording && !reviewed.length ? 'Buy-off needs at least one saved, reviewed recording.' : ''}</p></section>`;
 }
 
 function mediaError(message) { const el = $('#media-error'); if (el) { el.textContent = message; el.focus(); } else notify(message); }
@@ -13768,11 +13788,12 @@ function cleanupMediaSession() {
   s.stream?.getTracks().forEach(track => track.stop());
   if (s.url) URL.revokeObjectURL(s.url);
 }
-function mediaContext(o, op) { return `<p class="media-context"><strong>${esc(o.id)}</strong> · Op ${operationNumber(o, op.id)} · Rev ${esc(o.revision)}<br>Development / Installation · ${esc(op.title)}</p>`; }
+function mediaContext(o, op) { return `<p class="media-context"><strong>${esc(o.id)}</strong> · Op ${operationNumber(o, op.id)} · Rev ${esc(o.revision)}<br>${esc(o.pedigree)} / ${esc(o.subcategory)} · ${esc(op.title)}</p>`; }
 function mediaEditor(opId, source) {
   const o = order(), op = mediaOperation(o.id, opId);
   if (!op || !mediaEditable(o, op) || op.evidence.length >= 3) return notify('Select an available current operation to attach a recording.');
-  openDialog(source === 'recording' ? 'Record installation evidence' : 'Link installation recording', `${mediaContext(o, op)}<p>Only record people and work you have permission to capture. Nothing is uploaded to a server.</p><div class="capture-stage"><video id="capture-video" playsinline aria-label="Installation recording preview" hidden></video><div id="capture-placeholder">${icon('video')}<span>${source === 'recording' ? 'Camera is off' : 'Checking your recording…'}</span></div></div><p id="media-status" class="media-status" role="status">${source === 'recording' ? 'Ready when you are. Camera permission is requested on Start recording.' : 'Reading the selected video.'}</p><div id="media-error" class="form-error" role="alert" tabindex="-1"></div>${source === 'recording' ? '<label class="check-label"><input id="record-audio" type="checkbox" checked><span>Include microphone audio</span></label><div class="media-actions"><button id="record-start" class="btn primary" data-action="start-recording">Start recording</button><button id="record-stop" class="btn" data-action="stop-recording" hidden>Stop recording</button></div><p class="media-footnote">Recording stops at 10 minutes or near 100 MB, and when you leave this tab. Closing this window discards an unsaved clip.</p>' : ''}<form id="media-form"><div class="field"><label for="media-description">Evidence description</label><textarea id="media-description" name="description" minlength="3" maxlength="1000" required placeholder="Describe the work shown and the result observed. Include enough written detail to understand the recording."></textarea></div><div class="dialog-actions"><button id="download-pending" type="button" class="btn" data-action="download-pending" hidden>Download a copy</button><button id="save-media" type="submit" class="btn primary" disabled>Save &amp; link evidence</button></div></form>`);
+  if (!mediaCaptureAllowed(op)) return notify('Your role cannot add a recording to this operation.');
+  openDialog(source === 'recording' ? `Record ${mediaKind(o).toLowerCase()} evidence` : `Link ${mediaKind(o).toLowerCase()} recording`, `${mediaContext(o, op)}<p>Only record people and work you have permission to capture. Nothing is uploaded to a server.</p><div class="capture-stage"><video id="capture-video" playsinline aria-label="${mediaKind(o)} recording preview" hidden></video><div id="capture-placeholder">${icon('video')}<span>${source === 'recording' ? 'Camera is off' : 'Checking your recording…'}</span></div></div><p id="media-status" class="media-status" role="status">${source === 'recording' ? 'Ready when you are. Camera permission is requested on Start recording.' : 'Reading the selected video.'}</p><div id="media-error" class="form-error" role="alert" tabindex="-1"></div>${source === 'recording' ? '<label class="check-label"><input id="record-audio" type="checkbox" checked><span>Include microphone audio</span></label><div class="media-actions"><button id="record-start" class="btn primary" data-action="start-recording">Start recording</button><button id="record-stop" class="btn" data-action="stop-recording" hidden>Stop recording</button></div><p class="media-footnote">Recording stops at 10 minutes or near 100 MB, and when you leave this tab. Closing this window discards an unsaved clip.</p>' : ''}<form id="media-form"><div class="field"><label for="media-description">Evidence description</label><textarea id="media-description" name="description" minlength="3" maxlength="1000" required placeholder="Describe the work shown and the result observed. Include enough written detail to understand the recording."></textarea></div><div class="dialog-actions"><button id="download-pending" type="button" class="btn" data-action="download-pending" hidden>Download a copy</button><button id="save-media" type="submit" class="btn primary" disabled>Save &amp; link evidence</button></div></form>`);
   $('#dialog').classList.add('media-dialog');
   mediaSession = { orderId: o.id, opId, source, blob: null, fileName: '', stream: null, recorder: null, url: null, timer: null, cancelled: false };
   return mediaSession;
@@ -13881,6 +13902,7 @@ async function saveFile(blob, name) {
 function downloadBlob(blob, name) { saveFile(blob, name); }
 async function saveMedia(form) {
   const s = mediaSession; if (!s?.blob || mediaBusy) return;
+  if (!mediaCaptureAllowed(mediaOperation(s.orderId, s.opId))) return mediaError('Your role cannot add a recording to this operation.');
   const description = form.elements.description.value.trim();
   if (description.length < 3) return mediaError('Add a description of at least 3 characters.');
   let stored = false, id;
@@ -13903,7 +13925,7 @@ async function saveMedia(form) {
 async function reviewMedia(opId, id) {
   const o = order(), op = mediaOperation(o.id, opId), e = op?.evidence.find(e => e.id === id);
   if (!e) return;
-  openDialog('Review installation evidence', `${mediaContext(o, op)}<video id="evidence-playback" class="evidence-playback" controls playsinline preload="metadata" aria-label="Installation objective evidence"></video><h3 class="media-review-title">${esc(e.fileName)}</h3><p class="record-note">${esc(e.description)}</p><p class="media-credit">${mediaSize(e.size)} · Linked by ${esc(e.capturedBy.name)} · ${date(e.addedAt)}</p><div id="media-error" class="form-error" role="alert" tabindex="-1"></div><p id="media-status" role="status" class="media-status">Loading recording from the shared server or offline cache…</p>${mediaEditable(o, op) && !e.reviewedAt ? '<form id="media-review-form"><label class="check-label"><input type="checkbox" name="acknowledge" required><span>I reviewed this recording and it documents this operation.</span></label><div class="dialog-actions"><button id="confirm-media-review" class="btn primary" disabled>Confirm evidence review</button></div></form>' : '<p class="small muted">' + (e.reviewedAt ? 'Review recorded by ' + esc(e.reviewedBy.name) + ' · ' + date(e.reviewedAt) : 'Read-only evidence.') + '</p>'}<p class="media-footnote">Evidence review is a acknowledgment, not proof of conformity or an authenticated signature.</p>`);
+  openDialog(`Review ${mediaKind(o).toLowerCase()} evidence`, `${mediaContext(o, op)}<video id="evidence-playback" class="evidence-playback" controls playsinline preload="metadata" aria-label="${mediaKind(o)} objective evidence"></video><h3 class="media-review-title">${esc(e.fileName)}</h3><p class="record-note">${esc(e.description)}</p><p class="media-credit">${mediaSize(e.size)} · Linked by ${esc(e.capturedBy.name)} · ${date(e.addedAt)}</p><div id="media-error" class="form-error" role="alert" tabindex="-1"></div><p id="media-status" role="status" class="media-status">Loading recording from the shared server or offline cache…</p>${mediaEditable(o, op) && !e.reviewedAt ? '<form id="media-review-form"><label class="check-label"><input type="checkbox" name="acknowledge" required><span>I reviewed this recording and it documents this operation.</span></label><div class="dialog-actions"><button id="confirm-media-review" class="btn primary" disabled>Confirm evidence review</button></div></form>' : '<p class="small muted">' + (e.reviewedAt ? 'Review recorded by ' + esc(e.reviewedBy.name) + ' · ' + date(e.reviewedAt) : 'Read-only evidence.') + '</p>'}<p class="media-footnote">Evidence review is a acknowledgment, not proof of conformity or an authenticated signature.</p>`);
   $('#dialog').classList.add('media-dialog');
   const s = mediaSession = { orderId: o.id, opId, evidenceId: id, cancelled: false };
   try {
@@ -13947,7 +13969,7 @@ async function ensureMediaForBuyoff(o, op) {
   if (!o || !op) throw Error('This operation is no longer available. Reopen the work order.');
   const clips = op.evidence?.filter(e => e.reviewedAt) || [];
   if ((op.requiresRecording || clips.length) && storageBlocked) throw Error('Reload this workspace before recording a buy-off. Your saved evidence is unchanged.');
-  if (op.requiresRecording && !clips.length) throw Error('Save and review an installation recording before buying off this operation.');
+  if (op.requiresRecording && !clips.length) throw Error(`Save and review ${o.subcategory === 'Installation' ? 'an installation' : 'a'} recording before buying off this operation.`);
   for (const e of clips) { const blob = await MESMedia.get(e.id); if (!blob || blob.size !== e.size) throw Error('A reviewed recording is unavailable in this browser. Reattach your backup before buy-off.'); }
 }
 function removeMediaDialog(opId, id) {
@@ -15066,6 +15088,8 @@ window.SK_INTEGRATIONS = window.SK_INTEGRATIONS || {
   function secLog(entry) { var list = readLog(); list.push(Object.assign({ at: new Date().toISOString(), page: location.pathname }, entry)); writeLog(list); }
   window.addEventListener('sk-security', function (ev) { secLog(ev.detail || {}); });
   window.skSecurityLog = { read: readLog, add: secLog };
+  // Sign-in events (failures, lockouts) the gate raised before this layer loaded, in the order they happened.
+  (window.skSecurityPending || []).splice(0).forEach(secLog);
 
   // ---- idle lock and hard session expiry ---------------------------------------------------------
   var lastActivity = Date.now(), warned = false, warnEl = null;
