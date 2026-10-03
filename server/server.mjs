@@ -200,6 +200,26 @@ export function createServer(options = {}) {
   })();
 
   // ---- helpers ----
+  // Refused-action audit rows are rate limited per account (Codex security review on #606): an account looping refused
+  // calls would otherwise grow the hash-chained audit log without bound. Up to ACTION_REFUSAL_LIMIT rows per account per
+  // minute are written; the rest are counted, and the count is written as one action-refused-suppressed row when that
+  // account's next refusal falls in a later minute. The response to the caller is the same either way.
+  const ACTION_REFUSAL_LIMIT = 30, ACTION_REFUSAL_WINDOW_MS = 60 * 1000;
+  const refusalWindows = new Map();
+  const auditActionRefusal = async (username, detail) => {
+    const at = clock(); let w = refusalWindows.get(username);
+    if (w && at - w.start >= ACTION_REFUSAL_WINDOW_MS) {
+      if (w.suppressed) await store.audit(username, 'action-refused-suppressed', { suppressed: w.suppressed, windowStart: new Date(w.start).toISOString(), limit: ACTION_REFUSAL_LIMIT });
+      w = null;
+    }
+    if (!w) {
+      if (refusalWindows.size >= 10000) for (const [key, value] of refusalWindows) if (at - value.start >= ACTION_REFUSAL_WINDOW_MS && !value.suppressed) refusalWindows.delete(key);
+      w = { start: at, written: 0, suppressed: 0 }; refusalWindows.set(username, w);
+    }
+    if (w.written >= ACTION_REFUSAL_LIMIT) { w.suppressed += 1; return; }
+    w.written += 1;
+    await store.audit(username, 'action-refused', detail);
+  };
   const send = (res, status, body, headers = {}) => { const json = body === undefined ? '' : JSON.stringify(body); res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers }); res.end(json); };
   // An unexpected failure is logged here with its detail and a reference. The caller gets the reference and a
   // plain next step, never the error text: it can name files, SQL, or engine internals.
@@ -924,7 +944,7 @@ export function createServer(options = {}) {
         // Every refusal on this route is audited, as PUT /workspace refusals are (#582): the action name, the status and
         // a reason. The request arguments themselves are never recorded; reasons and engine messages are capped at 500
         // characters.
-        const auditRefusal = async (status, reason, extra = {}) => { await store.audit(session.username, 'action-refused', { action: action[1].slice(0, 120), status, reason: String(reason).slice(0, 500), ...extra }); };
+        const auditRefusal = async (status, reason, extra = {}) => { await auditActionRefusal(session.username, { action: action[1].slice(0, 120), status, reason: String(reason).slice(0, 500), ...extra }); };
         const fn = host.resolveAction(action[1]);
         if (!fn) { await auditRefusal(404, 'no such action'); send(res, 404, { error: `No action named ${action[1]}.` }); return; }
         let body; try { body = await readJson(req); } catch (e) { if (e.status === 400 || e.status === 413) await auditRefusal(e.status, e.status === 413 ? 'request body over the size limit' : 'request body is not JSON'); throw e; }

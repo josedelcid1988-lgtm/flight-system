@@ -413,6 +413,7 @@ try {
   await check('every refused action is audited with its name, status and reason, and never its arguments (#582)', async () => {
     const refused = async () => (await server.store.auditRows(1000)).filter(row => row.action === 'action-refused');
     const latest = async () => JSON.parse((await refused())[0].detail);
+    now += 61 * 1000; // a fresh refusal window for this account (the earlier helper-refusal check used part of one)
     const before = server.store.getDoc('default'), count = (await refused()).length;
     const secret = 'argument-text-that-must-not-be-recorded';
     const unknown = await api('POST', '/workspace/actions/MES.noSuchCommand', { token, body: { args: [secret] }, headers: { 'If-Match': before.etag } });
@@ -474,6 +475,25 @@ try {
     assert.equal((await refused()).length, count + 14, 'each refusal adds exactly one audit row');
     assert.equal(JSON.stringify((await refused()).slice(0, 14)).includes(secret), false, 'no refusal row records the request arguments or the error text');
     assert.equal(server.store.getDoc('default').etag, before.etag, 'the refused actions leave the shared workspace unchanged');
+    assert.equal(server.store.verifyAudit().ok, true, 'the audit chain still verifies');
+  });
+  await check('refused-action audit rows are rate limited per account, and the suppressed count is recorded', async () => {
+    now += 61 * 1000;
+    const rows = async action => (await server.store.auditRows(5000)).filter(row => row.action === action && row.username === 'one');
+    const start = (await rows('action-refused')).length, startSuppressed = (await rows('action-refused-suppressed')).length;
+    const etag = server.store.getDoc('default').etag;
+    for (let i = 0; i < 35; i += 1) {
+      const probe = await api('POST', `/workspace/actions/MES.probe${i}`, { token, body: { args: [] }, headers: { 'If-Match': etag } });
+      assert.equal(probe.status, 404, 'every probe is still refused with 404');
+    }
+    assert.equal((await rows('action-refused')).length, start + 30, 'only the first 30 refusals in a minute are written');
+    assert.equal((await rows('action-refused-suppressed')).length, startSuppressed, 'the suppressed count waits for the next minute');
+    now += 61 * 1000;
+    assert.equal((await api('POST', '/workspace/actions/MES.probeAfter', { token, body: { args: [] }, headers: { 'If-Match': etag } })).status, 404);
+    const summary = await rows('action-refused-suppressed');
+    assert.equal(summary.length, startSuppressed + 1, 'one summary row for the suppressed minute');
+    assert.equal(JSON.parse(summary[0].detail).suppressed, 5, 'it counts the five refusals that were not written');
+    assert.equal((await rows('action-refused')).length, start + 31, 'the new minute writes its refusal again');
     assert.equal(server.store.verifyAudit().ok, true, 'the audit chain still verifies');
   });
   await check('bulk account writes reject client-supplied roles, grants, training and Support Access', async () => {
