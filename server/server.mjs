@@ -1129,8 +1129,11 @@ export function createServer(options = {}) {
           if (row) { try { const parsed = host.MES.upgrade(structuredClone(JSON.parse(row.json))); reviewState = parsed && host.MES.validate(parsed) ? parsed : null; } catch { reviewState = null; } }
           if (!caller || !host.rolesOf(caller, reviewState).some(role => ['qm', 'admin'].includes(role))) { refused = true; return false; }
           // Lockouts change with every failed sign-in and are not under the authority lock, so they are read for one
-          // instant, and that instant is the report's generation time: each lockout listed is one in force then.
-          const users = (await tx.accounts()).map(publicAccount), at = Date.now(), lockouts = await tx.lockouts(at);
+          // instant, and that instant is the report's generation time: each lockout listed is one in force then. One
+          // set by a failed sign-in after that instant (while the query ran) is left out; a locked account refuses
+          // further sign-ins before they are counted, so its last failure is the one that locked it.
+          const users = (await tx.accounts()).map(publicAccount), at = Date.now();
+          const lockouts = (await tx.lockouts(at)).filter(l => !l.lastFailedAt || !(Date.parse(l.lastFailedAt) > at));
           report = { generatedAt: new Date(at).toISOString(), by: session.username, workspaceEtag: row ? row.etag : null, users, lockouts };
           return false;
         });

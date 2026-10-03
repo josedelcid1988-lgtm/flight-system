@@ -107,6 +107,15 @@ try {
       assert.equal(r.json.workspaceEtag, server.store.getDoc('default').etag, 'the report names the version it read');
     } finally { server.store.lockAuthority = realLock; server.store.transaction = realTx; server.store.accounts = realAccounts; }
   });
+  await check('a lockout set after the report time (while the lockout query ran) is not listed', async () => {
+    const real = server.store.lockouts.bind(server.store);
+    server.store.lockouts = async at => [...await real(at), { username: 'ar-tech', until: new Date(at + 300000).toISOString(), lastFailedAt: new Date(at + 50).toISOString() }];
+    try {
+      const r = await api('GET', '/auth/access-report', { token: qmToken });
+      assert.equal(r.status, 200, JSON.stringify(r.json));
+      assert.deepEqual(r.json.lockouts.map(l => l.username), ['ar-locked'], 'only the lockout in force at the generation time');
+    } finally { server.store.lockouts = real; }
+  });
   await check('a manager demoted after signing in is refused: the caller is read again inside the snapshot', async () => {
     await add('ar-demoted', 'qm', 'ar-demoted-pass');
     const token = await signIn('ar-demoted', 'ar-demoted-pass');
