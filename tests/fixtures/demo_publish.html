@@ -2385,7 +2385,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // A noun after the marker counts only when it closes the phrase ("Torque stripe inspection", "torque seal condition on
   // each nut"), so hardware named "Torque seal check valve" or "inspection port cap" stays a torque action.
   const TORQUE_MARKER_NOUN_AFTER = new RegExp(`^torque\\s*${TORQUE_MARKER}\\s+(?:(?:applied|shall|should|must|is|are|was|to\\s+be|present|intact|unbroken|only|missing|absent|broken|damaged|cracked|disturbed|misaligned|not)\\b|(?:inspection|check|verification|application|witness|condition|damage)(?=\\s*(?:$|[.;:!?,)]|\\s(?:of|for|on|at|per|across|to|with|before|after)\\b)))`, 'i');
-  const TORQUE_MARKER_VERB_BEFORE = /\b(?:apply|applying|applied|reapply|re-apply|inspect|inspecting|verify|verifying|check|checking|confirm|confirming|remove|removing|replace|replacing|add|adding|touch[- ]up|witness|witnessing|document|documenting|record|recording|note|noting|report|reporting)(?:\s+(?!(?:then|and|or|torque)\b)[a-z][a-z-]*){0,3}\s+$/i;
+  const TORQUE_MARKER_VERB_BEFORE = /\b(?:apply|applying|applied|reapply|re-apply|inspect|inspecting|verify|verifying|check|checking|confirm|confirming|remove|removing|replace|replacing|add|adding|touch[- ]up|witness|witnessing|document|documenting|record|recording|note|noting|report|reporting)(?:\s+(?!(?:then|and|or|torque|to|per|with|after|before|install|installing|tighten|tightening)\b)[a-z][a-z-]*)*\s+$/i;
   const stepRecordsTorque = text => {
     const t = String(text ?? ''), mentions = [...t.matchAll(/torque/gi)];
     if (!mentions.length) return false;

@@ -27,7 +27,7 @@ numbers and record number formats have not changed in any entry below.
   that mentions torque records one unless every mention is marker work: a stripe, seal, paint or mark word follows
   it and either a noun, passive or condition form follows that ("Torque stripe inspection", "Torque seal is intact",
   "Torque stripe missing on B-nut", "Document torque stripe damage") or a
-  marker verb comes within three words before it in the same clause ("Apply red torque stripe"). Anything else is a
+  marker verb comes before it in the same clause, with any modifiers between ("Apply red torque stripe"). Anything else is a
   torque action ("Carefully torque seal nut", "Retorque seal nut", "Torque sealing plug per
   WI-123", "Torque marked fasteners") and any step that names a torque target always record the value, tool and
   unit. Adding and editing an operation, default steps and the migration of older steps (from the title and
