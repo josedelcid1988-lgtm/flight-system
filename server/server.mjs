@@ -1128,7 +1128,10 @@ export function createServer(options = {}) {
           let reviewState = null;
           if (row) { try { const parsed = host.MES.upgrade(structuredClone(JSON.parse(row.json))); reviewState = parsed && host.MES.validate(parsed) ? parsed : null; } catch { reviewState = null; } }
           if (!caller || !host.rolesOf(caller, reviewState).some(role => ['qm', 'admin'].includes(role))) { refused = true; return false; }
-          report = { generatedAt: new Date().toISOString(), by: session.username, workspaceEtag: row ? row.etag : null, users: (await tx.accounts()).map(publicAccount), lockouts: await tx.lockouts() };
+          // Lockouts change with every failed sign-in and are not under the authority lock, so they are read for one
+          // instant, and that instant is the report's generation time: each lockout listed is one in force then.
+          const users = (await tx.accounts()).map(publicAccount), at = Date.now(), lockouts = await tx.lockouts(at);
+          report = { generatedAt: new Date(at).toISOString(), by: session.username, workspaceEtag: row ? row.etag : null, users, lockouts };
           return false;
         });
         if (refused || !report) { send(res, 403, { error: 'Only a QA Manager or Master Access account opens the access review report. Ask one of them for a copy.' }); return; }

@@ -67,6 +67,7 @@ try {
       assert.ok(r.json.users.every(u => !('hash' in u) && !('salt' in u)), 'no password hash or salt is sent');
       assert.deepEqual(r.json.lockouts.map(l => l.username), ['ar-locked']);
       assert.ok(Number.isFinite(Date.parse(r.json.lockouts[0].until)), 'the lockout says until when');
+      assert.ok(Date.parse(r.json.lockouts[0].until) > Date.parse(r.json.generatedAt), 'each lockout listed is in force at the generation time');
       const at = Date.parse(r.json.generatedAt);
       assert.ok(Number.isFinite(at) && Math.abs(at - Date.now()) < 60000, 'the server stamps the generation time');
       assert.ok('workspaceEtag' in r.json, 'the server names the workspace version it read (none here: no workspace yet)');
