@@ -112,6 +112,13 @@ const repair = walk('seed-curated', 'WO-10003', 'Repair', {}, state => { MES.get
   tamper('reopening a released ticket and removing its release signature', t => { t.status = 'Open'; t.resolution = ''; t.resolvedAt = null; delete t.resolvedBy; delete t.manifest; }, 'release');
   // Codex P1 on #602 (3792f0e): the stored subject inside each signature must be the record that was signed.
   // verifyManifests already caught these by the stored subject's own hash; validate now refuses them too.
+  // Codex P2 on #602 (3246580): a removed stored subject fails verifyManifests too, not only validate.
+  for (const [what, edit] of [['approval', t => { delete t.reworkPlan.manifest.subject; }], ['release', t => { delete t.manifest.subject; }]]) {
+    const copy = structuredClone(rework.state);
+    edit(MES.getOrder(copy, 'WO-10006').tickets.find(t => t.id === rework.ticketId));
+    ok(`Tamper: removing the stored subject of the ${what} signature is refused by validate`, MES.validate(copy) === false, detail(copy));
+    ok(`Tamper: removing the stored subject of the ${what} signature fails verifyManifests`, failsAt(copy, new RegExp(`${rework.ticketId} rework ${what}`)) && verify(copy).failures.some(f => /no stored subject/.test(f.reason)), JSON.stringify(verify(copy).failures));
+  }
   for (const [what, edit] of [['approval', t => { t.reworkPlan.manifest.subject.approval = 'Use as is.'; }], ['release', t => { t.manifest.subject.opId = 'op-1'; }]]) {
     const copy = structuredClone(rework.state);
     edit(MES.getOrder(copy, 'WO-10006').tickets.find(t => t.id === rework.ticketId));
