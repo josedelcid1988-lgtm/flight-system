@@ -98,7 +98,7 @@ const repair = walk('seed-curated', 'WO-10003', 'Repair', {}, state => { MES.get
   tamper('changing the approver credential on the plan and the signature', t => { t.reworkPlan.approvedBy = { ...t.reworkPlan.approvedBy, credentialId: 'ACCT-other' }; t.reworkPlan.manifest.signer.credentialId = 'ACCT-other'; }, 'approval');
   tamper('changing the affected units after approval', t => { t.affected = { ...t.affected, subCode: 'DIM-01' }; }, 'approval');
   const op = tamper('changing the released operation', t => { t.reworkPlan.opId = MES.getOrder(rework.state, 'WO-10006').operations[0].id; }, 'release');
-  ok('Tamper: diagnose names the changed release', /QA release signature does not match the release record/.test(detail(op)), detail(op));
+  ok('Tamper: diagnose names the changed release', /(QA release signature does not match the release record|no longer on the work order)/.test(detail(op)), detail(op));
   tamper('changing the releaser', t => { t.reworkPlan.releasedBy = { ...t.reworkPlan.releasedBy, name: 'Someone Else' }; }, 'release');
   tamper('changing the resolver', t => { t.resolvedBy = { ...t.resolvedBy, name: 'Someone Else' }; }, 'release');
   // Codex P1 on #602: the signer on the manifest is the whole identity, not the credential alone.
@@ -370,6 +370,21 @@ const repair = walk('seed-curated', 'WO-10003', 'Repair', {}, state => { MES.get
   const approved = as(qe, () => MES.resolveTicket(state, id, created.id, 'Rework approved.', { defectCode: 'DIM', subCode: 'DIM-02' }));
   const plan = MES.getOrder(state, id).tickets.find(t => t.id === created.id).reworkPlan;
   ok('Operation author: with the add event gone from the log, the plan still names ME from the operation', approved.ok && plain(plan.opAddedBy) && plan.opAddedBy.credentialId === 'ACCT-rw-me', JSON.stringify([approved, plan.opAddedBy]));
+}
+
+// ---- Codex P1 on #602 (2f9b515): the operation a QA release closed the ticket on cannot be removed ----
+{
+  const state = structuredClone(rework.state);
+  const t = MES.getOrder(state, 'WO-10006').tickets.find(x => x.id === rework.ticketId);
+  const opId = t.reworkPlan.opId;
+  const removed = host.withAccount(me, () => MES.removeOrderOperation(state, 'WO-10006', opId, 'No longer needed.'));
+  ok('Released operation: ME cannot remove the operation that closed the NC', removed.ok === false && new RegExp(`QA released this operation to close ${rework.ticketId}`).test(removed.message) && MES.getOrder(state, 'WO-10006').operations.some(op => op.id === opId), JSON.stringify(removed));
+  const gone = structuredClone(rework.state);
+  { const o = MES.getOrder(gone, 'WO-10006'); o.operations = o.operations.filter(op => op.id !== opId); }
+  ok('Released operation: a workspace with it removed outside the application is refused', MES.validate(gone) === false && /no longer on the work order/.test(detail(gone)), detail(gone));
+  const recl = structuredClone(rework.state);
+  { const op = MES.getOrder(recl, 'WO-10006').operations.find(x => x.id === opId); op.classification = 'Manufacturing'; }
+  ok('Released operation: reclassifying it is refused', MES.validate(recl) === false && /no longer on the work order/.test(detail(recl)), detail(recl));
 }
 
 console.log(fails.length ? `FAILS ${JSON.stringify(fails)}` : 'FAILS []');

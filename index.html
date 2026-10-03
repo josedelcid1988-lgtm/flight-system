@@ -3798,6 +3798,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     // A QA release closes the ticket for good: an open ticket that carries one was reopened outside the application.
     if (ticket.status !== 'Resolved') return ticket.manifest !== undefined || p.stage === 'Released' || p.releasedAt !== undefined || p.releasedBy !== undefined ? `${ticket.id} carries a QA release but is open again: the closure was undone outside the application.` : null;
     if (ticket.manifest === undefined) return p.manifest === undefined ? null : `${ticket.id} is closed, but the QA release that closed it is not signed.`;
+    // The operation a signed release closed the ticket on stays on the order with the approved classification.
+    if (plain(ticket.manifest) && !order.operations.some(op => plain(op) && op.id === p.opId && op.classification === p.decision)) return `${ticket.id} was closed by the QA release of ${p.decision} operation ${p.opId}, but that operation is no longer on the work order: it was removed or reclassified.`;
     if (!snapshotValid(p.releasedBy) || !reworkManifestOk(ticket.manifest, REWORK_RELEASE_MEANING, p.releasedAt, p.releasedBy, reworkReleaseSubject(order, ticket))) return `${ticket.id} QA release signature does not match the release record: the released operation, releaser or approval changed after signing.`;
     return null;
   }
@@ -5544,6 +5546,7 @@ const OP_BOM_MAX = 12;
     if (index < firstInsertIndex(order)) return fail('An operation with checked-off steps can’t be removed.');
     if (Array.isArray(op.evidence) && op.evidence.length) return fail('Remove the linked evidence before removing this operation.');
     if (order.tickets.some(t => t.operationId === opId) || order.reports.some(r => r.operationId === opId)) return fail('This operation has linked NC tickets or ATP reports, so it can’t be removed.');
+    { const closed = order.tickets.find(t => t.status === 'Resolved' && plain(t.reworkPlan) && t.reworkPlan.opId === opId); if (closed) return fail(`QA released this operation to close ${closed.id} (${closed.reworkPlan.decision}), so it can’t be removed. Complete it, or raise a new NC if the work changes.`); }
     if (Array.isArray(order.engineeringChanges) && JSON.stringify(order.engineeringChanges).includes(`"${opId}"`)) return fail('An engineering change references this operation, so it can’t be removed.');
     const text = String(reason ?? '').trim();
     if (!str(text, 300)) return fail('Enter a reason for removing the operation (up to 300 characters).');
