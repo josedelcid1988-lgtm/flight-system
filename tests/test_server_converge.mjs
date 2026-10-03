@@ -44,7 +44,7 @@ try {
   const base = MES.upgrade(JSON.parse(fixture[1]));
   MES.ensureMasterWIs(base);
   // The fixture ships an empty planned-order list. Production seeds none (issue #247), so the demo engine seeds its
-  // sample planned orders (D-48) as this suite's data, so there are orders to lose.
+  // sample planned orders (D-49) as this suite's data, so there are orders to lose.
   delete base.plannedOrders;
   createHost(fileURLToPath(new URL('../demo.html', import.meta.url))).FlightPlan.ensure(base);
   // Move closed orders out now, as the first commit would, so the base can be stored again between checks.

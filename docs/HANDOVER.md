@@ -185,7 +185,7 @@ operation added to the order, or a sub-assembly issued from another order. Every
 verified before Building. The device profile names no person ("Not signed in") until an account signs
 in. The built-in configuration stays: the ESD and FOD training requirements, the default operation step
 text, part catalog, sites, aircraft and work centers. The sample data lives only in `demo.html` and the
-demo fixtures (deviations D-3, D-34, D-37, D-47 and D-48 in `docs/DEMO_DEVIATIONS.md`; the demo kit starts with three sample lines). A workspace saved under an
+demo fixtures (deviations D-3, D-34, D-37, D-48 and D-49 in `docs/DEMO_DEVIATIONS.md`; the demo kit starts with three sample lines). A workspace saved under an
 earlier build keeps everything it holds; the clean slate applies only to a new workspace. One thing does change for such a
 workspace: a tool that was only in the old shipped snapshot (2026-09-15) can no longer be used until the
 calibration log records it, so import the current calibration log before resuming tooled work.

@@ -2309,7 +2309,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // NetSuite on-hand stock, read by part number. The production build ships no stock: a live build reads lots
   // from the NetSuite inventory API, and until that read is connected every lot comes from the inventory ledger.
   // The demo build loads sample lots here (DEMO_DEVIATIONS.md).
-  /* DEMO D-47: sample data */
+  /* DEMO D-48: sample data */
   const NETSUITE_STOCK = Object.freeze({
     'SR-2401': Object.freeze([
       Object.freeze({ lot: 'LOT-2401-0088', onHand: 12, bin: 'A-04-2', location: 'HHR', buildClass: 'Production' }),
@@ -2389,7 +2389,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const STAMP_NUMBER_RE = /^SKY-\d{4}$/;
   const stampNumber = n => `${STAMP_PREFIX}${String(n).padStart(4, '0')}`;
   const placeholderName = number => `Unassigned ${number}`;
-  /* DEMO D-48: sample data */
+  /* DEMO D-49: sample data */
   const STAMP_HOLDERS = Object.freeze([['Quality', 'Quality'], ['Production', 'Production'], ['Quality', 'Quality'], ['Quality', 'Quality'], ['Production', 'Production'], ['Quality', 'Quality'], ['Quality', 'Quality']].map(([department, type], n) => Object.freeze({ name: placeholderName(stampNumber(n)), department, type, number: stampNumber(n), since: '2026-01-01', buyoffType: type === 'Production' ? 'Technician' : type, roleOnly: false, placeholder: true })).concat([['Technician', 'Production', 'Technician', 'Technician'], ['Quality inspector', 'Quality', 'Quality', 'Quality'], ['A&P mechanic', 'Maintenance', 'A&P', 'A&P'], ['Design engineer', 'Engineering', 'Engineering', 'Engineering'], ['Authorized inspector', 'Quality', '8130-9 AI', '8130-9 Authorized Inspector'], ['Conformity inspector', 'Quality', 'Conformity', 'Conformity Inspector']].map(([name, department, type, buyoffType], n) => Object.freeze({ name, department, type, number: stampNumber(7 + n), since: '2026-01-01', buyoffType, roleOnly: true }))));
   const pacificDay = at => new Date(at).toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
   // ---- Stamp and qualification register -----------------------------------------------------
@@ -3422,34 +3422,41 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     }
     return STAMP_HOLDERS.find(holder => holder.name.toLowerCase() === name) || null;
   };
+  // One rule for whether an issued stamp can sign on a Pacific workday: it has a valid issue date that has been
+  // reached, it is Active, it has not expired, and the training behind an additional stamp is current. Operation
+  // buy-offs (stampCheck), the inspection capability (hasValidInspectionStamp) and the FAIR, 8130-9 and AQI
+  // signatures (inspectorSign) all use it, so the paths cannot disagree about a stamp (#579). Returns the refusal
+  // text, or null when the stamp is valid.
+  function stampValidityProblem(holder, day, state) {
+    const who = `Stamp ${holder.number} (${holder.name})`;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(holder.since || ''))) return `${who} has no valid issue date. Ask the QA Manager to correct the stamp record before it is used.`;
+    if (holder.since > day) return `${who} is not active until ${holder.since}. It cannot be used before its issue date; ask the QA Manager to correct the issue date if it is wrong.`;
+    if (holder.status === 'Suspended') return `${who} is suspended. The QA Manager must reinstate it before it can buy off work.`;
+    if (holder.status === 'Retired') return `${who} is retired and cannot be used.`;
+    if (holder.status && holder.status !== 'Active') return `${who} is not active and cannot be used.`;
+    if (holder.expires && (!/^\d{4}-\d{2}-\d{2}$/.test(String(holder.expires)) || holder.expires < day)) return `${who} expired on ${holder.expires}. Requalification must be recorded and the stamp renewed by the QA Manager before it can be used.`;
+    if (holder.expansionTraining) { const t = trainingStatus({ name: holder.name, training: holder.training }, holder.expansionTraining, day, state); if (!t.ok) return `${who} is an additional stamp issued on ${holder.expansionTraining} training that is ${t.state === 'expired' ? `expired (${t.expires})` : t.state === 'retrain' ? 'due for retraining' : 'not on record'}. It pauses until the training is current; ask the QA Manager to record current ${holder.expansionTraining} training.`; }
+    return null;
+  }
   function stampCheck(profile, at = new Date().toISOString()) {
     /* DEMO D-13 */ { const h = stampHolderFor(profile); return { ok: true, holder: { ...(h || { number: 'DEMO', name: (profile && profile.name) || 'Demo user', buyoffType: 'Technician', type: 'Demo', department: 'Demo' }), demo: true } }; }
     const holder = stampHolderFor(profile);
     if (!holder) return fail(`${profile?.name || 'This person'} does not hold an issued stamp in the Stamp Control Log, so cannot buy off operations. Switch to a stamp holder’s credentials.`);
     if (String(profile.credentialId).trim().toLowerCase() !== stampCredential(holder).toLowerCase()) return fail(`The credential ID does not match the stamp issued to ${holder.name}. Pick the holder again in Your credentials.`);
-    const day = pacificDay(at);
-    if (holder.since > day) return fail(`${holder.name}’s stamp is not active until ${holder.since}.`);
-    if (holder.status === 'Suspended') return fail(`Stamp ${holder.number} (${holder.name}) is suspended. The QA Manager must reinstate it before it can buy off work.`);
-    if (holder.status === 'Retired') return fail(`Stamp ${holder.number} (${holder.name}) is retired and cannot be used.`);
-    if (holder.expires && holder.expires < day) return fail(`Stamp ${holder.number} (${holder.name}) expired on ${holder.expires}. Requalification must be recorded by the QA Manager before it can be used.`);
     if (holder.id) {
       const acct = accountActor();
       if (acct && !holder.account) return fail(`Stamp ${holder.number} is not assigned to an account. Ask the QA Manager to assign it to ${holder.name}'s account before it is used.`);
       if (acct && holder.account !== acct.account) return fail(`Stamp ${holder.number} is issued to account ${holder.account}. You are signed in as ${acct.account}, so you cannot stamp as ${holder.name}.`);
-      if (holder.expansionTraining) { const t = trainingStatus({ name: holder.name, training: holder.training }, holder.expansionTraining, day); if (!t.ok) return fail(`Stamp ${holder.number} is an additional stamp for ${holder.name}, issued on ${holder.expansionTraining} training that is ${t.state === 'expired' ? `expired (${t.expires})` : t.state === 'retrain' ? 'due for retraining' : 'not on record'}. It pauses until the training is current.`); }
     }
+    { const problem = stampValidityProblem(holder, pacificDay(at)); if (problem) return fail(problem); }
     return { ok: true, holder };
   }
   function hasValidInspectionStamp(state, username, at = new Date().toISOString()) {
     const account = String(username || '').trim().toLowerCase();
     if (!plain(state) || !account || !Array.isArray(state.stamps)) return false;
     const day = pacificDay(at);
-    return state.stamps.some(stamp => {
-      if (!plain(stamp) || String(stamp.account || '').trim().toLowerCase() !== account || stamp.buyoffType !== 'Quality' || stamp.status !== 'Active') return false;
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(stamp.issued || '')) || stamp.issued > day) return false;
-      if (stamp.expires && (!/^\d{4}-\d{2}-\d{2}$/.test(String(stamp.expires)) || stamp.expires < day)) return false;
-      return !stamp.expansionTraining || trainingCurrentFor(state, account, stamp.expansionTraining).ok;
-    });
+    return state.stamps.some(stamp => plain(stamp) && String(stamp.account || '').trim().toLowerCase() === account && stamp.buyoffType === 'Quality' && stamp.status === 'Active' &&
+      !stampValidityProblem({ ...holderFromStamp(stamp), training: personTraining(state, account) }, day, state));
   }
 
 
@@ -4871,7 +4878,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // The master WI library a new workspace starts with. The production build starts empty: WIs are written on the
   // Master WI library or imported as a CSV, then peer-reviewed and released by other people. The demo build seeds
   // sample WIs here (DEMO_DEVIATIONS.md).
-  /* DEMO D-48: sample data */
+  /* DEMO D-49: sample data */
   function seedMasterWIs() {
     const base = operations().map(op => ({ id: op.id, title: op.title, description: op.description, requiresRecording: false, buyoffType: defaultBuyoffType(op.id), inspectionPoint: op.id === 'op-040', requiresTooling: ['op-030', 'op-040'].includes(op.id), steps: defaultSteps(op.id, op.title) }));
     const list = PART_CATALOG.map((part, index) => {
@@ -5429,7 +5436,7 @@ const OP_BOM_MAX = 12;
     // ---- Standard Rework operations (draft library, not approved) ----
   // A new workspace starts with an empty library in the production build; Manufacturing Engineering writes each
   // operation and QA approves it. The demo build seeds starter drafts here (DEMO_DEVIATIONS.md).
-  /* DEMO D-48: sample data */
+  /* DEMO D-49: sample data */
   const STD_REWORK_SEED = [
     ['Re-torque fastener(s) to drawing value', 'Rework', 'Technician', true, [['Remove torque stripe', 'Remove the existing torque stripe from the affected fastener(s) with an approved solvent.'], ['Loosen and clean', 'Back off the fastener, inspect threads for damage, clean as required.'], ['Re-torque', 'Torque to the drawing or WI value with a calibrated tool. Record the value and tool.'], ['Apply torque stripe', 'Apply a new torque stripe across fastener and substrate.']]],
     ['Replace connector backshell and re-terminate', 'Rework', 'Technician', true, [['De-mate and remove backshell', 'De-mate the connector, remove the backshell and strain relief. Protect the pins.'], ['Inspect contacts', 'Inspect contacts and wires for damage. Replace any damaged contact per the harness drawing.'], ['Install backshell', 'Install the backshell and strain relief. Torque to the drawing value.'], ['Continuity check', 'Perform a continuity check on affected circuits and record the result.']]],
@@ -6136,9 +6143,15 @@ const OP_BOM_MAX = 12;
     const override = masterOverride(types);
     if (override) return { ok: true, override };
     const acct = accountActor();
-    const stamp = (state.stamps || []).find(s => s.status === 'Active' && types.includes(s.buyoffType) && acct && s.account === acct.account);
-    if (!stamp) return fail(`Signing needs an active ${types.join(' or ')} stamp issued to your account.`);
-    const holder = holderFromStamp(stamp);
+    const mine = acct ? (state.stamps || []).filter(s => plain(s) && s.status === 'Active' && types.includes(s.buyoffType) && s.account === acct.account) : [];
+    if (!mine.length) return fail(`Signing needs an active ${types.join(' or ')} stamp issued to your account.`);
+    // The same validity rule as an operation buy-off (#579): a stamp that is not yet issued, expired or paused for
+    // training does not sign. Any one current stamp of an allowed type is enough.
+    const day = pacificDay(new Date().toISOString());
+    const checked = mine.map(s => { const h = { ...holderFromStamp(s), training: personTraining(state, s.account) }; return { holder: h, problem: stampValidityProblem(h, day, state) }; });
+    const current = checked.find(c => !c.problem) || checked[0]; /* DEMO D-47 */
+    if (!current) return fail(`Signing needs a current ${types.join(' or ')} stamp issued to your account. ${checked.map(c => c.problem).join(' ')}`);
+    const holder = current.holder;
     /* DEMO D-17: PIN step-up lifted for FAIR and 8130-9 signatures */
     return { ok: true, holder };
   }
@@ -7718,7 +7731,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   // The kit a new work order starts with, before its WI's operation BOM lines are added. The production build adds no
   // sample lines: kit lines come from operation BOM lines (the WI's, or an operation added to the order) or from a
   // sub-assembly issued from another order, and each line still needs its lot verified before Building. The demo build starts each kit with three sample lines (DEMO_DEVIATIONS.md).
-  /* DEMO D-47: sample data */
+  /* DEMO D-48: sample data */
   function materials(ready = false) {
     return [
       { id: 'kit-1', name: 'Interface module', partNumber: 'SR-2401', required: 1, ready },
@@ -9239,10 +9252,10 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   // Stub read of the MES stock table; the MRP tool's live NetSuite read replaces netsuiteRead(). The production build
   // ships no stock, so a planned order records no read (netsuite: null) until the live read is connected.
   const NETSUITE_SNAPSHOT = MES.NETSUITE_SNAPSHOT;
-  /* DEMO D-47: sample data */
+  /* DEMO D-48: sample data */
   const DEMO_PARTS = Object.freeze(['SR-FC-200', 'SR-HC-050', 'SR-CI-110']);
   // Finished goods on hand for parts with no NetSuite stock row. The production build ships none; the demo loads a sample.
-  /* DEMO D-47: sample data */
+  /* DEMO D-48: sample data */
   const DEMO_FINISHED_STOCK = Object.freeze({ 'SR-FC-200': 1, 'SR-HC-050': 6, 'SR-CI-110': 3 });
   const fail = message => ({ ok: false, message });
   const plain = v => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -9359,7 +9372,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     state.plannedOrders = [];
     const wiFor = partNumber => { const wi = state.masterWIs.find(item => item.partNumber === partNumber && item.status === 'Released'); return wi ? `${wi.id}|${wi.revision}` : ''; };
     // A new production workspace starts with no planned orders. The demo build seeds sample ones here (DEMO_DEVIATIONS.md).
-    /* DEMO D-48: sample data */
+    /* DEMO D-49: sample data */
     const seed = [
       ['SR-FC-200', 'Production', 'Mfg.', 'HHR', 'C3', 4, '2026-10-09', null],
       ['SR-HC-050', 'Production', 'Mfg.', 'CMA', 'C2', 10, '2026-09-30', 'firm'],
@@ -9380,18 +9393,18 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   // records; the demo build loads invented, DEMO-marked tables (DEMO_DEVIATIONS.md). In the real build they come
   // from Rafa's BOM tool (MBOM, interchangeability, shelf life) and from the existing MRP tool's NetSuite read (lots,
   // expiry, open purchases). Flight Plan reads; it never owns them.
-  /* DEMO D-47: sample data */
+  /* DEMO D-48: sample data */
   const DEMO_MBOM = Object.freeze({
     'SR-FC-200|C': [{ part: 'DEMO-MTR-011', rev: 'A', title: 'DEMO drive motor', qtyPer: 1, leadDays: 45, interchangeable: true }, { part: 'DEMO-PCB-204', rev: 'C', title: 'DEMO controller board', qtyPer: 1, leadDays: 60, interchangeable: false, supersedes: 'B' }, { part: 'DEMO-SEAL-090', rev: 'A', title: 'DEMO shaft seal', qtyPer: 2, leadDays: 20, interchangeable: true, shelfLifeDays: 365 }],
     'SR-HC-050|A': [{ part: 'DEMO-WIRE-22', rev: 'A', title: 'DEMO 22 AWG wire (ft)', qtyPer: 40, leadDays: 14, interchangeable: true }, { part: 'DEMO-CONN-38', rev: 'A', title: 'DEMO 38-pin connector', qtyPer: 2, leadDays: 30, interchangeable: true }, { part: 'DEMO-ADH-7', rev: 'A', title: 'DEMO potting adhesive', qtyPer: 1, leadDays: 21, interchangeable: true, shelfLifeDays: 180 }]
   });
-  /* DEMO D-47: sample data */
+  /* DEMO D-48: sample data */
   const DEMO_COMPONENT_LOTS = Object.freeze([
     { part: 'DEMO-MTR-011', rev: 'A', lot: 'LOT-DEMO-M1', onHand: 3, expires: null }, { part: 'DEMO-PCB-204', rev: 'B', lot: 'LOT-DEMO-P1', onHand: 6, expires: null }, { part: 'DEMO-PCB-204', rev: 'C', lot: 'LOT-DEMO-P2', onHand: 1, expires: null },
     { part: 'DEMO-SEAL-090', rev: 'A', lot: 'LOT-DEMO-S1', onHand: 10, expires: '2026-10-05' }, { part: 'DEMO-SEAL-090', rev: 'A', lot: 'LOT-DEMO-S2', onHand: 8, expires: '2027-03-01' }, { part: 'DEMO-WIRE-22', rev: 'A', lot: 'LOT-DEMO-W1', onHand: 500, expires: null },
     { part: 'DEMO-CONN-38', rev: 'A', lot: 'LOT-DEMO-C1', onHand: 12, expires: null }, { part: 'DEMO-ADH-7', rev: 'A', lot: 'LOT-DEMO-A1', onHand: 4, expires: '2026-09-28' }
   ]);
-  /* DEMO D-47: sample data */
+  /* DEMO D-48: sample data */
   const DEMO_LEAD_ACTUALS = Object.freeze([
     { part: 'SR-FC-200', order: 'WO-DEMO-0901', issued: '2026-06-02', closed: '2026-06-19' }, { part: 'SR-FC-200', order: 'WO-DEMO-0917', issued: '2026-07-07', closed: '2026-07-28' }, { part: 'SR-FC-200', order: 'WO-DEMO-0933', issued: '2026-08-04', closed: '2026-08-22' },
     { part: 'SR-HC-050', order: 'WO-DEMO-0905', issued: '2026-06-09', closed: '2026-06-16' }, { part: 'SR-HC-050', order: 'WO-DEMO-0921', issued: '2026-07-14', closed: '2026-07-23' }
