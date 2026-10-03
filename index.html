@@ -3589,6 +3589,10 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const isQAProfile = profile => profileValid(profile) && ['Quality Manager', 'Quality Engineer', 'QA Reviewer', 'System Administrator'].includes(profile.role);
   const engineeringChange = order => Array.isArray(order?.engineeringChanges) ? order.engineeringChanges.find(change => change.status !== 'Applied') || null: null;
   const engineeringHoldMessage = 'An engineering change is pending. QA re-release is required before work can continue.';
+  // engineeringChangesValid holds the order quantity to the one the applied change records name (#458). A split
+  // would change it outside a signed change, so it is refused once any engineering change has been applied.
+  const appliedEngineeringChange = order => Array.isArray(order?.engineeringChanges) ? order.engineeringChanges.filter(change => change.status === 'Applied').at(-1) || null: null;
+  const splitEngineeringMessage = change => `Engineering change ${change.id} set this work order to ${change.after.quantity} unit${change.after.quantity === 1 ? '' : 's'}, and that approved quantity can only change through another engineering change. To move units off this order, submit an engineering change to the reduced quantity, then open a new work order for the units taken off.`;
   const selfApprovalMessage = 'The requester cannot approve their own engineering change. Use a different QA credential.';
   // #542: once a work order is sent to QA it is frozen. Only QA records (NC, notes, messages, QA evidence files, FAIR,
   // conformity and 8130-9, Review & close) may be written; anything else waits for a signed QA send back to Building.
@@ -7578,6 +7582,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (error) return fail(error);
     if (!['Draft', 'Kitting'].includes(order.status)) return fail('A work order can only be split before the build starts (Draft or Kitting).');
     if (engineeringChange(order)) return fail(engineeringHoldMessage);
+    { const applied = appliedEngineeringChange(order); if (applied) return fail(splitEngineeringMessage(applied)); }
     if (!count(order.quantity) || order.quantity < 2) return fail('Only a work order with a quantity of 2 or more can be split.');
     const qty = Number(quantity);
     if (!Number.isInteger(qty) || qty < 1 || qty >= order.quantity) return fail(`Enter a quantity from 1 to ${order.quantity - 1} to move onto the new work order.`);
@@ -7622,6 +7627,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (!sr || sr.status !== 'Open') return fail('This split request is no longer open.');
     if (!['Draft', 'Kitting', 'Building'].includes(order.status)) return fail('Units can be split out while the order is in Draft, Kitting, or Building.');
     if (engineeringChange(order)) return fail(engineeringHoldMessage);
+    { const applied = appliedEngineeringChange(order); if (applied) return fail(splitEngineeringMessage(applied)); }
     if (pendingSequenceChange(order)) return fail(sequenceHoldMessage);
     const qty = Number(sr.quantity);
     if (!Number.isInteger(qty) || qty < 1 || qty >= order.quantity) return fail(`This request covers ${sr.quantity} of ${order.quantity} units. Close it as Not required instead.`);
