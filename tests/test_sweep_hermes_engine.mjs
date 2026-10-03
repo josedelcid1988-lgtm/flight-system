@@ -153,7 +153,9 @@ realm('globalThis.Date = globalThis.__RealDate;')();
     // Seventeenth review: a marker verb carries across coordinated marker phrases.
     'Apply red torque stripe to the nut and blue torque stripe to the bolt', 'Inspect torque stripe for damage and torque seal for damage',
     // Twentieth review: nominal inspections and long coordinated objects.
-    'Perform visual inspection of torque stripe', 'Conduct an inspection of torque seal', 'Apply torque stripe across each of the four forward mounting nuts and torque seal across the aft nuts'];
+    'Perform visual inspection of torque stripe', 'Conduct an inspection of torque seal', 'Apply torque stripe across each of the four forward mounting nuts and torque seal across the aft nuts',
+    // Twenty-second review: perfect passive conditions.
+    'Torque stripe has been damaged', 'Torque seal has been inspected', 'Torque stripes have been applied to all B-nuts'];
   check('MES.stepRecordsTorque: a step that is only torque stripe, seal, paint or mark work records no torque', stripes.every(t => MES.stepRecordsTorque(t) === false), stripes.filter(t => MES.stepRecordsTorque(t)).join(', '));
   // Review of PR #605: a torque action on marked or sealed parts still records the value, tool and unit.
   // Second review: a torque action on seal-named hardware with a torque target records it too.
@@ -185,7 +187,9 @@ realm('globalThis.Date = globalThis.__RealDate;')();
     // Nineteenth review: an adverb before torque makes it a torque command.
     'Inspect torque stripe on nut and carefully torque seal per WI-123', 'Inspect fitting carefully torque seal per WI-123', 'Inspect torque stripe on nut and now torque seal per WI-123', 'Inspect torque stripe on nut and finally torque seal',
     // Twentieth review: a nominal inspection of seal-named hardware, or an action inside a long object, still records.
-    'Perform inspection of torque seal nut per WI-123', 'Apply torque stripe to the nut clean the fitting and torque seal per WI-123'];
+    'Perform inspection of torque seal nut per WI-123', 'Apply torque stripe to the nut clean the fitting and torque seal per WI-123',
+    // Twenty-second review: a part after a perfect passive still records.
+    'Torque seal has been nut per WI-123'];
   check('MES.stepRecordsTorque: a torque action records a torque value, also on marked, paint-marked, sealed or seal-named parts', actions.every(t => MES.stepRecordsTorque(t) === true), actions.filter(t => !MES.stepRecordsTorque(t)).join(', '));
   const state = fresh(), order = state.orders.find(o => o.status === 'Draft' && o.operations.length), op = order.operations[0];
   op.steps = [{ id: 'step-1', title: 'Install bracket', instruction: 'Install bracket', recordsTorque: true }];
