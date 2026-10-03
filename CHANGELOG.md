@@ -30,7 +30,8 @@ numbers and record number formats have not changed in any entry below.
   mark or witness mark word follows "torque", then only known inspection, condition or passive words ("visual
   inspection", "is intact", "missing on", "damage") up to the end of the clause or a preposition, and either a marker
   verb comes before it in the same clause ("Apply red torque stripe to the B-nut") or one of those words follows
-  ("Torque stripe adhesion check"). Any other word after the marker, such as the part ("torque seal retaining nut",
+  ("Torque stripe adhesion check"); a marker verb carries across "and" or "or" to the next marker phrase ("Apply red
+  torque stripe to the nut and blue torque stripe to the bolt"). Any other word after the marker, such as the part ("torque seal retaining nut",
   "torque seal electrical connector"), makes it a torque action, so an unlisted word records the value instead of
   skipping it. A torque action ("Carefully torque seal nut", "Retorque seal nut", "Torque sealing plug per WI-123")
   any step that says tighten, and any step that names a torque target always record the value, tool and unit. "At

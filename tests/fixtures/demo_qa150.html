@@ -2389,17 +2389,19 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const TORQUE_MARKER_WORDS = 'inspections?|inspected|checks?|checked|verification|verified|application|applied|witness(?:ed)?|condition|damage|damaged|visual|visually|adhesion|integrity|presence|present|continuity|alignment|aligned|misaligned|intact|unbroken|missing|absent|broken|cracked|disturbed|smeared|faded|only|not|shall|should|must|is|are|was|were|be|been|to\\s+be|remains?';
   const TORQUE_MARKER_PHRASE = new RegExp(`^torque\\s*${TORQUE_MARKER}((?:\\s+(?:${TORQUE_MARKER_WORDS})\\b)*)(?=\\s*(?:$|[.;:!?,)])|\\s+(?:of|for|on|onto|at|per|across|to|with|before|after|from|over|between|in|and|or|then)\\b)`, 'i');
   const TORQUE_MARKER_VERB_BEFORE = /\b(?:apply|applying|applied|reapply|re-apply|inspect|inspecting|verify|verifying|check|checking|confirm|confirming|remove|removing|replace|replacing|add|adding|touch[- ]up|witness|witnessing|document|documenting|record|recording|note|noting|report|reporting)(?:\s+(?!(?:then|and|or|torque|to|per|with|after|before|install|installing|tighten|tightening)\b)[a-z][a-z-]*)*\s+$/i;
+  const TORQUE_MARKER_COORDINATED = /\b(?:and|or)(?:\s+(?!(?:then|torque|to|per|with|after|before|install|installing|tighten|tightening)\b)[a-z][a-z-]*)*\s+$/i;
   const stepRecordsTorque = text => {
     const t = String(text ?? ''), mentions = [...t.matchAll(/torque/gi)];
     if (!mentions.length) return false;
     if (TORQUE_TARGET.test(t) || TORQUE_TIGHTEN.test(t)) return true;
-    const kinds = mentions.map(m => {
-      const before = t.slice(0, m.index), after = t.slice(m.index);
-      if (/[a-z-]$/i.test(before)) return 'action';
-      if (TORQUE_PLACE.test(before) && TORQUE_PLACE_AFTER.test(after)) return 'place';
-      const phrase = TORQUE_MARKER_PHRASE.exec(after);
-      return phrase && (phrase[1].trim() || TORQUE_MARKER_VERB_BEFORE.test(before)) ? 'marker' : 'action';
-    });
+    const kinds = [];
+    for (const m of mentions) {
+      const before = t.slice(0, m.index), after = t.slice(m.index), phrase = TORQUE_MARKER_PHRASE.exec(after);
+      // "Apply red torque stripe to the nut and blue torque stripe to the bolt": the marker verb carries across "and".
+      const carried = kinds[kinds.length - 1] === 'marker' && TORQUE_MARKER_COORDINATED.test(before);
+      kinds.push(/[a-z-]$/i.test(before) ? 'action' : TORQUE_PLACE.test(before) && TORQUE_PLACE_AFTER.test(after) ? 'place'
+        : phrase && (phrase[1].trim() || carried || TORQUE_MARKER_VERB_BEFORE.test(before)) ? 'marker' : 'action');
+    }
     // A place ("at specified torque points") is exempt only beside marker work on the same step.
     return kinds.includes('action') || !kinds.includes('marker');
   };

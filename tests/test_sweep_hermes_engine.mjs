@@ -149,7 +149,9 @@ realm('globalThis.Date = globalThis.__RealDate;')();
     // Thirteenth review: specified torque locations are places, not a torque target.
     'Apply torque stripe to all specified torque locations', 'Inspect torque witness marks at specified torque points',
     // Fifteenth review: modifiers between the marker and its inspection noun.
-    'Torque stripe visual inspection', 'Torque stripe adhesion check', 'Verify torque stripe integrity on each B-nut'];
+    'Torque stripe visual inspection', 'Torque stripe adhesion check', 'Verify torque stripe integrity on each B-nut',
+    // Seventeenth review: a marker verb carries across coordinated marker phrases.
+    'Apply red torque stripe to the nut and blue torque stripe to the bolt', 'Inspect torque stripe for damage and torque seal for damage'];
   check('MES.stepRecordsTorque: a step that is only torque stripe, seal, paint or mark work records no torque', stripes.every(t => MES.stepRecordsTorque(t) === false), stripes.filter(t => MES.stepRecordsTorque(t)).join(', '));
   // Review of PR #605: a torque action on marked or sealed parts still records the value, tool and unit.
   // Second review: a torque action on seal-named hardware with a torque target records it too.
@@ -173,7 +175,9 @@ realm('globalThis.Date = globalThis.__RealDate;')();
     // Fifteenth review: any part after the marker word records torque, listed or not.
     'Verify torque seal electrical connector per drawing', 'Record final torque seal adapter per WI-123', 'Inspect torque seal union per drawing', 'Torque seal', 'Torque stripe per drawing',
     // Sixteenth review: tightening at specified torque locations records torque.
-    'Tighten all fasteners at specified torque locations per drawing', 'Tighten bolts at specified torque points', 'Inspect fasteners at specified torque locations', 'Tighten fasteners, then apply torque stripe'];
+    'Tighten all fasteners at specified torque locations per drawing', 'Tighten bolts at specified torque points', 'Inspect fasteners at specified torque locations', 'Tighten fasteners, then apply torque stripe',
+    // Seventeenth review: a coordinated torque action or seal-named part still records.
+    'Apply torque stripe and torque seal nut per drawing', 'Inspect torque stripe and torque the nut', 'Torque the nut and torque seal plug'];
   check('MES.stepRecordsTorque: a torque action records a torque value, also on marked, paint-marked, sealed or seal-named parts', actions.every(t => MES.stepRecordsTorque(t) === true), actions.filter(t => !MES.stepRecordsTorque(t)).join(', '));
   const state = fresh(), order = state.orders.find(o => o.status === 'Draft' && o.operations.length), op = order.operations[0];
   op.steps = [{ id: 'step-1', title: 'Install bracket', instruction: 'Install bracket', recordsTorque: true }];
