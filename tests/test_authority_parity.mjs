@@ -348,13 +348,27 @@ const MASTER = account('fx-master', 'admin');
 const TARGET = account('fx-target', 'qe');
 {
   const users = [...browserUsers, ...[MASTER, TARGET].map(acc => ({ ...acc, salt: '00', hash: '00' }))];
-  const asBrowser = (who, fn, args) => page.evaluate(([AUTH, SESSION, users, who, fx, fnText, args]) => {
+  const asBrowser = (who, fn, args, fx = base) => page.evaluate(([AUTH, SESSION, users, who, fx, fnText, args]) => {
     localStorage.setItem(AUTH, JSON.stringify({ users })); state = fx; sessionStorage.setItem(SESSION, who);
     return (0, eval)(fnText)(...args);
-  }, [AUTH, SESSION, users, who, base, fn.toString(), args]);
-  const setGrant = (who, target, reason) => asBrowser(who, (t, r) => skAuth.setGrant(t, 'conformity', false, r, ''), [target, reason]);
+  }, [AUTH, SESSION, users, who, fx, fn.toString(), args]);
   const setRoles = (who, target, reason) => asBrowser(who, (t, r) => skAuth.setRoles(t, ['qe'], r, ''), [target, reason]);
-  const setSupport = (who, target, reason) => asBrowser(who, (t, r) => skAuth.setSupportAccess(t, false, r), [target, reason]);
+  // The target holds current ESD training, so a grant, an added role and Support Access are real changes. Each call
+  // starts from the same stored accounts and returns the account as it is stored afterwards.
+  const trainedState = structuredClone(base); recordTraining(trainedState, TARGET.username, 'ESD', day(400));
+  const stored = t => JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.find(u => u.username === t);
+  const grantChange = (reason) => asBrowser(GRANTOR.username, (t, r) => {
+    const res = skAuth.setGrant(t, 'conformity', true, r, 'ESD'), u = JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.find(x => x.username === t);
+    return { res, grant: (u.grants && u.grants.conformity) || null, active: skAuth.users().find(x => x.username === t).grants.includes('conformity') };
+  }, [TARGET.username, reason], trainedState);
+  const roleChange = (reason) => asBrowser(GRANTOR.username, (t, r) => {
+    const res = skAuth.setRoles(t, ['qe', 'me'], r, 'ESD'), u = JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.find(x => x.username === t);
+    return { res, extraRoles: u.extraRoles || [], trainingCode: (u.roleTraining && u.roleTraining.me && u.roleTraining.me.code) || null, roles: skAuth.rolesOf(t) };
+  }, [TARGET.username, reason], trainedState);
+  const supportChange = (reason) => asBrowser(MASTER.username, (t, r) => {
+    const before = state.supportLog ? state.supportLog.length : 0, res = skAuth.setSupportAccess(t, true, r), u = JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.find(x => x.username === t);
+    return { res, flag: u.supportAccess === true, logged: (state.supportLog ? state.supportLog.length : 0) - before };
+  }, [TARGET.username, reason]);
   const refusedWith = (result, text) => result.ok === false && result.message === text;
   const selfGrantResult = await asBrowser(GRANTOR.username, u => skAuth.setGrant(u, 'conformity', true, 'Granting myself on purpose.', 'ESD'), [GRANTOR.username]);
   ok('browser: granting your own authority is refused with today\'s text', refusedWith(selfGrantResult, SELF_GRANT), JSON.stringify(selfGrantResult));
@@ -363,18 +377,25 @@ const TARGET = account('fx-target', 'qe');
   const selfSupportResult = await asBrowser(MASTER.username, u => skAuth.setSupportAccess(u, true, 'Granting myself support.'), [MASTER.username]);
   ok('browser: Master Access granting itself Support Access is refused with today\'s text', refusedWith(selfSupportResult, SELF_SUPPORT), JSON.stringify(selfSupportResult));
   for (const [n, refused] of [[9, true], [10, false], [300, false], [301, true]]) {
-    const g = await setGrant(GRANTOR.username, TARGET.username, reasonOf(n));
-    ok(`browser: a grant reason of ${n} characters is ${refused ? 'refused' : 'accepted'}`, refused ? !g.ok && g.message === GRANT_REASON_BROWSER : g.ok === true, JSON.stringify(g));
-    const r = await setRoles(GRANTOR.username, TARGET.username, reasonOf(n));
-    ok(`browser: a role change reason of ${n} characters is ${refused ? 'refused' : 'accepted'}`, refused ? !r.ok && r.message === ROLES_REASON_BROWSER : r.ok === true, JSON.stringify(r));
+    const g = await grantChange(reasonOf(n));
+    ok(`browser: a grant reason of ${n} characters is ${refused ? 'refused and grants nothing' : 'accepted and the grant is held'}`, refused ? g.res.ok === false && g.res.message === GRANT_REASON_BROWSER && g.grant === null && !g.active : g.res.ok === true && /^[0-9a-f]{64}$/.test(g.grant && g.grant.hash) && g.active, JSON.stringify(g));
+    const r = await roleChange(reasonOf(n));
+    ok(`browser: a role change reason of ${n} characters is ${refused ? 'refused and adds no role' : 'accepted and the role is added'}`, refused ? r.res.ok === false && r.res.message === ROLES_REASON_BROWSER && !r.extraRoles.length && !r.roles.includes('me') : r.res.ok === true && r.extraRoles.join() === 'me' && r.trainingCode === 'ESD' && r.roles.includes('me'), JSON.stringify(r));
   }
   for (const [n, refused] of [[9, true], [10, false], [500, false], [501, true]]) {
-    const s = await setSupport(MASTER.username, TARGET.username, reasonOf(n));
-    ok(`browser: a Support Access reason of ${n} characters is ${refused ? 'refused' : 'accepted'}`, refused ? !s.ok && s.message === SUPPORT_REASON : s.ok === true, JSON.stringify(s));
+    const c = await supportChange(reasonOf(n));
+    ok(`browser: a Support Access reason of ${n} characters is ${refused ? 'refused and sets nothing' : 'accepted, the flag is set and the change is logged'}`, refused ? c.res.ok === false && c.res.message === SUPPORT_REASON && !c.flag && c.logged === 0 : c.res.ok === true && c.flag && c.logged > 0, JSON.stringify(c));
   }
   await page.evaluate(([AUTH, users]) => localStorage.setItem(AUTH, JSON.stringify({ users })), [AUTH, browserUsers]);
 
   await storeAccount(MASTER); await storeAccount(TARGET);
+  // The server reads training from its stored workspace: add the target's ESD record to it (unsigned, like the others).
+  const targetRecord = trainedState.trainingRecords.find(rec => rec.account === TARGET.username);
+  const withTarget = structuredClone(serverWorkspace);
+  withTarget.trainingRecords.push({ ...targetRecord, id: `TRN-${String(withTarget.trainingRecords.length + 1).padStart(5, '0')}` });
+  delete withTarget.trainingRecords[withTarget.trainingRecords.length - 1].trainerSignature;
+  ok('the server workspace with the target\'s training validates', MES.validate(withTarget), JSON.stringify(MES.diagnose ? MES.diagnose(withTarget) : null));
+  ok('the server workspace is replaced with it', !!(await server.store.putDoc('default', JSON.stringify(withTarget), (await server.store.getDoc('default')).etag, 'parity test')));
   const qm = (await signIn(GRANTOR.username)).token, master = (await signIn(MASTER.username)).token;
   const access = (token, body) => api('POST', '/auth/access', { token, body });
   const selfGrant = await access(qm, { action: 'grant', username: GRANTOR.username, cap: 'conformity', reason: 'Granting myself on purpose.', trainingCode: 'ESD' });
@@ -383,17 +404,19 @@ const TARGET = account('fx-target', 'qe');
   ok('server: Master Access granting itself Support Access is refused 403 with today\'s text', selfSupport.status === 403 && selfSupport.json.error === SELF_SUPPORT, JSON.stringify(selfSupport));
   const selfRoles = await access(qm, { action: 'roles', username: GRANTOR.username, roles: ['qm'], reason: 'Changing my own roles on purpose.' });
   ok('server: changing your own roles is refused 403 with today\'s text', selfRoles.status === 403 && selfRoles.json.error === SELF_ROLES, JSON.stringify(selfRoles));
+  const stateOf = async res => { const acc = await server.store.account(TARGET.username); return { status: res.status, error: res.json && res.json.error, grant: (acc.grants && acc.grants.conformity) || null, extraRoles: acc.extraRoles || [], support: acc.supportAccess === true }; };
   for (const [n, refused] of [[9, true], [10, false], [300, false], [301, true]]) {
-    const r = await access(qm, { action: 'roles', username: TARGET.username, roles: ['qe'], reason: reasonOf(n) });
-    ok(`server: a role change reason of ${n} characters is ${refused ? 'refused' : 'accepted'}`, refused ? r.status === 400 && r.json.error === GRANT_REASON_SERVER : r.status === 200, JSON.stringify(r));
-  }
-  for (const [n, refused] of [[9, true], [10, false], [300, false], [301, true]]) {
-    const r = await access(qm, { action: 'revoke', username: TARGET.username, cap: 'conformity', reason: reasonOf(n) });
-    ok(`server: a grant reason of ${n} characters is ${refused ? 'refused' : 'accepted'}`, refused ? r.status === 400 && r.json.error === GRANT_REASON_SERVER : r.status === 200 && r.json.message === 'Not granted.', JSON.stringify(r));
+    await storeAccount(TARGET);
+    const r = await stateOf(await access(qm, { action: 'roles', username: TARGET.username, roles: ['qe', 'me'], reason: reasonOf(n), trainingCode: 'ESD' }));
+    ok(`server: a role change reason of ${n} characters is ${refused ? 'refused and adds no role' : 'accepted and the role is added'}`, refused ? r.status === 400 && r.error === GRANT_REASON_SERVER && !r.extraRoles.length : r.status === 200 && r.extraRoles.join() === 'me', JSON.stringify(r));
+    await storeAccount(TARGET);
+    const g = await stateOf(await access(qm, { action: 'grant', username: TARGET.username, cap: 'conformity', reason: reasonOf(n), trainingCode: 'ESD' }));
+    ok(`server: a grant reason of ${n} characters is ${refused ? 'refused and grants nothing' : 'accepted and the grant is stored'}`, refused ? g.status === 400 && g.error === GRANT_REASON_SERVER && g.grant === null : g.status === 200 && /^[0-9a-f]{64}$/.test(g.grant && g.grant.hash) && !g.grant.revokedAt, JSON.stringify(g));
   }
   for (const [n, refused] of [[9, true], [10, false], [500, false], [501, true]]) {
-    const r = await access(master, { action: 'support', username: TARGET.username, on: false, reason: reasonOf(n) });
-    ok(`server: a Support Access reason of ${n} characters is ${refused ? 'refused' : 'accepted'}`, refused ? r.status === 400 && r.json.error === SUPPORT_REASON : r.status === 200, JSON.stringify(r));
+    await storeAccount(TARGET);
+    const c = await stateOf(await access(master, { action: 'support', username: TARGET.username, on: true, reason: reasonOf(n) }));
+    ok(`server: a Support Access reason of ${n} characters is ${refused ? 'refused and sets nothing' : 'accepted and the flag is stored'}`, refused ? c.status === 400 && c.error === SUPPORT_REASON && !c.support : c.status === 200 && c.support, JSON.stringify(c));
   }
 }
 
