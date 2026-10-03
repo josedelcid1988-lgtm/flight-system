@@ -1225,14 +1225,22 @@ export function createServer(options = {}) {
 // host:port whose port is not a number is a password cut short by an unencoded /. A ?password= parameter or a
 // password=, sslpassword= or other secret keyword counts too. An empty password is none.
 const SECRET_SETTING = /^\s*(?:[a-z_]*password|oauth_client_secret|scram_(?:client|server)_key)\s*$/i;
+// The PostgreSQL client for Node (pg-connection-string) reads any value that is not a socket path as a URL relative to
+// postgres://base, whatever libpq would call it. So postgresql:/db?%70assword=x, which libpq takes for keyword syntax,
+// still sets the password there, and the user info runs to the last @ of the authority. This is that reading.
+function clientUrlHasPassword(raw) {
+  if (raw.startsWith('/')) return false;
+  const str = / |%[^a-f0-9]|%[a-f0-9][^a-f0-9]/i.test(raw) ? encodeURI(raw).replace(/%25(\d\d)/g, '%$1') : raw;
+  let url = null;
+  try { url = new URL(str, 'postgres://base'); } catch { try { url = new URL(str.replace('@/', '@___DUMMY___/'), 'postgres://base'); } catch { return false; } }
+  return Boolean(url.password) || [...url.searchParams].some(([key, setting]) => SECRET_SETTING.test(key) && setting !== '');
+}
 export function connectionStringHasPassword(value) {
   const text = String(value || '').trim();
+  if (clientUrlHasPassword(String(value || ''))) return true;
   const uri = /^[a-z][a-z0-9+.-]*:\/\//i.exec(text);
   // keyword=value form: libpq allows white space around the =, and a quoted value may hold spaces.
   if (!uri) return [...text.matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*=\s*('(?:\\.|[^'\\])*'?|[^\s']\S*|)/g)].some(([, key, value]) => SECRET_SETTING.test(key) && value !== '' && value !== "''");
-  // The PostgreSQL client for Node reads the URL the WHATWG way, where the user info runs to the last @ of the
-  // authority, so an unescaped @ in a user name still leaves the password after it; that reading is checked too.
-  try { if (new URL(text).password) return true; } catch {}
   const rest = text.slice(uri[0].length), at = rest.indexOf('@'), slash = rest.indexOf('/');
   if (at >= 0 && (slash < 0 || at < slash)) { const userinfo = rest.slice(0, at); if (userinfo.includes(':') && userinfo.slice(userinfo.indexOf(':') + 1) !== '') return true; }
   // An @ after the first / with a : before that / is a password cut short by an unencoded /, numeric or not

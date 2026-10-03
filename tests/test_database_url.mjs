@@ -37,7 +37,12 @@ const withPassword = [
   `host=db scram_client_key=${SECRET}`,
   `host=db user=flight password = ${SECRET} dbname=flight`,
   `host=db password =${SECRET}`,
-  `host=db password= '${SECRET}'`
+  `host=db password= '${SECRET}'`,
+  // Not a postgresql:// URI to libpq, but the Node client reads any such string as a URL relative to postgres://base,
+  // so a percent-encoded password key in its query still sets the password (Codex review).
+  `postgresql:/flight?%70assword=${SECRET}`,
+  `postgresql:/flight?password=${SECRET}`,
+  `postgresql:flight?sslpassword=${SECRET}`
 ];
 const withoutPassword = [
   'postgresql://flight@db/flight',
@@ -49,7 +54,10 @@ const withoutPassword = [
   'postgresql:///flight?host=%2Frun%2Fpostgresql',
   'host=db user=flight dbname=flight',
   "host=db password=''",
-  'flight'
+  'flight',
+  'postgresql:/flight',
+  'postgresql:/flight?sslmode=require',
+  'postgresql:/flight?%70assword='
 ];
 for (const url of withPassword) ok(`a password is found in ${url.replace(SECRET, '<secret>').replace(SECRET.slice(4), '<secret>')}`, connectionStringHasPassword(url) === true);
 for (const url of withoutPassword) ok(`no password is found in ${url}`, connectionStringHasPassword(url) === false);
