@@ -9949,7 +9949,8 @@ const ATTACH_KINDS = Object.freeze(['mrb','cars','ncs','sprs']);
   const MES_record = (state, order, action) => { try { const a = actor(state); const taken = new Set([...(order.historyArchive || []), ...order.history, ...(state.activity || []), ...(state.activityArchive || [])].map(e => e && e.id)); let n = (Array.isArray(order.historyArchive) ? order.historyArchive.length : 0) + order.history.length + 1; while (taken.has(`${order.id}-event-${n}`)) n += 1; order.history.push({ id: `${order.id}-event-${n}`, at: now(), action: String(action).slice(0, 600), actor: `${a.name} · ${a.credentialId}`, build: MES.buildStamp() }); if (order.history.length > 300) { order.historyArchive = [...(order.historyArchive || []), ...order.history.splice(0, order.history.length - 300)]; } } catch (e) {} };
 
   // ---------- stock NC: a product problem found outside a work order ----------
-  const ticketSequence = state => Math.max(0, ...allTickets(state).map(x => Number(String(x.ticket.id).split('-').at(-1)) || 0), ...signedTicketNumbers(state)) + 1;
+  // Ticket numbers on the signed rework register are never issued again (#602), as createTicket does.
+  const ticketSequence = state => Math.max(0, ...allTickets(state).map(x => Number(String(x.ticket.id).split('-').at(-1)) || 0), ...(state && state.reworkLegacySeal && Array.isArray(state.reworkLegacySeal.signed) ? state.reworkLegacySeal.signed.map(key => Number(String(key).split('@')[0].split('-').at(-1)) || 0) : [])) + 1;
   function raiseNC(state, input) {
     { const d = denied('raise-nc', 'raise an NC'); if (d) return d; }
     if (list(state, 'ncs').length >= MAX) return fail(`This workspace supports up to ${MAX} stock NC records.`);

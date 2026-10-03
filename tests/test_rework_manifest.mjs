@@ -367,6 +367,8 @@ const repair = walk('seed-curated', 'WO-10003', 'Repair', {}, state => { MES.get
   { const o = MES.getOrder(freed, 'WO-10006'); o.tickets = o.tickets.filter(x => x.id !== open.ticketId); }
   const again = host.withAccount(qm, () => MES.createTicket(freed, 'WO-10006', MES.getOrder(freed, 'WO-10006').operations[0].id, { type: 'NC', title: 'Second finding', description: 'Another finding.', hold: false }), freed);
   ok('Register: a ticket number on the signed register is not issued again', again.ok && again.id !== open.ticketId && Number(again.id.split('-').at(-1)) > Number(open.ticketId.split('-').at(-1)), JSON.stringify(again));
+  const stockNc = host.withAccount(qm, () => host.FlightManeuver.raiseNC(freed, { sourceType: 'Serial number', type: 'NC', title: 'Stock finding', description: 'Found in stock.', partNumber: 'SR-IH-040', revision: 'A', serial: 'IH-040-RW1', quantity: 1, foundAt: 'Stock', pedigree: 'Production', escaped: 'no' }), freed);
+  ok('Register: a stock NC does not reuse a number on the signed register either', stockNc.ok && stockNc.id !== open.ticketId && Number(stockNc.id.split('-').at(-1)) > Number(open.ticketId.split('-').at(-1)), JSON.stringify(stockNc));
 
   // The operation records who added it, so the author survives the bounded sequence change log.
   const state = MES.upgrade(structuredClone(seed('seed-curated')));
