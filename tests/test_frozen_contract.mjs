@@ -80,6 +80,14 @@ const SOD=[
   ['nobody inspects their own work: step check',"if (checked) { const own = ownWorkRefusal(state, order, operation); if (own) return own; }",1],
   ['the person who verified a FAIR cannot sign box 22',"    if (fair.verified && fair.verified.by && by.credentialId === fair.verified.by.credentialId) return fail('The FAI reviewer in box 22 is a second person.",1],
   ['the Skyryse QA approval of a FAIR waits for box 22',"    if (!plain(fair.reviewed)) return fail('Box 22 is not signed.",1],
+  // #579: one stamp validity rule (issue date reached, Active, not expired, additional-stamp training current) for
+  // operation buy-offs, the inspection capability and the FAIR, 8130-9 and AQI signatures.
+  ['one stamp validity rule',"  function stampValidityProblem(holder, day, state) {",1],
+  ['a buy-off stamp passes the stamp validity rule',"    { const problem = stampValidityProblem(holder, pacificDay(at)); if (problem) return fail(problem); }",1],
+  ['the inspection capability uses the stamp validity rule',"!stampValidityProblem({ ...holderFromStamp(stamp), training: personTraining(state, account) }, day, state));",1],
+  ['FAIR, 8130-9 and AQI signatures use the stamp validity rule',"const checked = mine.map(s => { const h = { ...holderFromStamp(s), training: personTraining(state, s.account) }; return { holder: h, problem: stampValidityProblem(h, day, state) }; });",1],
+  ['an expired stamp does not sign',"if (holder.expires && (!/^\\d{4}-\\d{2}-\\d{2}$/.test(String(holder.expires)) || holder.expires < day)) return `${who} expired on ${holder.expires}.",1],
+  ['a stamp does not sign before its issue date',"if (holder.since > day) return `${who} is not active until ${holder.since}.",1],
 ];
 for(const [label,text,count] of SOD) has(label,text,count);
 
