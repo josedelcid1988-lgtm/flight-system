@@ -28,11 +28,15 @@ A workspace from outside becomes the shared record in two places: the first `PUT
   which also stops a fake v81 stamp, when it is dated before the steps it signs (FAIR characteristic result dates,
   MRB convening and votes, CAR steps, NC creation and disposition), or when the order history records the FAIR
   verification by a v82 build.
+- **Signer and time bound.** An MRB decision, CAR closure, stock NC approval or FAIR verification whose displayed
+  signer or time is not the manifest's is refused, and a step dated before the steps it follows is refused whether or
+  not its manifest survives.
 - **No deleted signatures.** A buy-off, an approved order closure, a work order disposition approval, a FAIR
   verification, box 22 review or QA approval, an MRB decision, a CAR closure or a stock NC approval that was signed on
   or after 2026-09-28, or has no readable time, and has lost its manifest is refused; `MES.validate` alone accepted
   several of these. Builds before v80 wrote some of these steps unsigned, and those still load, as do a rework or
-  repair ticket resolved by its plan and a closed escape migrated from before the ticket restructure. Pre-release QA
+  repair ticket resolved by its plan and a closed escape migrated from before the ticket restructure (no source, no
+  disposition, no MRB and no affected record; taking that shape erases what an approval signs, as deleting it would). Pre-release QA
   approvals are not in this list: engineering changes and disposition approvals re-apply them unsigned.
 - **Refusal.** The server answers 422 with code `SIGNATURE_PROVENANCE`, names the record, stores nothing and writes a
   `workspace-put-refused` audit row. The migration dry run stops with the same finding.

@@ -3625,38 +3625,46 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       (order.tickets || []).forEach(t => { if (plain(t) && t.status === 'Resolved' && !(plain(t.reworkPlan) && t.resolution === t.reworkPlan.approval)) unsigned({ manifest: t.manifest }, `${order.id} ${t.id} disposition approval`, t.resolvedAt); });
       if (plain(order.fair)) [['verified', 'FAIR verification'], ['reviewed', 'FAIR review (box 22)'], ['approved', 'FAIR QA approval']].forEach(([k, label]) => unsigned(order.fair[k], `${order.id} ${label}`));
     });
-    (fm.mrb || []).forEach(b => { if (plain(b) && plain(b.decision)) unsigned(b.decision, `${b.id} MRB decision`); });
-    (fm.cars || []).forEach(c => { if (plain(c) && plain(c.closure)) unsigned(c.closure, `${c.id} closure`); });
-    // A closed escape from before the ticket restructure becomes a resolved stock NC with its old closure and no
-    // disposition (FlightManeuver.ensure). approveNC always records both the disposition and the affected quantity.
-    const migratedEscape = t => t.dispo === null && t.affected === null && (t.history || []).some(e => plain(e) && /^Migrated from escape /.test(String(e.action || '')));
-    (fm.ncs || []).forEach(t => { if (plain(t) && plain(t.resolution) && !migratedEscape(t)) unsigned(t.resolution, `${t.id} disposition approval`); });
-    (state.orders || []).forEach(order => {
-      const f = order.fair; if (!plain(f) || !plain(f.verified) || !plain(f.verified.manifest)) return;
-      const m = f.verified.manifest, where = `${order.id} FAIR verification`;
-      if (plain(m.subject)) { const by = plain(f.verified.by) ? f.verified.by : {}, live = fairBound({ ...fairSnapshot(state, order), ...(by.override ? { override: by.override } : {}) }); if (!live || !sameSigned(fairBound(m.subject), live)) refuse(where, 'Forms 1 to 3 no longer match what was verified'); return; }
-      const days = (f.chars || []).map(c => plain(c) && /^\d{4}-\d{2}-\d{2}$/.test(c.date || '') ? c.date : null).filter(Boolean);
-      const verifiedEvent = new RegExp(`^AS9102 FAIR ${escaped(order.id)}\\b.* verified`);
-      if (days.some(d => d > String(m.at).slice(0, 10))) refuse(where, 'it is dated before characteristic results it verifies');
-      else if ((order.history || []).concat(order.historyArchive || []).some(e => plain(e) && subjectEraBuild(e.build) && verifiedEvent.test(String(e.action || '')))) refuse(where, 'the order history records this verification by a build that stores the signed subject, but the subject is missing');
-    });
+    // A closed escape from before the ticket restructure becomes a resolved stock NC with its old closure, no source, no
+    // disposition, no MRB and no affected record (FlightManeuver.ensure). raiseNC always records the source and approveNC
+    // the disposition and affected quantity, so taking this shape erases what an approval signs, as deleting the NC would.
+    const migratedEscape = t => !Object.hasOwn(t, 'source') && plain(t.escape) && t.dispo === null && t.affected === null && t.mrbId === null && (t.history || []).some(e => plain(e) && e.actor === 'system' && /^Migrated from escape /.test(String(e.action || '')));
+    // A signed step shows its signer and time on the record; both must be the manifest's. Signed or not, a step cannot be
+    // dated before the steps it follows, so neither a downgrade nor a deleted manifest can be hidden by moving its time.
+    const signedStep = (record, where, after, chronology) => {
+      if (!plain(record)) return;
+      const m = plain(record.manifest) ? record.manifest : null, at = m ? m.at : record.at;
+      if (m && record.at !== undefined && record.at !== m.at) refuse(where, 'the time shown on the record is not the signed time');
+      if (m && plain(record.by) && plain(m.signer) && record.by.credentialId !== m.signer.credentialId) refuse(where, 'the signer shown on the record is not the person who signed');
+      if (!(m && plain(m.subject)) && before({ at }, after)) refuse(where, chronology);
+    };
     (fm.mrb || []).forEach(b => {
-      if (!plain(b) || !plain(b.decision) || !plain(b.decision.manifest)) return;
-      const m = b.decision.manifest, where = `${b.id} MRB decision`;
-      if (plain(m.subject)) { if (!sameSigned(m.subject, mrbDecisionSubject(b, b.decision.status, b.decision.note))) refuse(where, 'the board record no longer matches what was signed'); }
-      else if (before(m, [b.openedAt, ...(b.votes || []).map(v => plain(v) ? v.at : null)])) refuse(where, 'it is dated before the board was convened or before a vote it decides');
+      if (!plain(b) || !plain(b.decision)) return;
+      const where = `${b.id} MRB decision`; unsigned(b.decision, where);
+      signedStep(b.decision, where, [b.openedAt, ...(b.votes || []).map(v => plain(v) ? v.at : null)], 'it is dated before the board was convened or before a vote it decides');
+      const m = b.decision.manifest; if (plain(m) && plain(m.subject) && !sameSigned(m.subject, mrbDecisionSubject(b, b.decision.status, b.decision.note))) refuse(where, 'the board record no longer matches what was signed');
     });
     (fm.cars || []).forEach(c => {
-      if (!plain(c) || !plain(c.closure) || !plain(c.closure.manifest)) return;
-      const m = c.closure.manifest, where = `${c.id} closure`;
-      if (plain(m.subject)) { if (!sameSigned(m.subject, carClosureSubject(c, c.closure.note))) refuse(where, 'the corrective action no longer matches what was signed'); }
-      else if (before(m, [c.raisedAt, c.rootCause && c.rootCause.at, c.verification && c.verification.at, c.effectiveness && c.effectiveness.at, ...(c.actions || []).map(a => plain(a) ? a.completedAt : null)])) refuse(where, 'it is dated before the steps it closes');
+      if (!plain(c) || !plain(c.closure)) return;
+      const where = `${c.id} closure`; unsigned(c.closure, where);
+      signedStep(c.closure, where, [c.raisedAt, c.rootCause && c.rootCause.at, c.verification && c.verification.at, c.effectiveness && c.effectiveness.at, ...(c.actions || []).map(a => plain(a) ? a.completedAt : null)], 'it is dated before the steps it closes');
+      const m = c.closure.manifest; if (plain(m) && plain(m.subject) && !sameSigned(m.subject, carClosureSubject(c, c.closure.note))) refuse(where, 'the corrective action no longer matches what was signed');
     });
     (fm.ncs || []).forEach(t => {
-      if (!plain(t) || !plain(t.resolution) || !plain(t.resolution.manifest)) return;
-      const m = t.resolution.manifest, where = `${t.id} disposition approval`, a = plain(t.affected) ? t.affected : {};
-      if (plain(m.subject)) { const code = { defectCode: a.defectCode, defectName: a.defectName, subCode: a.subCode, subName: a.subName }; if (!sameSigned(m.subject, ncApprovalSubject(t, code, a.quantity, t.resolution.note))) refuse(where, 'the nonconformance no longer matches what was signed'); }
-      else if (before(m, [t.createdAt, t.dispo && t.dispo.at])) refuse(where, 'it is dated before the nonconformance or its disposition');
+      if (!plain(t) || !plain(t.resolution) || migratedEscape(t)) return;
+      const where = `${t.id} disposition approval`, a = plain(t.affected) ? t.affected : {}; unsigned(t.resolution, where);
+      signedStep(t.resolution, where, [t.createdAt, t.dispo && t.dispo.at], 'it is dated before the nonconformance or its disposition');
+      const m = t.resolution.manifest; if (plain(m) && plain(m.subject) && !sameSigned(m.subject, ncApprovalSubject(t, { defectCode: a.defectCode, defectName: a.defectName, subCode: a.subCode, subName: a.subName }, a.quantity, t.resolution.note))) refuse(where, 'the nonconformance no longer matches what was signed');
+    });
+    (state.orders || []).forEach(order => {
+      const f = order.fair; if (!plain(f) || !plain(f.verified)) return;
+      const m = plain(f.verified.manifest) ? f.verified.manifest : null, where = `${order.id} FAIR verification`, at = m ? m.at : f.verified.at;
+      signedStep(f.verified, where, [], '');
+      if (m && plain(m.subject)) { const by = plain(f.verified.by) ? f.verified.by : {}, live = fairBound({ ...fairSnapshot(state, order), ...(by.override ? { override: by.override } : {}) }); if (!live || !sameSigned(fairBound(m.subject), live)) refuse(where, 'Forms 1 to 3 no longer match what was verified'); return; }
+      const days = (f.chars || []).map(c => plain(c) && /^\d{4}-\d{2}-\d{2}$/.test(c.date || '') ? c.date : null).filter(Boolean);
+      const verifiedEvent = new RegExp(`^AS9102 FAIR ${escaped(order.id)}\\b.* verified`);
+      if (days.some(d => d > String(at).slice(0, 10))) refuse(where, 'it is dated before characteristic results it verifies');
+      else if ((order.history || []).concat(order.historyArchive || []).some(e => plain(e) && subjectEraBuild(e.build) && verifiedEvent.test(String(e.action || '')))) refuse(where, 'the order history records this verification by a build that stores the signed subject, but the subject is missing');
     });
     return { ok: failures.length === 0, failures };
   }

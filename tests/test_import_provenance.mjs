@@ -280,6 +280,27 @@ await check('a recent work order disposition approval with its manifest deleted 
   assert.ok(r.failures.some(f => f.where === `${wo.id} ${t.id} disposition approval` && /signature manifest is missing/.test(f.reason)), JSON.stringify(r.failures));
 });
 
+// Codex review on #631 (45cbedf): an NC edited to look like a migrated escape, a displayed signer or time that is not
+// the signed one, and a deleted manifest whose step is moved before the cutoff.
+await check('a signed NC approval edited to look like a migrated escape is refused', async () => {
+  const doc = exported(), t = ncOf(doc);
+  delete t.resolution.manifest; t.dispo = null; t.affected = null;
+  t.history.push({ at: new Date().toISOString(), action: 'Migrated from escape ESC-0009.', actor: 'system' });
+  assert.match((await refused(doc, `${current.ncId} disposition approval`)).json.error, /signature manifest is missing/);
+});
+await check('an approval whose displayed signer or time is not the signed one is refused', async () => {
+  const signer = exported(); mrbOf(signer).decision.by = { ...mrbOf(signer).decision.by, credentialId: 'ACCT-prov-qm', name: 'Quincy Manager' };
+  assert.match((await refused(signer, `${current.mrbId} MRB decision`)).json.error, /signer shown on the record is not the person who signed/);
+  const when = exported(); carOf(when).closure.at = '2026-10-01T12:00:00.000Z';
+  assert.match((await refused(when, `${current.carId} closure`)).json.error, /time shown on the record is not the signed time/);
+});
+await check('a deleted manifest whose step is moved before v82 shipped is refused by its own chronology', async () => {
+  // An MRB decision or CAR closure without its manifest already fails MES.validate; the stock NC carries this rule.
+  for (const edit of [s => { delete mrbOf(s).decision.manifest; mrbOf(s).decision.at = BACKDATED; }, s => { delete carOf(s).closure.manifest; carOf(s).closure.at = BACKDATED; }]) { const doc = exported(); edit(doc); assert.equal(MES.validate(doc), false); }
+  const n = exported(); delete ncOf(n).resolution.manifest; ncOf(n).resolution.at = BACKDATED;
+  assert.match((await refused(n, `${current.ncId} disposition approval`)).json.error, /dated before the nonconformance or its disposition/);
+});
+
 await check('the browser migration dry run refuses the #481 forgery and accepts the unedited export', async () => {
   const forged = exported(), f = fairOf(forged);
   f.chars[1].result = '2.790'; f.verified.at = BACKDATED; downgrade(f.verified.manifest, BACKDATED);
