@@ -139,7 +139,9 @@ realm('globalThis.Date = globalThis.__RealDate;')();
     // Sixth review: a count after "to" is not a torque target.
     'Apply torque stripe to 3 fasteners',
     // Seventh review: modifiers before the marker.
-    'Apply red torque stripe across the nut', 'Visually verify red torque seal condition', 'Torque stripe condition', 'Torque stripe inspection of each B-nut', 'Torque seal check.'];
+    'Apply red torque stripe across the nut', 'Visually verify red torque seal condition', 'Torque stripe condition', 'Torque stripe inspection of each B-nut', 'Torque seal check.',
+    // Tenth review: missing, broken and damaged marker conditions.
+    'Torque stripe missing on B-nut', 'Torque seal broken at fitting', 'Document torque stripe damage', 'Torque stripe damaged on the jam nut', 'Record torque seal damage on B-nut', 'Torque stripe not intact'];
   check('MES.stepRecordsTorque: a step that is only torque stripe, seal, paint or mark work records no torque', stripes.every(t => MES.stepRecordsTorque(t) === false), stripes.filter(t => MES.stepRecordsTorque(t)).join(', '));
   // Review of PR #605: a torque action on marked or sealed parts still records the value, tool and unit.
   // Second review: a torque action on seal-named hardware with a torque target records it too.
@@ -149,7 +151,9 @@ realm('globalThis.Date = globalThis.__RealDate;')();
     // Eighth review: a modified or prefixed torque verb is a torque action.
     'Carefully torque seal retaining nut per drawing', 'Retorque seal nut per WI-123', 'Inspect threads, then torque seal nut per drawing', 'Inspect threads and torque seal nut per drawing',
     // Ninth review: hardware named after a marker noun.
-    'Torque seal check valve per WI-123', 'Torque seal inspection port cap per WI-123'];
+    'Torque seal check valve per WI-123', 'Torque seal inspection port cap per WI-123',
+    // Tenth review: recording a torque value, or a torque action next to marker damage, still records torque.
+    'Record torque value', 'Document torque stripe damage, then torque nut to 35 in-lb'];
   check('MES.stepRecordsTorque: a torque action records a torque value, also on marked, paint-marked, sealed or seal-named parts', actions.every(t => MES.stepRecordsTorque(t) === true), actions.filter(t => !MES.stepRecordsTorque(t)).join(', '));
   const state = fresh(), order = state.orders.find(o => o.status === 'Draft' && o.operations.length), op = order.operations[0];
   op.steps = [{ id: 'step-1', title: 'Install bracket', instruction: 'Install bracket', recordsTorque: true }];
