@@ -25,9 +25,9 @@ numbers and record number formats have not changed in any entry below.
   start the site day, planned finish a week later).
 - **One torque rule (#589, #659).** `MES.stepRecordsTorque` decides whether a step records a torque value. A step
   that mentions torque records one unless every mention is marker work: a stripe, seal, paint or mark word follows
-  it and either a noun or passive form follows that ("Torque stripe inspection", "Torque seal is intact") or the
-  mention does not start a clause ("Apply red torque stripe", "Verify torque seal condition"). "Torque" at the start
-  of a clause is the verb ("Torque sealing plug per
+  it and either a noun or passive form follows that ("Torque stripe inspection", "Torque seal is intact") or a
+  marker verb comes within three words before it in the same clause ("Apply red torque stripe"). Anything else is a
+  torque action ("Carefully torque seal nut", "Retorque seal nut", "Torque sealing plug per
   WI-123", "Torque marked fasteners") and any step that names a torque target always record the value, tool and
   unit. Adding and editing an operation, default steps and the migration of older steps (from the title and
   instruction together) all use it, so "Apply torque stripe" no longer asks for a torque reading after an edit. An
