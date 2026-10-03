@@ -135,6 +135,12 @@ await as('ttech');
 await run(()=>profileDialog());
 ok('nothing blocked: no reasons block in Your credentials',await run(()=>!document.querySelector('#dialog .own-blocked')));
 await run(()=>document.getElementById('dialog').close());
+
+// Two invalid Quality stamps with different problems: each one is named with its own remedy.
+await as('jdoe');
+const two=await run(([f])=>{const s=MES.issueStamp(state,{name:'Tam Tampered',buyoffType:'Quality',account:'tamp',expires:f});if(!s.ok)return {s};
+  const r=MES.updateStamp(state,state.stamps.find(x=>x.number===s.number).id,{expires:'2026-01-01'});save();return {s,r,number:s.number,why:skAuth.blockedReasons('tamp')[0]};},[future()]);
+ok('two invalid stamps: every stamp is named with its own remedy',two.s&&two.s.ok&&two.r&&two.r.ok&&two.why===`Inspection is paused: Quality stamp ${setup.tNumber} is suspended. Ask the QA Manager to reinstate it. Quality stamp ${two.number} expired on Jan 1, 2026. Ask the QA Manager to renew it.`&&!EM.test(two.why||''),JSON.stringify(two));
 ok('state valid at the end',await run(()=>MES.validate(state)));
 
 // ---------------- the demo print is marked ----------------

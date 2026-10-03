@@ -1132,7 +1132,9 @@ export function createServer(options = {}) {
           // instant, and that instant is the report's generation time: each lockout listed is one in force then. One
           // set by a failed sign-in after that instant (while the query ran) is left out; a locked account refuses
           // further sign-ins before they are counted, so its last failure is the one that locked it.
-          const users = (await tx.accounts()).map(publicAccount), at = Date.now();
+          // Each account also carries the roles and capabilities this server enforces for it, from the same functions the
+          // gates use, so roles kept in an older account record (several standard roles in `roles`) are reported as held.
+          const users = (await tx.accounts()).map(a => ({ ...publicAccount(a), enforced: { roles: host.rolesOf(a, reviewState), capabilities: host.capsOf(a, reviewState) } })), at = Date.now();
           const lockouts = (await tx.lockouts(at)).filter(l => !l.lastFailedAt || !(Date.parse(l.lastFailedAt) > at));
           report = { generatedAt: new Date(at).toISOString(), by: session.username, workspaceEtag: row ? row.etag : null, users, lockouts };
           return false;

@@ -73,6 +73,18 @@ try {
       assert.ok('workspaceEtag' in r.json, 'the server names the workspace version it read (none here: no workspace yet)');
     });
   }
+  await check('each account carries the roles and capabilities the server enforces, including roles kept in an older account record', async () => {
+    // An older record keeps several standard roles in `roles`; the server holds them without a training gate.
+    await server.store.upsertAccount({ username: 'ar-legacy', displayName: 'User ar-legacy', role: 'technician', roles: ['technician', 'qe'], extraRoles: [], roleTraining: {}, grants: {}, grantHistory: [], supportAccess: false, salt: '', hash: await makeHash('ar-legacy-pass-1'), createdBy: 'ar-admin' });
+    const r = await api('GET', '/auth/access-report', { token: adminToken });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    const legacy = r.json.users.find(u => u.username === 'ar-legacy'), tech = r.json.users.find(u => u.username === 'ar-tech');
+    assert.deepEqual(legacy.enforced.roles, ['technician', 'qe'], 'both standard roles are reported as held');
+    assert.deepEqual(tech.enforced.roles, ['technician']);
+    assert.ok(tech.enforced.capabilities.every(c => legacy.enforced.capabilities.includes(c)), 'the legacy account holds everything a technician holds');
+    assert.ok(legacy.enforced.capabilities.some(c => !tech.enforced.capabilities.includes(c)), 'and the capabilities its second role adds');
+    assert.ok(r.json.users.every(u => u.enforced && Array.isArray(u.enforced.roles) && Array.isArray(u.enforced.capabilities)), 'every account carries what the server enforces');
+  });
   for (const [who, token, status] of [['a Quality Supervisor', qsToken, 403], ['a technician', techToken, 403], ['an account whose QA Manager role is a paused extra role (training not current)', pausedQmToken, 403], ['a caller without a session', null, 401]]) {
     await check(`${who} is refused the access review with a plain message`, async () => {
       const r = await api('GET', '/auth/access-report', { token });

@@ -1979,7 +1979,7 @@ function skBoot(){
   rolesOf(u,true).slice(1).forEach(function(k){if(extraRoleActive(u,k))return;var t=u.roleTraining&&u.roleTraining[k];out.push(roleLabel(k)+' role is paused: '+extraRoleWhy(u,k)+'. '+(t&&t.code?'Record current '+t.code+' training to resume it.':'A QA Manager must add the role again with a current training.'));});
   if(eligibleFor(u,'inspect-steps')&&caps.indexOf('inspect-steps')<0){var qs=stampsOf(u).filter(function(s){return s.buyoffType==='Quality';});
    if(!qs.length)out.push('Inspection is paused: no Quality stamp is assigned to this account. Ask the QA Manager to issue and assign one.');
-   else{var whys=qs.map(function(s){return {s:s,w:stampWhy(u,s)};});out.push('Inspection is paused: '+whys.map(function(x){return 'Quality stamp '+x.s.number+' '+x.w.text;}).join(' and ')+'. '+whys[0].w.fix);}}
+   else out.push('Inspection is paused: '+qs.map(function(s){var w=stampWhy(u,s);return 'Quality stamp '+s.number+' '+w.text+'. '+w.fix;}).join(' '));}
   GRANTED.forEach(function(cap){if(caps.indexOf(cap)>=0)return;var st=authorityStatus(u,cap),name=authorityName(cap);
    if(st.status==='Not granted'){if(eligibleFor(u,cap))out.push(name+' is not granted: a QA Manager grants it to a named person against a current training.');return;}
    if(st.status==='Not active'){out.push(name+' is not active: '+st.reason+'. A QA Manager must grant it again.');return;}
@@ -1988,9 +1988,12 @@ function skBoot(){
   return out;}
  function lockoutOf(u,serverLockouts){if(Array.isArray(serverLockouts)){var l=serverLockouts.find(function(x){return x&&x.username===u.username;});return l?{locked:true,text:'Locked until '+String(l.until||'').slice(0,16).replace('T',' ')+' UTC'}:{locked:false,text:'Not locked'};}
   var mins=lockedFor(u.username),st=lockState(u.username);return mins?{locked:true,text:'Locked, '+mins+' minute'+(mins===1?'':'s')+' left'}:{locked:false,text:st.fails?'Not locked ('+st.fails+' failed sign-in'+(st.fails===1?'':'s')+')':'Not locked'};}
- function accessReviewRows(users,serverLockouts){var today=reviewToday();return users.map(function(u){var caps=capsOf(u);return {
+ // With a server, each account carries the roles and capabilities the server enforces; a role kept in an older account
+ // record (several standard roles in `roles`) is held there without a training gate, so it is listed as Active.
+ function accessReviewRows(users,serverLockouts){var today=reviewToday();return users.map(function(u){var en=u.enforced&&Array.isArray(u.enforced.capabilities)?u.enforced:null,caps=en?en.capabilities:capsOf(u),listed=rolesOf(u,true),
+   held=(en&&Array.isArray(en.roles)?en.roles:[]).filter(function(k){return listed.indexOf(k)<0&&ROLES.some(function(r){return r.key===k;});});return {
    username:u.username,name:u.displayName,primaryRole:roleLabel(primaryRole(u)),
-   extraRoles:rolesOf(u,true).slice(1).map(function(k){var on=extraRoleActive(u,k);return {role:roleLabel(k),status:on?'Active':'Paused',reason:on?'':extraRoleWhy(u,k)};}),
+   extraRoles:listed.slice(1).map(function(k){var on=extraRoleActive(u,k);return {role:roleLabel(k),status:on?'Active':'Paused',reason:on?'':extraRoleWhy(u,k)};}).concat(held.map(function(k){return {role:roleLabel(k),status:'Active',reason:''};})),
    authorities:GRANTED.map(function(cap){var st=authorityStatus(u,cap);return {authority:authorityName(cap),status:st.status,reason:st.reason};}),
    stamps:stampsOf(u).map(function(s){var valid=stampInForce(u,s);return {number:s.number,buyoffType:s.buyoffType,status:s.status,issued:s.issued||'',expires:s.expires||'',valid:valid,reason:valid?'':stampWhy(u,s).text};}),
    supportAccess:u.supportAccess===true,lockout:lockoutOf(u,serverLockouts),
@@ -2008,6 +2011,7 @@ function skBoot(){
  // A change of this page's own that the server has not confirmed yet would be lost by the reload, so it waits.
  var ACCESS_REVIEW_CHANGED='The shared workspace changed while the access review was being built. Try again in a moment.';
  var ACCESS_REVIEW_CLOCK='This computer\'s date does not match the server\'s, so the access review would read training and stamp dates on the wrong day. Correct the computer\'s date and time, then try again.';
+ var ACCESS_REVIEW_MIDNIGHT='Midnight Pacific time passed while the access review was being built, so its dates would mix two days. Try again.';
  var ACCESS_REVIEW_SAVING='Your last change is still being saved to the server. Try the access review again once it is saved.';
  // Queued, sent-but-unconfirmed and snapshot writes all count: the report would read a workspace the server has not confirmed.
  function accessReviewSaving(){try{return !!((typeof serverActionQueue!=='undefined'&&serverActionQueue.length)||(typeof serverActionPending!=='undefined'&&serverActionPending>0)||(typeof serverReconcilePending!=='undefined'&&serverReconcilePending)||(window.skServer&&window.skServer.sync&&window.skServer.sync.status==='saving'));}catch(e){return false;}}
@@ -2026,7 +2030,10 @@ function skBoot(){
     if(accessReviewSaving())return {ok:false,message:ACCESS_REVIEW_SAVING};
     if(r.json.workspaceEtag&&r.json.workspaceEtag!==window.skServer.etag)return left>0?attempt(left-1):{ok:false,message:ACCESS_REVIEW_CHANGED};
     var at=Date.parse(r.json.generatedAt||'');if(!Number.isFinite(at)||pacificDayAt(at)!==pacificDayAt(Date.now()))return {ok:false,message:ACCESS_REVIEW_CLOCK};
-    return accessReview(r.json.users,r.json.lockouts||[],r.json.generatedAt,r.json.by);});};
+    var built=accessReview(r.json.users,r.json.lockouts||[],r.json.generatedAt,r.json.by);
+    // Every status was read on the Pacific day of the generation time only if midnight did not pass while the rows were built.
+    if(pacificDayAt(Date.now())!==pacificDayAt(at))return {ok:false,message:ACCESS_REVIEW_MIDNIGHT};
+    return built;});};
   return attempt(1).catch(function(e){if(e&&e.reload)return {ok:false,message:'The shared workspace could not be reloaded, so the access review was not built. '+(e.reload&&e.reload.message?e.reload.message:'Try again.')};return {ok:false,message:'The server could not be reached, so the access review was not built. Try again.'};});}
  // A grant is a signed record: who granted what to whom, when and why, with a SHA-256 of that record.
  function grantHash(rec){try{return window.MES&&window.MES.sha256?window.MES.sha256(window.MES.canonical(rec)):'';}catch(e){return '';}}
