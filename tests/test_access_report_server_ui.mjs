@@ -33,7 +33,8 @@ try {
   // version the server read; the report is built only from that same version.
   let rewrite = body => { const t = Date.parse(body.generatedAt); body.generatedAt = new Date(t - 1000).toISOString(); return body; };
   const sent = [];
-  await page.route('**/api/auth/access-report', async route => { const response = await route.fetch(); let body = await response.json(); if (body && Array.isArray(body.users)) { body = rewrite(body); sent.push({ generatedAt: body.generatedAt, workspaceEtag: body.workspaceEtag }); } await route.fulfill({ response, json: body }); });
+  let duringFetch = null;
+  await page.route('**/api/auth/access-report', async route => { const response = await route.fetch(); if (duringFetch) await duringFetch(); let body = await response.json(); if (body && Array.isArray(body.users)) { body = rewrite(body); sent.push({ generatedAt: body.generatedAt, workspaceEtag: body.workspaceEtag }); } await route.fulfill({ response, json: body }); });
   const build = () => page.evaluate(async () => {
     let reloads = 0; const real = refreshServerWorkspace;
     refreshServerWorkspace = async function () { reloads += 1; return real.apply(this, arguments); };
@@ -82,6 +83,14 @@ try {
   });
   const WAIT = 'Your last change is still being saved to the server. Try the access review again once it is saved.';
   ok('a sent but unconfirmed change, or a snapshot write in flight, makes the report wait without reloading', inflight.a === WAIT && inflight.b === WAIT && inflight.reloads === 0, JSON.stringify(inflight));
+
+  // A change this tab starts while the report requests are running: the server read the version before it, so the
+  // report is refused rather than built from a page state the server has not confirmed.
+  duringFetch = () => page.evaluate(() => { serverActionPending += 1; });
+  let midway;
+  try { midway = await page.evaluate(async () => { const r = await skAuth.accessReport(); return { ok: r.ok, message: r.message }; }); }
+  finally { duringFetch = null; await page.evaluate(() => { serverActionPending -= 1; }); }
+  ok('a change started while the report requests run makes the report wait instead of mixing versions', midway.ok === false && midway.message === WAIT, JSON.stringify(midway));
 
   // The generator is named from the account list the server read, not this tab's cache: a display name changed in
   // another session shows as the server has it.

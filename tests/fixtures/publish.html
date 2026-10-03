@@ -1955,18 +1955,22 @@ function skBoot(){
  // A change of this page's own that the server has not confirmed yet would be lost by the reload, so it waits.
  var ACCESS_REVIEW_CHANGED='The shared workspace changed while the access review was being built. Try again in a moment.';
  var ACCESS_REVIEW_CLOCK='This computer\'s date does not match the server\'s, so the access review would read training and stamp dates on the wrong day. Correct the computer\'s date and time, then try again.';
+ var ACCESS_REVIEW_SAVING='Your last change is still being saved to the server. Try the access review again once it is saved.';
+ // Queued, sent-but-unconfirmed and snapshot writes all count: the report would read a workspace the server has not confirmed.
+ function accessReviewSaving(){try{return !!((typeof serverActionQueue!=='undefined'&&serverActionQueue.length)||(typeof serverActionPending!=='undefined'&&serverActionPending>0)||(typeof serverReconcilePending!=='undefined'&&serverReconcilePending)||(window.skServer&&window.skServer.sync&&window.skServer.sync.status==='saving'));}catch(e){return false;}}
  function pacificDayAt(ms){return new Date(ms).toLocaleDateString('en-CA',{timeZone:'America/Los_Angeles'});}
  // With a server, the account list is reloaded first, so a role another manager just gave or took away counts.
  function refreshServerAccounts(){return serverApi('/auth/accounts').then(function(r){if(r.ok&&r.json&&Array.isArray(r.json.users))SERVER.auth=Object.assign({},SERVER.auth,{users:r.json.users});},function(){});}
  function accessReport(){if(!currentUser())return Promise.resolve({ok:false,message:'Sign in first.'});if(!SERVER)return Promise.resolve(canReviewAccess(currentUser())?accessReview():{ok:false,message:ACCESS_REVIEW_REFUSAL});
   return refreshServerAccounts().then(accessReportFromServer);}
  function accessReportFromServer(){var me=currentUser();if(!me)return {ok:false,message:'Sign in first.'};if(!canReviewAccess(me))return {ok:false,message:ACCESS_REVIEW_REFUSAL};
-  // Queued, sent-but-unconfirmed and snapshot writes all count: the reload would show the workspace without them.
-  try{if((typeof serverActionQueue!=='undefined'&&serverActionQueue.length)||(typeof serverActionPending!=='undefined'&&serverActionPending>0)||(typeof serverReconcilePending!=='undefined'&&serverReconcilePending)||(window.skServer&&window.skServer.sync&&window.skServer.sync.status==='saving'))return Promise.resolve({ok:false,message:'Your last change is still being saved to the server. Try the access review again once it is saved.'});}catch(e){}
+  if(accessReviewSaving())return Promise.resolve({ok:false,message:ACCESS_REVIEW_SAVING});
   var attempt=function(left){
    var reload=typeof refreshServerWorkspace==='function'?Promise.resolve().then(refreshServerWorkspace):Promise.resolve();
    return reload.then(function(){return serverApi('/auth/access-report');},function(e){throw {reload:e};}).then(function(r){
     if(!r.ok||!r.json||!Array.isArray(r.json.users))return {ok:false,message:r.json&&r.json.error||'The server did not send the access review. Try again.'};
+    // A change made in this tab while the requests ran is in the page but not yet in the version the server read.
+    if(accessReviewSaving())return {ok:false,message:ACCESS_REVIEW_SAVING};
     if(r.json.workspaceEtag&&r.json.workspaceEtag!==window.skServer.etag)return left>0?attempt(left-1):{ok:false,message:ACCESS_REVIEW_CHANGED};
     var at=Date.parse(r.json.generatedAt||'');if(!Number.isFinite(at)||pacificDayAt(at)!==pacificDayAt(Date.now()))return {ok:false,message:ACCESS_REVIEW_CLOCK};
     return accessReview(r.json.users,r.json.lockouts||[],r.json.generatedAt,r.json.by);});};
