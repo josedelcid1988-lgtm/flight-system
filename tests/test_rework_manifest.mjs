@@ -450,13 +450,19 @@ const repair = walk('seed-curated', 'WO-10003', 'Repair', {}, state => { MES.get
   const resubmit = as(me, () => MES.editOrderOperation(state, id, reworkId, { title: cur.title, description: cur.description, buyoffType: cur.buyoffType, requiresTooling: !!cur.requiresTooling, steps: cur.steps.map(x => x.instruction).join('\n'), reason: `Resubmitted for the QA release of ${created.id}.` }));
   ok('Bound release: ME can resubmit the released operation unchanged for the NC', resubmit.ok, JSON.stringify(resubmit));
   const self = as(qm, () => MES.approveSequenceChange(state, id));
-  ok('Bound release: the person who added the operation cannot release it', self.ok === false && /You added the rework operation for/.test(self.message) && tk().status === 'Open', JSON.stringify(self));
+  ok('Bound release: the person who added the operation cannot release it', self.ok === false && /or added its rework operation, so you can’t release it/.test(self.message) && tk().status === 'Open', JSON.stringify(self));
+  // Codex 4171443073 / #663: the Quality approver of the disposition cannot release it either.
+  const approverRel = as(qe, () => MES.approveSequenceChange(state, id));
+  ok('Bound release: the Quality approver of the disposition cannot release it', approverRel.ok === false && /You approved the Rework disposition of/.test(approverRel.message) && tk().status === 'Open', JSON.stringify(approverRel));
   const rel = as(qe2, () => MES.approveSequenceChange(state, id));
   ok('Bound release: a different QA account releases the resubmitted operation and the NC closes signed', rel.ok && tk().status === 'Resolved' && plain(tk().manifest) && tk().manifest.subject.opId === reworkId && MES.validate(state) && verify(state).ok, JSON.stringify([rel, verify(state).failures]));
   // A release forged in the name of the operation's author is refused, even re-signed.
   const forged = structuredClone(state);
   { const t = MES.getOrder(forged, id).tickets.find(x => x.id === created.id), o = MES.getOrder(forged, id); t.reworkPlan = { ...t.reworkPlan, releasedBy: { ...t.reworkPlan.opAddedBy } }; t.manifest = host.withAccount(qm, () => MES.signManifest(forged, RELEASE, { ...t.manifest.subject, releasedBy: t.reworkPlan.releasedBy }, t.reworkPlan.releasedAt), forged); }
-  ok('Bound release: a release signed by the operation\'s author is refused by validate and fails verifyManifests', MES.validate(forged) === false && /who added the rework operation it was released on/.test(detail(forged)) && failsAt(forged, new RegExp(`${created.id} rework release`)), JSON.stringify([detail(forged), verify(forged).failures]));
+  ok('Bound release: a release signed by the operation\'s author is refused by validate and fails verifyManifests', MES.validate(forged) === false && /who added the rework operation it was released on or approved its disposition/.test(detail(forged)) && failsAt(forged, new RegExp(`${created.id} rework release`)), JSON.stringify([detail(forged), verify(forged).failures]));
+  const forgedApprover = structuredClone(state);
+  { const t = MES.getOrder(forgedApprover, id).tickets.find(x => x.id === created.id); t.reworkPlan = { ...t.reworkPlan, releasedBy: { ...t.reworkPlan.approvedBy } }; t.manifest = host.withAccount(qe, () => MES.signManifest(forgedApprover, RELEASE, { ...t.manifest.subject, releasedBy: t.reworkPlan.releasedBy }, t.reworkPlan.releasedAt), forgedApprover); }
+  ok('Bound release: a release signed by the disposition\'s Quality approver is refused by validate and fails verifyManifests', MES.validate(forgedApprover) === false && failsAt(forgedApprover, new RegExp(`${created.id} rework release`)) && verify(forgedApprover).failures.some(f => /approved the disposition/.test(f.reason)), JSON.stringify([detail(forgedApprover), verify(forgedApprover).failures]));
 }
 
 // ---- Codex P1 on #602 (4db0d45): a locked standard rework operation released before approval can be resubmitted ----

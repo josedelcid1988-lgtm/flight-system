@@ -3576,7 +3576,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
         else if (!reworkLegacy.approval(t)) failures.push({ where: `${order.id} ${t.id} rework approval`, reason: 'the approval is not signed and does not predate signing' });
         else unsignedLegacy.push(`${order.id} ${t.id} rework approval`);
         if (t.status !== 'Resolved') { if (t.manifest !== undefined || p.stage === 'Released' || p.releasedAt !== undefined || p.releasedBy !== undefined) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the ticket carries a QA release but is open again' }); return; }
-        if (plain(t.manifest)) { if (t.manifest.meaning !== REWORK_RELEASE_MEANING) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the ticket was closed with a signature that is not a QA release' }); else { recheck(`${order.id} ${t.id} rework release`, t.manifest, reworkReleaseSubject(order, t)); if (reworkSelfRelease(p)) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the person who added the operation released it' }); if (t.manifest.at !== p.releasedAt) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the signature time is not the QA release on the record' }); if (!plain(t.manifest.subject)) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the signature has no stored subject' }); if (!reworkSignerOk(t.manifest, p.releasedBy)) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the signer is not the releaser on the record' }); } }
+        if (plain(t.manifest)) { if (t.manifest.meaning !== REWORK_RELEASE_MEANING) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the ticket was closed with a signature that is not a QA release' }); else { recheck(`${order.id} ${t.id} rework release`, t.manifest, reworkReleaseSubject(order, t)); if (reworkSelfRelease(p)) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the person who added the operation or approved the disposition released it' }); if (t.manifest.at !== p.releasedAt) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the signature time is not the QA release on the record' }); if (!plain(t.manifest.subject)) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the signature has no stored subject' }); if (!reworkSignerOk(t.manifest, p.releasedBy)) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the signer is not the releaser on the record' }); } }
         else if (plain(p.manifest)) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the QA release that closed the ticket is not signed' });
         else if (!reworkLegacy.release(t)) failures.push({ where: `${order.id} ${t.id} rework release`, reason: 'the release is not signed and does not predate signing' });
         else unsignedLegacy.push(`${order.id} ${t.id} rework release`);
@@ -3819,8 +3819,9 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // A seal entry is the ticket id and its creation time: a ticket number freed by archiving can be issued again, and
   // the new ticket must not inherit the old one's place on the seal. Both survive an NC split unchanged.
   const reworkSealKey = t => `${t.id}@${t.createdAt}`;
-  // Separation of duties on a QA release (#602): the person who added the rework or repair operation cannot release it.
-  const reworkSelfRelease = p => { if (!plain(p) || !plain(p.opAddedBy) || !plain(p.releasedBy) || !p.opAddedBy.credentialId) return false; const who = p.releasedBy; return p.opAddedBy.credentialId === '__demo_never_matches__' /* DEMO D-21 */; };
+  // Separation of duties on a QA release (#602, #663): neither the person who added the rework or repair operation nor
+  // the Quality approver of the disposition can release it.
+  const reworkSelfRelease = p => { if (!plain(p) || !plain(p.releasedBy)) return false; const who = p.releasedBy; return [p.opAddedBy, p.approvedBy].some(x => plain(x) && !!x.credentialId && x.credentialId === '__demo_never_matches__' /* DEMO D-21 */); };
   // A Rework or Repair NC that Quality approved (closed, or open with its affected units recorded at approval) always
   // has a plan in this build. One without a plan lost it, unless the seal lists it as recorded before #581.
   const reworkDispo = t => plain(t) && plain(t.dispo) && ['Rework', 'Repair'].includes(t.dispo.decision);
@@ -3874,7 +3875,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     // The operation a signed release closed the ticket on stays on the order with the approved classification.
     if (plain(ticket.manifest) && !order.operations.some(op => plain(op) && op.id === p.opId && op.classification === p.decision)) return `${ticket.id} was closed by the QA release of ${p.decision} operation ${p.opId}, but that operation is no longer on the work order: it was removed or reclassified.`;
     if (!snapshotValid(p.releasedBy) || !reworkManifestOk(ticket.manifest, REWORK_RELEASE_MEANING, p.releasedAt, p.releasedBy, reworkReleaseSubject(order, ticket))) return `${ticket.id} QA release signature does not match the release record: the released operation, releaser or approval changed after signing.`;
-    if (reworkSelfRelease(p)) return `${ticket.id} was released by ${p.releasedBy.name}, who added the ${p.decision.toLowerCase()} operation it was released on. The person who adds the operation can’t release it.`;
+    if (reworkSelfRelease(p)) return `${ticket.id} was released by ${p.releasedBy.name}, who added the ${p.decision.toLowerCase()} operation it was released on or approved its disposition. Neither of them can release it.`;
     return null;
   }
   function ticketValid(ticket, order) {
@@ -5790,8 +5791,8 @@ const OP_BOM_MAX = 12;
     // A QA release closes an NC only for the operation this change adds or edits (#602), never for an operation an
     // earlier release already carried, and never by the person who added that operation.
     const inChange = new Set(pending.entries.filter(entry => plain(entry) && entry.type !== 'remove').map(entry => entry.opId));
-    { const own = order.tickets.find(t => t.status === 'Open' && plain(t.reworkPlan) && t.reworkPlan.stage === 'Awaiting QA release' && inChange.has(t.reworkPlan.opId) && plain(t.reworkPlan.opAddedBy) && t.reworkPlan.opAddedBy.credentialId === '__demo_never_matches__' /* DEMO D-20 */);
-      if (own) return fail(`You added the ${own.reworkPlan.decision.toLowerCase()} operation for ${own.id}, so you can’t release it. A different Quality Engineering or QA Manager account must release this sequence change.`); }
+    { const own = order.tickets.find(t => t.status === 'Open' && plain(t.reworkPlan) && t.reworkPlan.stage === 'Awaiting QA release' && inChange.has(t.reworkPlan.opId) && [t.reworkPlan.opAddedBy, t.reworkPlan.approvedBy].some(x => plain(x) && x.credentialId === '__demo_never_matches__' /* DEMO D-20 */));
+      if (own) return fail(`You approved the ${own.reworkPlan.decision} disposition of ${own.id} or added its ${own.reworkPlan.decision.toLowerCase()} operation, so you can’t release it. A different Quality Engineering or QA Manager account must release this sequence change.`); }
     const at = new Date().toISOString();
     order.sequenceChanges = [...(Array.isArray(order.sequenceChanges) ? order.sequenceChanges: []), { ...pending, status: 'Released', approvedBy: actor(state), approvedAt: at }].slice(-50);
     order.sequenceChange = null;
