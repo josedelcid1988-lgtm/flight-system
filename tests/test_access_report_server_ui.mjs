@@ -2,7 +2,9 @@
 // workspace before it builds the report (so training and stamps another person changed are current) and builds it
 // only from the workspace version the server read (one more try, then a plain refusal, when they differ); the report
 // carries the generation time the server sent, and is refused when this computer is on another Pacific day than the
-// server; a role given in another session counts because the account list is reloaded first; a change of the
+// server; every row is decided at that generation time, so a clock that moves on while they are built changes
+// nothing; the statuses and reasons follow the roles the server enforces; a stamp in force with no PIN blocks its
+// buy-off type; a role given in another session counts because the account list is reloaded first; a change of the
 // page's own that the server has not confirmed yet makes it wait with a plain message.
 import { chromium } from 'playwright';
 import { createServer } from '../server/server.mjs';
@@ -106,19 +108,49 @@ try {
   const legacy = await page.evaluate(async () => { const r = await skAuth.accessReport(); const row = (r.accounts || []).find(a => a.username === 'legacy-two'); return { ok: r.ok, message: r.message, row }; });
   ok('an account with two standard roles from an older record shows both, with the capabilities the server enforces', legacy.ok === true && !!legacy.row && legacy.row.extraRoles.some(x => x.role === 'Quality' && x.status === 'Active') && legacy.row.capabilities.length > 0, JSON.stringify(legacy));
 
-  // Midnight Pacific time passing while the rows are built: refused, so no report mixes two days.
-  // The clock moves forward at the first stamp check after the server's response has arrived, that is while the rows
-  // are being derived (the page's own drawing also checks stamps, so the shift is armed only then).
-  duringFetch = () => page.evaluate(() => { window.__armMidnight = true; });
-  let midnight;
+  // Every status follows the roles the server enforces, not only the capability column (#676, Codex 4171781138): an
+  // older record holding Quality only in `roles` is eligible for inspection, conformity and the AQI signature, so a
+  // missing stamp and a grant whose training is not on record are named; an account without that role is not.
+  const future = new Date(Date.now() + 2 * 365 * 86400000).toISOString().slice(0, 10);
+  const grantFor = await page.evaluate(() => { const by = { name: 'Report Admin', credentialId: 'ACCT-report-admin', account: 'report-admin' }, at = new Date().toISOString(), reason = 'Qualified for this authority per QP-7.2.';
+    return { by, at, reason, trainingCode: 'TORQUE', hash: MES.sha256(MES.canonical({ account: 'legacy-two', authority: 'conformity', action: 'granted', by, at, reason, trainingCode: 'TORQUE' })) }; });
+  const legacyAccount = { ...await server.store.account('legacy-two'), grants: { conformity: grantFor } };
+  await server.store.upsertAccount(legacyAccount);
+  await server.store.upsertAccount({ username: 'legacy-one', displayName: 'Legacy One', role: 'technician', roles: ['technician'], extraRoles: [], roleTraining: {}, grants: {}, grantHistory: [], supportAccess: false, salt: '', hash: 'x'.repeat(64), createdBy: 'report-admin' });
+  const rowsOf = () => page.evaluate(async () => { const r = await skAuth.accessReport(); const pick = n => (r.accounts || []).find(a => a.username === n); return { ok: r.ok, message: r.message, generatedAt: r.generatedAt, two: pick('legacy-two'), one: pick('legacy-one') }; });
+  const BUYOFF = 'Operation buy-off is blocked: no stamp in force is assigned to this account, and each buy-off needs one of the operation\'s buy-off type. Ask the QA Manager to issue and assign one.';
+  const unstamped = await rowsOf();
+  ok('a role held only in an older record\'s `roles`: its authority status and blocked reasons follow the server, not this page', unstamped.ok === true
+    && JSON.stringify(unstamped.two.authorities) === JSON.stringify([{ authority: 'Conformity inspection', status: 'Paused', reason: 'TORQUE training is not on record' }, { authority: 'AQI signature', status: 'Not granted', reason: '' }])
+    && JSON.stringify(unstamped.two.blocked) === JSON.stringify(['Inspection is paused: no Quality stamp is assigned to this account. Ask the QA Manager to issue and assign one.', BUYOFF, 'Conformity inspection is paused: TORQUE training is not on record. Record current TORQUE training to resume it.', 'AQI signature is not granted: a QA Manager grants it to a named person against a current training.'])
+    && JSON.stringify(unstamped.two.buyoff) === JSON.stringify({ any: false, types: [] }), JSON.stringify(unstamped.two));
+  ok('an account without that role is not told about authorities its roles do not include', unstamped.one && JSON.stringify(unstamped.one.blocked) === JSON.stringify([BUYOFF]) && unstamped.one.authorities.every(a => a.status === 'Not granted'), JSON.stringify(unstamped.one));
+
+  // A Quality stamp in force with no PIN yet (#677): inspection is open, but every buy-off with it is refused by
+  // identity step-up, so the report says so and lists no buy-off type until the PIN is set.
+  const issued = await page.evaluate(async f => { const r = await window.skServer.api('/workspace/actions/MES.issueStamp', { method: 'POST', body: { args: [{ name: 'Legacy Two', buyoffType: 'Quality', account: 'legacy-two', expires: f }] }, headers: { 'If-Match': window.skServer.etag } }); await refreshServerWorkspace(); const s = state.stamps.find(x => x.account === 'legacy-two'); return { ok: r.ok, status: r.status, number: s && s.number }; }, future);
+  ok('setup: a Quality stamp is issued to the older-record account through the server', issued.ok === true && !!issued.number, JSON.stringify(issued));
+  const nopin = await rowsOf();
+  const stampRow = nopin.two && nopin.two.stamps.find(x => x.number === issued.number);
+  ok('a stamp in force with no PIN: in force, not usable, a Quality buy-off blocker and no buy-off type', nopin.ok === true && stampRow && stampRow.valid === true && stampRow.pinSet === false && stampRow.usable === false
+    && nopin.two.capabilities.includes('inspect-steps') && nopin.two.blocked.includes(`Quality buy-off is blocked: stamp ${issued.number} has no PIN yet. The stamp holder sets it in Your credentials.`)
+    && !nopin.two.blocked.some(t => /^Inspection is paused/.test(t)) && JSON.stringify(nopin.two.buyoff) === JSON.stringify({ any: false, types: [] }), JSON.stringify(nopin.two));
+
+  // One instant decides every row (#646, #674): the clock jumps three years ahead while the rows are being built
+  // (at the first stamp check after the server answered); the stamp, which expires in two years, still reads as in
+  // force at the generation time the server sent, and the report is built rather than refused.
+  duringFetch = () => page.evaluate(() => { window.__armJump = true; });
+  let jump;
   try {
-    midnight = await page.evaluate(async () => {
-      const realNow = Date.now, realStamp = MES.hasValidInspectionStamp; let shifted = false;
-      MES.hasValidInspectionStamp = function () { if (window.__armMidnight && !shifted) { shifted = true; const skew = 2 * 86400000; Date.now = () => realNow.call(Date) + skew; } return realStamp.apply(this, arguments); };
-      try { const r = await skAuth.accessReport(); return { ok: r.ok, message: r.message, shifted }; } finally { Date.now = realNow; MES.hasValidInspectionStamp = realStamp; window.__armMidnight = false; }
-    });
+    jump = await page.evaluate(async number => {
+      const RealDate = Date, realStamp = MES.hasValidInspectionStamp, skew = 3 * 365 * 86400000; let shifted = false;
+      class Later extends RealDate { constructor(...a) { if (a.length) super(...a); else super(RealDate.now() + skew); } static now() { return RealDate.now() + skew; } }
+      MES.hasValidInspectionStamp = function () { if (window.__armJump && !shifted) { shifted = true; window.Date = Later; } return realStamp.apply(this, arguments); };
+      try { const r = await skAuth.accessReport(); const row = (r.accounts || []).find(a => a.username === 'legacy-two'); return { ok: r.ok, message: r.message, shifted, generatedAt: r.generatedAt, stamp: row && row.stamps.find(x => x.number === number) }; }
+      finally { window.Date = RealDate; MES.hasValidInspectionStamp = realStamp; window.__armJump = false; }
+    }, issued.number);
   } finally { duringFetch = null; }
-  ok('when midnight Pacific time passes while the report is built, it is refused with a plain message', midnight.shifted === true && midnight.ok === false && /Midnight Pacific time passed/.test(midnight.message || '') && !/—/.test(midnight.message || ''), JSON.stringify(midnight));
+  ok('a clock that moves on while the rows are built changes no status: each is decided at the server\'s generation time', jump.shifted === true && jump.ok === true && jump.generatedAt === sent.at(-1).generatedAt && jump.stamp && jump.stamp.valid === true && jump.stamp.reason === 'has no PIN yet, so it cannot be used for a buy-off until the holder sets it in Your credentials', JSON.stringify(jump));
 
   // The Admin page itself: with this tab's cached role stale (Quality Supervisor, who sees Admin but not the report),
   // opening Admin reloads the account list and draws the report action once the server's role allows it.
