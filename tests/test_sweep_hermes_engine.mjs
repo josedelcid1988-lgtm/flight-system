@@ -171,7 +171,9 @@ realm('globalThis.Date = globalThis.__RealDate;')();
     // Codex security review: a recorded or verified reading on seal-named hardware is a torque action.
     'Record installation torque seal retaining nut per WI-123', 'Verify torque seal nut per drawing', 'Inspect torque seal check valve per WI-123', 'Record torque sealing plug per WI-123',
     // Fifteenth review: any part after the marker word records torque, listed or not.
-    'Verify torque seal electrical connector per drawing', 'Record final torque seal adapter per WI-123', 'Inspect torque seal union per drawing', 'Torque seal', 'Torque stripe per drawing'];
+    'Verify torque seal electrical connector per drawing', 'Record final torque seal adapter per WI-123', 'Inspect torque seal union per drawing', 'Torque seal', 'Torque stripe per drawing',
+    // Sixteenth review: tightening at specified torque locations records torque.
+    'Tighten all fasteners at specified torque locations per drawing', 'Tighten bolts at specified torque points', 'Inspect fasteners at specified torque locations', 'Tighten fasteners, then apply torque stripe'];
   check('MES.stepRecordsTorque: a torque action records a torque value, also on marked, paint-marked, sealed or seal-named parts', actions.every(t => MES.stepRecordsTorque(t) === true), actions.filter(t => !MES.stepRecordsTorque(t)).join(', '));
   const state = fresh(), order = state.orders.find(o => o.status === 'Draft' && o.operations.length), op = order.operations[0];
   op.steps = [{ id: 'step-1', title: 'Install bracket', instruction: 'Install bracket', recordsTorque: true }];
