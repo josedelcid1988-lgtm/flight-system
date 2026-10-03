@@ -110,6 +110,14 @@ const repair = walk('seed-curated', 'WO-10003', 'Repair', {}, state => { MES.get
   const reopened = tamper('reopening a released ticket', t => { t.status = 'Open'; t.resolution = ''; t.resolvedAt = null; delete t.resolvedBy; }, 'release');
   ok('Tamper: diagnose names the reopened ticket', /carries a QA release but is open again/.test(detail(reopened)), detail(reopened));
   tamper('reopening a released ticket and removing its release signature', t => { t.status = 'Open'; t.resolution = ''; t.resolvedAt = null; delete t.resolvedBy; delete t.manifest; }, 'release');
+  // Codex P1 on #602 (3792f0e): the stored subject inside each signature must be the record that was signed.
+  // verifyManifests already caught these by the stored subject's own hash; validate now refuses them too.
+  for (const [what, edit] of [['approval', t => { t.reworkPlan.manifest.subject.approval = 'Use as is.'; }], ['release', t => { t.manifest.subject.opId = 'op-1'; }]]) {
+    const copy = structuredClone(rework.state);
+    edit(MES.getOrder(copy, 'WO-10006').tickets.find(t => t.id === rework.ticketId));
+    ok(`Tamper: editing the stored subject of the ${what} signature is refused by validate`, MES.validate(copy) === false, detail(copy));
+    ok(`Tamper: editing the stored subject of the ${what} signature fails verifyManifests`, !verify(copy).ok, JSON.stringify(verify(copy).failures));
+  }
   tamper('changing the closing rationale', t => { t.resolution = 'Closed.'; }, 'release');
   tamper('swapping in a re-signed approval under the old release', t => { t.reworkPlan.approval = 'Use as is.'; t.reworkPlan.manifest = host.withAccount(qe, () => MES.signManifest(rework.state, APPROVAL, { ...t.reworkPlan.manifest.subject, approval: 'Use as is.' }, t.reworkPlan.approvedAt)); }, 'release');
 }

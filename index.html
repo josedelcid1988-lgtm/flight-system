@@ -3729,7 +3729,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const reworkReleaseSubject = (order, ticket) => { const p = ticket.reworkPlan; return { ...ticketSubject(order, ticket), orderId: plain(ticket.carriedFrom) ? ticket.carriedFrom.orderId : order.id, decision: p.decision, approvalHash: plain(p.manifest) ? p.manifest.hash : null, opId: p.opId, opAddedBy: p.opAddedBy || null, releasedBy: p.releasedBy, releasedAt: p.releasedAt, resolvedBy: ticket.resolvedBy, resolvedAt: ticket.resolvedAt }; };
   // The signer must be the person on the record: name, role and credential, not the credential alone.
   const reworkSignerOk = (m, signer) => plain(m) && plain(m.signer) && plain(signer) && m.signer.credentialId === signer.credentialId && m.signer.name === signer.name && m.signer.role === signer.role;
-  const reworkManifestOk = (m, meaning, at, signer, subject) => plain(m) && m.meaning === meaning && m.at === at && m.algorithm === 'SHA-256' && reworkSignerOk(m, signer) && m.hash === sha256(canonical(subject));
+  // The stored subject is the audit copy of what was signed, so it must be the record as recomputed, not only hash to it.
+  const reworkManifestOk = (m, meaning, at, signer, subject) => { if (!(plain(m) && m.meaning === meaning && m.at === at && m.algorithm === 'SHA-256' && reworkSignerOk(m, signer) && plain(m.subject))) return false; const signed = canonical(subject); return m.hash === sha256(signed) && canonical(m.subject) === signed; };
   // The records that predate signing are named once, in state.reworkLegacySeal = { tickets, releases, sealedAt }:
   // tickets are the unsigned approvals, releases the tickets a pre-#581 release closed. MES.upgrade writes it for a
   // workspace that holds unsigned plans and nothing signed, and the first signed approval or release writes it if it is
