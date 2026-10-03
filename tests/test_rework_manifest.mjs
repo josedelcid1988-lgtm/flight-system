@@ -229,9 +229,9 @@ const repair = walk('seed-curated', 'WO-10003', 'Repair', {}, state => { MES.get
   const both = structuredClone(rework.state);
   { const t = MES.getOrder(both, 'WO-10006').tickets.find(x => x.id === rework.ticketId); delete t.manifest; delete t.reworkPlan.manifest; }
   ok('Seal: removing both signatures of a signed plan is refused by validate', MES.validate(both) === false);
-  ok('Seal: diagnose names the plan whose signatures were removed', new RegExp(`${rework.ticketId} has an unsigned Rework or Repair approval, but it was not approved before approvals were signed`).test(detail(both)), detail(both));
+  ok('Seal: diagnose names the plan whose signatures were removed', new RegExp(`${rework.ticketId} (has an unsigned Rework or Repair approval, but it was not approved before approvals were signed|was approved for rework or repair with a signed plan, but that plan and its signature are missing)`).test(detail(both)), detail(both));
   ok('Seal: MES.upgrade does not accept the stripped plan', MES.upgrade(structuredClone(both)) === null);
-  const listed = structuredClone(both); { const tk = MES.getOrder(listed, 'WO-10006').tickets.find(x => x.id === rework.ticketId); listed.reworkLegacySeal.releases.push(`${tk.id}@${tk.createdAt}`); } listed.reworkLegacySeal.tickets.push(`${rework.ticketId}@${MES.getOrder(listed, 'WO-10006').tickets.find(x => x.id === rework.ticketId).createdAt}`);
+  const listed = structuredClone(both); { const tk = MES.getOrder(listed, 'WO-10006').tickets.find(x => x.id === rework.ticketId); listed.reworkLegacySeal.releases.push(`${tk.id}@${tk.createdAt}`); listed.reworkLegacySeal.signed = listed.reworkLegacySeal.signed.filter(k => k !== `${tk.id}@${tk.createdAt}`); } listed.reworkLegacySeal.tickets.push(`${rework.ticketId}@${MES.getOrder(listed, 'WO-10006').tickets.find(x => x.id === rework.ticketId).createdAt}`);
   ok('Seal: the stripped plan passes only if the seal is edited too (outside what the seal can catch)', MES.validate(listed) === true);
   const noSeal = structuredClone(rework.state); delete noSeal.reworkLegacySeal;
   ok('Seal: a workspace with signed plans and no seal is refused', MES.validate(noSeal) === false && /no record of the unsigned approvals that predate signing/.test(detail(noSeal)), detail(noSeal));
@@ -240,7 +240,7 @@ const repair = walk('seed-curated', 'WO-10003', 'Repair', {}, state => { MES.get
   // does not inherit the seal, because the entry names the ticket's creation time as well.
   const reused = structuredClone(both);
   { const t = MES.getOrder(reused, 'WO-10006').tickets.find(x => x.id === rework.ticketId); reused.reworkLegacySeal.tickets.push(`${rework.ticketId}@2026-01-01T00:00:00.000Z`); ok('Seal: the stripped ticket was created at another time than the reused entry', t.createdAt !== '2026-01-01T00:00:00.000Z'); }
-  ok('Seal: an unsigned plan on a reused ticket number is refused', MES.validate(reused) === false && new RegExp(`${rework.ticketId} has an unsigned Rework or Repair approval`).test(detail(reused)), detail(reused));
+  ok('Seal: an unsigned plan on a reused ticket number is refused', MES.validate(reused) === false && new RegExp(`${rework.ticketId} (has an unsigned Rework or Repair approval|was approved for rework or repair with a signed plan, but that plan and its signature are missing)`).test(detail(reused)), detail(reused));
   const bad = structuredClone(rework.state); bad.reworkLegacySeal = { tickets: 'NC-0001', sealedAt: 'yesterday' };
   ok('Seal: a malformed seal is refused', MES.validate(bad) === false && /is malformed/.test(detail(bad)), detail(bad));
   // A workspace with no rework plans at all gets no seal on upgrade; the first signed approval writes it.
@@ -284,12 +284,12 @@ const repair = walk('seed-curated', 'WO-10003', 'Repair', {}, state => { MES.get
   const gone = structuredClone(rework.state);
   { const t = ticketIn(gone); delete t.reworkPlan; delete t.manifest; }
   const gV = verify(gone);
-  ok('Plan: deleting the plan and release of a closed Rework NC is refused by validate', MES.validate(gone) === false && new RegExp(`${rework.ticketId} is a closed Rework NC without its approved plan and signed release`).test(detail(gone)), detail(gone));
+  ok('Plan: deleting the plan and release of a closed Rework NC is refused by validate', MES.validate(gone) === false && new RegExp(`${rework.ticketId} (is a closed Rework NC without its approved plan and signed release|was approved for rework or repair with a signed plan, but that plan and its signature are missing)`).test(detail(gone)), detail(gone));
   ok('Plan: verifyManifests fails it instead of treating it as an ordinary closed ticket', !gV.ok && gV.failures.some(f => f.where.endsWith(`${rework.ticketId} rework release`) && /plan is missing/.test(f.reason)), JSON.stringify(gV.failures));
   const open = walk('seed-curated', 'WO-10006', 'Rework');
   const openGone = structuredClone(open.state);
   delete MES.getOrder(openGone, 'WO-10006').tickets.find(t => t.id === open.ticketId).reworkPlan;
-  ok('Plan: deleting the approved plan of an open Rework NC is refused', MES.validate(openGone) === false && new RegExp(`${open.ticketId} was approved for Rework but its approved plan is missing`).test(detail(openGone)) && failsAt(openGone, new RegExp(`${open.ticketId} rework approval`)), detail(openGone));
+  ok('Plan: deleting the approved plan of an open Rework NC is refused', MES.validate(openGone) === false && new RegExp(`${open.ticketId} (was approved for Rework but its approved plan is missing|was approved for rework or repair with a signed plan, but that plan and its signature are missing)`).test(detail(openGone)) && failsAt(openGone, new RegExp(`${open.ticketId} rework approval`)), detail(openGone));
   // A Rework NC closed without a plan by data from before #581 is sealed as legacy and still loads.
   const raw = seed('seed-curated');
   const rawOrder = raw.orders.find(o => o.id === 'WO-10005'), base = rawOrder.tickets.find(x => x.id === 'NC-0001');
@@ -336,8 +336,40 @@ const repair = walk('seed-curated', 'WO-10003', 'Repair', {}, state => { MES.get
   const bare = structuredClone(rework.state);
   { const t = ticketIn(bare); delete t.reworkPlan; delete t.manifest; delete t.dispo; delete t.affected; }
   const bV = verify(bare);
-  ok('Stripped: a released Rework NC stripped of plan, signatures, disposition and affected units is refused', MES.validate(bare) === false && new RegExp(`${rework.ticketId} was closed after approvals were signed but carries no signature`).test(detail(bare)), detail(bare));
+  ok('Stripped: a released Rework NC stripped of plan, signatures, disposition and affected units is refused', MES.validate(bare) === false && new RegExp(`${rework.ticketId} (was closed after approvals were signed but carries no signature|was approved for rework or repair with a signed plan, but that plan and its signature are missing)`).test(detail(bare)), detail(bare));
   ok('Stripped: verifyManifests fails that closure', !bV.ok && bV.failures.some(f => f.where === `WO-10006 ${rework.ticketId} closure`), JSON.stringify(bV.failures));
+}
+
+// ---- Codex on #602 (c5b8f3a): signed approvals are registered on the seal; operation authors live on the operation ----
+{
+  const open = walk('seed-curated', 'WO-10006', 'Rework');
+  const key = `${open.ticketId}@${open.ticket().createdAt}`;
+  ok('Register: a signed approval adds its ticket to the seal\'s signed list', open.state.reworkLegacySeal.signed.includes(key), JSON.stringify(open.state.reworkLegacySeal));
+  const stripped = structuredClone(open.state);
+  { const t = MES.getOrder(stripped, 'WO-10006').tickets.find(x => x.id === open.ticketId); delete t.reworkPlan; delete t.dispo; delete t.affected; }
+  const sV = verify(stripped);
+  ok('Register: an open approved NC stripped of plan, disposition and affected units is refused', MES.validate(stripped) === false && new RegExp(`${open.ticketId} was approved for rework or repair with a signed plan, but that plan and its signature are missing`).test(detail(stripped)), detail(stripped));
+  ok('Register: verifyManifests fails it', !sV.ok && sV.failures.some(f => f.where === `WO-10006 ${open.ticketId} rework approval` && /plan and its signature are missing/.test(f.reason)), JSON.stringify(sV.failures));
+  const unlisted = structuredClone(stripped); unlisted.reworkLegacySeal.signed = unlisted.reworkLegacySeal.signed.filter(k => k !== key);
+  ok('Register: it passes only if the seal is edited too (outside what the seal can catch)', MES.validate(unlisted) === true);
+
+  // The operation records who added it, so the author survives the bounded sequence change log.
+  const state = MES.upgrade(structuredClone(seed('seed-curated')));
+  const as = (who, fn) => host.withAccount(who, fn, state);
+  const id = 'WO-10006', order = MES.getOrder(state, id);
+  const op = order.operations.find(item => !item.done) || order.operations[0];
+  const created = as(qm, () => MES.createTicket(state, id, op.id, { type: 'NC', title: 'Torque out of spec', description: 'J3 torque below the drawing value.', hold: true }));
+  as(me, () => MES.dispositionTicket(state, id, created.id, { decision: 'Rework', note: 'Rework J3.' }));
+  const before = new Set(order.operations.map(o => o.id));
+  const added = as(me, () => reworkOp(state, id, created.id, 'Rework'));
+  const newOp = MES.getOrder(state, id).operations.find(o => !before.has(o.id));
+  ok('Operation author: a new operation records who added it', added.ok && !!newOp && plain(newOp.addedBy) && newOp.addedBy.credentialId === 'ACCT-rw-me', JSON.stringify(newOp && newOp.addedBy));
+  as(qe2, () => MES.approveSequenceChange(state, id));
+  // As if more than 50 later releases had pushed the add event out of the bounded log.
+  const o2 = MES.getOrder(state, id); o2.sequenceChanges = (o2.sequenceChanges || []).map(c => ({ ...c, entries: (c.entries || []).filter(e => !(e.type === 'add' && e.opId === newOp.id)) }));
+  const approved = as(qe, () => MES.resolveTicket(state, id, created.id, 'Rework approved.', { defectCode: 'DIM', subCode: 'DIM-02' }));
+  const plan = MES.getOrder(state, id).tickets.find(t => t.id === created.id).reworkPlan;
+  ok('Operation author: with the add event gone from the log, the plan still names ME from the operation', approved.ok && plain(plan.opAddedBy) && plan.opAddedBy.credentialId === 'ACCT-rw-me', JSON.stringify([approved, plan.opAddedBy]));
 }
 
 console.log(fails.length ? `FAILS ${JSON.stringify(fails)}` : 'FAILS []');
