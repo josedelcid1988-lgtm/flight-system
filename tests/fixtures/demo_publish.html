@@ -12675,9 +12675,10 @@ function orderTier(o){
 function orderCreatedOn(o){const h=(Array.isArray(o.historyArchive)&&o.historyArchive[0])||(o.history||[])[0];const r=(o.revisions||[])[0];return String((h&&h.at)||(r&&r.at)||o.start||'').slice(0,10);}
 // Blocked means work cannot continue: an open NC hold, an engineering change, an operation sequence change awaiting QA
 // release, or a source-inspection operation with no inspection record. Lists, filters, sorting and phone cards share it.
-// A source inspection blocks the order once it is the work to do: every earlier operation is done, which is when
-// MES.recordSourceInspection accepts the record and buy-off waits for it. A later one is not yet a hold.
-const actionableSourceInspections=o=>MES.sourceInspectionHolds(state,o).filter(h=>{const ops=o.operations||[],i=ops.findIndex(op=>op.id===h.operationId);return i>=0&&ops.slice(0,i).every(op=>op.done);});
+// A source inspection blocks the order once it is the work to do: the order is Building (where the record can be made)
+// and every earlier operation is done, which is when MES.recordSourceInspection accepts the record and buy-off waits for
+// it. A later one, or one on an order not yet Building, is not yet a hold.
+const actionableSourceInspections=o=>o.status!=='Building'?[]:MES.sourceInspectionHolds(state,o).filter(h=>{const ops=o.operations||[],i=ops.findIndex(op=>op.id===h.operationId);return i>=0&&ops.slice(0,i).every(op=>op.done);});
 const orderBlocked=o=>MES.blockingTickets(o).length>0||!!MES.engineeringChange(o)||!!MES.pendingSequenceChange(o)||actionableSourceInspections(o).length>0;
 function logSortValue(o,col){
   switch(col){
@@ -12717,7 +12718,7 @@ function renderOrders() {
     && skTable.matchAny('orders','Status',[o.status,...(orderBlocked(o)?['Blocked']:[])])
     && skTable.match('orders','Pedigree',o.pedigree)
     && skTable.match('orders','Priority',(o.priority==='AOG'||MES.aogActive(o))?'AOG':o.priority)
-    && skTable.matchAny('orders','Work order',['site:'+MES.orderSite(o),'air:'+o.aircraft,...(MES.aogActive(o)||MES.blockingTickets(o).length?['flag:flagged']:[])])
+    && skTable.matchAny('orders','Work order',['site:'+MES.orderSite(o),'air:'+o.aircraft,...(flaggedOrder(o)?['flag:flagged']:[])])
     && matchesWiFilter(o)));
   return `<section aria-labelledby="list-heading"><div class="page-heading"><div><h1 id="list-heading">${esc(activeViewName())}</h1>${wiFilter ? `<p class="wi-filter-chip">${icon('file')} <span>Cloned from <strong>${esc(wiFilter.id)}</strong>${wiFilter.revision ? ` Rev ${esc(wiFilter.revision)}` : ' · all revisions'}</span><button class="btn quiet" data-action="wi-filter-clear">Show all work orders</button></p>` : ''}</div><div class="heading-actions log-heading-actions"><label class="search log-search"><span class="sr-only">Search work orders</span>${icon('search')}<input id="order-search" type="search" placeholder="Search orders" value="${esc(search)}"></label><div class="page-actions">${woListActions()}</div></div></div>
     
@@ -12738,7 +12739,7 @@ function renderOrders() {
 }
 
 function reactOrderQueueProps(){
-  const source=sortOrders(state.orders.filter(o=>(!flaggedOnly||flaggedOrder(o))&&skTable.match('orders','Part',o.partNumber)&&skTable.matchAny('orders','Status',[o.status,...(orderBlocked(o)?['Blocked']:[])])&&skTable.match('orders','Pedigree',o.pedigree)&&skTable.match('orders','Priority',(o.priority==='AOG'||MES.aogActive(o))?'AOG':o.priority)&&skTable.matchAny('orders','Work order',['site:'+MES.orderSite(o),'air:'+o.aircraft,...(MES.aogActive(o)||MES.blockingTickets(o).length?['flag:flagged']:[])])&&matchesWiFilter(o)));
+  const source=sortOrders(state.orders.filter(o=>(!flaggedOnly||flaggedOrder(o))&&skTable.match('orders','Part',o.partNumber)&&skTable.matchAny('orders','Status',[o.status,...(orderBlocked(o)?['Blocked']:[])])&&skTable.match('orders','Pedigree',o.pedigree)&&skTable.match('orders','Priority',(o.priority==='AOG'||MES.aogActive(o))?'AOG':o.priority)&&skTable.matchAny('orders','Work order',['site:'+MES.orderSite(o),'air:'+o.aircraft,...(flaggedOrder(o)?['flag:flagged']:[])])&&matchesWiFilter(o)));
   const rows=source.map(o=>{const engineering=!!MES.engineeringChange(o),open= openTickets(o).length,held=orderBlocked(o);return{record:o,held,engineering,blockingTickets:MES.blockingTickets(o).length,openTickets:open,sequenceChange:!!MES.pendingSequenceChange(o),sourceInspections:actionableSourceInspections(o),aog:o.priority==='AOG'||MES.aogActive(o),flagged:flaggedOrder(o),superseded:MES.revisionLabel(o)==='Superseded',qaPending:o.status==='Draft'&&MES.requiresReleaseQA(o)&&!MES.releaseApproval(o),overdue:o.status!=='Closed'&&!!o.due&&o.due<new Date().toISOString().slice(0,10),created:orderCreatedOn(o),progress:flightProgress(o,held)};});
   const headers=[
     tblHead('orders',{col:'Work order',label:'Work order',filter:{label:'Site, aircraft and flags',values:[...MES.SITES.map(s=>({value:'site:'+s,label:s})),...MES.AIRCRAFT.map(a=>({value:'air:'+a,label:a})),{value:'flag:flagged',label:'Flagged only'}]}}),

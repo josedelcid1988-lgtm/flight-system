@@ -59,6 +59,14 @@ const blockedFilterCards = async page => {
   await page.locator('#main select[aria-label="Work order status"]').selectOption('All');
   return ids.filter(id => selectIds.includes(id));
 };
+const flaggedFilterCards = async page => {
+  await show(page, 'orders');
+  await page.locator('#main .fr-order-table thead summary[aria-label="Filter Work order"]').click();
+  await page.locator('#main .fr-order-table thead .log-menu[open] [data-tbl-filter][data-value="flag:flagged"]').click();
+  const ids = await page.evaluate(() => [...document.querySelectorAll('#main .fr-wo-card')].map(card => card.dataset.woCard));
+  await page.evaluate(() => { skTable.reset('orders'); render(); });
+  return ids;
+};
 const show = (page, next, setup) => page.evaluate(([v, s]) => { if (s) Function(s)(); view = v; render(); scrollTo(0, 0); }, [next, setup || '']);
 
 const browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
@@ -226,7 +234,7 @@ try {
         const fai = open.find(o => o !== nc);
         // A Quality order has every operation bought off; set back to Building it is a finished build waiting on the QA handoff.
         const building = state.orders.find(o => o.status === 'Quality' && o !== nc && o !== fai && o.operations.every(op => op.done) && !MES.blockingTickets(o).length && !MES.engineeringChange(o) && !o.pedigreeChange);
-        const inspect = open.find(o => o !== nc && o !== fai && o !== building && !MES.blockingTickets(o).length && !MES.engineeringChange(o) && (o.operations || []).some(op => !op.done));
+        const inspect = open.find(o => o !== nc && o !== fai && o !== building && o.status === 'Building' && !MES.blockingTickets(o).length && !MES.engineeringChange(o) && (o.operations || []).some(op => !op.done));
         const op = inspect.operations.find(item => !item.done);
         window.__restore = { ticket: [ticket, ticket.hold], seq: [nc, nc.sequenceChange], fai: [fai, fai.fai, fai.aircraft], building: [building, building.status], op: [op, op.classification, op.sourceInspection] };
         ticket.hold = false;
@@ -234,8 +242,10 @@ try {
         fai.fai = { ...(fai.fai || {}), required: true };
         fai.aircraft = 'N349PL';
         building.status = 'Building';
+        const inspectFlaggedBefore = flaggedOrder(inspect);
         op.classification = MES.SOURCE_INSPECTION_CLASS; delete op.sourceInspection;
         const hold = MES.sourceInspectionHolds(null, inspect)[0];
+        window.__inspectFlag = [inspectFlaggedBefore, flaggedOrder(inspect)];
         return { nc: nc.id, open: nc.tickets.filter(t => t.status === 'Open').length, fai: fai.id, building: building.id, buildingAllowed: MES.canAdvance(building).allowed, inspect: inspect.id, holdTitle: hold && hold.title };
       });
       try {
@@ -265,6 +275,10 @@ try {
           assert.match(await card(setup.inspect).locator('.fr-wo-card-next dd').innerText(), new RegExp(`^Resolve holds before continuing: .*source inspection record for ${setup.holdTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), `${route}: the card names the source inspection`);
           assert.equal(await card(setup.building).locator('.fr-wo-card-next dd').innerText(), 'All operations recorded. Send to QA.', `${route}: a finished build is sent to QA`);
         }
+        // The source-inspection hold also flags the order: the Flagged checkbox and the Work order column's "Flagged only"
+        // filter keep it, as the Blocked filter does.
+        assert.deepEqual(await page.evaluate(() => window.__inspectFlag), [false, true], 'the source-inspection hold flags an order that was not flagged before');
+        assert.ok((await flaggedFilterCards(page)).includes(setup.inspect), 'the Flagged only column filter keeps an order held by a source inspection');
       } finally {
         await page.evaluate(() => { const r = window.__restore; r.ticket[0].hold = r.ticket[1]; if (r.seq[1] !== undefined) r.seq[0].sequenceChange = r.seq[1]; r.fai[0].fai = r.fai[1]; if (r.fai[2] === undefined) delete r.fai[0].aircraft; else r.fai[0].aircraft = r.fai[2]; r.building[0].status = r.building[1]; r.op[0].classification = r.op[1]; if (r.op[2]) r.op[0].sourceInspection = r.op[2]; render(); });
       }
@@ -272,21 +286,28 @@ try {
     });
     await check(`${at} home and orders: a source inspection later in the sequence does not block the card yet`, async () => {
       const setup = await page.evaluate(() => {
-        // An open order with an unfinished operation before the source inspection: the record is refused until that
-        // earlier operation is done, so the inspection is not yet the next step.
-        const order = state.orders.find(o => o.status !== 'Closed' && !orderBlocked(o) && !flaggedOrder(o) && (o.operations || []).filter(op => !op.done).length >= 2);
+        // A Building order with an unfinished operation before the source inspection: the record is refused until that
+        // earlier operation is done, so the inspection is not yet the next step. The sample's only Building order with
+        // several open operations also has an NC hold and a sequence change; both are lifted here and restored after.
+        const order = state.orders.find(o => o.status === 'Building' && (o.operations || []).filter(op => !op.done).length >= 2);
+        const holding = (order.tickets || []).filter(t => t.status === 'Open' && t.hold);
         const [first, later] = order.operations.filter(op => !op.done);
-        window.__later = [later, later.classification, later.sourceInspection, first, first.classification, first.sourceInspection];
+        window.__later = [later, later.classification, later.sourceInspection, first, first.classification, first.sourceInspection, order, order.sequenceChange, holding];
+        holding.forEach(t => { t.hold = false; });
+        delete order.sequenceChange;
+        const clear = !orderBlocked(order), flaggedBefore = flaggedOrder(order);
         later.classification = MES.SOURCE_INSPECTION_CLASS; delete later.sourceInspection;
-        return { id: order.id, holdTitle: MES.sourceInspectionHolds(null, order).find(h => h.operationId === later.id)?.title, pending: MES.sourceInspectionHolds(null, order).length, refused: MES.recordSourceInspection(state, order.id, later.id, {}).ok === false, blocked: orderBlocked(order), flagged: flaggedOrder(order) };
+        return { id: order.id, clear, flaggedBefore, holdTitle: MES.sourceInspectionHolds(null, order).find(h => h.operationId === later.id)?.title, pending: MES.sourceInspectionHolds(null, order).length, refused: MES.recordSourceInspection(state, order.id, later.id, {}).ok === false, blocked: orderBlocked(order), flagged: flaggedOrder(order) };
       });
       try {
         assert.ok(setup.pending > 0 && setup.refused, `the engine lists the later inspection and refuses its record (${JSON.stringify(setup)})`);
+        assert.ok(setup.clear, `the order has no other hold for this check (${JSON.stringify(setup)})`);
         assert.equal(setup.blocked, false, 'orderBlocked does not count a source inspection that cannot be recorded yet');
-        assert.equal(setup.flagged, false, 'the Flagged view does not count a source inspection that cannot be recorded yet');
+        assert.equal(setup.flagged, setup.flaggedBefore, 'the later source inspection does not change whether the order is flagged');
         for (const route of ['home', 'orders']) {
           await show(page, route);
           const card = page.locator(`#main [data-wo-card="${setup.id}"]`);
+          assert.equal(await card.count(), 1, `${route}: the card for ${setup.id} is listed`);
           assert.equal(await card.locator('.fr-order-blocked').count(), 0, `${route}: the card is not Blocked by a later source inspection`);
           assert.ok(!/source inspection record/.test(await card.locator('.fr-wo-card-next dd').innerText()), `${route}: the next step does not ask for a record that cannot be made yet`);
           if (route === 'orders') assert.ok(!(await blockedFilterCards(page)).includes(setup.id), 'the Blocked filter leaves out an order whose source inspection is still ahead');
@@ -303,11 +324,24 @@ try {
         }
         const legacy = await page.evaluate(orderId => new DOMParser().parseFromString(`<table>${renderOrders()}</table>`, 'text/html').querySelector(`tr[data-order-row="${orderId}"]`)?.className ?? null, setup.id);
         assert.ok(legacy !== null && !/\bhold-row\b/.test(legacy), `legacy table: the row is not a hold row (${legacy})`);
-        // Once the source inspection is the next operation it is a hold, and the Flagged view keeps the order with the Blocked one.
-        const now = await page.evaluate(orderId => { const first = window.__later[3]; first.classification = MES.SOURCE_INSPECTION_CLASS; delete first.sourceInspection; const order = state.orders.find(o => o.id === orderId); return { blocked: orderBlocked(order), flagged: flaggedOrder(order) }; }, setup.id);
-        assert.deepEqual(now, { blocked: true, flagged: true }, 'an actionable source inspection both blocks and flags the order');
+        // Once the source inspection is the next operation it is a hold.
+        const now = await page.evaluate(orderId => { const first = window.__later[3]; first.classification = MES.SOURCE_INSPECTION_CLASS; delete first.sourceInspection; return orderBlocked(state.orders.find(o => o.id === orderId)); }, setup.id);
+        assert.equal(now, true, 'a source inspection that is the next operation blocks the order');
+        // On an order that is not yet Building the same inspection is not a hold: the record is made once the build starts.
+        const early = await page.evaluate(() => {
+          const order = state.orders.find(o => (o.status === 'Kitting' || o.status === 'Draft') && !orderBlocked(o) && (o.operations || []).some(op => !op.done));
+          if (!order) return null;
+          const op = order.operations.find(item => !item.done);
+          const saved = [op.classification, op.sourceInspection];
+          op.classification = MES.SOURCE_INSPECTION_CLASS; delete op.sourceInspection;
+          const result = { id: order.id, status: order.status, listed: MES.sourceInspectionHolds(null, order).length, blocked: orderBlocked(order) };
+          if (saved[0] === undefined) delete op.classification; else op.classification = saved[0];
+          if (saved[1]) op.sourceInspection = saved[1];
+          return result;
+        });
+        assert.ok(early && early.listed > 0 && early.blocked === false, `a source inspection on a ${early && early.status} order is not a hold yet (${JSON.stringify(early)})`);
       } finally {
-        await page.evaluate(() => { const [op, classification, record, first, firstClass, firstRecord] = window.__later; for (const [o, c, r] of [[op, classification, record], [first, firstClass, firstRecord]]) { if (c === undefined) delete o.classification; else o.classification = c; if (r) o.sourceInspection = r; else delete o.sourceInspection; } render(); });
+        await page.evaluate(() => { const [op, classification, record, first, firstClass, firstRecord, order, sequenceChange, holding] = window.__later; holding.forEach(t => { t.hold = true; }); if (sequenceChange !== undefined) order.sequenceChange = sequenceChange; for (const [o, c, r] of [[op, classification, record], [first, firstClass, firstRecord]]) { if (c === undefined) delete o.classification; else o.classification = c; if (r) o.sourceInspection = r; else delete o.sourceInspection; } render(); });
       }
       assert.equal(await page.evaluate(() => MES.validate(state)), true, 'the restored workspace is valid');
     });
@@ -327,6 +361,15 @@ try {
           assert.equal(await card.locator('.fr-order-blocked').count(), 1, `${route}: the card is Blocked`);
           assert.match(await card.locator('.fr-wo-card-next dd').innerText(), /^Resolve holds before continuing: .*QA release of the updated operation sequence/, `${route}: the card asks for the QA release, not the QA handoff`);
           if (route === 'orders') assert.ok((await blockedFilterCards(page)).includes(id), 'the Blocked filter keeps a card blocked by a sequence change');
+          if (route === 'home') {
+            // The order drawer lists the sequence change among its holds, as the Hangar Open holds panel does.
+            await card.locator('.fr-wo-card-open').click();
+            const drawer = page.locator('dialog.fr-drawer[open]');
+            await drawer.waitFor();
+            const callout = await drawer.locator('.fr-hold-callout').allInnerTexts();
+            assert.ok(callout.some(text => /QA release of the updated operation sequence/.test(text)), `the drawer lists the sequence change as a hold (${JSON.stringify(callout)})`);
+            await drawer.locator('[data-close-drawer]').click();
+          }
         }
         // The legacy order table, used when the React interface is not loaded, marks the same hold.
         const legacy = await page.evaluate(orderId => {

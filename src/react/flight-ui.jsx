@@ -29,7 +29,7 @@ function RecordDrawer({ order, MES, onClose, onOpen }) {
     return () => { if (dialog.current && dialog.current.open) dialog.current.close(); if (returnFocus.current) returnFocus.current.focus(); };
   }, [order]);
   if (!order) return null;
-  const holds = [...(MES && MES.blockingTickets ? MES.blockingTickets(order) : []), ...actionableSourceInspections(order, MES)].map(holdText);
+  const holds = orderHoldItems(order, MES).map(holdText);
   const next = (order.operations || []).find(operation => !operation.done);
   const close = () => { if (dialog.current && dialog.current.open) dialog.current.close(); onClose(); };
   return <dialog className="fr-drawer" ref={dialog} onCancel={event => { event.preventDefault(); close(); }} onClick={event => { if (event.target === dialog.current) close(); }}>
@@ -71,14 +71,25 @@ const cardGateOf = (order, MES) => {
 // (the Hangar holds panel and the drawer list it; buy-off is refused until it is recorded) and an operation sequence
 // change awaiting QA release (buy-off and MES.advance both refuse the order). Both card lists add them to the gate here,
 // so the card is Blocked and names what clears it. A source inspection counts once every earlier operation is done:
-// MES.recordSourceInspection refuses the record before then, so a later one is not yet the next step.
+// MES.recordSourceInspection refuses the record before then, so a later one is not yet the next step. The order must
+// also be Building: the record is made there, so on a Draft or Kitting order the inspection is not yet the work to do.
 const actionableSourceInspections = (order, MES) => {
   const ops = order.operations || [];
+  if (order.status !== 'Building') return [];
   return (MES && MES.sourceInspectionHolds ? MES.sourceInspectionHolds(null, order) : []).filter(hold => {
     const index = ops.findIndex(op => op.id === hold.operationId);
     return index >= 0 && ops.slice(0, index).every(op => op.done);
   });
 };
+// Every hold that stops an order, for the Hangar's Open holds panel and the order drawer: the same set the card gate
+// and the Blocked filter use (holding NCs, an engineering change, a sequence change awaiting QA, an actionable source
+// inspection), so no surface calls an order clear that another shows as Blocked.
+const orderHoldItems = (order, MES) => [
+  ...(MES && MES.blockingTickets ? MES.blockingTickets(order) : []),
+  ...(MES && MES.engineeringChange && MES.engineeringChange(order) ? ['Engineering change pending'] : []),
+  ...(MES && MES.pendingSequenceChange && MES.pendingSequenceChange(order) ? ['QA release of the updated operation sequence'] : []),
+  ...actionableSourceInspections(order, MES)
+];
 const withCardHolds = (gate, order, MES) => {
   const sourceInspections = actionableSourceInspections(order, MES);
   const sequenceChange = !!(MES && MES.pendingSequenceChange && MES.pendingSequenceChange(order));
@@ -147,9 +158,7 @@ function Hangar({ state, MES, onOpen }) {
     return (filter === 'All' || orderIsOpen(item)) && searchable.includes(query.trim().toLowerCase());
   }).sort((a, b) => asText(dueOf(a) || '9999').localeCompare(asText(dueOf(b) || '9999')));
   const holds = (state.orders || []).filter(orderIsOpen).flatMap(item => {
-    const blockers = MES && MES.blockingTickets ? MES.blockingTickets(item) : [];
-    const sourceInspections = actionableSourceInspections(item, MES);
-    const allHolds = [...blockers, ...sourceInspections];
+    const allHolds = orderHoldItems(item, MES);
     return allHolds.length ? [{ item, reason: holdText(allHolds[0]) }] : [];
   }).slice(0, 4);
   const milestoneRisks = MES.milestoneRisks ? MES.milestoneRisks(state) : [];
