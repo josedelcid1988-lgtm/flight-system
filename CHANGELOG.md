@@ -23,24 +23,25 @@ numbers and record number formats have not changed in any entry below.
   past") and the problem report date ("cannot be in the future"). The source-inspection dialog's date limit
   follows the same day, and so do the defaults of Raise SPR, Create work order and Ad hoc work order (planned
   start the site day, planned finish a week later). The printed 8130-9, the conformity package checklist, the FAIR
-  signature blocks and the certification notice date each signature on the site day too, so an evening AQI signature
+  signature blocks (legacy and React) and the certification notice date each signature on the site day too, so an evening AQI signature
   and the DAR acceptance it allows carry the same date.
 - **One torque rule (#589, #659).** `MES.stepRecordsTorque` decides whether a step records a torque value. A step
-  that mentions torque records one unless every mention is marker work in one closed shape: a stripe, seal, paint,
+  that mentions torque records one unless every mention is marker work in one closed shape. A stripe, seal, paint,
   mark or witness mark word follows "torque", then only known inspection, condition or passive words ("visual
-  inspection", "is intact", "missing on", "damage") up to the end of the clause or a preposition, and either a marker
-  verb or an "inspection of" comes before it in the same clause ("Apply red torque stripe to the B-nut", "Perform visual
-  inspection of torque stripe") or one of those words follows
-  ("Torque stripe adhesion check"); a marker verb carries across "and" or "or" to the next marker phrase when only its object
-  comes between ("Apply red torque stripe to the nut and blue torque stripe to the bolt"), never across another
-  clause ("Inspect torque stripe; clean the fitting and torque seal per WI-123" records). An adverb before "torque"
-  ("and carefully torque seal per WI-123") makes it a torque command. Any other word after the marker, such as the part ("torque seal retaining nut",
-  "torque seal electrical connector"), makes it a torque action, so an unlisted word records the value instead of
-  skipping it. A torque action ("Carefully torque seal nut", "Retorque seal nut", "Torque sealing plug per WI-123")
-  any step that says tighten, and any step that names a torque target always record the value, tool and unit. "At
-  specified torque locations" is exempt only beside marker work on the same step. Adding and editing an operation,
-  default steps and the migration of older steps (title and instruction read as two sentences) all use it, so "Apply
-  torque stripe" no longer asks for a torque reading after an edit. An unchanged step keeps its saved setting.
+  inspection", "is intact", "missing on", "damage", "as found") up to the end of the clause or a preposition. Either
+  a marker verb or an "inspection of" comes before it in the same clause ("Apply red torque stripe to the B-nut",
+  "Perform visual inspection of torque stripe"), or one of those words follows ("Torque stripe adhesion check").
+  A marker verb carries across "and" or "or" to the next marker phrase when only its object comes between ("Apply
+  red torque stripe to the nut and blue torque stripe to the bolt"), never across another clause ("Inspect torque
+  stripe; clean the fitting and torque seal per WI-123" records). An adverb before "torque" ("and carefully torque
+  seal per WI-123") makes it a torque command. Any other word after the marker, such as the part ("torque seal
+  retaining nut", "torque seal electrical connector"), makes it a torque action, so an unlisted word records the
+  value instead of skipping it. A torque action ("Carefully torque seal nut", "Retorque seal nut", "Torque sealing
+  plug per WI-123"), any step that says tighten, and any step that names a torque target always record the value,
+  tool and unit. "At specified torque locations" is exempt only beside marker work on the same step. Adding and
+  editing an operation, default steps and the migration of older steps (title and instruction read as two
+  sentences) all use it, so "Apply torque stripe" no longer asks for a torque reading after an edit. An unchanged
+  step keeps its saved setting.
 - **Inspection buy-off on edit (#590).** Two checks that could never fail were removed. Editing an Inspection or
   Source Inspection operation to a buy-off that is not an inspection buy-off is refused before anything changes
   (the edit already refused it for Inspection, later in the function; Source Inspection was not covered). The

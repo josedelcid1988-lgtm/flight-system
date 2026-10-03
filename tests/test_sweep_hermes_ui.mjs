@@ -104,6 +104,29 @@ try {
   assert.deepEqual(forms.offered.sort(), [...(await late.evaluate(() => MES.INSPECTION_BUYOFF_TYPES))].sort(), `Edit operation offers only inspection buy-offs for Source Inspection: ${forms.offered.join(', ')}`);
   assert.deepEqual(forms.printDays, ['2026-10-01'], `the printed 8130-9 and conformity checklist date the AQI, preparer and step signatures on the site day, matching the DAR date: ${forms.printDays.join(', ')}`);
   assert.deepEqual(lateErrors, []);
+
+  // Codex P1 on #605: the production React Quality tab dates the FAIR verified, reviewed and approved signatures on the
+  // site day too, so it agrees with the legacy view and the printed FAIR. WO-10002 is a closed FAI order with a FAIR.
+  const fairPage = await evening.newPage(), fairErrors = [];
+  fairPage.on('pageerror', error => fairErrors.push(`${error.message}`));
+  await fairPage.clock.setFixedTime(new Date('2026-10-02T00:30:00.000Z'));
+  await fairPage.goto(new URL('./fixtures/demo_publish.html', import.meta.url).href);
+  await fairPage.waitForFunction(() => window.__ready === true);
+  const sigs = await fairPage.evaluate(async () => {
+    const o = MES.getOrder(state, 'WO-10002'), at = new Date().toISOString(), by = { name: 'Quinn Quality' };
+    o.fair.verified = { by, at }; o.fair.reviewed = { by, at }; o.fair.approved = { by, at };
+    const host = document.createElement('div');
+    document.body.append(host);
+    try {
+      window.FlightReact.renderOrder(host, state, MES, o, 'quality', null, skCan, 'Baseline');
+      await new Promise(done => setTimeout(done, 80));
+      return { utcDay: at.slice(0, 10), days: [...host.querySelectorAll('.fair-sigs .mono')].map(node => node.textContent.trim()) };
+    } finally { window.FlightReact.unmount?.(); host.remove(); }
+  });
+  assert.equal(sigs.utcDay, '2026-10-02', 'the FAIR signatures are made after UTC midnight');
+  assert.deepEqual(sigs.days, ['2026-10-01', '2026-10-01', '2026-10-01'], `React FAIR verified, reviewed and approved dates show the site day: ${JSON.stringify(sigs)}`);
+  assert.deepEqual(fairErrors, []);
+  console.log(`React FAIR signatures at 17:30 Pacific read ${sigs.days.join(', ')} (UTC day ${sigs.utcDay})`);
   console.log(`Pacific evening forms: SPR ${forms.spr}, work order ${forms.createStart} to ${forms.createDue}, ad hoc ${forms.adhocStart} to ${forms.adhocDue}; Source Inspection edit offers ${forms.offered.join(', ')}`);
   console.log('FAILS []');
 } finally {
