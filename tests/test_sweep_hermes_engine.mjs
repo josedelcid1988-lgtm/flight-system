@@ -139,7 +139,7 @@ realm('globalThis.Date = globalThis.__RealDate;')();
     // Sixth review: a count after "to" is not a torque target.
     'Apply torque stripe to 3 fasteners',
     // Seventh review: modifiers before the marker.
-    'Apply red torque stripe across the nut', 'Visually verify red torque seal condition', 'Torque stripe condition'];
+    'Apply red torque stripe across the nut', 'Visually verify red torque seal condition', 'Torque stripe condition', 'Torque stripe inspection of each B-nut', 'Torque seal check.'];
   check('MES.stepRecordsTorque: a step that is only torque stripe, seal, paint or mark work records no torque', stripes.every(t => MES.stepRecordsTorque(t) === false), stripes.filter(t => MES.stepRecordsTorque(t)).join(', '));
   // Review of PR #605: a torque action on marked or sealed parts still records the value, tool and unit.
   // Second review: a torque action on seal-named hardware with a torque target records it too.
@@ -147,7 +147,9 @@ realm('globalThis.Date = globalThis.__RealDate;')();
     // Third and fourth reviews: "Torque" as the verb records torque whatever follows it, with or without a target.
     'Torque sealing plug per WI-123', 'Torque seal retaining nut per drawing', 'Torque sealing plug', 'Torque paint the jam nut', 'Torque mark each fastener', 'Apply torque stripe after torque to 35 in-lb', 'Torque fasteners, then apply torque stripe', 'Torque to 35 inch-pounds', 'Torque nut to 12 ft-lbf', 'Clean threads, then torque sealing plug per WI-123', 'Install the plug and torque seal nut per drawing',
     // Eighth review: a modified or prefixed torque verb is a torque action.
-    'Carefully torque seal retaining nut per drawing', 'Retorque seal nut per WI-123', 'Inspect threads, then torque seal nut per drawing', 'Inspect threads and torque seal nut per drawing'];
+    'Carefully torque seal retaining nut per drawing', 'Retorque seal nut per WI-123', 'Inspect threads, then torque seal nut per drawing', 'Inspect threads and torque seal nut per drawing',
+    // Ninth review: hardware named after a marker noun.
+    'Torque seal check valve per WI-123', 'Torque seal inspection port cap per WI-123'];
   check('MES.stepRecordsTorque: a torque action records a torque value, also on marked, paint-marked, sealed or seal-named parts', actions.every(t => MES.stepRecordsTorque(t) === true), actions.filter(t => !MES.stepRecordsTorque(t)).join(', '));
   const state = fresh(), order = state.orders.find(o => o.status === 'Draft' && o.operations.length), op = order.operations[0];
   op.steps = [{ id: 'step-1', title: 'Install bracket', instruction: 'Install bracket', recordsTorque: true }];
