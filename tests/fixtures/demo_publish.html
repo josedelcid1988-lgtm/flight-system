@@ -2376,8 +2376,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // before it ("Apply torque stripe", "Remove the existing torque seal") or a noun or passive form after it ("Torque
   // stripe inspection", "Torque stripe shall be applied", "Torque seal is intact"). "Torque" as the verb ("Torque
   // sealing plug per WI-123") records the value, and so does any step that names a torque target (a value with its
-  // unit, or the drawing or WI value).
-  const TORQUE_TARGET = /\bto\s+\d|\d\s*(?:in|ft)[- ]?(?:lbs?|oz)\b|\d\s*(?:n[·.]?m|nm)\b|\b(?:drawing|wi|specified)\s+(?:torque\s+)?value\b|\bspecified\s+torque\b/i;
+  // unit, or the drawing or WI value). A bare number ("Apply torque stripe to 3 fasteners") is not a torque target.
+  const TORQUE_TARGET = /\d\s*(?:in|ft)[- .]?(?:lbs?|lbf|oz)\b|\d\s*(?:inch|foot)[- ]?(?:pounds?|lbs?)\b|\d\s*lbf[- .]?(?:in|ft)\b|\d\s*(?:n[·.]?m|nm)\b|\b(?:drawing|wi|specified)\s+(?:torque\s+)?value\b|\bspecified\s+torque\b/i;
   const TORQUE_MARKER = '(?:stripes?|striping|seals?|sealing|sealant|paints?|painting|marks?|marking)';
   const TORQUE_MARKER_VERB_BEFORE = /\b(?:apply|applying|applied|reapply|re-apply|inspect|inspecting|verify|verifying|check|checking|confirm|confirming|remove|removing|replace|replacing|add|adding|touch[- ]up|witness|witnessing)\s+(?:(?:the|a|an|new|fresh|existing|each|all|any)\s+)*$/i;
   const TORQUE_MARKER_AFTER = new RegExp(`^torque\\s*${TORQUE_MARKER}\\b(?!-)`, 'i');

@@ -135,13 +135,15 @@ realm('globalThis.Date = globalThis.__RealDate;')();
 {
   const stripes = ['Apply torque stripe', 'Apply torque stripe to both B-nuts', 'Inspect torque stripes', 'Apply torque striping', 'Apply torque seal to B-nut', 'Apply torque sealant', 'Remove the existing torque stripe from the affected fastener(s)', 'Apply a new torque stripe across fastener and substrate.', 'Verify torque stripe is unbroken',
     // Fifth review: noun and passive forms of marker work.
-    'Torque stripe inspection', 'Torque stripe shall be applied across the nut', 'Torque seal is intact on each fastener', 'Torque stripe applied to all B-nuts'];
+    'Torque stripe inspection', 'Torque stripe shall be applied across the nut', 'Torque seal is intact on each fastener', 'Torque stripe applied to all B-nuts',
+    // Sixth review: a count after "to" is not a torque target.
+    'Apply torque stripe to 3 fasteners'];
   check('MES.stepRecordsTorque: a step that is only torque stripe, seal, paint or mark work records no torque', stripes.every(t => MES.stepRecordsTorque(t) === false), stripes.filter(t => MES.stepRecordsTorque(t)).join(', '));
   // Review of PR #605: a torque action on marked or sealed parts still records the value, tool and unit.
   // Second review: a torque action on seal-named hardware with a torque target records it too.
   const actions = ['Torque to 35 in-lb', 'Re-torque fastener(s) to drawing value', 'Torque marked fasteners to 35 in-lb', 'Torque paint-marked bolts to the drawing value', 'Torque sealed fitting to 40 in-lb', 'Torque to 35 in-lb, then apply torque stripe', 'Torque sealing plug to 35 in-lb', 'Torque seal retaining nut to 15 in-lb', 'Torque sealing plug to the WI value', 'Torque the B-nut to 4.5 N·m',
     // Third and fourth reviews: "Torque" as the verb records torque whatever follows it, with or without a target.
-    'Torque sealing plug per WI-123', 'Torque seal retaining nut per drawing', 'Torque sealing plug', 'Torque paint the jam nut', 'Torque mark each fastener', 'Apply torque stripe after torque to 35 in-lb', 'Torque fasteners, then apply torque stripe'];
+    'Torque sealing plug per WI-123', 'Torque seal retaining nut per drawing', 'Torque sealing plug', 'Torque paint the jam nut', 'Torque mark each fastener', 'Apply torque stripe after torque to 35 in-lb', 'Torque fasteners, then apply torque stripe', 'Torque to 35 inch-pounds', 'Torque nut to 12 ft-lbf'];
   check('MES.stepRecordsTorque: a torque action records a torque value, also on marked, paint-marked, sealed or seal-named parts', actions.every(t => MES.stepRecordsTorque(t) === true), actions.filter(t => !MES.stepRecordsTorque(t)).join(', '));
   const state = fresh(), order = state.orders.find(o => o.status === 'Draft' && o.operations.length), op = order.operations[0];
   op.steps = [{ id: 'step-1', title: 'Install bracket', instruction: 'Install bracket', recordsTorque: true }];
