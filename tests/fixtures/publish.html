@@ -2306,8 +2306,10 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // The site calendar day. Date checks on records compare against this, never the UTC day (#587, #588).
   const siteToday = () => pacificDay(new Date().toISOString());
   // A torque step records a torque value; a step about the torque stripe, seal, paint or mark itself does not (#589).
-  // "Torque marked fasteners" and "Torque paint-marked bolts" are torque actions, so they still record a value.
-  const stepRecordsTorque = text => /torque(?!\s*(?:stripes?|striping|seals?|sealing|sealant|paints?|painting|marks?|marking)\b(?!-))/i.test(String(text ?? ''));
+  // A step that names a torque target (a value with its unit, or the drawing or WI value) always records one, so
+  // "Torque sealing plug to 35 in-lb" and "Torque marked fasteners to 35 in-lb" keep the value, tool and unit.
+  const TORQUE_TARGET = /\bto\s+\d|\d\s*(?:in|ft)[- ]?(?:lbs?|oz)\b|\d\s*(?:n[·.]?m|nm)\b|\b(?:drawing|wi|specified)\s+(?:torque\s+)?value\b|\bspecified\s+torque\b/i;
+  const stepRecordsTorque = text => { const t = String(text ?? ''); return /torque(?!\s*(?:stripes?|striping|seals?|sealing|sealant|paints?|painting|marks?|marking)\b(?!-))/i.test(t) || (/torque/i.test(t) && TORQUE_TARGET.test(t)); };
   // ---- Stamp and qualification register -----------------------------------------------------
   // Replaces the embedded Stamp Control Log snapshot with a managed register: the QA Manager
   // issues, assigns, suspends and expires stamps; one stamp belongs to one account; buy-offs and
