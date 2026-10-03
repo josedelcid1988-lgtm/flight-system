@@ -3931,7 +3931,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
 
   function orderValid(order, version = 3) {
     if (order && (!fairValid(order.fair) || !confValid(order.conformity))) return false;
-    if (plain(order) && plain(order.fair) && fairImpactProblems(order).length) return false;
+    if (plain(order) && plain(order.fair) && fairImpactProblems(order).length) return false; if (plain(order) && plain(order.fair) && fairSupersededProblems(order).length) return false;
     if (order && order.fai !== undefined && !(plain(order.fai) && typeof order.fai.required === 'boolean' && str(order.fai.reason, 340) && str(order.fai.wi, 40) && timestamp(order.fai.at) && snapshotValid(order.fai.by))) return false;
     if (!plain(order) || !str(order.id, 24) || !/^WO-\d{5,8}(?:-Split-\d{1,2})?$/.test(order.id) || !str(order.title, 120) || !str(order.partNumber, 50) || !str(order.serial, 60) || !str(order.revision, 24) || !PEDIGREES.includes(order.pedigree) || !PRIORITIES.includes(order.priority) || !count(order.quantity) || !STATUSES.includes(order.status) || !str(order.owner, 80) || !str(order.due, 10) || !/^\d{4}-\d{2}-\d{2}$/.test(order.due) || !Number.isFinite(Date.parse(order.due)) || new Date(order.due).toISOString().slice(0, 10) !== order.due) return false;
     if (Object.hasOwn(order, 'start') && !(str(order.start, 10) && /^\d{4}-\d{2}-\d{2}$/.test(order.start) && Number.isFinite(Date.parse(order.start)) && order.start <= order.due)) return false;
@@ -5788,7 +5788,7 @@ const OP_BOM_MAX = 12;
   // Internal: the sequence change and engineering change approvals call it with the order they are changing. It is
   // not a server action (server/mes-host.mjs actionExclude), and the page never sends it as one.
   const WO_REVISION_LIMIT = 200;
-  function rollWorkOrderRevision(state, order, summary, changes, approver) {
+  function rollWorkOrderRevision(state, order, summary, changes, approver, changedBy) {
     ensureRevisions(state);
     if (order.revisions.length >= WO_REVISION_LIMIT) return null;
     const rev = nextWoRev(order.woRev);
@@ -5796,7 +5796,7 @@ const OP_BOM_MAX = 12;
     const entry = {
       rev, at: new Date().toISOString(), summary: String(summary || 'Change released.'),
       changes: (Array.isArray(changes) ? changes: [String(changes || '')]).filter(Boolean).map(text => String(text).slice(0, 400)).slice(0, 40),
-      approvedBy: approver ? { ...approver } : null, drawingRev: order.drawingRev, wiRev: order.wiRev,
+      approvedBy: approver ? { ...approver } : null, ...(Array.isArray(changedBy) && changedBy.length ? { changedBy: changedBy.filter(plain).map(p => ({ ...p })) } : {}), drawingRev: order.drawingRev, wiRev: order.wiRev,
       partRevision: order.revision, quantity: order.quantity
     };
     order.revisions = [...order.revisions, entry];
@@ -5825,7 +5825,7 @@ const OP_BOM_MAX = 12;
     });
     const approver = actor(state);
     const entry = rollWorkOrderRevision(state, order, `Operation sequence changed (${pending.entries.length} change${pending.entries.length === 1 ? '' : 's'}).`,
-      pending.entries.map(item => `${item.type === 'add' ? 'Added' : item.type === 'remove' ? 'Removed' : 'Edited'} Op ${item.position || ''} ${item.title || ''}`.replace(/\s+/g, ' ').trim()), approver);
+      pending.entries.map(item => `${item.type === 'add' ? 'Added' : item.type === 'remove' ? 'Removed' : 'Edited'} Op ${item.position || ''} ${item.title || ''}`.replace(/\s+/g, ' ').trim()), approver, pending.entries.map(item => item.by));
     record(state, order, `QA released the updated operation sequence (${pending.entries.length} change${pending.entries.length === 1 ? '' : 's'}) · ${actor(state).name}.${entry ? ` Work order revision rolled to ${woRevLabel(entry.rev)}.` : ''}`);
     return { ok: true, message: `Sequence released by QA. Work can continue.${entry ? ` Revision is now ${woRevLabel(entry.rev)}.` : ''}` };
   }
@@ -6345,22 +6345,32 @@ const OP_BOM_MAX = 12;
     f.superseded = [...(Array.isArray(f.superseded) ? f.superseded : []), kept];
     clearFairSignatures(order);
   }
-  // Every manifest a superseded entry keeps must be well formed and, where it stored its subject, still hash to it. A FAIR
-  // signed before manifests existed is kept as it was.
+  // A superseded entry keeps the signatures its status had reached, and they still chain together the way they did when
+  // live: verification for Verified and Approved, the Skyryse QA approval for Approved, box 22 where the approval bound it
+  // or was recorded after box 22 became mandatory. Each kept manifest must be well formed, still hash to the subject it
+  // stored, and point at the kept verification (Codex r4170545510). A FAIR signed before manifests stored their subject is
+  // checked by its hash alone.
   const fairSupersededProblems = order => {
     const out = [], list = plain(order.fair) && Array.isArray(order.fair.superseded) ? order.fair.superseded : [];
+    const wellFormed = m => plain(m) && typeof m.meaning === 'string' && !!m.meaning && timestamp(m.at) && plain(m.signer) && m.algorithm === 'SHA-256' && /^[0-9a-f]{64}$/.test(String(m.hash));
     list.forEach((x, i) => {
       if (!plain(x)) return;
       const where = label => `${order.id} FAIR superseded signature ${i + 1} (${label})`;
-      const check = (label, m) => {
-        if (!plain(m)) return;
-        if (!(typeof m.meaning === 'string' && !!m.meaning && timestamp(m.at) && plain(m.signer) && m.algorithm === 'SHA-256' && /^[0-9a-f]{64}$/.test(String(m.hash)))) out.push({ where: where(label), reason: 'the kept manifest is malformed' });
-        else if (plain(m.subject) && m.hash !== sha256(canonical(m.subject))) out.push({ where: where(label), reason: 'hash does not match the signed record' });
+      const check = (label, rec, required) => {
+        if (!plain(rec)) { if (required) out.push({ where: where(label), reason: 'the kept signature is missing' }); return null; }
+        const m = rec.manifest;
+        if (!wellFormed(m)) { out.push({ where: where(label), reason: plain(m) ? 'the kept manifest is malformed' : 'the kept signature has no manifest' }); return null; }
+        if (plain(m.subject) && m.hash !== sha256(canonical(m.subject))) { out.push({ where: where(label), reason: 'hash does not match the signed record' }); return null; }
+        return m;
       };
-      if (plain(x.verified)) check('verification', x.verified.manifest);
-      if (plain(x.reviewed)) check('box 22', x.reviewed.manifest);
-      if (plain(x.approved)) check('Skyryse QA approval', x.approved.manifest);
-      (Array.isArray(x.impactAssessments) ? x.impactAssessments : []).forEach(a => check(`impact assessment ${a && a.id || ''}`.trim(), a && a.manifest));
+      const chains = (label, m, key, hash) => { if (m && plain(m.subject) && Object.hasOwn(m.subject, key) && m.subject[key] !== hash) out.push({ where: where(label), reason: `does not chain to the kept ${key === 'verified' ? 'verification' : 'box 22'}` }); };
+      const v = check('verification', x.verified, true), vh = v ? v.hash : null;
+      const r = check('box 22', x.reviewed, x.status === 'Approved' && plain(x.approved) && String(x.approved.at || '') >= FAIR_BOX22_REQUIRED_FROM);
+      chains('box 22', r, 'verified', vh);
+      const a = check('Skyryse QA approval', x.approved, x.status === 'Approved');
+      chains('Skyryse QA approval', a, 'verified', vh);
+      if (a && plain(a.subject) && Object.hasOwn(a.subject, 'reviewed') && a.subject.reviewed !== (r ? r.hash : null)) out.push({ where: where('Skyryse QA approval'), reason: 'does not chain to the kept box 22' });
+      (Array.isArray(x.impactAssessments) ? x.impactAssessments : []).forEach(ia => { const label = `impact assessment ${plain(ia) && ia.id || ''}`.trim(); chains(label, check(label, ia, true), 'verified', vh); });
     });
     return out;
   };
@@ -6373,6 +6383,9 @@ const OP_BOM_MAX = 12;
     const roles = Array.isArray(acct.accountRoles) ? acct.accountRoles : Array.isArray(acct.roles) ? acct.roles : [acct.accountRole];
     return roles.includes('qm');
   };
+  // A split copies the order, signed FAIR included, onto a new work order with other units. A signed FAIR is never carried
+  // that way: nobody splits the order while it stands, a QA Manager included, who reopens the FAIR first (Cursor r4170578158).
+  const FAIR_SPLIT_MESSAGE = "This work order's FAIR is signed, so its units can't be split onto another work order. A QA Manager reopens the FAIR first.";
   const fairLockRefusal = (state, order) => fairSigned(order) && !qaManagerSignedIn(state) ? fail(FAIR_LOCK_MESSAGE) : null;
   // A change a QA Manager makes on a signed FAIR rolls the work order revision, so the FAIR no longer matches the order
   // and closure needs an impact assessment or a new FAI. A full revision log cannot record that roll, so the change is
@@ -6402,6 +6415,13 @@ const OP_BOM_MAX = 12;
     if (i < 0 || j <= i) return null;
     return list.slice(i + 1, j + 1).map(e => ({ rev: e.rev, summary: String(e.summary ?? ''), changes: Array.isArray(e.changes) ? e.changes.map(String) : [] }));
   }
+  // The people who released or made the changes an assessment covers: nobody assesses their own change (AGENTS.md rule 1).
+  const fairImpactChangers = (order, from, to) => {
+    const list = revisionEntries(order), i = list.findIndex(e => plain(e) && e.rev === from), j = list.findIndex(e => plain(e) && e.rev === to);
+    if (i < 0 || j <= i) return [];
+    return list.slice(i + 1, j + 1).flatMap(e => [e.approvedBy, ...(Array.isArray(e.changedBy) ? e.changedBy : [])]).filter(p => plain(p) && typeof p.credentialId === 'string' && p.credentialId).map(p => p.credentialId);
+  };
+  const FAIR_IMPACT_SELF_MESSAGE = 'You released or made a change this assessment covers. Another QA Manager must sign the FAIR impact assessment.';
   const fairImpactDrawing = (order, to) => { const e = revisionEntries(order).find(x => plain(x) && x.rev === to); return { partNumber: order.partNumber, revision: e ? (e.drawingRev ?? null) : null }; };
   const fairImpactStatements = drawing => ['The existing FAIR remains valid.', 'The change has no impact on completed operations or their buy-offs.', `The work order has not deviated from drawing ${drawing.partNumber} Rev ${drawing.revision}.`];
   // The signed subject: the FAIR verification hash, the old and new work order revisions, the rev-roll change list, the drawing
@@ -6429,6 +6449,7 @@ const OP_BOM_MAX = 12;
       if (!plain(m) || m.algorithm !== 'SHA-256' || !/^[0-9a-f]{64}$/.test(String(m.hash)) || !plain(m.subject)) { out.push({ where: where(a), reason: 'the impact assessment has no complete signature manifest' }); return; }
       if (m.meaning !== FAIR_IMPACT_MEANING) out.push({ where: where(a), reason: 'the signature meaning is not a FAIR impact assessment' });
       if (signerMismatch(a, m)) out.push({ where: where(a), reason: 'the recorded signer or time does not match the signature' });
+      if (plain(a.by) && fairImpactChangers(order, a.fromWoRev, a.toWoRev).includes(a.by.credentialId)) out.push({ where: where(a), reason: 'the assessment was signed by someone who released or made a change it covers' });
       if (a.fromWoRev !== from) out.push({ where: where(a), reason: `the assessment starts at WO Rev ${a.fromWoRev}, but the FAIR was signed at WO Rev ${from}` });
       if (!same(a.changes, fairImpactChanges(order, a.fromWoRev, a.toWoRev))) out.push({ where: where(a), reason: 'the assessed change list does not match the work order revision log' });
       if (!same(a.drawing, fairImpactDrawing(order, a.toWoRev))) out.push({ where: where(a), reason: 'the assessed drawing revision does not match the work order revision log' });
@@ -6457,6 +6478,7 @@ const OP_BOM_MAX = 12;
     if (!(yes(input0.fairValid) && yes(input0.noOperationImpact) && yes(input0.noDrawingDeviation))) return fail('Confirm all three statements: the FAIR remains valid, the change has no impact on completed operations or their buy-offs, and the work order has not deviated from the drawing.');
     const rationale = String(input0.rationale ?? '').trim();
     if (!rationale || rationale.length > 300) return fail('Enter a rationale of 1 to 300 characters.');
+    if (fairImpactChangers(order, from, to).includes(actor(state).credentialId)) return fail(FAIR_IMPACT_SELF_MESSAGE);
     const list = fairImpactList(fair);
     if (list.length >= FAIR_IMPACT_MAX) return fail(`A FAIR holds up to ${FAIR_IMPACT_MAX} impact assessments. Reopen the FAIR instead.`);
     const v = inspectorSign(state, ['Quality', '8130-9 Authorized Inspector'], execution, false); if (!v.ok) return v;
@@ -7987,6 +8009,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     { const d = denied('split', 'split a work order'); if (d) return d; }
     const { order, error } = target(state, orderId);
     if (error) return fail(error);
+    if (fairSigned(order)) return fail(FAIR_SPLIT_MESSAGE);
     if (!['Draft', 'Kitting'].includes(order.status)) return fail('A work order can only be split before the build starts (Draft or Kitting).');
     if (engineeringChange(order)) return fail(engineeringHoldMessage);
     if (!count(order.quantity) || order.quantity < 2) return fail('Only a work order with a quantity of 2 or more can be split.');
@@ -8031,6 +8054,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (error) return fail(error);
     const sr = (Array.isArray(order.splitRequests) ? order.splitRequests : []).find(item => item.id === requestId);
     if (!sr || sr.status !== 'Open') return fail('This split request is no longer open.');
+    if (fairSigned(order)) return fail(FAIR_SPLIT_MESSAGE);
     if (!['Draft', 'Kitting', 'Building'].includes(order.status)) return fail('Units can be split out while the order is in Draft, Kitting, or Building.');
     if (engineeringChange(order)) return fail(engineeringHoldMessage);
     if (pendingSequenceChange(order)) return fail(sequenceHoldMessage);

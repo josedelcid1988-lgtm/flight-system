@@ -150,7 +150,15 @@ ok('editing a kept verification subject fails verification',!r.verified.ok&&r.ve
 ok('a forged kept approval hash fails verification',!r.approved.ok&&r.approved.why.some(w=>/superseded signature 1 \(Skyryse QA approval\)/.test(w)),JSON.stringify(r.approved));
 ok('a malformed kept box 22 manifest fails verification',!r.reviewed.ok&&r.reviewed.why.some(w=>/superseded signature 1 \(box 22\): the kept manifest is malformed/.test(w)),JSON.stringify(r.reviewed));
 ok('a kept entry with no reason or a bad time fails validation',!r.reason.valid&&!r.gone.valid,JSON.stringify({reason:r.reason.valid,gone:r.gone.valid}));
-r=await run(([id])=>{const C=structuredClone(window.__S),o=C.orders.find(x=>x.id===id);o.status='Building';o.fair.superseded=Array.from({length:50},()=>({reopenedAt:'2026-09-01T00:00:00.000Z',reason:'Earlier reopen.',status:'Approved',verified:null,reviewed:null,approved:null,impactAssessments:[]}));const before=JSON.stringify(C);const x=MES.reopenFair(C,id,'Another delta FAI');return {x,same:JSON.stringify(C)===before,valid:MES.validate(structuredClone(window.__S))};},[ID]);
+// Codex r4170545510: an entry keeps the signatures its status reached, chained as they were when live.
+r=await run(([id])=>{const t=f=>{const s=structuredClone(window.__C),o=s.orders.find(x=>x.id===id);f(o.fair.superseded[0],o);const v=MES.verifyManifests(s);return {ok:v.ok,valid:MES.validate(s),why:v.failures.map(x=>x.where+': '+x.reason)};};
+  return {all:t(k=>{k.verified=null;k.reviewed=null;k.approved=null;k.impactAssessments=[];}),approved:t(k=>{k.approved=null;}),verified:t(k=>{k.verified=null;}),box22:t(k=>{k.reviewed=null;}),nomanifest:t(k=>{delete k.approved.manifest;}),swap:t((k,o)=>{const other=structuredClone(window.__S).orders.find(x=>x.id===id).fair.verified;other.manifest.subject.verifiedAt='2026-01-01T00:00:00.000Z';other.manifest.hash=MES.sha256?MES.sha256(JSON.stringify(other.manifest.subject)):'f'.repeat(64);k.verified=other;})};},[ID]);
+ok('nulling every kept signature on an Approved entry fails validation and verification',!r.all.ok&&!r.all.valid&&r.all.why.some(w=>/superseded signature 1 \(verification\): the kept signature is missing/.test(w))&&r.all.why.some(w=>/\(Skyryse QA approval\): the kept signature is missing/.test(w)),JSON.stringify(r.all));
+ok('removing the kept approval or verification fails verification',!r.approved.ok&&!r.approved.valid&&!r.verified.ok&&!r.verified.valid,JSON.stringify({a:r.approved.why,v:r.verified.why}));
+ok('removing the kept box 22 the approval was bound to fails verification',!r.box22.ok&&r.box22.why.some(w=>/box 22/.test(w)),JSON.stringify(r.box22.why));
+ok('a kept approval with no manifest fails verification',!r.nomanifest.ok&&r.nomanifest.why.some(w=>/\(Skyryse QA approval\): the kept signature has no manifest/.test(w)),JSON.stringify(r.nomanifest.why));
+ok('swapping in a different verification breaks the kept chain',!r.swap.ok&&!r.swap.valid,JSON.stringify(r.swap.why));
+r=await run(([id])=>{const C=structuredClone(window.__S),o=C.orders.find(x=>x.id===id);o.status='Building';o.fair.superseded=Array.from({length:50},()=>({reopenedAt:'2026-09-01T00:00:00.000Z',reason:'Earlier reopen.',status:o.fair.status,verified:o.fair.verified,reviewed:o.fair.reviewed??null,approved:o.fair.approved,impactAssessments:[]}));const before=JSON.stringify(C);const x=MES.reopenFair(C,id,'Another delta FAI');return {x,same:JSON.stringify(C)===before,valid:MES.validate(structuredClone(window.__S))};},[ID]);
 ok('a FAIR whose superseded list is full refuses another reopen and changes nothing',!r.x.ok&&/reopened 50 times and keeps every superseded signature/.test(r.x.message)&&r.same,JSON.stringify(r));
 await as('ume');
 r=await run(([id])=>MES.addOrderOperation(structuredClone(window.__C),id,{classification:'Manufacturing',title:'After reopen',description:'Added.',buyoffType:'Technician',stepList:[{title:'S',instruction:'Do.'}],position:window.__C.orders.find(x=>x.id===id).operations.length}),[ID]);
@@ -162,6 +170,28 @@ await as('qmb');
 r=await run(([id])=>{const C=window.__C,o=C.orders.find(x=>x.id===id);const a=MES.approveSequenceChange(C,id);return {a,woRev:o.woRev,signedAt:MES.fairWoRev(o),gap:MES.fairRevisionGap(o),valid:MES.validate(C)};},[ID]);
 ok('a second QA Manager releases the sequence change and the work order rolls to Rev A',r.a.ok&&r.woRev==='A'&&r.signedAt==='Baseline'&&r.valid,JSON.stringify(r));
 ok('the FAIR reports the revision mismatch with what to do next',/FAIR was signed at WO Rev Baseline and the work order is now Rev A\. A QA Manager signs a FAIR impact assessment at Rev A or reopens the FAIR/.test(r.gap||''),String(r.gap));
+// Cursor security review r4170567223: nobody assesses a change they made or released (AGENTS.md rule 1). Here uqm edited
+// the sequence and qmb released it, so neither signs the impact assessment.
+{const IA0={fairValid:true,noOperationImpact:true,noDrawingDeviation:true,rationale:'Sequence-only change.'};
+r=await run(([id])=>{const e=window.__C.orders.find(x=>x.id===id).revisions.at(-1);return {by:e.approvedBy&&e.approvedBy.credentialId,changed:(e.changedBy||[]).map(p=>p.credentialId)};},[ID]);
+ok('the sequence roll records who released it and who made the change',!!r.by&&r.changed.length>0&&!r.changed.includes(r.by),JSON.stringify(r));
+for(const u of ['uqm','qmb']){await as(u);const out=await run(([id,a,pin])=>{const C=structuredClone(window.__C);const before=JSON.stringify(C);const x=MES.signFairImpactAssessment(C,id,a,{pin});return {x,same:JSON.stringify(C)===before};},[ID,IA0,PIN]);
+  ok(`the impact assessment is refused for the QA Manager who ${u==='uqm'?'made':'released'} the change`,!out.x.ok&&out.x.message==='You released or made a change this assessment covers. Another QA Manager must sign the FAIR impact assessment.'&&out.same,JSON.stringify(out));}
+}
+
+// Cursor security review r4170578158: a split would copy the signed FAIR onto a new work order with other units, so neither
+// split path runs while the FAIR is signed, for anyone, a QA Manager included.
+const SPLIT_MSG="This work order's FAIR is signed, so its units can't be split onto another work order. A QA Manager reopens the FAIR first.";
+const splitSrc=`const o=C.orders.find(x=>x.id===id);o.quantity=Math.max(3,o.quantity);o.splitRequests=[{id:'SPR-FAIR-1',ticketId:null,quantity:1,of:o.quantity,serials:[],reason:'Split one unit',status:'Open',requestedBy:{name:'Quinn Quality',role:'Quality Engineer',credentialId:'QE-1'},requestedAt:new Date().toISOString()}];`;
+for(const signed of [true,false]){
+  for(const u of ['uqm','uops','uadmin']){
+    await prepare({},signed);await as(u);
+    r=await run(([id,prep])=>{const C=window.__C;(new Function('C','id',prep))(C,id);const before=JSON.stringify(C);const req=MES.splitRequestOrder(C,id,'SPR-FAIR-1');const sameReq=JSON.stringify(C)===before;const before2=JSON.stringify(C);const direct=MES.splitOrder(C,id,1);return {req,direct,sameReq,sameDirect:JSON.stringify(C)===before2};},[ID,splitSrc]);
+    if(signed)ok(`both split paths are refused on a signed FAIR for ${u}, and nothing changes`,!r.req.ok&&r.req.message===SPLIT_MSG&&!r.direct.ok&&r.direct.message===SPLIT_MSG&&r.sameReq&&r.sameDirect,JSON.stringify(r));
+    else ok(`a split is not refused for the FAIR when the FAIR is not signed (${u})`,r.req.message!==SPLIT_MSG&&r.direct.message!==SPLIT_MSG,JSON.stringify(r));
+  }
+}
+
 // Codex r4170271751: a QA Manager's serial change on a signed FAIR rolls the work order revision, so the FAIR no longer
 // matches the order and closure needs an impact assessment or a new FAI.
 await prepare({});await as('uqm');
@@ -170,6 +200,8 @@ ok('a QA Manager voiding a serial on a signed FAIR rolls the work order to Rev A
 ok('the void opens the FAIR revision gap and says what is needed before closure',/now Rev A/.test(r.gap||'')&&/impact assessment or a new FAI before closure/.test(r.v.message),JSON.stringify(r));
 r=await run(([id])=>{const C=window.__C,o=C.orders.find(x=>x.id===id);const a=MES.assignSerial(C,id);return {a,woRev:o.woRev,gap:MES.fairRevisionGap(o),last:o.revisions.at(-1),valid:MES.validate(C),mv:MES.verifyManifests(C).ok};},[ID]);
 ok('a QA Manager assigning a serial on a signed FAIR rolls the work order again',r.a.ok&&r.woRev==='B'&&/now Rev B/.test(r.gap||'')&&r.last.changes.some(c=>/^Assigned serial /.test(c))&&r.valid&&r.mv,JSON.stringify(r));
+r=await run(([id,pin])=>MES.signFairImpactAssessment(structuredClone(window.__C),id,{fairValid:true,noOperationImpact:true,noDrawingDeviation:true,rationale:'Serial change only.'},{pin}),[ID,PIN]);
+ok('the QA Manager who changed the serials cannot sign the impact assessment for that change',!r.ok&&/You released or made a change this assessment covers/.test(r.message),JSON.stringify(r));
 await prepare({},false);await as('uqm');
 r=await run(([id])=>{const C=window.__C,o=C.orders.find(x=>x.id===id);const v=MES.voidSerial(C,id,MES.orderSerials(C,o)[0].serial,'Damaged tag');return {v,woRev:o.woRev};},[ID]);
 ok('a serial change with no signed FAIR does not roll the work order revision',r.v.ok&&r.woRev==='Baseline',JSON.stringify(r));
@@ -233,6 +265,10 @@ ok('closeOrder is no longer refused for the FAIR once the assessment covers the 
 r=await run(([id])=>{state=structuredClone(window.__R);const o=state.orders.find(x=>x.id===id);return {panel:fairPanel(o),print:fairHtml(o)};},[ID]);
 ok('the screen and the print list the signed impact assessment',/FIA-1: WO Rev Baseline to Rev A/.test(r.panel)&&/FIA-1: WO Rev Baseline to Rev A/.test(r.print));
 
+// Cursor security review r4170567223: an assessment signed by someone who made a change it covers fails verification.
+await as('uqm');
+r=await run(([id])=>{const C=structuredClone(window.__R),o=C.orders.find(x=>x.id===id);const before=MES.verifyManifests(C).ok;o.revisions.at(-1).changedBy=[{...o.fair.impactAssessments[0].by}];const v=MES.verifyManifests(C);return {before,ok:v.ok,valid:MES.validate(C),why:v.failures.map(f=>f.where+': '+f.reason)};},[ID]);
+ok('an assessment signed by someone who made a change it covers fails verification',r.before&&!r.ok&&!r.valid&&r.why.some(w=>/signed by someone who released or made a change it covers/.test(w)),JSON.stringify(r));
 // Tampering with the impact assessment.
 const tamper=src=>run(([id,src])=>{const s=structuredClone(window.__R),o=s.orders.find(x=>x.id===id),a=o.fair.impactAssessments[0];(new Function('s','o','a',src))(s,o,a);const v=MES.verifyManifests(s);return {ok:v.ok,valid:MES.validate(s),where:v.failures.map(f=>f.where+': '+f.reason)};},[ID,src]);
 const TAMPER=[
