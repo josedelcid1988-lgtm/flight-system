@@ -477,6 +477,22 @@ try {
     assert.equal(server.store.getDoc('default').etag, before.etag, 'the refused actions leave the shared workspace unchanged');
     assert.equal(server.store.verifyAudit().ok, true, 'the audit chain still verifies');
   });
+  await check('an engine failure whose audit write also fails is answered once and the server keeps serving', async () => {
+    now += 61 * 1000;
+    const before = await api('GET', '/workspace', { token });
+    const resolveAction = server.host.resolveAction, audit = server.store.audit;
+    const unhandled = []; const onUnhandled = e => unhandled.push(e);
+    process.on('unhandledRejection', onUnhandled);
+    server.host.resolveAction = name => name === 'MES.setPriority' ? () => { throw new Error('engine failure'); } : resolveAction(name);
+    server.store.audit = async (...row) => { if (row[1] === 'action-refused') throw new Error('audit store unavailable'); return audit.apply(server.store, row); };
+    let thrown;
+    try { thrown = await api('POST', '/workspace/actions/MES.setPriority', { token, body: { args: ['WO-10001', 'High'] }, headers: { 'If-Match': before.etag } }); await new Promise(r => setTimeout(r, 50)); }
+    finally { server.host.resolveAction = resolveAction; server.store.audit = audit; process.off('unhandledRejection', onUnhandled); }
+    assert.equal(thrown.status, 500);
+    assert.match(thrown.json.reference, /^[0-9A-F]{12}$/);
+    assert.deepEqual(unhandled.map(String), [], 'no second response is attempted, so nothing is left unhandled');
+    assert.equal((await api('GET', '/workspace', { token })).status, 200, 'the server keeps serving');
+  });
   await check('refused-action audit rows are rate limited per account, and the suppressed count is recorded', async () => {
     now += 61 * 1000;
     const rows = async action => (await server.store.auditRows(5000)).filter(row => row.action === action && row.username === 'one');
