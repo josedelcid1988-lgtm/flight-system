@@ -4707,7 +4707,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     'op-050': [['Collect records', 'Confirm every prior operation has a stamp, date, and completion note.'], ['Check evidence', 'Verify linked reports, photos, or recordings are attached and reviewed.']],
     'op-060': [['Review the traveler', 'Read through the full traveler for open items, holds, or missing entries.'], ['Hand off to QA', 'Notify Quality that the work order is ready for final review.']]
   });
-  const defaultSteps = (opId, title) => (DEFAULT_STEPS[opId] || [['Perform the operation', `Complete “${title}” per the master work instruction.`], ['Verify the result', 'Check the work against the WI before buy-off.']]).map(([stepTitle, instruction], index) => ({ id: `step-${index + 1}`, title: stepTitle, instruction, recordsTorque: stepRecordsTorque(stepTitle) }));
+  const defaultSteps = (opId, title) => (DEFAULT_STEPS[opId] || [['Perform the operation', `Complete “${title}” per the master work instruction.`], ['Verify the result', 'Check the work against the WI before buy-off.']]).map(([stepTitle, instruction], index) => ({ id: `step-${index + 1}`, title: stepTitle, instruction, recordsTorque: stepRecordsTorque(`${stepTitle} ${instruction}`) }));
   const MAX_STEP_IMAGE = 300000, MAX_IMAGE_TOTAL = 2600000;
   const stepImageValid = image => plain(image) && typeof image.dataUrl === 'string' && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(image.dataUrl) && image.dataUrl.length <= MAX_STEP_IMAGE && str(image.caption, 200, 0) && str(image.name, 120, 0);
   const STD_INSPECTION = Object.freeze({ title: 'Standard inspection', text: 'Inspect all operations performed since the last inspection point. Check for FOD, FOD damage and workmanship.' });
@@ -4815,7 +4815,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       });
     } else if (!masterWIsValid(state.masterWIs)) return state;
     state.orders.forEach(order => { if (!AIRCRAFT.includes(order.aircraft)) order.aircraft = AIRCRAFT[parseInt(order.id.slice(3), 10) % AIRCRAFT.length]; if (!order.start || order.start > order.due) order.start = new Date(Date.parse(order.due) - 7 * 86400000).toISOString().slice(0, 10); if (aogActive(order) && !plain(order.aog)) order.aog = { startedAt: new Date().toISOString(), startedBy: { name: 'Assembly operator', role: 'Assembly technician', credentialId: 'SR-OP-001' }, notified: 0, lastNotifiedAt: null, nextNotifyAt: new Date().toISOString() }; if (!aogActive(order)) order.aog = null; });
-    state.masterWIs.forEach(wi => wi.operations.forEach(op => { if (typeof op.requiresTooling !== 'boolean') op.requiresTooling = ['op-030', 'op-040'].includes(op.id); op.steps.forEach(step => { if (typeof step.recordsTorque !== 'boolean') step.recordsTorque = stepRecordsTorque(step.title); }); }));
+    state.masterWIs.forEach(wi => wi.operations.forEach(op => { if (typeof op.requiresTooling !== 'boolean') op.requiresTooling = ['op-030', 'op-040'].includes(op.id); op.steps.forEach(step => { if (typeof step.recordsTorque !== 'boolean') step.recordsTorque = stepRecordsTorque(`${step.title ?? ''} ${step.instruction ?? ''}`); }); }));
     state.orders.forEach(order => order.operations.forEach(operation => {
       if (!Array.isArray(operation.steps) || !operation.steps.length || !operation.steps.every(stepValid)) operation.steps = defaultSteps(operation.id, operation.title);
       if (!plain(operation.stepChecks)) operation.stepChecks = {};
@@ -4823,7 +4823,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       if (!BUYOFF_TYPES.includes(operation.buyoffType)) operation.buyoffType = defaultBuyoffType(operation.id);
       if (typeof operation.inspectionPoint !== 'boolean') operation.inspectionPoint = operation.id === 'op-040' && INSPECTION_BUYOFF_TYPES.includes(operation.buyoffType);
       if (typeof operation.requiresTooling !== 'boolean') operation.requiresTooling = ['op-030', 'op-040'].includes(operation.id) || (Array.isArray(operation.buyoff?.tools) && operation.buyoff.tools.length > 0);
-      operation.steps.forEach(step => { if (typeof step.recordsTorque !== 'boolean') step.recordsTorque = stepRecordsTorque(step.title); });
+      operation.steps.forEach(step => { if (typeof step.recordsTorque !== 'boolean') step.recordsTorque = stepRecordsTorque(`${step.title ?? ''} ${step.instruction ?? ''}`); });
     }));
     ensureInventory(state);
     ensureSavedViews(state);

@@ -153,6 +153,18 @@ realm('globalThis.Date = globalThis.__RealDate;')();
   check('adding and editing the same lines give the same torque settings', add.ok && addedSteps[0].recordsTorque === stripe.recordsTorque && addedSteps[1].recordsTorque === torque.recordsTorque, add.message);
 }
 
+// Third review: a step saved before recordsTorque existed is migrated from its title and instruction together, so a
+// short title such as "Torque sealing plug" with its target in the instruction still records torque.
+{
+  const state = JSON.parse(DEMO), order = state.orders.find(o => o.status === 'Draft' && o.operations.length), wi = state.masterWIs[0];
+  const legacy = () => [{ id: 'step-1', title: 'Torque sealing plug', instruction: 'Tighten to 35 in-lb with a calibrated driver.' }, { id: 'step-2', title: 'Apply torque stripe', instruction: 'Stripe across the nut and housing.' }];
+  order.operations[0].steps = legacy(); wi.operations[0].steps = legacy();
+  const upgraded = MES.ensureMasterWIs(state);
+  const wo = MES.getOrder(upgraded, order.id).operations[0].steps, master = upgraded.masterWIs.find(w => w.id === wi.id && w.revision === wi.revision).operations[0].steps;
+  check('a legacy work-order step with its torque target in the instruction is migrated as recording torque', wo[0].recordsTorque === true && wo[1].recordsTorque === false, JSON.stringify(wo.map(x => x.recordsTorque)));
+  check('a legacy master WI step with its torque target in the instruction is migrated as recording torque', master[0].recordsTorque === true && master[1].recordsTorque === false, JSON.stringify(master.map(x => x.recordsTorque)));
+}
+
 // ---- #590: an inspection operation keeps an inspection buy-off on edit ----------------------------------------------
 {
   for (const [classification, extra] of [['Inspection', {}], ['Source Inspection', { sourceInspectionCode: 'CSI' }]]) {
