@@ -5,9 +5,9 @@
 // same questions, and fails on any answer that differs: role by role, capability by capability, the manager route
 // gate, Support Access, and the inspector signature against the inspection stamp gate.
 //
-// Disagreements already reported are listed in KNOWN with their issue. A listed disagreement keeps the suite green
-// and is printed; a listed one that no longer happens fails ("now agrees, remove it from KNOWN"), so the list cannot
-// go stale. Nothing is skipped.
+// Disagreements already reported and not yet fixed are listed in KNOWN with their issue. A listed disagreement
+// keeps the suite green and is printed; a listed one that no longer happens fails ("now agrees, remove it from
+// KNOWN"), so the list cannot go stale. Nothing is skipped.
 //
 // The second half pins today's behavior at the boundaries (RFC step 5 subset): capabilities per role, extra roles
 // pausing and resuming on training, grant hash tamper, self-grant refusal text, reason length bands, and the
@@ -41,12 +41,6 @@ const day = offset => pacificDay(Date.now() + offset * 86400000);
 // second rule). A different disagreement on the same question is not masked. Remove an entry in the pull request
 // that fixes its issue.
 const KNOWN = [
-  { issue: 579, fixture: 'stamp-expired', check: 'browser: FAIR box 20 signature vs inspection stamp gate', browser: 'true', server: 'false' },
-  { issue: 579, fixture: 'stamp-expired', check: 'server host: FAIR box 20 signature vs inspection stamp gate', browser: 'true', server: 'false' },
-  { issue: 579, fixture: 'stamp-not-yet-issued', check: 'browser: FAIR box 20 signature vs inspection stamp gate', browser: 'true', server: 'false' },
-  { issue: 579, fixture: 'stamp-not-yet-issued', check: 'server host: FAIR box 20 signature vs inspection stamp gate', browser: 'true', server: 'false' },
-  { issue: 579, fixture: 'stamp-expansion-lapsed', check: 'browser: FAIR box 20 signature vs inspection stamp gate', browser: 'true', server: 'false' },
-  { issue: 579, fixture: 'stamp-expansion-lapsed', check: 'server host: FAIR box 20 signature vs inspection stamp gate', browser: 'true', server: 'false' },
   { issue: 580, fixture: 'extra-qm-lapsed', check: 'manager route GET /audit', browser: 'false', server: 'true' },
   { issue: 580, fixture: 'extra-qm-missing-record', check: 'manager route GET /audit', browser: 'false', server: 'true' },
   { issue: 580, fixture: 'extra-qm-no-role-training', check: 'manager route GET /audit', browser: 'false', server: 'true' },
