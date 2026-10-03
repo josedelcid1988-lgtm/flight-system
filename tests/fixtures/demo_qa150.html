@@ -1999,12 +1999,24 @@ function skBoot(){
   var build={version:'',sha256:''};try{build=window.MES.buildStamp();}catch(e){}
   return {ok:true,generatedAt:Number.isFinite(Date.parse(generatedAt||''))?generatedAt:new Date().toISOString(),generatedBy:{name:me.displayName,account:me.username,credentialId:'ACCT-'+me.username},build:build,accounts:accessReviewRows(users||loadAuth().users,serverLockouts)};}
  // With a server, the page first reloads the shared workspace (training records and stamps another person may have
- // changed), then the server checks the manager gate and supplies the account list, its lockouts and the time.
+ // changed), then the server checks the manager gate and supplies the account list, its lockouts, the time and the
+ // version (ETag) of the workspace it read. The report is built only when that is the version the page just loaded;
+ // if a change landed in between, the page reloads and tries once more. Every status is decided on the Pacific day,
+ // so the report is refused when this computer's Pacific day differs from the server's at the report time.
  // A change of this page's own that the server has not confirmed yet would be lost by the reload, so it waits.
+ var ACCESS_REVIEW_CHANGED='The shared workspace changed while the access review was being built. Try again in a moment.';
+ var ACCESS_REVIEW_CLOCK='This computer\'s date does not match the server\'s, so the access review would read training and stamp dates on the wrong day. Correct the computer\'s date and time, then try again.';
+ function pacificDayAt(ms){return new Date(ms).toLocaleDateString('en-CA',{timeZone:'America/Los_Angeles'});}
  function accessReport(){var me=currentUser();if(!me)return Promise.resolve({ok:false,message:'Sign in first.'});if(!canReviewAccess(me))return Promise.resolve({ok:false,message:ACCESS_REVIEW_REFUSAL});if(!SERVER)return Promise.resolve(accessReview());
   try{if((typeof serverActionQueue!=='undefined'&&serverActionQueue.length)||(typeof serverReconcilePending!=='undefined'&&serverReconcilePending))return Promise.resolve({ok:false,message:'Your last change is still being saved to the server. Try the access review again once it is saved.'});}catch(e){}
-  var reload=typeof refreshServerWorkspace==='function'?Promise.resolve().then(refreshServerWorkspace):Promise.resolve();
-  return reload.then(function(){return serverApi('/auth/access-report');},function(e){throw {reload:e};}).then(function(r){if(!r.ok||!r.json||!Array.isArray(r.json.users))return {ok:false,message:r.json&&r.json.error||'The server did not send the access review. Try again.'};return accessReview(r.json.users,r.json.lockouts||[],r.json.generatedAt);}).catch(function(e){if(e&&e.reload)return {ok:false,message:'The shared workspace could not be reloaded, so the access review was not built. '+(e.reload&&e.reload.message?e.reload.message:'Try again.')};return {ok:false,message:'The server could not be reached, so the access review was not built. Try again.'};});}
+  var attempt=function(left){
+   var reload=typeof refreshServerWorkspace==='function'?Promise.resolve().then(refreshServerWorkspace):Promise.resolve();
+   return reload.then(function(){return serverApi('/auth/access-report');},function(e){throw {reload:e};}).then(function(r){
+    if(!r.ok||!r.json||!Array.isArray(r.json.users))return {ok:false,message:r.json&&r.json.error||'The server did not send the access review. Try again.'};
+    if(r.json.workspaceEtag&&r.json.workspaceEtag!==window.skServer.etag)return left>0?attempt(left-1):{ok:false,message:ACCESS_REVIEW_CHANGED};
+    var at=Date.parse(r.json.generatedAt||'');if(!Number.isFinite(at)||pacificDayAt(at)!==pacificDayAt(Date.now()))return {ok:false,message:ACCESS_REVIEW_CLOCK};
+    return accessReview(r.json.users,r.json.lockouts||[],r.json.generatedAt);});};
+  return attempt(1).catch(function(e){if(e&&e.reload)return {ok:false,message:'The shared workspace could not be reloaded, so the access review was not built. '+(e.reload&&e.reload.message?e.reload.message:'Try again.')};return {ok:false,message:'The server could not be reached, so the access review was not built. Try again.'};});}
  // A grant is a signed record: who granted what to whom, when and why, with a SHA-256 of that record.
  function grantHash(rec){try{return window.MES&&window.MES.sha256?window.MES.sha256(window.MES.canonical(rec)):'';}catch(e){return '';}}
   function setGrant(username,cap,on,reason,trainingCode){trainingCode=String(trainingCode||'').trim().toUpperCase();username=String(username||'').trim().toLowerCase();reason=String(reason||'').trim();var me=currentUser(),a=loadAuth(),u=a.users.find(function(x){return x.username===username;});

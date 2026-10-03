@@ -1,7 +1,8 @@
 // The access review report in server mode, in a real browser against the real server: the page reloads the shared
-// workspace before it builds the report (so training and stamps another person changed are current), the report
-// carries the generation time the server sent, not the workstation clock, and a change of the page's own that the
-// server has not confirmed yet makes it wait with a plain message instead of building from a stale copy.
+// workspace before it builds the report (so training and stamps another person changed are current) and builds it
+// only from the workspace version the server read (one more try, then a plain refusal, when they differ); the report
+// carries the generation time the server sent, and is refused when this computer is on another Pacific day than the
+// server; a change of the page's own that the server has not confirmed yet makes it wait with a plain message.
 import { chromium } from 'playwright';
 import { createServer } from '../server/server.mjs';
 
@@ -26,17 +27,35 @@ try {
   await page.locator('#sk-boot').waitFor({ state: 'hidden', timeout: 15000 });
   await page.waitForFunction(() => window.skServer?.sync?.status === 'synced', null, { timeout: 15000 });
 
-  // The server's time is the report's time: the response is rewritten to a time no workstation clock would show.
-  const SENT = '2030-01-01T00:00:00.000Z';
-  await page.route('**/api/auth/access-report', async route => { const response = await route.fetch(); const body = await response.json(); if (body && Array.isArray(body.users)) body.generatedAt = SENT; await route.fulfill({ response, json: body }); });
-  const report = await page.evaluate(async () => {
+  // The server's time is the report's time: the response is rewritten to one second before the server's own
+  // time (same Pacific day), a value the workstation clock does not produce. The response also names the workspace
+  // version the server read; the report is built only from that same version.
+  let rewrite = body => { const t = Date.parse(body.generatedAt); body.generatedAt = new Date(t - 1000).toISOString(); return body; };
+  const sent = [];
+  await page.route('**/api/auth/access-report', async route => { const response = await route.fetch(); let body = await response.json(); if (body && Array.isArray(body.users)) { body = rewrite(body); sent.push({ generatedAt: body.generatedAt, workspaceEtag: body.workspaceEtag }); } await route.fulfill({ response, json: body }); });
+  const build = () => page.evaluate(async () => {
     let reloads = 0; const real = refreshServerWorkspace;
     refreshServerWorkspace = async function () { reloads += 1; return real.apply(this, arguments); };
-    try { const r = await skAuth.accessReport(); return { ok: r.ok, message: r.message, generatedAt: r.generatedAt, accounts: (r.accounts || []).map(a => a.username), reloads }; } finally { refreshServerWorkspace = real; }
+    try { const r = await skAuth.accessReport(); return { ok: r.ok, message: r.message, generatedAt: r.generatedAt, accounts: (r.accounts || []).map(a => a.username), reloads, etag: window.skServer.etag }; } finally { refreshServerWorkspace = real; }
   });
+  const report = await build();
   ok('Master Access builds the report from the server', report.ok === true && report.accounts.includes('report-admin'), JSON.stringify(report));
   ok('the shared workspace is reloaded once before the report is built', report.reloads === 1, String(report.reloads));
-  ok('the report carries the generation time the server sent', report.generatedAt === SENT, report.generatedAt);
+  ok('the report carries the generation time the server sent', sent.length === 1 && report.generatedAt === sent[0].generatedAt, JSON.stringify({ report: report.generatedAt, sent }));
+  ok('the server names the workspace version it read, and it is the version the page loaded', !!sent[0]?.workspaceEtag && sent[0].workspaceEtag === report.etag, JSON.stringify({ sent, etag: report.etag }));
+
+  // A change lands between the page's reload and the report: the versions differ, the page reloads and tries once
+  // more, and when they still differ it refuses rather than mix two versions.
+  rewrite = body => { body.workspaceEtag = 'a-newer-version'; return body; };
+  const changed = await build();
+  ok('when the server read a different workspace version, the page reloads once more and then refuses with a plain message', changed.ok === false && changed.message === 'The shared workspace changed while the access review was being built. Try again in a moment.' && changed.reloads === 2, JSON.stringify(changed));
+
+  // The statuses are decided on the Pacific day: a server time on another day than this computer is refused.
+  rewrite = body => { body.generatedAt = new Date(Date.parse(body.generatedAt) + 2 * 86400000).toISOString(); return body; };
+  const skewed = await build();
+  ok('when this computer and the server are on different Pacific days, the report is refused with a plain message', skewed.ok === false && /does not match the server's/.test(skewed.message || '') && /Correct the computer's date and time/.test(skewed.message || ''), JSON.stringify(skewed));
+  ok('no em dash in either refusal', !/\u2014/.test((changed.message || '') + (skewed.message || '')));
+  rewrite = body => body;
 
   // A change the server has not confirmed: the report waits rather than reload over it.
   const waiting = await page.evaluate(async () => {

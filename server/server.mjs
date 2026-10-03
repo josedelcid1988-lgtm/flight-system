@@ -1113,9 +1113,10 @@ export function createServer(options = {}) {
       }
       // -- access review: the account list and its lockouts for the read-only access review report, managers only.
       // The gate counts only active roles: an extra QA Manager or Master Access role whose training is not current
-      // in the shared workspace does not open it, as in the page. It changes nothing; the page derives every status
+      // in the shared workspace does not open it, as in the page. It sends the version (ETag) of the workspace it read, so
+      // the page derives the report only from that same version. It changes nothing; the page derives every status
       // from the same authority functions it enforces with. --
-      if (route === '/auth/access-report' && m === 'GET') { const { state: reviewState } = await loadState(); if (!host.rolesOf(session.account, reviewState).some(role => ['qm', 'admin'].includes(role))) { send(res, 403, { error: 'Only a QA Manager or Master Access account opens the access review report. Ask one of them for a copy.' }); return; } send(res, 200, { generatedAt: new Date().toISOString(), by: session.username, users: (await store.accounts()).map(publicAccount), lockouts: await store.lockouts() }); return; }
+      if (route === '/auth/access-report' && m === 'GET') { const { state: reviewState, etag: reviewEtag } = await loadState(); if (!host.rolesOf(session.account, reviewState).some(role => ['qm', 'admin'].includes(role))) { send(res, 403, { error: 'Only a QA Manager or Master Access account opens the access review report. Ask one of them for a copy.' }); return; } send(res, 200, { generatedAt: new Date().toISOString(), by: session.username, workspaceEtag: reviewEtag || null, users: (await store.accounts()).map(publicAccount), lockouts: await store.lockouts() }); return; }
       // -- lockouts: listed and cleared by a manager, one named user at a time, with a reason, audited --
       if (route === '/auth/lockouts' && m === 'GET') { if (!manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can see lockouts.' }); return; } send(res, 200, { lockouts: await store.lockouts() }); return; }
       if (route === '/auth/unlock' && m === 'POST') {

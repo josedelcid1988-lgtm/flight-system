@@ -28,8 +28,10 @@ workspace or the accounts.
   `MES.hasValidInspectionStamp`). Anyone else, a Quality Supervisor included, is refused with a plain message.
   With a server, `GET /api/auth/access-report` opens only for an account whose active roles include QA Manager or
   Master Access (an extra role whose training is not current does not count, as in the page) and supplies the
-  accounts, the lockouts in force and the generation time. The page reloads the shared workspace first, so
-  training and stamps another person changed are current, and waits while a change of its own is unconfirmed.
+  accounts, the lockouts in force, the generation time and the version of the workspace it read. The page reloads
+  the shared workspace first, so training and stamps another person changed are current, builds the report only from
+  the version the server read (one more try, then a plain refusal), refuses when this computer is on another
+  Pacific day than the server, and waits while a change of its own is unconfirmed.
 - **Why blocked.** The Admin page (Accounts and roles) lists, per account, one plain sentence for each blocked
   or paused permission, and Your credentials lists the signed-in person's own, for example "Inspection is
   paused: Quality stamp SKY-0002 expired on Jan 1, 2026. Ask the QA Manager to renew it."
