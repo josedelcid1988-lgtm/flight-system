@@ -158,6 +158,16 @@ ok('removing the kept approval or verification fails verification',!r.approved.o
 ok('removing the kept box 22 the approval was bound to fails verification',!r.box22.ok&&r.box22.why.some(w=>/box 22/.test(w)),JSON.stringify(r.box22.why));
 ok('a kept approval with no manifest fails verification',!r.nomanifest.ok&&r.nomanifest.why.some(w=>/\(Skyryse QA approval\): the kept signature has no manifest/.test(w)),JSON.stringify(r.nomanifest.why));
 ok('swapping in a different verification breaks the kept chain',!r.swap.ok&&!r.swap.valid,JSON.stringify(r.swap.why));
+// Codex r4170847382: a kept signature is still checked as the live record is: signer, time, meaning, override and stamp.
+r=await run(([id])=>{const t=f=>{const s=structuredClone(window.__C),o=s.orders.find(x=>x.id===id);f(o.fair.superseded[0]);const v=MES.verifyManifests(s);return {ok:v.ok,valid:MES.validate(s),why:v.failures.map(x=>x.where+': '+x.reason)};};
+  const other={name:'Someone Else',role:'Quality Manager',credentialId:'ACCT-other'};
+  return {reattr:t(k=>{k.approved.by={...k.approved.by,...other};k.approved.manifest.signer={...k.approved.manifest.signer,...other};}),
+    retime:t(k=>{const at='2026-01-02T00:00:00.000Z';k.verified.at=at;k.verified.manifest.at=at;}),
+    relabel:t(k=>{k.approved.manifest.meaning='AS9102 FAIR reviewed and approved (blocks 22 and 23)';}),
+    stamp:t(k=>{k.reviewed.by={...k.reviewed.by,stamp:{...(k.reviewed.by.stamp||{}),number:'Q-999'}};}),
+    override:t(k=>{k.verified.by={...k.verified.by,override:{by:'Master'}};})};},[ID]);
+for(const [k,label] of [['reattr','reattributing a kept approval to another person'],['retime','moving a kept verification to another time'],['relabel','relabeling a kept approval meaning'],['stamp','changing a kept box 22 stamp'],['override','adding an override to a kept verification']])
+  ok(`${label} fails verification`,!r[k].ok&&!r[k].valid&&r[k].why.some(w=>/superseded signature 1/.test(w)),JSON.stringify(r[k].why));
 r=await run(([id])=>{const C=structuredClone(window.__S),o=C.orders.find(x=>x.id===id);o.status='Building';o.fair.superseded=Array.from({length:50},()=>({reopenedAt:'2026-09-01T00:00:00.000Z',reason:'Earlier reopen.',status:o.fair.status,verified:o.fair.verified,reviewed:o.fair.reviewed??null,approved:o.fair.approved,impactAssessments:[]}));const before=JSON.stringify(C);const x=MES.reopenFair(C,id,'Another delta FAI');return {x,same:JSON.stringify(C)===before,valid:MES.validate(structuredClone(window.__S))};},[ID]);
 ok('a FAIR whose superseded list is full refuses another reopen and changes nothing',!r.x.ok&&/reopened 50 times and keeps every superseded signature/.test(r.x.message)&&r.same,JSON.stringify(r));
 await as('ume');

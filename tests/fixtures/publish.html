@@ -6354,25 +6354,37 @@ const OP_BOM_MAX = 12;
   // checked by its hash alone.
   const fairSupersededProblems = order => {
     const out = [], list = plain(order.fair) && Array.isArray(order.fair.superseded) ? order.fair.superseded : [];
+    const same = (a, b) => canonical(a === undefined ? null : a) === canonical(b === undefined ? null : b);
     const wellFormed = m => plain(m) && typeof m.meaning === 'string' && !!m.meaning && timestamp(m.at) && plain(m.signer) && m.algorithm === 'SHA-256' && /^[0-9a-f]{64}$/.test(String(m.hash));
     list.forEach((x, i) => {
       if (!plain(x)) return;
       const where = label => `${order.id} FAIR superseded signature ${i + 1} (${label})`;
-      const check = (label, rec, required) => {
+      const check = (label, rec, required, meanings) => {
         if (!plain(rec)) { if (required) out.push({ where: where(label), reason: 'the kept signature is missing' }); return null; }
         const m = rec.manifest;
         if (!wellFormed(m)) { out.push({ where: where(label), reason: plain(m) ? 'the kept manifest is malformed' : 'the kept signature has no manifest' }); return null; }
         if (plain(m.subject) && m.hash !== sha256(canonical(m.subject))) { out.push({ where: where(label), reason: 'hash does not match the signed record' }); return null; }
+        // The kept record must still be the one that was signed: its signer, time, meaning, override and stamp checked as
+        // the live record is (Codex r4170847382).
+        const fail_ = reason => out.push({ where: where(label), reason });
+        if (!meanings.includes(m.meaning)) fail_('the signature meaning is not one this record type has been signed with');
+        if (signerMismatch(rec, m)) fail_('the recorded signer or time does not match the signature');
+        if (overrideMismatch(rec)) fail_('the recorded override does not match the signed override');
+        const sub = plain(m.subject) ? m.subject : null, by = plain(rec.by) ? rec.by : {};
+        if (sub && bindsSigner(m) && (!same(sub.signer, signerOf_(rec.by)) || sub.signedAt !== rec.at)) fail_('the signed signer or time does not match the record');
+        if (sub && Object.hasOwn(sub, 'override') && !same(sub.override, m.override ?? null)) fail_('the signed override does not match the manifest');
+        if (sub && Object.hasOwn(sub, 'reviewer') && (sub.reviewer !== (by.credentialId ?? null) || sub.reviewedAt !== rec.at)) fail_('the signed reviewer or time does not match the record');
+        for (const k of ['verifierStamp', 'reviewerStamp', 'stamp']) if (sub && Object.hasOwn(sub, k) && !same(sub[k], by.stamp ?? null)) fail_('the signed inspection stamp does not match the record');
         return m;
       };
       const chains = (label, m, key, hash) => { if (m && plain(m.subject) && Object.hasOwn(m.subject, key) && m.subject[key] !== hash) out.push({ where: where(label), reason: `does not chain to the kept ${key === 'verified' ? 'verification' : 'box 22'}` }); };
-      const v = check('verification', x.verified, true), vh = v ? v.hash : null;
-      const r = check('box 22', x.reviewed, x.status === 'Approved' && plain(x.approved) && String(x.approved.at || '') >= FAIR_BOX22_REQUIRED_FROM);
+      const v = check('verification', x.verified, true, RECORD_MEANINGS['FAIR verification']), vh = v ? v.hash : null;
+      const r = check('box 22', x.reviewed, x.status === 'Approved' && plain(x.approved) && String(x.approved.at || '') >= FAIR_BOX22_REQUIRED_FROM, RECORD_MEANINGS['FAIR box 22']);
       chains('box 22', r, 'verified', vh);
-      const a = check('Skyryse QA approval', x.approved, x.status === 'Approved');
+      const a = check('Skyryse QA approval', x.approved, x.status === 'Approved', RECORD_MEANINGS['FAIR approval']);
       chains('Skyryse QA approval', a, 'verified', vh);
       if (a && plain(a.subject) && Object.hasOwn(a.subject, 'reviewed') && a.subject.reviewed !== (r ? r.hash : null)) out.push({ where: where('Skyryse QA approval'), reason: 'does not chain to the kept box 22' });
-      (Array.isArray(x.impactAssessments) ? x.impactAssessments : []).forEach(ia => { const label = `impact assessment ${plain(ia) && ia.id || ''}`.trim(); chains(label, check(label, ia, true), 'verified', vh); });
+      (Array.isArray(x.impactAssessments) ? x.impactAssessments : []).forEach(ia => { const label = `impact assessment ${plain(ia) && ia.id || ''}`.trim(); chains(label, check(label, ia, true, [FAIR_IMPACT_MEANING]), 'verified', vh); });
     });
     return out;
   };
