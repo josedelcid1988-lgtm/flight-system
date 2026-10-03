@@ -166,7 +166,7 @@ export function createServer(options = {}) {
   const serveDemo = options.serveDemo !== undefined ? options.serveDemo === true : process.env.FLIGHT_SERVE_DEMO === '1';
   // Origins the page may call besides this server (#583); an entry that is not an origin stops the server at start.
   const cspConnect = connectSources(options.cspConnectSrc !== undefined ? options.cspConnectSrc : process.env.FLIGHT_CSP_CONNECT_SRC);
-  const htmlHeaders = (html, extraHashes = []) => ({ 'Content-Type': MIME['.html'], 'Cache-Control': 'no-store', 'Content-Security-Policy': pageCsp([...inlineScriptHashes(html), ...extraHashes], cspConnect) });
+  const htmlHeaders = (html, extraHashes = [], cache = false) => ({ 'Content-Type': MIME['.html'], 'Cache-Control': 'no-store', 'Content-Security-Policy': pageCsp([...inlineScriptHashes(html, { cache }), ...extraHashes], cspConnect) });
   const jira = options.jira || {};
   const jiraConfig = {
     baseUrl: String(jira.baseUrl || process.env.FLIGHT_JIRA_BASE_URL || '').replace(/\/$/, ''),
@@ -478,7 +478,7 @@ export function createServer(options = {}) {
     const ctx = { api: '/api', etag: null, workspace: null, workspaceAvailable: !!row, jiraConfigured, auth: { users: session ? accounts.map(publicAccount) : [], setupRequired: accounts.length === 0 }, account: session ? publicAccount(session.account) : null, served: new Date().toISOString() };
     const body = `window.FLIGHT_SERVER=${JSON.stringify(ctx).replace(/</g, '\\u003c')};`;
     // The page's policy is built from the served file once and the hash of this per-request script (#583).
-    return { html: host.html.replace('<head>', `<head><script id="flight-server">${body}</script>`), headers: htmlHeaders(host.html, [hashSource(body)]) };
+    return { html: host.html.replace('<head>', `<head><script id="flight-server">${body}</script>`), headers: htmlHeaders(host.html, [hashSource(body)], true) };
   };
   // Writes the archive export JSON with each recording's bytes base64-encoded in bounded chunks, one recording at a
   // time and respecting backpressure, so an evidence-heavy archive never has to fit in memory as one object.
@@ -584,7 +584,7 @@ export function createServer(options = {}) {
     const file = path.normalize(path.join(ROOT, rel));
     if (!file.startsWith(ROOT) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { send(res, 404, { error: 'Not found' }); return; }
     // An HTML file (demo.html) is a page: it gets the page policy built from its own inline scripts.
-    if (path.extname(file) === '.html') { const html = fs.readFileSync(file, 'utf8'); res.writeHead(200, htmlHeaders(html)); res.end(html); return; }
+    if (path.extname(file) === '.html') { const html = fs.readFileSync(file, 'utf8'); res.writeHead(200, htmlHeaders(html, [], true)); res.end(html); return; }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'public, max-age=3600' });
     fs.createReadStream(file).pipe(res);
   };

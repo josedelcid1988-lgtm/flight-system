@@ -28,17 +28,21 @@ export const hashSource = text => `'sha256-${createHash('sha256').update(text, '
 // The HTML parser ends a script at the first "</script" followed by white space, "/" or ">", and turns CR LF and a
 // lone CR into LF before the browser hashes the text, so both are done the same way here.
 const SCRIPT = /<script\b([^>]*)>([\s\S]*?)<\/script[\s/>]/gi;
+// Only the static app pages (index.html, demo.html) are cached: a dynamic document such as an archive print is unique
+// per response and can be large, so caching it would only pin memory.
 const hashCache = new Map();
-export function inlineScriptHashes(html) {
+export function inlineScriptHashes(html, { cache = false } = {}) {
   const text = String(html);
-  if (hashCache.has(text)) return hashCache.get(text);
+  if (cache && hashCache.has(text)) return hashCache.get(text);
   const hashes = new Set();
   for (const [, attributes, body] of text.matchAll(SCRIPT)) if (!/\bsrc\s*=/i.test(attributes)) hashes.add(hashSource(body.replace(/\r\n?/g, '\n')));
   const list = Object.freeze([...hashes]);
-  if (hashCache.size >= 8) hashCache.delete(hashCache.keys().next().value);
+  if (!cache) return list;
+  if (hashCache.size >= 4) hashCache.delete(hashCache.keys().next().value);
   hashCache.set(text, list);
   return list;
 }
+export const cachedHashCount = () => hashCache.size;
 
 // FLIGHT_CSP_CONNECT_SRC: origins separated by spaces or commas, each http(s) or ws(s) with no credentials, path, query
 // or fragment, and no wildcard. The written entry may hold no delimiter (; , quote, backslash, *, %), and the host as

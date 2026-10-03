@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import { chromium } from 'playwright';
 import { createServer, makeHash } from '../server/server.mjs';
-import { BASE_HEADERS, EVIDENCE_CSP, INLINE_HANDLERS, NON_PAGE_CSP, connectSources, hashSource, inlineScriptHashes, pageCsp } from '../server/security-headers.mjs';
+import { BASE_HEADERS, EVIDENCE_CSP, INLINE_HANDLERS, NON_PAGE_CSP, cachedHashCount, connectSources, hashSource, inlineScriptHashes, pageCsp } from '../server/security-headers.mjs';
 
 const fails = [];
 let checks = 0;
@@ -21,6 +21,13 @@ const directives = csp => Object.fromEntries(String(csp || '').split(';').map(pa
   ok('inline script hashes: one per inline script, none for a script file', hashes.length === 3, JSON.stringify(hashes));
   ok('inline script hashes: CR LF is hashed as LF, as the browser does', hashes.includes(hashSource('two()\nthree()')), JSON.stringify(hashes));
   ok('inline script hashes: tags are matched in any case', hashes.includes(hashSource('four()')));
+  // Only static pages are cached (Codex review): unique dynamic documents such as archive prints are never kept.
+  const cachedBefore = cachedHashCount();
+  for (let i = 0; i < 20; i += 1) inlineScriptHashes(`<p>archive print ${i} ${'x'.repeat(1000)}</p>`);
+  ok('inline script hashes: a dynamic document is not cached', cachedHashCount() === cachedBefore, `${cachedBefore} -> ${cachedHashCount()}`);
+  for (let i = 0; i < 20; i += 1) inlineScriptHashes(`<script>page${i}()</script>`, { cache: true });
+  ok('inline script hashes: the static page cache stays bounded', cachedHashCount() <= 4, cachedHashCount());
+  ok('inline script hashes: a cached page returns the same hashes', inlineScriptHashes('<script>page19()</script>', { cache: true })[0] === hashSource('page19()'));
   const page = directives(pageCsp(hashes));
   ok('page policy: scripts from this server and listed hashes only, never unsafe-inline or unsafe-eval', page['script-src'][0] === "'self'" && !page['script-src'].includes("'unsafe-inline'") && !page['script-src'].includes("'unsafe-eval'") && hashes.every(h => page['script-src'].includes(h)), JSON.stringify(page['script-src']));
   ok('page policy: only the reviewed inline handlers are allowed, by hash', page['script-src'].includes("'unsafe-hashes'") && INLINE_HANDLERS.every(h => page['script-src'].includes(hashSource(h))));
