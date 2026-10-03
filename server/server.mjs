@@ -1117,18 +1117,21 @@ export function createServer(options = {}) {
       // the page derives the report only from that same version. It changes nothing; the page derives every status
       // from the same authority functions it enforces with. --
       if (route === '/auth/access-report' && m === 'GET') {
-        // The workspace, the accounts and the lockouts are read separately, so the workspace version is read again at
-        // the end: a training or stamp change that landed meanwhile makes the server read everything once more, and
-        // a second change refuses rather than send an account list that does not match the workspace version named.
-        let report = null;
-        for (let attempt = 0; attempt < 2 && !report; attempt += 1) {
-          const { state: reviewState, etag: reviewEtag } = await loadState();
-          if (!host.rolesOf(session.account, reviewState).some(role => ['qm', 'admin'].includes(role))) { send(res, 403, { error: 'Only a QA Manager or Master Access account opens the access review report. Ask one of them for a copy.' }); return; }
-          const users = (await store.accounts()).map(publicAccount), lockouts = await store.lockouts();
-          const after = await store.getDoc(TENANT);
-          if ((after ? after.etag : null) === (reviewEtag || null)) report = { generatedAt: new Date().toISOString(), by: session.username, workspaceEtag: reviewEtag || null, users, lockouts };
-        }
-        if (!report) { send(res, 409, { error: 'The shared workspace changed while the access review was being built. Try again in a moment.' }); return; }
+        // One snapshot: the caller's own account, the workspace, every account and the lockouts are read in one
+        // transaction under the authority lock that role, grant and Support Access changes take (with PostgreSQL it
+        // also takes the workspace lock; SQLite's transaction holds the write lock), so no change lands between the
+        // reads and a just-demoted manager is refused. The transaction is rolled back: the report writes nothing.
+        let report = null, refused = false;
+        await store.transaction(async tx => {
+          await tx.lockAuthority();
+          const caller = await tx.account(session.username), row = await tx.getDoc(TENANT);
+          let reviewState = null;
+          if (row) { try { const parsed = host.MES.upgrade(structuredClone(JSON.parse(row.json))); reviewState = parsed && host.MES.validate(parsed) ? parsed : null; } catch { reviewState = null; } }
+          if (!caller || !host.rolesOf(caller, reviewState).some(role => ['qm', 'admin'].includes(role))) { refused = true; return false; }
+          report = { generatedAt: new Date().toISOString(), by: session.username, workspaceEtag: row ? row.etag : null, users: (await tx.accounts()).map(publicAccount), lockouts: await tx.lockouts() };
+          return false;
+        });
+        if (refused || !report) { send(res, 403, { error: 'Only a QA Manager or Master Access account opens the access review report. Ask one of them for a copy.' }); return; }
         send(res, 200, report); return;
       }
       // -- lockouts: listed and cleared by a manager, one named user at a time, with a reason, audited --

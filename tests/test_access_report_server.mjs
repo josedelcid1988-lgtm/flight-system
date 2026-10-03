@@ -87,30 +87,33 @@ try {
     const after = { audit: server.store.db.prepare('SELECT COUNT(*) AS n FROM audit').get().n, accounts: JSON.stringify((await api('GET', '/auth/accounts', { token: adminToken })).json.users) };
     assert.deepEqual(after, before);
   });
-  // One version: a workspace write that lands while the server reads the accounts makes it read everything again;
-  // writes that keep landing are refused with a plain message instead of an account list that does not match.
-  await check('a workspace change during the read is re-read once, and the report names the version it matches', async () => {
+  // One snapshot: the report is read inside one transaction under the authority lock that role, grant and Support
+  // Access changes take, the caller's own account is read inside it, and the transaction writes nothing.
+  await check('the report is read under the authority lock, and names the workspace version it read', async () => {
     const seed = JSON.stringify(server.host.MES.seed());
     server.store.putDoc('default', seed, undefined, 'ar-admin');
-    const real = server.store.accounts.bind(server.store); let calls = 0;
-    server.store.accounts = (...args) => { calls += 1; if (calls === 1) server.store.putDoc('default', seed, undefined, 'ar-other'); return real(...args); };
+    const realLock = server.store.lockAuthority.bind(server.store), realTx = server.store.transaction.bind(server.store);
+    let locks = 0, inTx = false, readsInTx = 0;
+    server.store.lockAuthority = async () => { locks += 1; return realLock(); };
+    server.store.transaction = async fn => { inTx = true; try { return await realTx(fn); } finally { inTx = false; } };
+    const realAccounts = server.store.accounts.bind(server.store);
+    server.store.accounts = (...args) => { if (inTx) readsInTx += 1; return realAccounts(...args); };
     try {
       const r = await api('GET', '/auth/access-report', { token: qmToken });
       assert.equal(r.status, 200, JSON.stringify(r.json));
-      assert.equal(calls, 2, 'the accounts were read again after the workspace changed');
-      assert.equal(r.json.workspaceEtag, server.store.getDoc('default').etag, 'the report names the version it was read against');
-    } finally { server.store.accounts = real; }
+      assert.equal(locks, 1, 'the authority lock is taken once');
+      assert.ok(readsInTx >= 1, 'the caller and the account list are read inside the locked transaction');
+      assert.equal(r.json.workspaceEtag, server.store.getDoc('default').etag, 'the report names the version it read');
+    } finally { server.store.lockAuthority = realLock; server.store.transaction = realTx; server.store.accounts = realAccounts; }
   });
-  await check('a workspace that keeps changing during the read is refused with a plain message and no account list', async () => {
-    const seed = JSON.stringify(server.host.MES.seed());
-    const real = server.store.accounts.bind(server.store);
-    server.store.accounts = (...args) => { server.store.putDoc('default', seed, undefined, 'ar-other'); return real(...args); };
-    try {
-      const r = await api('GET', '/auth/access-report', { token: qmToken });
-      assert.equal(r.status, 409, JSON.stringify(r.json));
-      assert.equal(r.json.error, 'The shared workspace changed while the access review was being built. Try again in a moment.');
-      assert.ok(!('users' in r.json));
-    } finally { server.store.accounts = real; }
+  await check('a manager demoted after signing in is refused: the caller is read again inside the snapshot', async () => {
+    await add('ar-demoted', 'qm', 'ar-demoted-pass');
+    const token = await signIn('ar-demoted', 'ar-demoted-pass');
+    assert.equal((await api('GET', '/auth/access-report', { token })).status, 200, 'a QA Manager opens it');
+    await add('ar-demoted', 'technician', 'ar-demoted-pass');
+    const r = await api('GET', '/auth/access-report', { token });
+    assert.equal(r.status, 403, JSON.stringify(r.json));
+    assert.ok(!r.json || !('users' in r.json), 'no account list is sent');
   });
   await check('the refusal text carries no em dash', async () => {
     const r = await api('GET', '/auth/access-report', { token: techToken });
