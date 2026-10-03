@@ -2090,6 +2090,8 @@ function skBoot(){
   authorityName:authorityName,
   canReviewAccess:function(){return canReviewAccess(currentUser());},
   accessReport:accessReport,
+  // With a server: reload the account list (so a role given or taken in another session counts); false without one.
+  refreshAccounts:function(){return SERVER?refreshServerAccounts().then(function(){return true;}):Promise.resolve(false);},
   blockedReasons:function(username){var me=currentUser();if(!me)return [];username=String(username||me.username).trim().toLowerCase();if(username!==me.username&&!canManageAccess(me))return [];var u=loadAuth().users.find(function(x){return x.username===username;});return u?blockedReasons(u):[];},
   ownProfileHtml:function(){var me=currentUser();if(!me)return '';var esc=function(v){return String(v).replace(/[&<>"']/g,function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];});};
    var auth=GRANTED.filter(function(c){return eligibleFor(me,c);}).map(function(c){return '<span class="pill '+authorityClass(me,c)+'">'+esc(authorityText(me,c))+'</span>';}).join(' ');
@@ -15073,11 +15075,18 @@ window.SK_INTEGRATIONS = window.SK_INTEGRATIONS || {
   // Only accounts that manage access open it. The engine and the server still enforce every rule below;
   // this page only places the controls.
   var ADMIN_TABS = [['accounts', 'Accounts and roles'], ['training', 'Training'], ['stamps', 'Stamps'], ['sds', 'Master SDS book']];
-  var adminTab = 'accounts';
+  var adminTab = 'accounts', adminAccountsCheckedAt = 0;
   function adminAllowed() { return !!(window.skAuth && window.skAuth.can && window.skAuth.can('manage-access')); }
   window.renderAdmin = function () {
     if (!adminAllowed()) return '<section class="admin-page admin-refused"><div class="page-heading"><div><h1>Admin</h1></div></div><div class="panel"><div class="inline-info warning" role="alert"><p><strong>Admin is not available to your account.</strong> Accounts, roles, training, stamps and the master SDS book are managed by a Master Access, QA Manager or Quality Supervisor account.</p><p>Ask one of them to make the change. Your own stamps and PIN are under Your credentials.</p></div></div></section>';
     var parts = registerHtml() || { sds: '', training: '', stamps: '' };
+    // With a server, reload the account list in the background (at most every 30 s) and draw the page again if the
+    // report action should now show or hide: a role given or taken in another session then needs no page reload.
+    var canReport = window.skAuth.canReviewAccess();
+    if (window.skServer && window.skServer.active && Date.now() - adminAccountsCheckedAt > 30000) {
+      adminAccountsCheckedAt = Date.now();
+      window.skAuth.refreshAccounts().then(function () { if (view === 'admin' && window.skAuth.canReviewAccess() !== canReport) render(); }).catch(function () {});
+    }
     var html = { accounts: window.skAuth.accessHtml() + blockedPanelHtml(), training: parts.training, stamps: parts.stamps, sds: parts.sds };
     if (!ADMIN_TABS.some(function (t) { return t[0] === adminTab; })) adminTab = 'accounts';
     var tabs = ADMIN_TABS.map(function (t) { var on = t[0] === adminTab; return '<button type="button" role="tab" class="admin-tab" id="admin-tab-' + t[0] + '" data-admin-tab="' + t[0] + '" aria-controls="admin-panel-' + t[0] + '" aria-selected="' + on + '" tabindex="' + (on ? 0 : -1) + '">' + t[1] + '</button>'; }).join('');
