@@ -2,7 +2,8 @@
 // workspace before it builds the report (so training and stamps another person changed are current) and builds it
 // only from the workspace version the server read (one more try, then a plain refusal, when they differ); the report
 // carries the generation time the server sent, and is refused when this computer is on another Pacific day than the
-// server; a change of the page's own that the server has not confirmed yet makes it wait with a plain message.
+// server; a role given in another session counts because the account list is reloaded first; a change of the
+// page's own that the server has not confirmed yet makes it wait with a plain message.
 import { chromium } from 'playwright';
 import { createServer } from '../server/server.mjs';
 
@@ -56,6 +57,17 @@ try {
   ok('when this computer and the server are on different Pacific days, the report is refused with a plain message', skewed.ok === false && /does not match the server's/.test(skewed.message || '') && /Correct the computer's date and time/.test(skewed.message || ''), JSON.stringify(skewed));
   ok('no em dash in either refusal', !/\u2014/.test((changed.message || '') + (skewed.message || '')));
   rewrite = body => body;
+
+  // A role given in another session: this tab's cached account still says General user, but the report reloads the
+  // account list from the server before its own check, so the account the server knows as Master Access is let in.
+  const fresh = await page.evaluate(async () => {
+    const auth = window.skServer.context.auth, mine = auth.users.find(u => u.username === 'report-admin');
+    window.skServer.context.auth = Object.assign({}, auth, { users: auth.users.map(u => u.username === 'report-admin' ? Object.assign({}, u, { role: 'general', roles: ['general'] }) : u) });
+    const stale = skAuth.canReviewAccess();
+    const r = await skAuth.accessReport();
+    return { stale, ok: r.ok, message: r.message, after: skAuth.canReviewAccess(), role: mine && mine.role };
+  });
+  ok('a stale cached role does not refuse the report: the account list is reloaded from the server first', fresh.stale === false && fresh.ok === true && fresh.after === true, JSON.stringify(fresh));
 
   // A change the server has not confirmed: the report waits rather than reload over it.
   const waiting = await page.evaluate(async () => {

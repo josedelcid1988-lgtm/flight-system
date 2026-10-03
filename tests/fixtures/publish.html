@@ -1954,7 +1954,11 @@ function skBoot(){
  var ACCESS_REVIEW_CHANGED='The shared workspace changed while the access review was being built. Try again in a moment.';
  var ACCESS_REVIEW_CLOCK='This computer\'s date does not match the server\'s, so the access review would read training and stamp dates on the wrong day. Correct the computer\'s date and time, then try again.';
  function pacificDayAt(ms){return new Date(ms).toLocaleDateString('en-CA',{timeZone:'America/Los_Angeles'});}
- function accessReport(){var me=currentUser();if(!me)return Promise.resolve({ok:false,message:'Sign in first.'});if(!canReviewAccess(me))return Promise.resolve({ok:false,message:ACCESS_REVIEW_REFUSAL});if(!SERVER)return Promise.resolve(accessReview());
+ // With a server, the account list is reloaded first, so a role another manager just gave or took away counts.
+ function refreshServerAccounts(){return serverApi('/auth/accounts').then(function(r){if(r.ok&&r.json&&Array.isArray(r.json.users))SERVER.auth=Object.assign({},SERVER.auth,{users:r.json.users});},function(){});}
+ function accessReport(){if(!currentUser())return Promise.resolve({ok:false,message:'Sign in first.'});if(!SERVER)return Promise.resolve(canReviewAccess(currentUser())?accessReview():{ok:false,message:ACCESS_REVIEW_REFUSAL});
+  return refreshServerAccounts().then(accessReportFromServer);}
+ function accessReportFromServer(){var me=currentUser();if(!me)return {ok:false,message:'Sign in first.'};if(!canReviewAccess(me))return {ok:false,message:ACCESS_REVIEW_REFUSAL};
   try{if((typeof serverActionQueue!=='undefined'&&serverActionQueue.length)||(typeof serverReconcilePending!=='undefined'&&serverReconcilePending))return Promise.resolve({ok:false,message:'Your last change is still being saved to the server. Try the access review again once it is saved.'});}catch(e){}
   var attempt=function(left){
    var reload=typeof refreshServerWorkspace==='function'?Promise.resolve().then(refreshServerWorkspace):Promise.resolve();
