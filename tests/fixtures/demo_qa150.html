@@ -8216,6 +8216,9 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
       }
     }
     const reviewer = actor(state), reviewedAt = new Date(Math.max(Date.now(), Date.parse(ticket.createdAt))).toISOString();
+    // The signed register is append-only (#602): a full register refuses the approval before anything is recorded, because
+    // dropping its oldest key would let that ticket's approval be stripped without detection.
+    if (['Rework', 'Repair'].includes(ticket.dispo.decision) && plain(state.reworkLegacySeal) && Array.isArray(state.reworkLegacySeal.signed) && state.reworkLegacySeal.signed.length >= REWORK_SEAL_MAX) return fail(`This workspace has signed ${REWORK_SEAL_MAX.toLocaleString('en-US')} Rework and Repair approvals, which is the most its signed register can hold, so ${ticket.id} was not approved. Ask your Flight System administrator how to continue.`);
     // Seal before this approval records anything, so the plan being approved is never listed as predating signing.
     if (['Rework', 'Repair'].includes(ticket.dispo.decision) && state.reworkLegacySeal === undefined) state.reworkLegacySeal = reworkSealFor(state);
     ticket.affected = { quantity: qty, of: order.quantity, serials, defectCode: codeDef.code, defectName: codeDef.name, subCode: subDef.code, subName: subDef.name, subDefinition: subDef.def, recordedBy: reviewer, recordedAt: reviewedAt };
@@ -8229,7 +8232,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (['Rework', 'Repair'].includes(ticket.dispo.decision)) {
       ticket.reworkPlan = { decision: ticket.dispo.decision, stage: 'Awaiting ME operation', approval: resolution.trim(), approvedBy: reviewer, approvedAt: reviewedAt, opId: null };
       ticket.reworkPlan.manifest = signManifest(state, REWORK_APPROVAL_MEANING, reworkApprovalSubject(order, ticket), reviewedAt);
-      state.reworkLegacySeal = { ...state.reworkLegacySeal, signed: [...state.reworkLegacySeal.signed, reworkSealKey(ticket)].slice(-REWORK_SEAL_MAX) };
+      state.reworkLegacySeal = { ...state.reworkLegacySeal, signed: [...state.reworkLegacySeal.signed, reworkSealKey(ticket)] };
       const linkedNow = linkReworkOperation(state, order, ticket);
       if (linkedNow) return { ok: true, message: `${ticket.id} approved for ${ticket.dispo.decision}. The ${ticket.dispo.decision.toLowerCase()} operation already in the sequence was linked to it, so the hold lifts once QA releases the sequence.${ticket.splitRequestId ? ` Split request ${ticket.splitRequestId} sent to ME.` : ''}` };
       record(state, order, `${ticket.id}: Quality approved the ME disposition "${ticket.dispo.decision}" (${defectLabel}; ${qty} of ${order.quantity} affected${serials.length ? `: ${serials.join(', ')}` : ''}). Hold remains until ME adds a ${ticket.dispo.decision} operation and QA releases it. Approval rationale: ${resolution.trim()}`, 'Quality reviewer');

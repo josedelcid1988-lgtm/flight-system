@@ -490,5 +490,30 @@ const repair = walk('seed-curated', 'WO-10003', 'Repair', {}, state => { MES.get
   ok('Standard resubmit: QA releases the resubmission and the NC closes signed, content unchanged', rel.ok && tk().status === 'Resolved' && plain(tk().manifest) && tk().manifest.subject.opId === bound.id && JSON.stringify(MES.getOrder(state, id).operations.find(o => o.id === bound.id)) === before && MES.validate(state) && verify(state).ok, JSON.stringify([rel, tk().status, verify(state).failures]));
 }
 
+// ---- Codex P2 on #602 (c576d06): the signed register is append-only and a full register refuses the approval ----
+{
+  const fill = n => Array.from({ length: n }, (_, i) => `NC-${100000 + i}@2026-01-01T00:00:00.000Z`);
+  const run = size => {
+    const state = MES.upgrade(structuredClone(seed('seed-curated')));
+    const as = (who, fn) => host.withAccount(who, fn, state);
+    const id = 'WO-10006', order = MES.getOrder(state, id);
+    const op = order.operations.find(item => !item.done) || order.operations[0];
+    const created = as(qm, () => MES.createTicket(state, id, op.id, { type: 'NC', title: 'Torque out of spec', description: 'J3 torque below the drawing value.', hold: true }));
+    as(me, () => MES.dispositionTicket(state, id, created.id, { decision: 'Rework', note: 'Rework J3.' }));
+    state.reworkLegacySeal = { ...(state.reworkLegacySeal || { tickets: [], releases: [], sealedAt: new Date().toISOString() }), signed: fill(size) };
+    const before = JSON.stringify(state.reworkLegacySeal.signed);
+    const approved = as(qe, () => MES.resolveTicket(state, id, created.id, 'Rework approved.', { defectCode: 'DIM', subCode: 'DIM-02' }));
+    const t = MES.getOrder(state, id).tickets.find(x => x.id === created.id);
+    return { state, approved, t, before, signed: state.reworkLegacySeal.signed, created };
+  };
+  const full = run(10000);
+  ok('Register cap: a full signed register refuses a new Rework approval', full.approved.ok === false && /most its signed register can hold/.test(full.approved.message), JSON.stringify(full.approved));
+  ok('Register cap: the refused approval records nothing and drops no key', full.t.status === 'Open' && full.t.reworkPlan === undefined && JSON.stringify(full.signed) === full.before && full.signed.length === 10000 && MES.validate(full.state), JSON.stringify([full.t.status, full.signed.length]));
+  const room = run(9999);
+  ok('Register cap: with room for one more the approval is signed and no key is dropped', room.approved.ok && plain(room.t.reworkPlan) && room.signed.length === 10000 && room.signed[0] === fill(1)[0] && room.signed.includes(`${room.created.id}@${room.t.createdAt}`) && MES.validate(room.state), JSON.stringify([room.approved, room.signed.length]));
+  const next = host.withAccount(qm, () => MES.createTicket(room.state, 'WO-10006', MES.getOrder(room.state, 'WO-10006').operations[0].id, { type: 'NC', title: 'Another finding', description: 'Another finding.', hold: false }), room.state);
+  ok('Register cap: a ticket raised after the register fills is numbered past the registered ones', next.ok && Number(next.id.split("-").at(-1)) > 109998, JSON.stringify(next));
+}
+
 console.log(fails.length ? `FAILS ${JSON.stringify(fails)}` : 'FAILS []');
 process.exit(fails.length ? 1 : 0);
