@@ -3801,7 +3801,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const REWORK_APPROVAL_MEANING = 'Quality approval of ME rework or repair disposition';
   const REWORK_RELEASE_MEANING = 'QA release of ME rework or repair operation';
   // A plan moved by an NC split keeps the order id it was approved on (reworkPlan.carriedFrom), as a carried ticket does.
-  const reworkApprovalSubject = (order, ticket) => { const p = ticket.reworkPlan; return { orderId: plain(p.carriedFrom) ? p.carriedFrom.orderId : order.id, ticketId: ticket.id, operationId: ticket.operationId, dispo: ticket.dispo, decision: p.decision, approval: p.approval, approvedBy: p.approvedBy, approvedAt: p.approvedAt, defect: ticket.defect || null, affected: ticket.affected || null }; };
+  const reworkApprovalSubject = (order, ticket) => { const p = ticket.reworkPlan; return { orderId: plain(p.carriedFrom) ? p.carriedFrom.orderId : order.id, ticketId: ticket.id, operationId: ticket.operationId, dispo: ticket.dispo, decision: p.decision, approval: p.approval, approvedBy: p.approvedBy, approvedAt: p.approvedAt, createdAt: ticket.createdAt, defect: ticket.defect || null, affected: ticket.affected || null }; };
   const reworkReleaseSubject = (order, ticket) => { const p = ticket.reworkPlan; return { ...ticketSubject(order, ticket), orderId: plain(ticket.carriedFrom) ? ticket.carriedFrom.orderId : order.id, decision: p.decision, approvalHash: plain(p.manifest) ? p.manifest.hash : null, opId: p.opId, opAddedBy: p.opAddedBy || null, releasedBy: p.releasedBy, releasedAt: p.releasedAt, resolvedBy: ticket.resolvedBy, resolvedAt: ticket.resolvedAt }; };
   // The signer must be the person on the record: name, role and credential, not the credential alone.
   const reworkSignerOk = (m, signer) => plain(m) && plain(m.signer) && plain(signer) && m.signer.credentialId === signer.credentialId && m.signer.name === signer.name && m.signer.role === signer.role;
@@ -3835,7 +3835,10 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // keep its signed plan however many of its other fields (disposition, affected units) are removed with the plan.
   const reworkSealValid = seal => plain(seal) && Object.keys(seal).length === 4 && reworkSealKeysValid(seal.tickets) && reworkSealKeysValid(seal.releases) && reworkSealKeysValid(seal.signed) && timestamp(seal.sealedAt);
   const allWorkOrderTickets = state => (plain(state) && Array.isArray(state.orders) ? state.orders : []).flatMap(o => plain(o) && Array.isArray(o.tickets) ? o.tickets.filter(plain) : []);
-  const strippedSignedTickets = state => { const seal = plain(state) ? state.reworkLegacySeal : undefined; if (!plain(seal) || !Array.isArray(seal.signed)) return []; const signed = new Set(seal.signed); return allWorkOrderTickets(state).filter(t => signed.has(reworkSealKey(t)) && !(plain(t.reworkPlan) && plain(t.reworkPlan.manifest))); };
+  // The signed register is matched by ticket number alone (#602): the creation time in its key is mutable, and a
+  // registered number is never issued again (signedTicketNumbers), so the number names one ticket for good.
+  const signedTicketNumbers = state => { const seal = plain(state) ? state.reworkLegacySeal : undefined; return plain(seal) && Array.isArray(seal.signed) ? seal.signed.map(key => Number(String(key).split('@')[0].split('-').at(-1)) || 0) : []; };
+  const strippedSignedTickets = state => { const seal = plain(state) ? state.reworkLegacySeal : undefined; if (!plain(seal) || !Array.isArray(seal.signed)) return []; const signed = new Set(seal.signed.map(key => String(key).split('@')[0])); return allWorkOrderTickets(state).filter(t => signed.has(t.id) && !(plain(t.reworkPlan) && plain(t.reworkPlan.manifest))); };
   const sealReworkLegacy = state => { if (plain(state) && state.reworkLegacySeal === undefined && !signedReworkExists(state) && unsignedReworkIds(state).length) state.reworkLegacySeal = reworkSealFor(state); };
   // Every work order ticket closed by this build is signed: an ordinary disposition approval by resolveTicketBase, a
   // Rework or Repair one by its QA release. So once the seal exists, a closed ticket created or closed after it with no
@@ -8086,7 +8089,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (!plain(input) || !['IDR', 'NC'].includes(input.type) || !str(input.title, 120) || !input.title.trim() || !str(input.description, 1000) || !input.description.trim() || typeof input.hold !== 'boolean') return fail('Enter a title and description, and specify whether the ticket holds this operation.');
     if (order.tickets.length >= 100) return fail('This work order has reached its 100-ticket limit.');
     const stockTickets = plain(state.maneuver) && Array.isArray(state.maneuver.ncs) ? state.maneuver.ncs : [];
-    const sequence = Math.max(0, ...state.orders.flatMap(item => item.tickets.map(ticket => Number(ticket.id.split('-').at(-1)))), ...stockTickets.map(t => Number(String(t.id).split('-').at(-1)) || 0)) + 1;
+    const sequence = Math.max(0, ...state.orders.flatMap(item => item.tickets.map(ticket => Number(ticket.id.split('-').at(-1)))), ...stockTickets.map(t => Number(String(t.id).split('-').at(-1)) || 0), ...signedTicketNumbers(state)) + 1;
     if (sequence > 99999999) return fail('The ticket number limit has been reached.');
     const id = `${input.type}-${String(sequence).padStart(4, '0')}`;
     order.tickets.push({ id, type: input.type, operationId, title: input.title.trim(), description: input.description.trim(), status: 'Open', hold: input.hold, createdAt: new Date().toISOString(), reportedBy: 'Assembly operator', resolution: '', resolvedAt: null });
@@ -9936,7 +9939,7 @@ const ATTACH_KINDS = Object.freeze(['mrb','cars','ncs','sprs']);
   const MES_record = (state, order, action) => { try { const a = actor(state); const taken = new Set([...(order.historyArchive || []), ...order.history, ...(state.activity || []), ...(state.activityArchive || [])].map(e => e && e.id)); let n = (Array.isArray(order.historyArchive) ? order.historyArchive.length : 0) + order.history.length + 1; while (taken.has(`${order.id}-event-${n}`)) n += 1; order.history.push({ id: `${order.id}-event-${n}`, at: now(), action: String(action).slice(0, 600), actor: `${a.name} · ${a.credentialId}`, build: MES.buildStamp() }); if (order.history.length > 300) { order.historyArchive = [...(order.historyArchive || []), ...order.history.splice(0, order.history.length - 300)]; } } catch (e) {} };
 
   // ---------- stock NC: a product problem found outside a work order ----------
-  const ticketSequence = state => Math.max(0, ...allTickets(state).map(x => Number(String(x.ticket.id).split('-').at(-1)) || 0)) + 1;
+  const ticketSequence = state => Math.max(0, ...allTickets(state).map(x => Number(String(x.ticket.id).split('-').at(-1)) || 0), ...signedTicketNumbers(state)) + 1;
   function raiseNC(state, input) {
     { const d = denied('raise-nc', 'raise an NC'); if (d) return d; }
     if (list(state, 'ncs').length >= MAX) return fail(`This workspace supports up to ${MAX} stock NC records.`);

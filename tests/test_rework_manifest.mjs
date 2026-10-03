@@ -352,6 +352,21 @@ const repair = walk('seed-curated', 'WO-10003', 'Repair', {}, state => { MES.get
   ok('Register: verifyManifests fails it', !sV.ok && sV.failures.some(f => f.where === `WO-10006 ${open.ticketId} rework approval` && /plan and its signature are missing/.test(f.reason)), JSON.stringify(sV.failures));
   const unlisted = structuredClone(stripped); unlisted.reworkLegacySeal.signed = unlisted.reworkLegacySeal.signed.filter(k => k !== key);
   ok('Register: it passes only if the seal is edited too (outside what the seal can catch)', MES.validate(unlisted) === true);
+  // Codex P1 on #602 (6f40c2f): the register must not depend on the ticket's mutable creation time. Retiming the
+  // ticket before stripping its plan must not take it off the register.
+  const retimed = structuredClone(stripped);
+  { const t = MES.getOrder(retimed, 'WO-10006').tickets.find(x => x.id === open.ticketId); t.createdAt = '2026-01-02T03:04:05.000Z'; }
+  const rV = verify(retimed);
+  ok('Register: a retimed and stripped open approved NC is refused', MES.validate(retimed) === false && new RegExp(`${open.ticketId} was approved for rework or repair with a signed plan, but that plan and its signature are missing`).test(detail(retimed)), detail(retimed));
+  ok('Register: verifyManifests fails the retimed one too', !rV.ok && rV.failures.some(f => f.where === `WO-10006 ${open.ticketId} rework approval`), JSON.stringify(rV.failures));
+  const retimedOnly = structuredClone(open.state);
+  { const t = MES.getOrder(retimedOnly, 'WO-10006').tickets.find(x => x.id === open.ticketId); t.createdAt = '2026-01-02T03:04:05.000Z'; }
+  ok('Register: the approval signs the ticket creation time, so retiming a signed ticket is refused', open.ticket().reworkPlan.manifest.subject.createdAt === open.ticket().createdAt && MES.validate(retimedOnly) === false && failsAt(retimedOnly, new RegExp(`${open.ticketId} rework approval`)), JSON.stringify(verify(retimedOnly).failures));
+  // The register is keyed by ticket number alone, so a number on it is never issued again, even after its order is archived.
+  const freed = structuredClone(open.state);
+  { const o = MES.getOrder(freed, 'WO-10006'); o.tickets = o.tickets.filter(x => x.id !== open.ticketId); }
+  const again = host.withAccount(qm, () => MES.createTicket(freed, 'WO-10006', MES.getOrder(freed, 'WO-10006').operations[0].id, { type: 'NC', title: 'Second finding', description: 'Another finding.', hold: false }), freed);
+  ok('Register: a ticket number on the signed register is not issued again', again.ok && again.id !== open.ticketId && Number(again.id.split('-').at(-1)) > Number(open.ticketId.split('-').at(-1)), JSON.stringify(again));
 
   // The operation records who added it, so the author survives the bounded sequence change log.
   const state = MES.upgrade(structuredClone(seed('seed-curated')));
