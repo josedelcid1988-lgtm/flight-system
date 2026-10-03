@@ -989,7 +989,7 @@ const plan = {
 // ---------- System QMS records: calibration entry, audit and finding, controlled document ----------
 const qmsForm = (u, field) => u.page.locator('#main form').filter({ has: u.page.locator(`[name=${field}]`) }).first();
 const qms = {
-  name: 'qms', title: 'System QMS records: calibration entry, audit, controlled document',
+  name: 'qms', title: 'System QMS records: calibration entry, audit, controlled document, analysis draft',
   async run(u) {
     await u.nav('qms-records');
     const before = await u.read(() => (state.calibrationLog || []).length);
@@ -1030,7 +1030,42 @@ const qms = {
     await u.step('release the document (author and reviewer)', () => u.clickText('Sign release'));
     const doc = await u.read(() => JSON.parse(JSON.stringify((state.controlledDocuments || state.documents || []).slice(-1)[0])));
     u.check(`${doc.documentNumber} released by the one person who wrote and reviewed it`, doc.status === 'Released', doc.status);
-    return `calibration ${entry?.id || entry?.tag || 'recorded'}; ${audit.id} ${audit.status}; ${doc.documentNumber} ${doc.status}`;
+    // An AI analysis draft on an NC: master runs it, replaces its [confirm] scaffolds, reviews it and accepts it (D-51, D-58).
+    const draftsBefore = await u.read(() => (state.aiSkillDrafts || []).length);
+    const ncId = await u.read(() => { const n = (state.maneuver && state.maneuver.ncs) || []; return (Array.isArray(n) ? n : Object.values(n))[0]?.id || ''; });
+    await u.step('run a 5-Why analysis draft on an NC', async () => {
+      if (!ncId) throw new Error('the workspace has no NC to analyse');
+      const f = u.page.locator('#main form[data-flight-skill-run]');
+      await f.locator('[name=skill]').selectOption('five-why');
+      await f.locator('[name=input]').fill(JSON.stringify({ targetRefs: [ncId] }));
+      await f.locator('[name=reason]').fill('Find why this nonconformance happened.');
+      await f.locator('button[type=submit]').click(); await u.wait(450);
+      if (await u.read(() => (state.aiSkillDrafts || []).length) !== draftsBefore + 1) throw new Error('analysis draft not created: ' + await u.toast());
+    });
+    const draftId = await u.read(() => state.aiSkillDrafts.slice(-1)[0].id);
+    await u.step('replace the scaffolds with the verified analysis', async () => {
+      const f = u.page.locator(`#main form[data-flight-skill-edit="${draftId}"]`);
+      await f.locator('[name=body]').fill(JSON.stringify({ problem: 'One receiving bin had no label.', whyChain: [{ step: 1, statement: 'The label printer queue was cleared before the bin was labelled.' }], rootCause: 'No check that every bin is labelled before receiving closes the lot.' }));
+      await f.locator('[name=rationale]').fill('Replaced the scaffolds with what the audit found.');
+      await f.locator('button[type=submit]').click(); await u.wait(450);
+      if (/\[confirm/i.test(await u.read(i => JSON.stringify(state.aiSkillDrafts.find(d => d.id === i).body), draftId))) throw new Error('scaffolds still in the draft: ' + await u.toast());
+    });
+    await u.step('review the draft', async () => {
+      await u.clickLoc(u.page.locator(`#main [data-flight-skill-review="${draftId}"]`));
+      await u.wait(400);
+      if (await u.read(i => state.aiSkillDrafts.find(d => d.id === i).status, draftId) !== 'Reviewed') throw new Error('draft not reviewed: ' + await u.toast());
+    });
+    const reviewed = await u.toast();
+    u.check('the review message tells the solo reviewer they may accept it next', /In this demo the reviewer may accept it next\./.test(reviewed) && !/different qualified person/.test(reviewed), reviewed);
+    await u.step('accept the analysis (its reviewer)', async () => {
+      await u.clickLoc(u.page.locator(`#main [data-flight-skill-accept="${draftId}"]`));
+      await u.wait(400);
+      if (await u.read(i => state.aiSkillDrafts.find(d => d.id === i).status, draftId) !== 'Accepted') throw new Error('analysis not accepted: ' + await u.toast());
+    });
+    const draft = await u.read(i => JSON.parse(JSON.stringify(state.aiSkillDrafts.find(d => d.id === i))), draftId);
+    u.check(`${draftId} reviewed and accepted by the same signed-in person, with a SHA-256 manifest`, draft.review?.by?.credentialId && draft.review.by.credentialId === draft.decision?.by?.credentialId && /^[a-f0-9]{64}$/.test(draft.manifest?.hash || ''), JSON.stringify([draft.review?.by, draft.decision?.by, draft.manifest?.hash]));
+    await u.expectValid('the workspace after the analysis is accepted');
+    return `calibration ${entry?.id || entry?.tag || 'recorded'}; ${audit.id} ${audit.status}; ${doc.documentNumber} ${doc.status}; ${draftId} ${draft.status}`;
   },
 };
 
