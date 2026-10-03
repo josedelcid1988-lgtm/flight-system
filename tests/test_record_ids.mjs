@@ -305,21 +305,21 @@ await check('a review pinned to a held push is shown and reassigned on that push
   const heldPush = op.atp.pushes[0];
   const replacement = { ...structuredClone(op), atp: { ...structuredClone(op.atp), pushes: [{ ...structuredClone(heldPush), at: new Date(Date.parse(heldPush.at) + 60000).toISOString(), sha: 'abc0009', version: 'v9.9' }] } };
   order.operations.push(replacement);
-  const found = MES.assignedPush(state, original);
+  const found = MES.namedReviewPush(state, original);
   assert.equal(found.held, true, 'the review names the held push');
   assert.equal(found.push.version, heldPush.version);
   const moved = as(admin, state, s => MES.assignWork(s, { type: 'review-push', orderId: order.id, opId: op.id, pushId: original.pushId, pushAt: original.pushAt, assigneeUsername: 'id-admin', assigneeName: 'Id Admin', replaces: original.id }));
   assert.equal(moved.ok, true, moved.message);
   const next = state.assignments.find(a => a.id === moved.id);
   assert.equal(next.pushAt, heldPush.at, 'the reassigned review stays on the held push');
-  assert.equal(MES.assignedPush(state, next).held, true);
+  assert.equal(MES.namedReviewPush(state, next).held, true);
   assert.equal(state.assignments.find(a => a.id === original.id).status, 'Reassigned');
   MES.syncAssignments(state);
   assert.equal(state.assignments.find(a => a.id === next.id).status, 'Open', 'the held push is still pending, so the review stays open');
   // A review of the replacement's own push resolves to the current operation.
   const own = as(admin, state, s => MES.assignWork(s, { type: 'review-push', orderId: order.id, opId: op.id, pushId: 'PUSH-1', assigneeUsername: 'id-reviewer', assigneeName: 'Id Reviewer' }));
   assert.equal(own.ok, true, own.message);
-  const ownFound = MES.assignedPush(state, state.assignments.find(a => a.id === own.id));
+  const ownFound = MES.namedReviewPush(state, state.assignments.find(a => a.id === own.id));
   assert.equal(ownFound.held, false);
   assert.equal(ownFound.push.version, 'v9.9');
 });
