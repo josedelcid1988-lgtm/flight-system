@@ -38,8 +38,8 @@ numbers and record number formats have not changed in any entry below.
   seal per WI-123") makes it a torque command. Any other word after the marker, such as the part ("torque seal
   retaining nut", "torque seal electrical connector"), makes it a torque action, so an unlisted word records the
   value instead of skipping it. A torque action ("Carefully torque seal nut", "Retorque seal nut", "Torque sealing
-  plug per WI-123"), any step that says tighten, and any step that names a torque target always record the value,
-  tool and unit. "At specified torque locations" is exempt only beside marker work on the same step. Adding and
+  plug per WI-123"), any step that says tighten (unless a prohibition such as "Do not" or "Never" comes before it in the same
+  clause), and any step that names a torque target always record the value, tool and unit. "At specified torque locations" is exempt only beside marker work on the same step. Adding and
   editing an operation, default steps and the migration of older steps (title and instruction read as two
   sentences) all use it, so "Apply torque stripe" no longer asks for a torque reading after an edit. An unchanged
   step keeps its saved setting. Workspaces saved under the old add rule hold a false setting for real torque steps

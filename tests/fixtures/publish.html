@@ -2316,7 +2316,10 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // drawing, WI or specified value) record it too. A bare number ("to 3 fasteners") is not a target.
   const TORQUE_TARGET = /\d\s*(?:in|ft)[- .]?(?:lbs?|lbf|oz)\b|\d\s*(?:inch|foot)[- ]?(?:pounds?|lbs?)\b|\d\s*lbf[- .]?(?:in|ft)\b|\d\s*(?:n[·.]?m|nm)\b|\b(?:drawing|wi|specified)\s+(?:torque\s+)?value\b|\bspecified\s+torque\b(?!\s+(?:locations?|points?|positions?)\b)/i;
   // "Specified torque locations" names where torque was applied; it is not itself a torque action. Tightening is.
-  const TORQUE_TIGHTEN = /\b(?:tighten|tightens|tightened|tightening|re-tighten|retighten)\b/i;
+  const TORQUE_TIGHTEN = /\b(?:tighten|tightens|tightened|tightening|re-tighten|retighten)\b/gi;
+  // A tighten verb that follows a prohibition in the same clause ("Do not tighten the B-nut; inspect torque stripe") applies no torque.
+  const TORQUE_PROHIBITION = /\b(?:do\s+not|don't|never|avoid|avoiding|without|must\s+not|shall\s+not|should\s+not)\b[^.;:!?,]*$/i;
+  const tightens = text => [...text.matchAll(TORQUE_TIGHTEN)].some(m => !TORQUE_PROHIBITION.test(text.slice(0, m.index)));
   const TORQUE_PLACE = /\bspecified\s+$/i, TORQUE_PLACE_AFTER = /^torque\s+(?:locations?|points?|positions?)\b/i;
   const TORQUE_MARKER = '(?:witness\\s+)?(?:stripes?|striping|seals?|sealing|sealant|paints?|painting|marks?|marking)';
   const TORQUE_MARKER_WORDS = 'inspections?|inspected|checks?|checked|verification|verified|application|applied|witness(?:ed)?|condition|damage|damaged|visual|visually|adhesion|integrity|presence|present|continuity|alignment|aligned|misaligned|intact|unbroken|missing|absent|broken|cracked|disturbed|smeared|faded|only|not|as\\s+found|as\\s+left|as\\s+received|found|left|removed|removal|replaced|replacement|reapplied|reapplication|renewed|renewal|touch-up|touched\\s+up|shall|should|must|is|are|was|were|be|been|has|have|had|to\\s+be|remains?';
@@ -2329,7 +2332,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const stepRecordsTorque = text => {
     const t = String(text ?? ''), mentions = [...t.matchAll(/torque/gi)];
     if (!mentions.length) return false;
-    if (TORQUE_TARGET.test(t) || TORQUE_TIGHTEN.test(t)) return true;
+    if (TORQUE_TARGET.test(t) || tightens(t)) return true;
     const kinds = [];
     let markerEnd = -1;
     for (const m of mentions) {

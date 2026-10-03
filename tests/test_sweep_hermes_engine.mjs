@@ -163,7 +163,9 @@ realm('globalThis.Date = globalThis.__RealDate;')();
     // Twenty-fifth review: as found and as left conditions.
     'Document torque stripe as found', 'Record torque seal as found', 'Record torque stripe as left on each B-nut', 'Inspect torque seal as received',
     // Twenty-sixth review: preservation and prohibition steps apply no torque.
-    'Do not disturb torque stripe', 'Avoid damaging torque seal', "Don't remove torque stripe", 'Preserve torque stripe on each B-nut', 'Keep torque seal intact'];
+    'Do not disturb torque stripe', 'Avoid damaging torque seal', "Don't remove torque stripe", 'Preserve torque stripe on each B-nut', 'Keep torque seal intact',
+    // Twenty-seventh review: a prohibited tightening applies no torque.
+    'Do not tighten the B-nut; inspect torque stripe for damage', 'Never tighten, only inspect torque stripe', 'Avoid tightening the fitting while you inspect torque seal'];
   check('MES.stepRecordsTorque: a step that is only torque stripe, seal, paint or mark work records no torque', stripes.every(t => MES.stepRecordsTorque(t) === false), stripes.filter(t => MES.stepRecordsTorque(t)).join(', '));
   // Review of PR #605: a torque action on marked or sealed parts still records the value, tool and unit.
   // Second review: a torque action on seal-named hardware with a torque target records it too.
@@ -205,7 +207,9 @@ realm('globalThis.Date = globalThis.__RealDate;')();
     // Twenty-fifth review: a part after an as found condition still records.
     'Record torque seal as found nut per WI-123',
     // Twenty-sixth review: a prohibition does not hide a torque action or a part name.
-    'Do not exceed torque seal nut per WI-123', 'Do not retorque; torque seal nut per drawing', 'Avoid scratching the housing and torque seal plug per WI-123', 'Do not disturb torque stripe, then torque nut to 35 in-lb'];
+    'Do not exceed torque seal nut per WI-123', 'Do not retorque; torque seal nut per drawing', 'Avoid scratching the housing and torque seal plug per WI-123', 'Do not disturb torque stripe, then torque nut to 35 in-lb',
+    // Twenty-seventh review: a prohibition ends at its clause, so a later tightening still records.
+    'Do not overtighten; tighten bolts to spec and apply torque stripe', 'Do not loosen, tighten bolts at specified torque points', 'If not damaged tighten the nut and inspect torque stripe'];
   check('MES.stepRecordsTorque: a torque action records a torque value, also on marked, paint-marked, sealed or seal-named parts', actions.every(t => MES.stepRecordsTorque(t) === true), actions.filter(t => !MES.stepRecordsTorque(t)).join(', '));
   const state = fresh(), order = state.orders.find(o => o.status === 'Draft' && o.operations.length), op = order.operations[0];
   op.steps = [{ id: 'step-1', title: 'Install bracket', instruction: 'Install bracket', recordsTorque: true }];
