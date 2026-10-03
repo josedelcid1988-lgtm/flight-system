@@ -29,9 +29,10 @@ numbers and record number formats have not changed in any entry below.
   that mentions torque records one unless every mention is marker work in one closed shape: a stripe, seal, paint,
   mark or witness mark word follows "torque", then only known inspection, condition or passive words ("visual
   inspection", "is intact", "missing on", "damage") up to the end of the clause or a preposition, and either a marker
-  verb comes before it in the same clause ("Apply red torque stripe to the B-nut") or one of those words follows
-  ("Torque stripe adhesion check"); a marker verb carries across "and" or "or" to the next marker phrase when only a short
-  object comes between ("Apply red torque stripe to the nut and blue torque stripe to the bolt"), never across another
+  verb or an "inspection of" comes before it in the same clause ("Apply red torque stripe to the B-nut", "Perform visual
+  inspection of torque stripe") or one of those words follows
+  ("Torque stripe adhesion check"); a marker verb carries across "and" or "or" to the next marker phrase when only its object
+  comes between ("Apply red torque stripe to the nut and blue torque stripe to the bolt"), never across another
   clause ("Inspect torque stripe; clean the fitting and torque seal per WI-123" records). An adverb before "torque"
   ("and carefully torque seal per WI-123") makes it a torque command. Any other word after the marker, such as the part ("torque seal retaining nut",
   "torque seal electrical connector"), makes it a torque action, so an unlisted word records the value instead of
