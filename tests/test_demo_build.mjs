@@ -217,11 +217,13 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  ok('an account made in the older demo signs in to the demo with its chosen password',await p.evaluate(()=>skAuth.user()&&skAuth.user().username)==='qa.boss');
  await p.evaluate(()=>sessionStorage.removeItem('skyryse-mes-demo-session-v1'));
  // Clearing the browser's site data reopens it: production starts over with first-account setup.
- await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(600);
- await p.evaluate(()=>{localStorage.clear();sessionStorage.removeItem('skyryse-mes-session-v1');});
- await settled(ctx,()=>localStorage.length===0);
- await p.reload();await p.waitForTimeout(900);
- const fresh=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),login:!document.getElementById('sk-login').hidden,title:document.getElementById('sk-login-title').textContent}));
+ // Cleared site data is a browser with no storage for the origin, so production opens in a context of its own: in this
+ // harness a write from an earlier page of the same context can reach storage after a clear and bring the leftovers
+ // back (#556), which a real clear of the site data, with the older demo's tabs closed, does not.
+ const cleared=await b.newContext({viewport:{width:1440,height:1000}});const cp=await cleared.newPage();cp.on('pageerror',e=>errs.push(e.message));
+ await cp.goto('file://'+FIXTURES+'publish.html');await cp.waitForFunction(()=>!document.getElementById('sk-login').hidden||!!document.getElementById('sk-legacy-review'),null,{timeout:60000});
+ const fresh=await cp.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),login:!document.getElementById('sk-login').hidden,title:document.getElementById('sk-login-title').textContent}));
+ await cleared.close();
  ok('once the site data is cleared, production opens on first-account setup',!fresh.gate&&fresh.login&&/Set up Master Access/.test(fresh.title),JSON.stringify(fresh));
  await ctx.close();}
 // An identity provider set for production (here before load, as a deployment page does) never reaches the demo.
@@ -260,8 +262,15 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  // open until this tab sees it: a write from a page that reloaded or closed just after can be lost (#556).
  {const other=await ctx.newPage();await other.goto('file://'+FIXTURES+BLANK);
   await other.evaluate(v=>{if(!localStorage.getItem('skyryse-mes-legacy-demo-review-v1'))localStorage.setItem('skyryse-mes-legacy-demo-review-v1',v);},v);
-  for(const end=Date.now()+60000;Date.now()<end;){if(await p.evaluate(()=>!!localStorage.getItem('skyryse-mes-legacy-demo-review-v1')).catch(()=>false))break;await p.waitForTimeout(250);}
-  await p.reload();await p.waitForTimeout(900);await other.close();}
+  // The tab reloads itself once it sees the record; it is reloaded here only if it has not closed by then, so the two
+  // reloads never race.
+  let reloaded=false;
+  for(const end=Date.now()+60000;Date.now()<end;){
+   const r=await p.evaluate(()=>({record:!!localStorage.getItem('skyryse-mes-legacy-demo-review-v1'),gate:!!document.getElementById('sk-legacy-review')})).catch(()=>null);
+   if(r&&r.gate)break;
+   if(r&&r.record&&!reloaded){reloaded=true;await p.waitForTimeout(3000);if(!(await p.evaluate(()=>!!document.getElementById('sk-legacy-review')).catch(()=>false)))await p.reload().catch(()=>{});}
+   await p.waitForTimeout(250);}
+  await p.waitForTimeout(900);await other.close();}
  const open=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),user:window.skAuth&&skAuth.user()&&skAuth.user().username}));
  ok('that tab is then closed and its Operations session ends',open.gate&&!open.user,JSON.stringify(open));
  await ctx.close();}
@@ -273,16 +282,23 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  const posts=[];await ctx.route(/mirror-full\.test|\/api\/v1\/writes/,route=>{try{posts.push(...(JSON.parse(route.request().postData()||'{}').records||[]));}catch(e){}route.fulfill({status:500,contentType:'application/json',body:'{"ok":false}'});});
  await ctx.addInitScript(H=>{window.SK_MIRROR={url:'http://mirror-full.test',token:'full-token',batchSize:50};const real=Storage.prototype.setItem;
   Storage.prototype.setItem=function(k,v){if(this===window.localStorage&&k==='skyryse-mes-legacy-demo-review-v1')throw new DOMException('full','QuotaExceededError');return real.call(this,k,v);};},H);
- // The accounts are seeded once, by a page that closes once another page has seen them. A seed written from every page's init script could land
- // late from one tab and replace the account list after the leftovers were added.
- const s=await ctx.newPage();s.on('pageerror',e=>errs.push(e.message));
-  await s.addInitScript(H=>{if(localStorage.getItem('seeded'))return;localStorage.setItem('seeded','1');
-   localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify({users:[{username:'ops9',displayName:'Ops Nine',...H,role:'ops',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'mlee',displayName:'Morgan Lee',...H,role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'}]}));},H);
-  await s.goto('file://'+FIXTURES+'publish.html');await s.waitForFunction(()=>!document.getElementById('sk-login').hidden,null,{timeout:20000});
+ // The accounts are seeded once, by a page that stays on the blank page, where no app runs that could rewrite them, and
+ // writes them directly. A fresh page of the origin must then see them; if it does not, the seed is written again, up
+ // to three times, before any other page writes (#556). A seed written from every page's init script could land late
+ // from one tab and replace the account list after the leftovers were added.
+ const SEED=JSON.stringify({users:[{username:'ops9',displayName:'Ops Nine',...H,role:'ops',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'mlee',displayName:'Morgan Lee',...H,role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'}]});
+ const seedVisible=async()=>{const q=await ctx.newPage();try{await q.goto('file://'+FIXTURES+BLANK);await q.waitForFunction(()=>/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||''),null,{timeout:20000});return true;}catch(e){return false;}finally{await q.close().catch(()=>{});}};
+ const s=await ctx.newPage();s.on('pageerror',e=>errs.push(e.message));await s.goto('file://'+FIXTURES+BLANK);
+ let seedWrites=0,seedSeen=false;
+ while(!seedSeen&&seedWrites<3){await s.evaluate(v=>localStorage.setItem('skyryse-mes-auth-v1',v),SEED);seedWrites++;seedSeen=await seedVisible();}
  // A page already open on the sign-in screen (an active signed-in tab would rewrite shared storage from its own copy).
+ // It opens the blank page first: the first page of a fresh tab can miss the writes of other pages under load (#556).
  // The seeding page stays open until this page sees the seed: a page closed just after its write can lose it (#556).
  const open=await ctx.newPage();open.on('pageerror',e=>errs.push(e.message));
- await open.goto('file://'+FIXTURES+'publish.html');await open.waitForFunction(()=>!document.getElementById('sk-login').hidden&&/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||''),null,{timeout:60000});
+ await open.goto('file://'+FIXTURES+BLANK);await open.goto('file://'+FIXTURES+'publish.html');
+ await open.waitForFunction(()=>!document.getElementById('sk-login').hidden&&/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||''),null,{timeout:30000}).catch(()=>{});
+ {const st=await open.evaluate(()=>({login:!document.getElementById('sk-login').hidden,seeded:/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||'')}));
+ ok('review record refused: the seeded accounts reach a page already open on the sign-in screen',st.login&&st.seeded,JSON.stringify({...st,seedWrites,seedSeen}));}
  await s.close();
  // The leftovers are written by the finding page itself before it loads (a write from another tab arrives asynchronously).
  const leftovers=()=>{if(sessionStorage.getItem('left'))return;sessionStorage.setItem('left','1');const a=JSON.parse(localStorage.getItem('skyryse-mes-auth-v1'));if(!a.users.some(u=>u.username==='master')){a.users.push({username:'master',displayName:'Master Access',salt:'00',hash:'f'.repeat(64),role:'admin',createdAt:'2026-09-17T00:00:00.000Z',createdBy:'demo build'});localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify(a));localStorage.setItem('skyryse-mes-sync-queue-v1',JSON.stringify([{clientWriteId:'old-demo-w',storeKey:'skyryse-mes-work-order-qa100-v1',entityType:'order',entityId:'WO-10009',operation:'upsert',payloadJson:'{}'},{clientWriteId:'prod-w',storeKey:'skyryse-mes-work-order-v1',entityType:'order',entityId:'WO-1',operation:'upsert',payloadJson:'{}'}]));}};

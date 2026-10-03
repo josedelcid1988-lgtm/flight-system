@@ -166,11 +166,12 @@ export async function restorePostgres(connectionString, archivePath, options = {
   const listPath = path.join(dir, 'restore.list');
   try {
     fs.writeFileSync(listPath, list, { mode: 0o600 });
-    const args = ['--exit-on-error', '--single-transaction', '--no-owner', '--use-list', listPath, '--dbname', connectionString];
+    const target = pgRestoreTarget(connectionString);
+    const args = ['--exit-on-error', '--single-transaction', '--no-owner', '--use-list', listPath, '--dbname', target.dbname];
     if (options.clean) args.push('--clean', '--if-exists');
     if (Array.isArray(options.extraArgs)) args.push(...options.extraArgs);
     args.push(archivePath);
-    await runPgRestore(args);
+    await runPgRestore(args, false, target.env);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   return 0;
 }
@@ -182,9 +183,138 @@ export async function restoreListWithoutSessions(archivePath) {
   return list.split('\n').filter(line => !/^\d+;.*\bTABLE DATA \S+ sessions\b/.test(line)).join('\n');
 }
 
-function runPgRestore(args, capture = false) {
+// The --dbname argument without its password, and the password for the child's PGPASSWORD (#234). Anyone who can read
+// the process table sees a program's arguments while it runs, so the password goes to pg_restore and pg_dump through
+// their own environment instead. The connection string is read by libpq's own rules, without re-encoding anything else:
+// - URI form (postgresql:// or postgres://, host optional): the password in the user info, then any ?password= query
+//   parameter, the last one read winning as libpq reads it; every password parameter is removed and the other
+//   parameters are kept exactly as written.
+// - keyword=value form: every password assignment is removed and the last one is the password.
+// A string with no password, or a bare database name, is passed unchanged. A string that cannot be read is refused, never passed on as it was,
+// since it may hold the password. A password beside a connection service (service= in the string, or PGSERVICE) is
+// refused too: libpq lets a service file's password override PGPASSWORD, so moving the password out of the string
+// would change which password is used.
+// libpq has no environment variable for a client key passphrase, so one in the string cannot be moved out of the
+// arguments; it is refused instead (Codex 4161235803).
+const SSL_PASSWORD_REFUSAL = 'carries a client key passphrase (sslpassword), which pg_dump and pg_restore would show in their arguments; use an unencrypted key file readable only by the server account, or remove sslpassword';
+// libpq 18's OAuth client secret and SCRAM keys have no environment variable either, so they are refused the same way
+// (Cursor 4164991682).
+const ARGUMENT_SECRETS = ['oauth_client_secret', 'scram_client_key', 'scram_server_key'];
+const SECRET_NAMES = ['password', 'sslpassword', 'service', ...ARGUMENT_SECRETS];
+const secretRefusal = key => `carries ${key}, a secret libpq takes only in the connection string, which pg_dump and pg_restore would show in their arguments; remove ${key} from FLIGHT_DATABASE_URL for backup and restore`;
+export function pgRestoreTarget(connectionString, env = process.env) {
+  const raw = String(connectionString);
+  const refuse = why => { throw new Error(`The PostgreSQL connection string ${why}. Nothing was run. Fix FLIGHT_DATABASE_URL and try again.`); };
+  // A secret-bearing setting name must be written exactly: lowercase, with no spaces around it. libpq reads only the
+  // lowercase name, and newer libpq trims ASCII spaces around a URI parameter name, so Password=, SSLPASSWORD= or
+  // ?%20password= could reach --dbname untouched. Any other spelling is refused before it can (Cursor 4162958234,
+  // 4163152933).
+  const caseCheck = key => { const plain = key.replace(/^ +| +$/g, '').toLowerCase(); if (SECRET_NAMES.includes(plain) && key !== plain) refuse(`names ${plain} as "${key}"; write it as ${plain}, in lowercase with no spaces around it`); };
+  const pct = text => { try { return decodeURIComponent(text); } catch { return refuse('has a malformed percent-encoded part'); } };
+  let dbname = raw, password = null, service = false, found = false;
+  // A URI with anything before its scheme (a space, a tab, a quote) is not one libpq reads as a URI, yet it can carry a
+  // password in its user info, so it is refused instead of passed on as a bare name (Cursor 4163494602).
+  // libpq matches the scheme in lowercase only, so POSTGRESQL:// is no URI to it either (independent review of a93f783).
+  if (!/^postgres(ql)?:\/\//.test(raw) && /postgres(ql)?:\/\//i.test(raw)) refuse('holds postgresql:// somewhere other than at its very start, or writes it in capitals; start it with postgresql:// in lowercase and do not nest one connection string in another');
+  // Any other :// (another scheme such as pg:// or socket://, which node-pg accepts but libpq reads as a bare name, or a
+  // second postgresql:// after the first) would reach --dbname whole, user info and password included, so it is
+  // refused (Cursor 4170469991).
+  if (raw.replace(/^postgres(ql)?:\/\//, '').includes('://')) refuse('uses a scheme other than postgresql://, or holds a second one; start it with postgresql:// once and percent-encode any :// in a value');
+  // A bare database name (no = and not a URI) holds no password: libpq reads it as the dbname alone.
+  if (!/^postgres(ql)?:\/\//.test(raw) && !raw.includes('=')) return { dbname: raw, env: {} };
+  if (/^postgres(ql)?:\/\//.test(raw)) {
+    // libpq's URI has no fragment: a # is ordinary data wherever it appears, so a password such as ?password=Head#Tail
+    // is read whole (Codex 4161531093).
+    const scheme = raw.match(/^postgres(?:ql)?:\/\//)[0];
+    let rest = raw.slice(scheme.length), userinfo = null;
+    // As in libpq's conninfo_uri_parse_options, the user info runs to the first @ found before any /, so a host that
+    // itself starts with @ (an abstract socket) stays the host (Codex 4161788869), and an unencoded ? in a password is
+    // read the way libpq reads it (Codex 4161235818).
+    const firstAt = rest.indexOf('@'), firstSlash = rest.indexOf('/');
+    // libpq ends the user info at the first @, but node-pg (the server's own client) at the last one, so with a second @
+    // before the first / the two read a different password and host. postgresql://flight:@Secret-9@db/flight would
+    // reach --dbname with @Secret-9 in it. Any second @ there is refused; percent-encode it as %40 (Codex 4170690274).
+    if ((firstSlash < 0 ? rest : rest.slice(0, firstSlash)).split('@').length > 2) refuse('has more than one @ before the database name, which libpq and the server read differently; percent-encode any @ in the user name, password or host as %40');
+    if (firstAt >= 0 && (firstSlash < 0 || firstAt < firstSlash)) { userinfo = rest.slice(0, firstAt); rest = rest.slice(firstAt + 1); }
+    const [, hosts, path, query] = rest.match(/^([^/?]*)([^?]*)(?:\?(.*))?$/s);
+    // With no user info, a host:port whose port is not a number means an unencoded / cut the user info short and part of
+    // a password would land in --dbname as the "port". libpq cannot connect to that either, so it is refused. An @ in
+    // the database name or a query value is ordinary data to libpq (Codex 4161788877, Jinx review 5387290877).
+    if (userinfo === null && hosts.split(',').some(h => /:[^:\]]*$/.test(h) && !/:\d*$/.test(h))) refuse('has text libpq would read as a host or database name but that looks like a cut-off password; percent-encode any / ? or @ in the user name and password');
+    // An all-digit password cut short the same way reads as a port, so a numbered port with an @ later in the database
+    // name is refused too: postgresql://flight:123/Tail@db/flight would pass its password on as host and port (Codex
+    // 4170446394). A real @ in a database name behind a port is written %40.
+    if (userinfo === null && hosts.split(',').some(h => /:\d+$/.test(h)) && path.includes('@')) refuse('has text libpq would read as a host or database name but that looks like a cut-off password; percent-encode any / ? or @ in the user name and password, and write an @ in a database name as %40');
+    if (userinfo !== null && userinfo.includes(':')) {
+      found = true;
+      password = pct(userinfo.slice(userinfo.indexOf(':') + 1));
+      userinfo = userinfo.slice(0, userinfo.indexOf(':'));
+    }
+    const kept = [];
+    for (const part of query === undefined ? [] : query.split('&')) {
+      const eq = part.indexOf('='), key = pct(eq >= 0 ? part.slice(0, eq) : part);
+      caseCheck(key);
+      // Every libpq setting name is letters, digits and underscores. A decoded name with anything else (a tab, a line
+      // break, a NUL) is one libpq refuses or, in a newer release, may trim to a secret's name, so it is refused here
+      // rather than passed on with its value (independent review of 31a2b0c).
+      if (part !== '' && !/^[A-Za-z0-9_]+$/.test(key)) refuse('has a URI parameter name libpq cannot read; use only letters, digits and underscores in parameter names');
+      // libpq refuses a parameter with no =, so a bare ?password is refused rather than read as an empty password.
+      if (eq < 0 && SECRET_NAMES.includes(key)) refuse(`has ${key} with no value; write ${key}= followed by its value`);
+      // A password both in the user info and as ?password= is read differently by libpq (the query one wins, and an
+      // empty one means none) and by node-pg (an empty one leaves the user info's), so it is refused (Codex 4171254409).
+      if (key === 'password' && found) refuse('carries a password both in the user info and as ?password=, which libpq and the server read differently; give the password once');
+      if (key === 'password') { found = true; password = pct(part.slice(eq + 1)); continue; }
+      if (key === 'service') service = true;
+      if (key === 'sslpassword') refuse(SSL_PASSWORD_REFUSAL);
+      if (ARGUMENT_SECRETS.includes(key)) refuse(secretRefusal(key));
+      kept.push(part);
+    }
+    if (!found) return { dbname: raw, env: {} };
+    dbname = `${scheme}${userinfo !== null ? `${userinfo}@` : ''}${hosts}${path}${kept.length ? `?${kept.join('&')}` : ''}`;
+  } else {
+    // keyword=value pairs, as libpq's conninfo_parse reads them: a value that starts with ' runs to the closing quote;
+    // any other value runs to whitespace, and a ' inside it is an ordinary character (Codex 4161531100). In both, a
+    // backslash escapes the next character, so both are unescaped the same way (Codex 4161235788).
+    // White space is libpq's isspace set only, not every Unicode space JavaScript's \s takes. The s flag lets a backslash
+    // escape a line break too, as libpq allows (Codex 4171851670).
+    const pair = /[ \t\n\r\f\v]*([A-Za-z_][A-Za-z0-9_]*)[ \t\n\r\f\v]*=[ \t\n\r\f\v]*('(?:\\.|[^'\\])*'|(?:\\.|[^ \t\n\r\f\v'\\])(?:\\.|[^ \t\n\r\f\v\\])*|)/ys;
+    const kept = [];
+    let index = 0;
+    while (index < raw.length) {
+      if (/^[ \t\n\r\f\v]*$/.test(raw.slice(index))) break;
+      pair.lastIndex = index;
+      const match = pair.exec(raw);
+      if (!match) refuse('is not a list of keyword=value settings libpq can read');
+      index = pair.lastIndex;
+      const [, key, value] = match;
+      caseCheck(key);
+      if (key === 'password') { found = true; password = (value.startsWith("'") ? value.slice(1, -1) : value).replace(/\\(.)/gs, '$1'); continue; }
+      if (key === 'service') service = true;
+      if (key === 'sslpassword') refuse(SSL_PASSWORD_REFUSAL);
+      if (ARGUMENT_SECRETS.includes(key)) refuse(secretRefusal(key));
+      // Kept as key=value with the value exactly as written, escapes included, so an escaped trailing space survives
+      // (Codex 4161531104).
+      kept.push(`${key}=${value}`);
+    }
+    if (!found) return { dbname: raw, env: {} };
+    dbname = kept.join(' ');
+  }
+  // A NUL cannot pass through an environment variable; spawn would refuse it with an error quoting the value, so it is
+  // refused here with words that never repeat it (Codex 4161235811).
+  // libpq treats an empty password as none and falls back to PGPASSWORD or the password file, so an empty one is
+  // removed from --dbname but not set, leaving any inherited PGPASSWORD in place (Codex 4161788875).
+  if (password === '') return { dbname, env: {} };
+  if (password.includes('\0')) refuse('has a password with a NUL character');
+  if (service || (env && env.PGSERVICE)) refuse('names a password and a connection service; keep the password in the service file or in PGPASSWORD, not in the string, so backups and restores use the same password as the server');
+  return { dbname, env: { PGPASSWORD: password } };
+}
+
+function runPgRestore(args, capture = false, env = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn('pg_restore', args, { stdio: ['ignore', capture ? 'pipe' : 'ignore', 'ignore'] });
+    // spawn throws synchronously on a bad argument or environment value and quotes it; that message is never passed on.
+    let child;
+    try { child = spawn('pg_restore', args, { stdio: ['ignore', capture ? 'pipe' : 'ignore', 'ignore'], env: { ...process.env, ...env } }); }
+    catch { reject(new Error('pg_restore could not be started. Check FLIGHT_DATABASE_URL and the PostgreSQL client tools.')); return; }
     let out = '';
     if (capture) child.stdout.on('data', chunk => { out += chunk; });
     child.once('error', reject);
@@ -344,7 +474,12 @@ function makeStore(pool, query, inTransaction, connectionString) {
     async supersedeEvidence(id, by, reason) { const r = await query('UPDATE evidence SET superseded_by=$1,superseded_at=$2,superseded_reason=$3 WHERE id=$4 AND superseded_by IS NULL', [by,now(),reason,id]); return r.rowCount ? store.evidenceMeta(id) : null; },
     async backup(destination) {
       return new Promise((resolve, reject) => {
-        const child = spawn('pg_dump', ['--format=custom', '--file', destination, '--dbname', connectionString], { stdio: 'ignore' });
+        // The password goes through the child's environment, not its arguments (#234; see pgRestoreTarget).
+        const target = pgRestoreTarget(connectionString);
+        // spawn throws synchronously on a bad argument or environment value and quotes it; that message is never passed on.
+        let child;
+        try { child = spawn('pg_dump', ['--format=custom', '--file', destination, '--dbname', target.dbname], { stdio: 'ignore', env: { ...process.env, ...target.env } }); }
+        catch { reject(new Error('pg_dump could not be started. Check FLIGHT_DATABASE_URL and the PostgreSQL client tools.')); return; }
         child.once('error', reject);
         child.once('exit', (code, signal) => {
           if (code === 0) resolve(0);

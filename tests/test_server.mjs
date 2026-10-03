@@ -605,6 +605,26 @@ try {
     assert.ok(chain.checked >= result.json.rows.length);
     assert.equal(result.json.rows[0].hash.length, 64);
   });
+  await check('the audit read takes only a page limit of 1 to 1,000 and reads 200 for anything else (#323)', async () => {
+    const total = (await server.store.auditRows(1000)).length;
+    assert.ok(total >= 3, 'the audit log has a few rows to page');
+    // SQLite reads a negative LIMIT as unlimited and refuses a fractional one; each of these reads the default page.
+    for (const limit of ['-1', '0', '1.5', 'abc', '']) {
+      const r = await api('GET', `/audit?limit=${limit}`, { token });
+      assert.equal(r.status, 200, `limit=${limit}`);
+      assert.equal(r.json.rows.length, Math.min(200, total), `limit=${limit} reads the default page`);
+    }
+    assert.equal((await api('GET', '/audit?limit=2', { token })).json.rows.length, 2);
+    // The log here is far shorter than 1,000 rows, so the cap is checked on the limit the route hands the store.
+    const auditRows = server.store.auditRows, asked = [];
+    server.store.auditRows = function (limit) { asked.push(limit); return auditRows.call(this, limit); };
+    try {
+      assert.equal((await api('GET', '/audit?limit=5000', { token })).status, 200, 'a limit past 1,000 is capped, not refused');
+      await api('GET', '/audit?limit=-1', { token });
+      await api('GET', '/audit?limit=1000', { token });
+    } finally { server.store.auditRows = auditRows; }
+    assert.deepEqual(asked, [1000, 200, 1000], 'the store reads at most 1,000 rows, and the default page for a negative limit');
+  });
   await check('the manager can unlock an account with a reason and audit record', async () => {
     // Wrong passwords sent at the same time still count one each: the counter is a single atomic write.
     const guesses = await Promise.all(Array.from({ length: 5 }, () => api('POST', '/auth/session', { body: { username: 'basic', password: 'wrong' } })));
