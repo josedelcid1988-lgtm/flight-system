@@ -3477,13 +3477,14 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // A buy-off signed with the signer but before the WI reviews and contributor list were bound (no wiReview in its stored
   // subject) is rebuilt without them; wi === undefined selects that form. The current form also binds when each WI review was
   // recorded (wiReviewAt, selected by form.reviewAt); a buy-off signed before that is rebuilt without it. The current form
-  // (form.release given) also binds the WI release the buy-off writes and each action owner's account (ownerBy).
+  // (form.release given) also binds the WI release the buy-off writes, each action owner's account (ownerBy), and who opened the
+  // PFMEA and when (the opener is refused the buy-off, so the record cannot later be rewritten to show the signer as the opener).
   const pfmeaSafetySubject = (t, note, signed, wi, form) => { const cur = signed && plain(form) && form.release !== undefined; const who = signed ? snapOf : credOf; return { pfmea: t.id, wi: `${t.wiId} Rev ${t.wiRevision}`, note,
     ...(signed ? { part: t.partNumber ?? null, title: t.title ?? null } : {}),
     ...(signed && wi !== undefined ? { wiReview: plain(wi) ? { peer: snapOf(wi.peerReview), qa: snapOf(wi.qaReview) } : null,
       contributors: Array.isArray(t.contributors) ? [...t.contributors].sort() : null, contributorsComplete: t.contributorsComplete === true } : {}),
     ...(signed && wi !== undefined && plain(form) && form.reviewAt === true ? { wiReviewAt: plain(wi) ? { peer: atOf(wi.peerReview), qa: atOf(wi.qaReview) } : null } : {}),
-    ...(cur ? { release: form.release } : {}),
+    ...(cur ? { release: form.release, opened: { by: snapOf(t.openedBy), at: t.openedAt ?? null } } : {}),
     ...(signed ? { signedBy: plain(signed.by) ? { credentialId: signed.by.credentialId ?? null, name: signed.by.name ?? null, role: signed.by.role ?? null } : null, signedAt: signed.at ?? null } : {}),
     scope: plain(t.scope) ? { team: t.scope.team, boundaries: t.scope.boundaries ?? '', by: who(t.scope.by), ...(signed ? { at: atOf(t.scope) } : {}) } : null,
     analysisDone: plain(t.analysisDone) ? { by: who(t.analysisDone.by), at: t.analysisDone.at } : null,
