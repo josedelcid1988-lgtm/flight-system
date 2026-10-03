@@ -2390,17 +2390,24 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const TORQUE_MARKER_PHRASE = new RegExp(`^torque\\s*${TORQUE_MARKER}((?:\\s+(?:${TORQUE_MARKER_WORDS})\\b)*)(?=\\s*(?:$|[.;:!?,)])|\\s+(?:of|for|on|onto|at|per|across|to|with|before|after|from|over|between|in|and|or|then)\\b)`, 'i');
   const TORQUE_MARKER_VERB_BEFORE = /\b(?:apply|applying|applied|reapply|re-apply|inspect|inspecting|verify|verifying|check|checking|confirm|confirming|remove|removing|replace|replacing|add|adding|touch[- ]up|witness|witnessing|document|documenting|record|recording|note|noting|report|reporting)(?:\s+(?!(?:then|and|or|torque|to|per|with|after|before|install|installing|tighten|tightening)\b)[a-z][a-z-]*)*\s+$/i;
   const TORQUE_MARKER_COORDINATED = /\b(?:and|or)(?:\s+(?!(?:then|torque|to|per|with|after|before|install|installing|tighten|tightening)\b)[a-z][a-z-]*)*\s+$/i;
+  const TORQUE_MARKER_OBJECT = /^\s*(?:(?:to|on|onto|across|at|of|for|over|from|with|between|in)(?:\s+(?!(?:then|torque|tighten|tightening|install|installing)\b)[a-z0-9][a-z0-9-]*){1,4}\s*)?$/i;
   const stepRecordsTorque = text => {
     const t = String(text ?? ''), mentions = [...t.matchAll(/torque/gi)];
     if (!mentions.length) return false;
     if (TORQUE_TARGET.test(t) || TORQUE_TIGHTEN.test(t)) return true;
     const kinds = [];
+    let markerEnd = -1;
     for (const m of mentions) {
       const before = t.slice(0, m.index), after = t.slice(m.index), phrase = TORQUE_MARKER_PHRASE.exec(after);
-      // "Apply red torque stripe to the nut and blue torque stripe to the bolt": the marker verb carries across "and".
-      const carried = kinds[kinds.length - 1] === 'marker' && TORQUE_MARKER_COORDINATED.test(before);
-      kinds.push(/[a-z-]$/i.test(before) ? 'action' : TORQUE_PLACE.test(before) && TORQUE_PLACE_AFTER.test(after) ? 'place'
-        : phrase && (phrase[1].trim() || carried || TORQUE_MARKER_VERB_BEFORE.test(before)) ? 'marker' : 'action');
+      // "Apply red torque stripe to the nut and blue torque stripe to the bolt": the marker verb carries across "and"
+      // only when the previous mention was marker work and nothing but its short object comes between, so "Inspect
+      // torque stripe; clean the fitting and torque seal per WI-123" does not carry it.
+      const coordinated = TORQUE_MARKER_COORDINATED.exec(before);
+      const carried = kinds[kinds.length - 1] === 'marker' && coordinated && TORQUE_MARKER_OBJECT.test(t.slice(markerEnd, coordinated.index));
+      const kind = /[a-z-]$/i.test(before) ? 'action' : TORQUE_PLACE.test(before) && TORQUE_PLACE_AFTER.test(after) ? 'place'
+        : phrase && (phrase[1].trim() || carried || TORQUE_MARKER_VERB_BEFORE.test(before)) ? 'marker' : 'action';
+      kinds.push(kind);
+      markerEnd = kind === 'marker' ? m.index + phrase[0].length : -1;
     }
     // A place ("at specified torque points") is exempt only beside marker work on the same step.
     return kinds.includes('action') || !kinds.includes('marker');

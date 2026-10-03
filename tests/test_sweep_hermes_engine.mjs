@@ -177,7 +177,9 @@ realm('globalThis.Date = globalThis.__RealDate;')();
     // Sixteenth review: tightening at specified torque locations records torque.
     'Tighten all fasteners at specified torque locations per drawing', 'Tighten bolts at specified torque points', 'Inspect fasteners at specified torque locations', 'Tighten fasteners, then apply torque stripe',
     // Seventeenth review: a coordinated torque action or seal-named part still records.
-    'Apply torque stripe and torque seal nut per drawing', 'Inspect torque stripe and torque the nut', 'Torque the nut and torque seal plug'];
+    'Apply torque stripe and torque seal nut per drawing', 'Inspect torque stripe and torque the nut', 'Torque the nut and torque seal plug',
+    // Eighteenth review: a marker verb does not carry across an intervening clause.
+    'Inspect torque stripe; clean the fitting and torque seal per WI-123', 'Inspect torque stripe, clean the fitting and torque seal per WI-123', 'Inspect torque stripe then clean the fitting and torque seal per WI-123', 'Apply torque stripe to the nut then clean and torque seal'];
   check('MES.stepRecordsTorque: a torque action records a torque value, also on marked, paint-marked, sealed or seal-named parts', actions.every(t => MES.stepRecordsTorque(t) === true), actions.filter(t => !MES.stepRecordsTorque(t)).join(', '));
   const state = fresh(), order = state.orders.find(o => o.status === 'Draft' && o.operations.length), op = order.operations[0];
   op.steps = [{ id: 'step-1', title: 'Install bracket', instruction: 'Install bracket', recordsTorque: true }];
