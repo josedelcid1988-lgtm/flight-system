@@ -5,13 +5,15 @@
 - Inspection and MRB seats now follow role capabilities in production and demo; only conformity and AQI require named, current-training grants. MRB disposition training tiers remain optional and off by default.
 - Server-side grant routes reject attempts to grant inspection or MRB seat capabilities individually.
 - Support Access only lifts stamp binding for one operation; its documentation now matches the enforced rule.
-- UI polish from the Jinx UX audit (visual and wording only; no engine, gate, record or storage change): calibration
+- UI polish from the Jinx UX audit (visual and wording only; no gate, validation, record or storage change): calibration
   status pills are neutral blue for In Calibration and Out for Calibration, red for Quarantined and gray for Retired;
   open audits are neutral blue; a Draft controlled document uses the new neutral `.pill.draft`. The calibration log is a
   table (entry, tool tag, status, due date, recorded by) with the note and signature in an expandable row. FAIR and
   conformity stamp PIN fields are tied to their labels. Trace search and archived print or export say they are busy and
   hold their buttons while the server answers, and say plainly when it does not. The Hangar holds panel counts every
-  held order and links to All work orders filtered to a new On hold status, which lists exactly the orders the Hangar counted. The work order queue footer reads "Work order progress
+  held order and links to All work orders filtered to a new On hold status, which lists exactly the orders the Hangar counted. On hold and Blocked are worked out live, so
+  saving either as a view is refused with that reason and a next step instead of the generic refusal; saved view
+  validation is unchanged. The work order queue footer reads "Work order progress
   and approval rules are unchanged." `test_ui_audit_polish_ui` covers each change.
 - Admin page: accounts and roles, training, the stamp register and the master SDS book moved out of Your credentials onto an Admin page (sidebar), shown only to accounts that manage access; others are refused the page and its deep link. Your credentials keeps your own profile, your own stamps and PIN, the account switch and sign out. Conformity and AQI authorities read in words. The stamp register scrolls sideways at tablet width instead of breaking words. Every self-target refusal is unchanged; `test_admin_page` covers it.
 

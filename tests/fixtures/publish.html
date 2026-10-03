@@ -5621,6 +5621,8 @@ const OP_BOM_MAX = 12;
     if (!str(label, 40)) return fail('Name this view, up to 40 characters.');
     if (state.savedViews.length >= 12) return fail('You can keep up to 12 saved views. Remove one first.');
     if (state.savedViews.some(item => item.name.toLowerCase() === label.toLowerCase())) return fail(`You already have a view called ${label}.`);
+    // On hold and Blocked are worked out live from each order's holds, not stored statuses, so a view cannot keep them.
+    if (['On hold', 'Blocked'].includes(filters?.status)) return fail(`${filters.status} is worked out live from each order's holds, so a saved view cannot keep it. Set Status to All or a work order status, then save.`);
     const view = { id: `view-${Date.now().toString(36)}`, name: label, filters: { search: String(filters?.search ?? '').slice(0, 60), status: filters?.status ?? 'All', site: filters?.site ?? 'All', aircraft: filters?.aircraft ?? 'All', flagged: filters?.flagged === true } };
     if (!savedViewValid(view)) return fail('Those filters could not be saved.');
     state.savedViews = [...state.savedViews, view];

@@ -233,6 +233,24 @@ try {
     await link.click();
     await page.locator('body[data-view="orders"]').waitFor();
     check('View all holds opens All work orders filtered to On hold', await page.getByRole('combobox', { name: 'Work order status' }).inputValue() === 'On hold');
+    // On hold is worked out live, so saving it as a view is refused with a reason and a next step, not the generic refusal.
+    await page.locator('[data-action="view-manage"]').first().click();
+    await page.locator('#view-name').fill('My holds');
+    await page.locator('#view-save-form button[type="submit"]').click();
+    const saveRefusal = await page.locator('#view-error').innerText();
+    check('saving the On hold filter as a view says why it cannot be kept and what to do', /On hold is worked out live from each order's holds, so a saved view cannot keep it\. Set Status to All or a work order status, then save\./.test(saveRefusal) && !/—/.test(saveRefusal), saveRefusal);
+    check('the refused On hold view is not stored', await page.evaluate(() => !savedViews().some(item => item.name === 'My holds')));
+    await page.locator('#dialog [data-action="close-dialog"]').first().click();
+    const engine = await page.evaluate(() => {
+      const copy = structuredClone(state);
+      const blocked = MES.addSavedView(structuredClone(state), 'Blocked view', { status: 'Blocked' });
+      const unknown = MES.addSavedView(structuredClone(state), 'Unknown view', { status: 'No such status' });
+      const building = MES.addSavedView(copy, 'Building view', { status: 'Building' });
+      return { blocked: blocked.message, unknown: unknown.message, building: building.ok && copy.savedViews.some(v => v.name === 'Building view' && v.filters.status === 'Building') && MES.validate(copy) };
+    });
+    check('the engine refuses a Blocked view with the same reason', /^Blocked is worked out live/.test(engine.blocked), engine.blocked);
+    check('an unknown status is still refused as before', engine.unknown === 'Those filters could not be saved.', engine.unknown);
+    check('a stored status such as Building still saves as a view', engine.building === true);
     // The list holds exactly the orders the Hangar counted: blocking tickets or pending source inspections on an open
     // order. An order held only by a source inspection is listed; an engineering-change order with no hold is not.
     const expectedIds = await page.evaluate(() => state.orders.filter(o => !['Closed', 'Cancelled', 'Scrapped'].includes(o.status) && (MES.blockingTickets(o).length || MES.sourceInspectionHolds(state, o).length)).map(o => o.id).sort());
