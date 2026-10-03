@@ -3567,7 +3567,9 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       if (!plain(record)) return;
       const m = plain(record.manifest) ? record.manifest : null, at = m ? m.at : record.at;
       if (m && record.at !== undefined && record.at !== m.at) refuse(where, 'the time shown on the record is not the signed time');
-      if (m && plain(record.by) && plain(m.signer) && record.by.credentialId !== m.signer.credentialId) refuse(where, 'the signer shown on the record is not the person who signed');
+      // The person shown is the person who signed: name, role and credential, and the account when both record one.
+      const person = p => ({ name: p.name, role: p.role, credentialId: p.credentialId });
+      if (m && plain(record.by) && plain(m.signer) && (!sameSigned(person(record.by), person(m.signer)) || (record.by.account && m.signer.account && record.by.account !== m.signer.account))) refuse(where, 'the signer shown on the record is not the person who signed');
       if (!(m && plain(m.subject)) && before({ at }, after)) refuse(where, chronology);
     };
     (fm.mrb || []).forEach(b => {

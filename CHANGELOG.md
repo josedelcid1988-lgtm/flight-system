@@ -29,7 +29,7 @@ A workspace from outside becomes the shared record in two places: the first `PUT
   MRB convening and votes, CAR steps, NC creation and disposition), or when the order history records the FAIR
   verification by a v82 build.
 - **Signer and time bound.** An MRB decision, CAR closure, stock NC approval or FAIR verification whose displayed
-  signer or time is not the manifest's is refused, and a step dated before the steps it follows is refused whether or
+  signer (name, role, credential and account) or time is not the manifest's is refused, and a step dated before the steps it follows is refused whether or
   not its manifest survives.
 - **No deleted signatures.** A buy-off, an approved order closure, a work order disposition approval, a FAIR
   verification, box 22 review or QA approval, an MRB decision, a CAR closure or a stock NC approval that was signed on

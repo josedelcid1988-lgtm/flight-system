@@ -291,6 +291,10 @@ await check('a signed NC approval edited to look like a migrated escape is refus
 await check('an approval whose displayed signer or time is not the signed one is refused', async () => {
   const signer = exported(); mrbOf(signer).decision.by = { ...mrbOf(signer).decision.by, credentialId: 'ACCT-prov-qm', name: 'Quincy Manager' };
   assert.match((await refused(signer, `${current.mrbId} MRB decision`)).json.error, /signer shown on the record is not the person who signed/);
+  for (const field of [{ name: 'Someone Else' }, { role: 'Technician' }]) {
+    const shown = exported(); Object.assign(ncOf(shown).resolution.by, field);
+    assert.match((await refused(shown, `${current.ncId} disposition approval`)).json.error, /signer shown on the record is not the person who signed/);
+  }
   const when = exported(); carOf(when).closure.at = '2026-10-01T12:00:00.000Z';
   assert.match((await refused(when, `${current.carId} closure`)).json.error, /time shown on the record is not the signed time/);
 });
