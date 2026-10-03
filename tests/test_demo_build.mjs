@@ -279,7 +279,9 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
   await other.evaluate(v=>{if(!localStorage.getItem('skyryse-mes-legacy-demo-review-v1'))localStorage.setItem('skyryse-mes-legacy-demo-review-v1',v);},v);
   for(const end=Date.now()+60000;Date.now()<end;){if(await p.evaluate(()=>!!localStorage.getItem('skyryse-mes-legacy-demo-review-v1')).catch(()=>false))break;await p.waitForTimeout(250);}
   // The page is read once it has decided (the gate shown, or a signed-in user), not a fixed 900 ms after the reload.
-  await p.reload();await p.waitForFunction(()=>!!document.getElementById('sk-legacy-review')||!!(window.skAuth&&skAuth.user()),null,{timeout:20000}).catch(()=>{});await other.close();}
+  // A reload can itself be lost in this harness and leave a blank page; reload again, up to three times, until it decides.
+  for(let i=0;i<3;i++){await p.reload().catch(()=>{});if(await p.waitForFunction(()=>!!document.getElementById('sk-legacy-review')||!!(window.skAuth&&skAuth.user()),null,{timeout:20000}).then(()=>true,()=>false))break;}
+  await other.close();}
  const open=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),user:window.skAuth&&skAuth.user()&&skAuth.user().username}));
  ok('that tab is then closed and its Operations session ends',open.gate&&!open.user,JSON.stringify(open));
  await ctx.close();}
