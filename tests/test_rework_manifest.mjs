@@ -423,5 +423,39 @@ const repair = walk('seed-curated', 'WO-10003', 'Repair', {}, state => { MES.get
   ok('Pair: removing the released operation of a pair is refused and removes nothing', r2.ok === false && /QA released this operation to close/.test(r2.message) && ops2.some(o => o.id === inspection.id) && ops2.some(o => o.id === released.id), JSON.stringify(r2));
 }
 
+// ---- Codex security P1 on #602 (6f40c2f): a QA release closes an NC only for the operation it releases ----
+{
+  const state = MES.upgrade(structuredClone(seed('seed-curated')));
+  const as = (who, fn) => host.withAccount(who, fn, state);
+  const id = 'WO-10006', order = MES.getOrder(state, id);
+  const op = order.operations.find(item => !item.done) || order.operations[0];
+  const created = as(qm, () => MES.createTicket(state, id, op.id, { type: 'NC', title: 'Torque out of spec', description: 'J3 torque below the drawing value.', hold: true }));
+  as(me, () => MES.dispositionTicket(state, id, created.id, { decision: 'Rework', note: 'Rework J3.' }));
+  // The QA Manager adds the rework operation and QA releases it before Quality approves the disposition.
+  const before = new Set(order.operations.map(o => o.id));
+  const early = as(qm, () => reworkOp(state, id, created.id, 'Rework'));
+  const earlyRel = as(qe2, () => MES.approveSequenceChange(state, id));
+  const reworkId = MES.getOrder(state, id).operations.find(o => !before.has(o.id)).id;
+  const approved = as(qe, () => MES.resolveTicket(state, id, created.id, 'Rework approved.', { defectCode: 'DIM', subCode: 'DIM-02' }));
+  const tk = () => MES.getOrder(state, id).tickets.find(x => x.id === created.id);
+  ok('Bound release: setup releases the rework operation before Quality approves', early.ok && earlyRel.ok && approved.ok && tk().reworkPlan.stage === 'Awaiting QA release' && tk().reworkPlan.opId === reworkId, JSON.stringify([early, earlyRel, approved, tk().reworkPlan.stage]));
+  // An unrelated sequence change is released: it does not release the earlier operation for the NC.
+  as(me, () => reworkOp(state, id, undefined, 'Manufacturing'));
+  const unrelated = as(qe2, () => MES.approveSequenceChange(state, id));
+  ok('Bound release: releasing an unrelated sequence change does not close the NC', unrelated.ok && tk().status === 'Open' && tk().manifest === undefined && tk().reworkPlan.stage === 'Awaiting QA release', JSON.stringify([unrelated, tk().status, tk().reworkPlan.stage]));
+  // ME resubmits the operation unchanged, with a reason. The QA Manager who added it cannot release it.
+  const cur = MES.getOrder(state, id).operations.find(o => o.id === reworkId);
+  const resubmit = as(me, () => MES.editOrderOperation(state, id, reworkId, { title: cur.title, description: cur.description, buyoffType: cur.buyoffType, requiresTooling: !!cur.requiresTooling, steps: cur.steps.map(x => x.instruction).join('\n'), reason: `Resubmitted for the QA release of ${created.id}.` }));
+  ok('Bound release: ME can resubmit the released operation unchanged for the NC', resubmit.ok, JSON.stringify(resubmit));
+  const self = as(qm, () => MES.approveSequenceChange(state, id));
+  ok('Bound release: the person who added the operation cannot release it', self.ok === false && /You added the rework operation for/.test(self.message) && tk().status === 'Open', JSON.stringify(self));
+  const rel = as(qe2, () => MES.approveSequenceChange(state, id));
+  ok('Bound release: a different QA account releases the resubmitted operation and the NC closes signed', rel.ok && tk().status === 'Resolved' && plain(tk().manifest) && tk().manifest.subject.opId === reworkId && MES.validate(state) && verify(state).ok, JSON.stringify([rel, verify(state).failures]));
+  // A release forged in the name of the operation's author is refused, even re-signed.
+  const forged = structuredClone(state);
+  { const t = MES.getOrder(forged, id).tickets.find(x => x.id === created.id), o = MES.getOrder(forged, id); t.reworkPlan = { ...t.reworkPlan, releasedBy: { ...t.reworkPlan.opAddedBy } }; t.manifest = host.withAccount(qm, () => MES.signManifest(forged, RELEASE, { ...t.manifest.subject, releasedBy: t.reworkPlan.releasedBy }, t.reworkPlan.releasedAt), forged); }
+  ok('Bound release: a release signed by the operation\'s author is refused by validate and fails verifyManifests', MES.validate(forged) === false && /who added the rework operation it was released on/.test(detail(forged)) && failsAt(forged, new RegExp(`${created.id} rework release`)), JSON.stringify([detail(forged), verify(forged).failures]));
+}
+
 console.log(fails.length ? `FAILS ${JSON.stringify(fails)}` : 'FAILS []');
 process.exit(fails.length ? 1 : 0);
