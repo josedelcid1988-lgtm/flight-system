@@ -2312,7 +2312,9 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // a torque action and records the value: "Torque sealing plug per WI-123", "Carefully torque seal nut per drawing",
   // "Retorque seal nut", "Inspect threads, then torque seal nut". So does any step that names a torque target: a number
   // with a torque unit, or the drawing, WI or specified value. A bare number ("to 3 fasteners") is not a target.
-  const TORQUE_TARGET = /\d\s*(?:in|ft)[- .]?(?:lbs?|lbf|oz)\b|\d\s*(?:inch|foot)[- ]?(?:pounds?|lbs?)\b|\d\s*lbf[- .]?(?:in|ft)\b|\d\s*(?:n[·.]?m|nm)\b|\b(?:drawing|wi|specified)\s+(?:torque\s+)?value\b|\bspecified\s+torque\b/i;
+  const TORQUE_TARGET = /\d\s*(?:in|ft)[- .]?(?:lbs?|lbf|oz)\b|\d\s*(?:inch|foot)[- ]?(?:pounds?|lbs?)\b|\d\s*lbf[- .]?(?:in|ft)\b|\d\s*(?:n[·.]?m|nm)\b|\b(?:drawing|wi|specified)\s+(?:torque\s+)?value\b|\bspecified\s+torque\b(?!\s+(?:locations?|points?|positions?)\b)/i;
+  // "Specified torque locations" names where torque was applied; it is not itself a torque action.
+  const TORQUE_PLACE = /\bspecified\s+$/i, TORQUE_PLACE_AFTER = /^torque\s+(?:locations?|points?|positions?)\b/i;
   const TORQUE_MARKER = '(?:witness\\s+)?(?:stripes?|striping|seals?|sealing|sealant|paints?|painting|marks?|marking)';
   const TORQUE_MARKER_AFTER = new RegExp(`^torque\\s*${TORQUE_MARKER}\\b(?!-)`, 'i');
   // A noun after the marker counts only when it closes the phrase ("Torque stripe inspection", "torque seal condition on
@@ -2327,6 +2329,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       const before = t.slice(0, m.index), after = t.slice(m.index);
       if (/[a-z-]$/i.test(before)) return true;
       if (TORQUE_MARKER_NOUN_AFTER.test(after)) return false;
+      if (TORQUE_PLACE.test(before) && TORQUE_PLACE_AFTER.test(after)) return false;
       return !(TORQUE_MARKER_AFTER.test(after) && TORQUE_MARKER_VERB_BEFORE.test(before));
     });
   };

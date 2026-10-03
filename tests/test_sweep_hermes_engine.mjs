@@ -145,7 +145,9 @@ realm('globalThis.Date = globalThis.__RealDate;')();
     // Eleventh review: any number of modifiers between the marker verb and the marker.
     'Inspect the existing bright red torque stripe', 'Apply a continuous red tamper-evident torque stripe across the nut',
     // Twelfth review: torque witness marks.
-    'Inspect torque witness mark', 'Torque witness mark inspection', 'Apply torque witness marks across nut and stud', 'Torque witness mark missing on B-nut'];
+    'Inspect torque witness mark', 'Torque witness mark inspection', 'Apply torque witness marks across nut and stud', 'Torque witness mark missing on B-nut',
+    // Thirteenth review: specified torque locations are places, not a torque target.
+    'Apply torque stripe to all specified torque locations', 'Inspect torque witness marks at specified torque points'];
   check('MES.stepRecordsTorque: a step that is only torque stripe, seal, paint or mark work records no torque', stripes.every(t => MES.stepRecordsTorque(t) === false), stripes.filter(t => MES.stepRecordsTorque(t)).join(', '));
   // Review of PR #605: a torque action on marked or sealed parts still records the value, tool and unit.
   // Second review: a torque action on seal-named hardware with a torque target records it too.
@@ -161,7 +163,9 @@ realm('globalThis.Date = globalThis.__RealDate;')();
     // Eleventh review: a clause word between the verb and torque still ends the marker phrase.
     'Inspect the fitting threads before final torque seal nut per drawing', 'Inspect the long fitting threads on the housing and torque seal nut per drawing', 'Inspect the fitting then torque seal nut per drawing',
     // Twelfth review: a torque action next to a witness mark still records torque.
-    'Torque nut to 35 in-lb and apply torque witness mark', 'Torque witness bolt per drawing'];
+    'Torque nut to 35 in-lb and apply torque witness mark', 'Torque witness bolt per drawing',
+    // Thirteenth review: specified torque as a value, or a torque action at specified torque locations, still records.
+    'Tighten to specified torque', 'Apply specified torque to bolt', 'Torque all specified torque locations', 'Torque fasteners at specified torque points to 35 in-lb'];
   check('MES.stepRecordsTorque: a torque action records a torque value, also on marked, paint-marked, sealed or seal-named parts', actions.every(t => MES.stepRecordsTorque(t) === true), actions.filter(t => !MES.stepRecordsTorque(t)).join(', '));
   const state = fresh(), order = state.orders.find(o => o.status === 'Draft' && o.operations.length), op = order.operations[0];
   op.steps = [{ id: 'step-1', title: 'Install bracket', instruction: 'Install bracket', recordsTorque: true }];
