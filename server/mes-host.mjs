@@ -170,7 +170,7 @@ export function createHost(indexPath, html = fs.readFileSync(indexPath, 'utf8'))
     'MES.addEquipmentUnit', 'MES.createProject', 'MES.addProjectObjective', 'MES.addProjectMilestone',
     'MES.setProjectSensitivity', 'MES.linkWorkOrderProject', 'MES.createSprint', 'MES.recordMaintenance',
     'MES.closeMaintenance', 'MES.recordExternalReceipt', 'MES.clockOnOperation', 'MES.clockOffOperation',
-    'MES.postInventoryTransaction', 'MES.submitEngineeringChange', 'MES.reviewFair', 'MES.recordTraining',
+    'MES.postInventoryTransaction', 'MES.submitEngineeringChange', 'MES.reviewFair', 'MES.signFairImpactAssessment', 'MES.recordTraining',
     'MES.saveTraining', 'MES.importStamps', 'MES.recordSupportAccess', 'MES.saveSourceInspectionCodes',
     'MES.saveOperationSubcodes', 'MES.saveMrbTrainingTiers', 'MES.recordSourceInspection',
     'FlightPlan.addPlannedOrder', 'FlightPlan.firm', 'FlightPlan.cancel', 'FlightPlan.convert',

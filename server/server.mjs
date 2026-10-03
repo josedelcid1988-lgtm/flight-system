@@ -98,6 +98,21 @@ export async function unlockAccount(store, username, reason, by) {
 
 // Bind address when none is named: loopback only, so a server started with the defaults is reachable from this
 // machine and its reverse proxy, never from the network. --host, FLIGHT_HOST or options.host binds wider.
+// Both stores cut an audit detail at 4,000 characters, so the migrated-escape import audit is written as bounded rows
+// instead of one row an initial upload with hundreds of migrated NCs would cut mid-record (Codex r4170271763). Every row
+// carries its batch number, the batch count, the total and the SHA-256 of the full list, so a missing row is visible.
+export const LEGACY_IMPORT_AUDIT_CHARS = 3000;
+export function legacyEscapeImportAudits(list) {
+  const digest = sha256hex(JSON.stringify(list)), batches = [];
+  let batch = [], size = 0;
+  for (const nc of list) {
+    const n = JSON.stringify(nc).length + 1;
+    if (batch.length && size + n > LEGACY_IMPORT_AUDIT_CHARS) { batches.push(batch); batch = []; size = 0; }
+    batch.push(nc); size += n;
+  }
+  if (batch.length) batches.push(batch);
+  return batches.map((ncs, i) => ({ action: 'legacy-escape-import', detail: { batch: i + 1, batches: batches.length, total: list.length, digest, ncs } }));
+}
 export const DEFAULT_HOST = '127.0.0.1';
 // Session lifetime: minutes without activity and hours since sign-in. Options, then environment, then defaults.
 export const SESSION_DEFAULTS = Object.freeze({ idleMinutes: 30, maxHours: 12 });
@@ -385,6 +400,9 @@ export function createServer(options = {}) {
     // conflict before any comparison against that workspace, so the loser never reads as a calibration or archive refusal.
     if (expectedEtag === null && beforeRow) return { conflict: true };
     const beforeState = beforeRow ? JSON.parse(beforeRow.json) : null;
+    // Every signature is verified before any closed order leaves the document: an order moved to the archive is no longer
+    // in the workspace validState checks below, and not every caller validated before committing (Codex r4161912798).
+    { const pre = host.MES.verifyManifests(state); if (!pre.ok) { const f = pre.failures[0] || {}; return { problem: `A signed record failed verification at ${f.where || 'an unknown record'}: ${f.reason || 'invalid manifest'}.` }; } }
     const r = host.MES.archiveOrders ? host.MES.archiveOrders(state) : { ok: true, archived: [] };
     if (!r.ok) return { problem: r.message };
     for (const e of r.archived) if (!host.MES.archivedOrderValid(e)) return { problem: `${e.order.id} could not move to the archive: it does not validate as a closed work order. It stays in the live workspace.` };
@@ -392,6 +410,12 @@ export function createServer(options = {}) {
     // The calibration log is append-only against the stored copy: a write that drops, changes or reorders an entry
     // the server holds is refused, whatever the head in the new document says (#116, #117).
     { const changed = host.MES.calibrationLogChanges(beforeState, state); if (changed) return { problem: changed }; }
+    // A migrated-escape record exempts an unsigned NC closure from the signature check, so it is accepted only as the stored
+    // copy holds it, as the one-time backfill of a stored migrated NC, or from the migration of a stored closed escape (#305).
+    { const forged = host.MES.legacyEscapeChanges(beforeState, state); if (forged) return { problem: forged }; }
+    // An initial upload has no stored copy to anchor them, so the importing QA Manager's account is recorded against every
+    // unsigned migrated-escape closure it brings in, in the same transaction as the document write.
+    if (!beforeState) { const legacy = host.MES.legacyEscapeImports(state); if (legacy.length) audits = [...audits, ...legacyEscapeImportAudits(legacy)]; }
     // Superseded calibration entries an archive record in this write moved out of the live log (#130) go to the
     // calibration archive exactly as the stored log held them, in the same transaction as the document write.
     const calibrationRows = host.MES.calibrationArchivedEntries(beforeState, state).map(({ entry, recordId }) => { const json = JSON.stringify(entry); return { id: entry.id, tag: entry.tag, recordId, json, sha256: sha256hex(json), by: username }; });

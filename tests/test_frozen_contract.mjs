@@ -69,8 +69,45 @@ const SOD=[
   ['Support Access changes only after its log entry is saved',"if(detail.recorded!==true)return {ok:false,",1],
   ['nobody inspects their own work: buy-off',"    { const own = ownWorkRefusal(state, order, operation); if (own) return own; }",1],
   ['nobody inspects their own work: step check',"if (checked) { const own = ownWorkRefusal(state, order, operation); if (own) return own; }",1],
-  ['the person who verified a FAIR cannot sign box 22',"    if (fair.verified && fair.verified.by && by.credentialId === fair.verified.by.credentialId) return fail('The FAI reviewer in box 22 is a second person.",1],
+  ['the person who verified a FAIR cannot sign box 22',"    if (fairSelfReview(fair, by)) return fail('The FAI reviewer in box 22 is a second person.",1],
+  ['the box 22 second-person rule is a single check shared by the engine and validation',"const fairSelfReview = (fair, by) => !!(fair && plain(fair.verified) && plain(by) && ((plain(fair.verified.by) && by.credentialId === fair.verified.by.credentialId) || (plain(fair.verified.manifest) && plain(fair.verified.manifest.signer) && by.credentialId === fair.verified.manifest.signer.credentialId)));",1],
+  ['validation refuses a box 22 signed by the FAIR verifier',"&& !fairSelfReview(f, f.reviewed.by)",1],
+  ['the Skyryse QA approval of a FAIR signs the box 22 review',"{ fair: fairId(order), verified: fair.verified.manifest.hash, reviewed: fair.reviewed.manifest.hash,",1],
   ['the Skyryse QA approval of a FAIR waits for box 22',"    if (!plain(fair.reviewed)) return fail('Box 22 is not signed.",1],
+  ['every load and save refuses a signed record or signature that a reached stage requires but is missing',"const v = state => origValidate(state) && maneuverValid(state) && MES.missingSignatures(state).length === 0;",1],
+  ['the shared workspace is not opened when a signed record fails verification',"notify('The shared workspace has a signed record that fails verification. Saving is blocked.');",1],
+  ['a shared workspace refresh is refused when a signed record fails verification',"throw Error('The server workspace has a signed record that fails verification at '",1],
+  ['a standalone save recomputes every signature and is refused when one fails',"{const mv=MES.verifyManifests(state);if(!mv.ok){const f=mv.failures[0]||{};dropUncommittedServerCommands();state=structuredClone(lastSaved);",1],
+  ['a CAR closure signs each action\'s completion evidence and completer, and who closed it and when',"    const subject = MES.carClosureSubject(car, note, true, who, at);",1],
+  ['a signature made by this build binds who signed and when inside the signed hash',"const signedBy = (by, at) => ({ signer: signerOf_(by), signedAt: at ?? null });",1],
+  ['a stock NC approval signs the disposition record, the approver and the cited MRB decision',"    const subject = MES.ncApprovalSubject(t, note, who, at, true, MES.mrbDecisionHashOf(state, t));",1],
+  ['the FAIR verification, box 22 and Skyryse QA approval sign the recorded inspection stamp',"verifierStamp: by.stamp ?? null,",1],
+  ['an unsigned migrated-escape closure is exempt only through the structured record the migration writes',"&& legacyEscapeValid(t.resolution.legacy) &&",1],
+  // QA Manager decision on #238: the FAIR binds the work order revision and locks the work order; tests/test_fair_rev_lock.mjs drives each rule.
+  ['the FAIR verification signs the work order revision it was verified at',"rawReasons: [...fair.reasons], woRev, verifierStamp: by.stamp ?? null,",1],
+  ['verifyManifests refuses a changed or removed FAIR work order revision',"if (Object.hasOwn(vs, 'woRev') ? !same(vs.woRev, fair.verified.woRev) : fair.verified.woRev !== undefined) drift.push('work order revision');",1],
+  ['the FAIR lock refusal text',"const FAIR_LOCK_MESSAGE = \"This work order's FAIR is signed. Only a QA Manager can change it.\";",1],
+  ['only the QA Manager role lifts the FAIR lock; Master Access does not count',"const fairLockRefusal = (state, order) => fairSigned(order) && !qaManagerSignedIn(state) ? fail(FAIR_LOCK_MESSAGE) : null;",1],
+  ['the QA Manager test is the account role list, not Master Access',"    return roles.includes('qm');\n",1],
+  ['the FAIR lock guards engineering change submit, ECR approval, QA re-release, operation add, remove and edit, rework links, sequence release, reject and withdraw, and serial assign and void',"    { const locked = fairLockRefusal(state, order); if (locked) return locked; }",11],
+  ['the FAIR lock guards standard rework',"{ const o0 = state.orders.find(x => x.id === orderId), locked = o0 ? fairLockRefusal(state, o0) : null; if (locked) return locked; }",1],
+  ['a change on a signed FAIR is refused when the revision log is full: sequence release, engineering change QA re-release, serial assign and void',"    { const full = fairRollRefusal(state, order); if (full) return full; }",4],
+  ['a reopened FAIR keeps the signatures it supersedes, in the manual and the automatic reopen',"    supersedeFairSignatures(order, ",2],
+  ['verifyManifests rechecks the signatures a reopened FAIR kept',"failures.push(...fairSupersededProblems(order));",1],
+  ['nobody signs a FAIR impact assessment for a change they released or made',"    if (fairImpactChangers(order, from, to).includes(actor(state).credentialId)) return fail(FAIR_IMPACT_SELF_MESSAGE);",1],
+  ['verifyManifests refuses an impact assessment signed by someone who released or made a change it covers',"if (plain(a.by) && fairImpactChangers(order, a.fromWoRev, a.toWoRev).includes(a.by.credentialId))",1],
+  ['neither split path runs on a signed FAIR',"    if (fairSigned(order)) return fail(FAIR_SPLIT_MESSAGE);",2],
+  ['a serial change on a signed FAIR rolls the work order revision',"const rollForSignedFair = (state, order, summary, change) => fairSigned(order) ? rollWorkOrderRevision(state, order, summary, [change], actor(state)) : null;",1],
+  ['a signed FAIR is reopened only by a QA Manager',"if (!qaManagerSignedIn(state)) return fail('This FAIR is signed. Only a QA Manager can reopen it.');",1],
+  ['only a QA Manager signs a FAIR impact assessment',"if (!qaManagerSignedIn(state)) return fail('Only a QA Manager can sign a FAIR impact assessment.');",1],
+  ['the FAIR impact assessment needs all three statements',"if (!(yes(input0.fairValid) && yes(input0.noOperationImpact) && yes(input0.noDrawingDeviation))) return fail(",1],
+  ['the FAIR impact assessment is signed with the signer stamp and PIN, never a Master Access override',"const v = inspectorSign(state, ['Quality', '8130-9 Authorized Inspector'], execution, false); if (!v.ok) return v;",1],
+  ['the FAIR impact assessment signs the verification hash, both revisions, the change list, the drawing, the statements and the rationale',"const fairImpactSubject = (order, fair, a) => ({ fair: fairId(order), verified: plain(fair.verified) && plain(fair.verified.manifest) ? fair.verified.manifest.hash : null, fromWoRev: a.fromWoRev, toWoRev: a.toWoRev, changes: a.changes, drawing: a.drawing, statements: a.statements, rationale: a.rationale,",1],
+  ['verifyManifests rechecks every FAIR impact assessment',"failures.push(...fairImpactProblems(order));",1],
+  ['MES.validate refuses a work order whose FAIR impact assessment fails',"if (plain(order) && plain(order.fair) && fairImpactProblems(order).length) return false;",1],
+  ['an approved engineering change on a signed FAIR reopens it automatically (Jose, #238)',"    const fairReopened = fairSigned(order);\n    if (fairReopened) {\n      const signedAt = fairWoRev(order);\n      supersedeFairSignatures(order, ",1],
+  ['closeOrder and decideOrderClosure refuse a FAIR revision mismatch with no impact assessment at the current revision',"    { const gap = fairRevisionGap(order); if (gap) return fail(gap); }",2],
+  ['the recorded signer and time of a signed record must be the manifest signer and time',"const signerMismatch = (rec, m) => !plain(rec.by) || !plain(m.signer) || rec.by.credentialId !== m.signer.credentialId || rec.by.name !== m.signer.name || rec.at !== m.at;",1],
   // #579: one stamp validity rule (issue date reached, Active, not expired, additional-stamp training current) for
   // operation buy-offs, the inspection capability and the FAIR, 8130-9 and AQI signatures.
   ['one stamp validity rule',"  function stampValidityProblem(holder, day, state) {",1],
@@ -85,9 +122,13 @@ for(const [label,text,count] of SOD) has(label,text,count);
 // ---- the same self-target refusal on the server access route ----
 {const serverSrc=fs.readFileSync(path.join(ROOT,'server','server.mjs'),'utf8');const text="if (target.username === actor.username) return fail(403, 'Nobody changes their own roles. Another QA Manager, Quality Supervisor, or Master Access account must do it.');";const n=serverSrc.split(text).length-1;ok('the server refuses any account changing its own roles',n===1,`found ${n} of: ${text.slice(0,120)}`);}
 
+{const serverSrc=fs.readFileSync(path.join(ROOT,'server','server.mjs'),'utf8');const text="{ const forged = host.MES.legacyEscapeChanges(beforeState, state); if (forged) return { problem: forged }; }";const n=serverSrc.split(text).length-1;ok('the server refuses a migrated-escape record the stored workspace does not hold',n===1,`found ${n} of: ${text.slice(0,120)}`);}
+{const serverSrc=fs.readFileSync(path.join(ROOT,'server','server.mjs'),'utf8');const text="if (!beforeState) { const legacy = host.MES.legacyEscapeImports(state); if (legacy.length) audits = [...audits, ...legacyEscapeImportAudits(legacy)]; }";const n=serverSrc.split(text).length-1;ok('an initial upload audits every migrated-escape closure under the importing account',n===1,`found ${n} of: ${text.slice(0,120)}`);}
+
 // ---- what an approval records ----
 has('a signature manifest names the signer, meaning, time, signed subject, SHA-256 and build',"return { meaning, at, signer, algorithm: 'SHA-256', hash: sha256(canonical(subject)), subject: JSON.parse(JSON.stringify(subject)), authenticated: false, build: buildStamp(),",1);
-has('the signer is the signed-in account with its credential',"const signer = acct ? { name: acct.name, role: acct.role, credentialId: acct.credentialId, account: acct.account }",1);
+has('the signer is the signed-in account with its credential',"function manifestSigner(state) { const acct = accountActor(); return acct ? { name: acct.name, role: acct.role, credentialId: acct.credentialId, account: acct.account }",1);
+has('every manifest names its signer through manifestSigner',"    const signer = manifestSigner(state);",1);
 
 // ---- #542: a work order in QA review is frozen; only a signed QA send back returns it to Building ----
 has('the QA review freeze text',"const qaFreezeMessage = 'This work order is in QA review. Ask Quality to send it back to Building before changing it.';",1);

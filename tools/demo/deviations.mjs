@@ -147,8 +147,8 @@ const LIST = [
     replace: (ctx, m, id) => ` function grantActive(u,cap){return true;/* DEMO ${id} */` },
   { area: 'Separation of duties', title: 'The person who verified a FAIR may sign box 22',
     why: 'One person can verify a FAIR and review it in box 22, so an FAI order can be walked alone. Production refuses this to every role, Master Access and Support Access included. The QA approval still waits for box 22.',
-    find: '    if (fair.verified && fair.verified.by && by.credentialId === fair.verified.by.credentialId) return fail(', count: 1,
-    replace: (ctx, m, id) => `    if (false /* DEMO ${id} */ && fair.verified && fair.verified.by && by.credentialId === fair.verified.by.credentialId) return fail(` },
+    find: '  const fairSelfReview = (fair, by) => ', count: 1,
+    replace: (ctx, m, id) => `  const fairSelfReview = (fair, by) => false /* DEMO ${id} */ && ` },
   { area: 'Data', title: 'Demo-only Flight Maneuver examples',
     why: 'Sample corrective actions, SPRs and NCs load only in the explicitly marked demo build. Production opens a valid empty register and never replaces damaged records with examples.',
     find: 'window.FlightManeuver.ensure(state);const FM=window.FlightManeuver;', count: 1,
@@ -211,6 +211,10 @@ const LIST = [
     why: 'Production refuses a FAIR, 8130-9 or AQI signature when the signer has no current stamp of an allowed type (expired, not yet issued, or an additional stamp paused for training, #579). The demo signs with the account\'s first Active stamp of an allowed type, as it did before that rule, so a scenario is not stopped by stamp dates. An account with no Active stamp of an allowed type is still refused.',
     find: '    const current = checked.find(c => !c.problem);\n', count: 1,
     replace: (ctx, m, id) => `    const current = checked.find(c => !c.problem) || checked[0]; /* DEMO ${id} */\n` },
+  { area: 'Separation of duties', title: 'An 8130-9 completed and AQI-signed by one person needs no self-signature record',
+    why: 'The demo lifts the 8130-9 preparer and AQI comparison (D-20), so a demo AQI signature by the person who completed the form records no self-signature. Verification does not flag that pairing in the demo. Production records and checks it.',
+    find: '  const aqiSelfSignMismatch = p => ', count: 1,
+    replace: (ctx, m, id) => `  const aqiSelfSignMismatch = p => false /* DEMO ${id} */ && ` },
 ];
 
 export const DEVIATIONS = LIST.map((d, i) => Object.freeze({ ...d, id: `D-${i + 1}` }));
