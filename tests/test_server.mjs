@@ -494,6 +494,16 @@ try {
     assert.equal(summary.length, startSuppressed + 1, 'one summary row for the suppressed minute');
     assert.equal(JSON.parse(summary[0].detail).suppressed, 5, 'it counts the five refusals that were not written');
     assert.equal((await rows('action-refused')).length, start + 31, 'the new minute writes its refusal again');
+    // Concurrent refusals across a minute boundary share one window: one summary row and at most 30 refusal rows.
+    for (let i = 0; i < 29; i += 1) await api('POST', `/workspace/actions/MES.fill${i}`, { token, body: { args: [] }, headers: { 'If-Match': etag } });
+    for (let i = 0; i < 4; i += 1) await api('POST', `/workspace/actions/MES.over${i}`, { token, body: { args: [] }, headers: { 'If-Match': etag } });
+    now += 61 * 1000;
+    const beforeBurst = (await rows('action-refused')).length, summariesBefore = (await rows('action-refused-suppressed')).length;
+    const burst = await Promise.all(Array.from({ length: 40 }, (_, i) => api('POST', `/workspace/actions/MES.burst${i}`, { token, body: { args: [] }, headers: { 'If-Match': etag } })));
+    assert.ok(burst.every(result => result.status === 404), 'every concurrent probe is refused');
+    assert.equal((await rows('action-refused-suppressed')).length, summariesBefore + 1, 'one summary row for the previous minute, not one per concurrent request');
+    assert.equal(JSON.parse((await rows('action-refused-suppressed'))[0].detail).suppressed, 4);
+    assert.equal((await rows('action-refused')).length, beforeBurst + 30, 'a concurrent burst writes at most 30 refusal rows in the new minute');
     assert.equal(server.store.verifyAudit().ok, true, 'the audit chain still verifies');
   });
   await check('bulk account writes reject client-supplied roles, grants, training and Support Access', async () => {

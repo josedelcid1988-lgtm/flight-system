@@ -206,19 +206,22 @@ export function createServer(options = {}) {
   // account's next refusal falls in a later minute. The response to the caller is the same either way.
   const ACTION_REFUSAL_LIMIT = 30, ACTION_REFUSAL_WINDOW_MS = 60 * 1000;
   const refusalWindows = new Map();
+  // The window bookkeeping is done synchronously before any audit write is awaited, so concurrent refusals at a minute
+  // boundary see one window: one summary row, and at most ACTION_REFUSAL_LIMIT refusal rows, per account per minute.
   const auditActionRefusal = async (username, detail) => {
-    const at = clock(); let w = refusalWindows.get(username);
+    const at = clock(); let w = refusalWindows.get(username), summary = null;
     if (w && at - w.start >= ACTION_REFUSAL_WINDOW_MS) {
-      if (w.suppressed) await store.audit(username, 'action-refused-suppressed', { suppressed: w.suppressed, windowStart: new Date(w.start).toISOString(), limit: ACTION_REFUSAL_LIMIT });
+      if (w.suppressed) summary = { suppressed: w.suppressed, windowStart: new Date(w.start).toISOString(), limit: ACTION_REFUSAL_LIMIT };
       w = null;
     }
     if (!w) {
       if (refusalWindows.size >= 10000) for (const [key, value] of refusalWindows) if (at - value.start >= ACTION_REFUSAL_WINDOW_MS && !value.suppressed) refusalWindows.delete(key);
       w = { start: at, written: 0, suppressed: 0 }; refusalWindows.set(username, w);
     }
-    if (w.written >= ACTION_REFUSAL_LIMIT) { w.suppressed += 1; return; }
-    w.written += 1;
-    await store.audit(username, 'action-refused', detail);
+    const write = w.written < ACTION_REFUSAL_LIMIT;
+    if (write) w.written += 1; else w.suppressed += 1;
+    if (summary) await store.audit(username, 'action-refused-suppressed', summary);
+    if (write) await store.audit(username, 'action-refused', detail);
   };
   const send = (res, status, body, headers = {}) => { const json = body === undefined ? '' : JSON.stringify(body); res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers }); res.end(json); };
   // An unexpected failure is logged here with its detail and a reference. The caller gets the reference and a
