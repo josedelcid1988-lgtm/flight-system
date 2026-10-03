@@ -4857,6 +4857,10 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     state.orders.forEach(order => order.operations.forEach(operation => {
       if (!Array.isArray(operation.steps) || !operation.steps.length || !operation.steps.every(stepValid)) operation.steps = defaultSteps(operation.id, operation.title);
       if (!plain(operation.stepChecks)) operation.stepChecks = {};
+      // Workspaces saved under the old add rule hold a false setting for real torque steps ("Torque sealing plug to 35 in-lb").
+      // An unfinished step of an open operation is raised to true when the rule now requires a reading. A finished step, a
+      // closed order and a released master WI keep what was recorded, and a true setting is never lowered.
+      if (order.status !== 'Closed' && !operation.done) operation.steps.forEach(step => { if (step.recordsTorque === false && !step.locked && !Object.hasOwn(operation.stepChecks, step.id) && stepRecordsTorque(`${step.title ?? ''}. ${step.instruction ?? ''}`)) step.recordsTorque = true; });
       if (!Array.isArray(operation.attachments)) operation.attachments = [];
       if (!BUYOFF_TYPES.includes(operation.buyoffType)) operation.buyoffType = defaultBuyoffType(operation.id);
       if (typeof operation.inspectionPoint !== 'boolean') operation.inspectionPoint = operation.id === 'op-040' && INSPECTION_BUYOFF_TYPES.includes(operation.buyoffType);

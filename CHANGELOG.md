@@ -42,7 +42,10 @@ numbers and record number formats have not changed in any entry below.
   tool and unit. "At specified torque locations" is exempt only beside marker work on the same step. Adding and
   editing an operation, default steps and the migration of older steps (title and instruction read as two
   sentences) all use it, so "Apply torque stripe" no longer asks for a torque reading after an edit. An unchanged
-  step keeps its saved setting.
+  step keeps its saved setting. Workspaces saved under the old add rule hold a false setting for real torque steps
+  ("Torque sealing plug to 35 in-lb"). When a workspace loads, an unfinished step of an open operation with a false
+  setting is raised to recording torque if the rule now requires it. A step that is already checked, a step of a
+  closed order and a released master WI step keep their saved setting, and a true setting is never lowered.
 - **Inspection buy-off on edit (#590).** Two checks that could never fail were removed. Editing an Inspection or
   Source Inspection operation to a buy-off that is not an inspection buy-off is refused before anything changes
   (the edit already refused it for Inspection, later in the function; Source Inspection was not covered). The

@@ -233,6 +233,33 @@ realm('globalThis.Date = globalThis.__RealDate;')();
   check('a legacy master WI step with its torque target in the instruction is migrated as recording torque', master[0].recordsTorque === true && master[1].recordsTorque === false, JSON.stringify(master.map(x => x.recordsTorque)));
 }
 
+// Codex P1 on PR #605: a workspace saved under the old add rule holds recordsTorque false for a real torque step such as
+// "Torque sealing plug to 35 in-lb". Loading raises an unfinished step of an open operation. It never touches a step that is
+// already checked, a step of a closed order or a released master WI, and it never lowers a true setting.
+{
+  const state = MES.upgrade(JSON.parse(DEMO));
+  const open = state.orders.find(o => o.status !== 'Closed' && o.operations.some(op => !op.done)), closed = state.orders.find(o => o.status === 'Closed');
+  const op = open.operations.find(item => !item.done), closedOp = closed.operations[0];
+  const step = (title, instruction, recordsTorque) => ({ id: `step-mig-${title.replace(/\W+/g, '-').toLowerCase()}`, title, instruction, recordsTorque });
+  const real = step('Torque sealing plug', 'Tighten to 35 in-lb with a calibrated driver.', false), marker = step('Apply torque stripe', 'Stripe across the nut and housing.', false);
+  const done = step('Torque seal retaining nut', 'Torque per drawing.', false), kept = step('Torque jam nut', 'Torque to 20 in-lb.', true), markerTrue = step('Apply torque stripe again', 'Stripe the nut.', true);
+  const closedReal = step('Torque sealing plug', 'Tighten to 35 in-lb with a calibrated driver.', false);
+  op.steps.push(real, marker, done, kept, markerTrue);
+  op.stepChecks[done.id] = { checked: true, at: '2026-09-01T00:00:00.000Z' };
+  closedOp.steps.push(closedReal);
+  const masterWI = state.masterWIs[0].operations[0], masterReal = step('Torque sealing plug', 'Tighten to 35 in-lb with a calibrated driver.', false);
+  masterWI.steps.push(masterReal);
+  check('the migration fixture is a valid workspace', MES.validate(state));
+  MES.ensureMasterWIs(state);
+  check('an unfinished real torque step with a false setting is raised to recording torque', real.recordsTorque === true);
+  check('a marker-only step with a false setting stays false', marker.recordsTorque === false);
+  check('a step that is already checked keeps the setting it was checked under', done.recordsTorque === false);
+  check('a step of a closed order keeps its setting', closedReal.recordsTorque === false);
+  check('a released master WI step keeps its setting', masterReal.recordsTorque === false);
+  check('a true setting is never lowered, even when the rule would say marker-only', kept.recordsTorque === true && markerTrue.recordsTorque === true);
+  check('the migrated workspace is still valid', MES.validate(state));
+}
+
 // ---- #590: an inspection operation keeps an inspection buy-off on edit ----------------------------------------------
 {
   for (const [classification, extra] of [['Inspection', {}], ['Source Inspection', { sourceInspectionCode: 'CSI' }]]) {
