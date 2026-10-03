@@ -87,6 +87,31 @@ try {
     const after = { audit: server.store.db.prepare('SELECT COUNT(*) AS n FROM audit').get().n, accounts: JSON.stringify((await api('GET', '/auth/accounts', { token: adminToken })).json.users) };
     assert.deepEqual(after, before);
   });
+  // One version: a workspace write that lands while the server reads the accounts makes it read everything again;
+  // writes that keep landing are refused with a plain message instead of an account list that does not match.
+  await check('a workspace change during the read is re-read once, and the report names the version it matches', async () => {
+    const seed = JSON.stringify(server.host.MES.seed());
+    server.store.putDoc('default', seed, undefined, 'ar-admin');
+    const real = server.store.accounts.bind(server.store); let calls = 0;
+    server.store.accounts = (...args) => { calls += 1; if (calls === 1) server.store.putDoc('default', seed, undefined, 'ar-other'); return real(...args); };
+    try {
+      const r = await api('GET', '/auth/access-report', { token: qmToken });
+      assert.equal(r.status, 200, JSON.stringify(r.json));
+      assert.equal(calls, 2, 'the accounts were read again after the workspace changed');
+      assert.equal(r.json.workspaceEtag, server.store.getDoc('default').etag, 'the report names the version it was read against');
+    } finally { server.store.accounts = real; }
+  });
+  await check('a workspace that keeps changing during the read is refused with a plain message and no account list', async () => {
+    const seed = JSON.stringify(server.host.MES.seed());
+    const real = server.store.accounts.bind(server.store);
+    server.store.accounts = (...args) => { server.store.putDoc('default', seed, undefined, 'ar-other'); return real(...args); };
+    try {
+      const r = await api('GET', '/auth/access-report', { token: qmToken });
+      assert.equal(r.status, 409, JSON.stringify(r.json));
+      assert.equal(r.json.error, 'The shared workspace changed while the access review was being built. Try again in a moment.');
+      assert.ok(!('users' in r.json));
+    } finally { server.store.accounts = real; }
+  });
   await check('the refusal text carries no em dash', async () => {
     const r = await api('GET', '/auth/access-report', { token: techToken });
     assert.ok(!/—/.test(r.json.error));
