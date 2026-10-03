@@ -305,6 +305,20 @@ await check('a deleted manifest whose step is moved before v82 shipped is refuse
   assert.match((await refused(n, `${current.ncId} disposition approval`)).json.error, /dated before the nonconformance or its disposition/);
 });
 
+// Codex review on #631 (7bbda6d): the FAIR review and QA approval signers and times, and the FAIR inspection stamp.
+await check('a FAIR QA approval whose displayed signer or time is not the signed one is refused', async () => {
+  const signer = exported(); MES.getOrder(signer, 'WO-10002').fair.approved.by.name = 'Someone Else';
+  assert.match((await refused(signer, 'WO-10002 FAIR QA approval')).json.error, /signer shown on the record is not the person who signed/);
+  const when = exported(); MES.getOrder(when, 'WO-10002').fair.approved.at = '2026-09-20T12:00:00.000Z';
+  assert.match((await refused(when, 'WO-10002 FAIR QA approval')).json.error, /time shown on the record is not the signed time/);
+});
+await check('a FAIR verification whose shown inspection stamp changed after signing is refused', async () => {
+  const doc = exported(), f = fairOf(doc);
+  assert.ok(Object.hasOwn(f.verified.manifest.subject, 'stamp'), 'the verification signed its stamp');
+  f.verified.by.stamp = { number: 'Q-999', type: 'Quality' };
+  assert.match((await refused(doc, 'WO-10004 FAIR verification')).json.error, /Forms 1 to 3 no longer match what was verified/);
+});
+
 await check('the browser migration dry run refuses the #481 forgery and accepts the unedited export', async () => {
   const forged = exported(), f = fairOf(forged);
   f.chars[1].result = '2.790'; f.verified.at = BACKDATED; downgrade(f.verified.manifest, BACKDATED);

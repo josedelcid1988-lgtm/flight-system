@@ -31,6 +31,9 @@ A workspace from outside becomes the shared record in two places: the first `PUT
 - **Signer and time bound.** An MRB decision, CAR closure, stock NC approval or FAIR verification whose displayed
   signer (name, role, credential and account) or time is not the manifest's is refused, and a step dated before the steps it follows is refused whether or
   not its manifest survives.
+- **FAIR signatures.** The box 22 review and QA approval are held to the same signer, time and chronology rules as
+  the verification. A FAIR verification now signs the inspection stamp shown in blocks 20 and 21, and import compares
+  it; verifications signed before this change carry no stamp in their subject, so theirs is not bound.
 - **No deleted signatures.** A buy-off, an approved order closure, a work order disposition approval, a FAIR
   verification, box 22 review or QA approval, an MRB decision, a CAR closure or a stock NC approval that was signed on
   or after 2026-09-28, or has no readable time, and has lost its manifest is refused; `MES.validate` alone accepted

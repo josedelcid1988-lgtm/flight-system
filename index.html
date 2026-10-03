@@ -3594,7 +3594,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       const f = order.fair; if (!plain(f) || !plain(f.verified)) return;
       const m = plain(f.verified.manifest) ? f.verified.manifest : null, where = `${order.id} FAIR verification`, at = m ? m.at : f.verified.at;
       signedStep(f.verified, where, [], '');
-      if (m && plain(m.subject)) { const by = plain(f.verified.by) ? f.verified.by : {}, live = fairBound({ ...fairSnapshot(state, order), ...(by.override ? { override: by.override } : {}) }); if (!live || !sameSigned(fairBound(m.subject), live)) refuse(where, 'Forms 1 to 3 no longer match what was verified'); return; }
+      [['reviewed', 'FAIR review (box 22)'], ['approved', 'FAIR QA approval']].forEach(([k, label]) => signedStep(f[k], `${order.id} ${label}`, [f.verified.at], 'it is dated before the verification it approves'));
+      if (m && plain(m.subject)) { const by = plain(f.verified.by) ? f.verified.by : {}, live = fairBound({ ...fairSnapshot(state, order), ...(Object.hasOwn(m.subject, 'stamp') ? { stamp: by.stamp || null } : {}), ...(by.override ? { override: by.override } : {}) }); if (!live || !sameSigned(fairBound(m.subject), live)) refuse(where, 'Forms 1 to 3 no longer match what was verified'); return; }
       const days = (f.chars || []).map(c => plain(c) && /^\d{4}-\d{2}-\d{2}$/.test(c.date || '') ? c.date : null).filter(Boolean);
       const verifiedEvent = new RegExp(`^AS9102 FAIR ${escaped(order.id)}\\b.* verified`);
       if (days.some(d => d > String(at).slice(0, 10))) refuse(where, 'it is dated before characteristic results it verifies');
@@ -6124,7 +6125,9 @@ const OP_BOM_MAX = 12;
     const gaps = fairReview(state, order); if (gaps.length) return fail(gaps.join(' '));
     const v = inspectorSign(state, INSPECTION_BUYOFF_TYPES, execution); if (!v.ok) return v;
     const at = new Date().toISOString(), snap = fairSnapshot(state, order);
-    fair.verified = { by: signerOf(state, v), at, manifest: signManifest(state, 'AS9102 FAIR verified (blocks 20 and 21)', { ...snap, ...(v.override ? { override: v.override } : {}) }, at) };
+    // The inspection stamp shown in blocks 20 and 21 is signed with the forms, so it cannot be changed afterwards.
+    const by = signerOf(state, v);
+    fair.verified = { by, at, manifest: signManifest(state, 'AS9102 FAIR verified (blocks 20 and 21)', { ...snap, stamp: by.stamp || null, ...(v.override ? { override: v.override } : {}) }, at) };
     fair.status = 'Verified';
     record(state, order, `AS9102 FAIR ${fairId(order)} verified (blocks 20 and 21): ${fair.type} FAI, ${fair.chars.length} characteristics, nonconformance ${snap.form1.nonconformance}.`);
     return { ok: true, message: 'FAIR verified. A second person reviews and approves it in box 22 next.' };
