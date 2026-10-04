@@ -11,6 +11,17 @@ What changed in Flight System, newest first. The build id is set in `VERSION.md`
 the end of `VERSION.md` names the exact files and the suite results for the build. Storage keys, form
 numbers and record number formats have not changed in any entry below.
 
+## Review & close writes a signed quality review closure (#706)
+
+- **Signed.** Review & close now writes `qualityClose` on the work order: the person, their credential, the time
+  and a SHA-256 signature manifest ("Quality review complete. Work order closed"), the same as the Obsolete and
+  Scrap closure path. The signature binds the work order, part, revisions, serial, quantity, the hash of every
+  operation buy-off and of the FAIR approval, and who signed and when.
+- **Rechecked.** Validation and manifest verification recompute the hash, so an edit to a bound field after
+  closure, a removed manifest, a record copied to another order, or a reopened order fails and the write rolls back.
+- **Saved workspaces open as they are.** Orders closed before this change carry no record, stay valid, and get no
+  signature invented. Who may close is unchanged (`approve-wo`); no new separation-of-duties rule at closure.
+
 ## Work orders frozen in QA review; signed QA send back to Building (#542)
 
 QA Manager decision: once a work order is sent to QA, no changes are allowed. Saved workspaces open as they are.

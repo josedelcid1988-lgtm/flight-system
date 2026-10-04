@@ -104,6 +104,10 @@ has('validation rechecks every send back',"    if (!sendBacksValid(order)) retur
 has('manifest verification rechecks every send back',"recheck(`${order.id} ${e.id} send back`, e.manifest, sendBackSubject(order, e));",1);
 has('the order keeps a bounded send-back list',"const SEND_BACK_MAX = 20;",1);
 has('a split never copies the signed send backs onto the new order',"    delete child.sendBacks;",2);
+// #706: Review & close is an approval, so it writes a signed record (AGENTS.md rule 2) that validation and manifest verification recheck.
+has('Review & close signs the quality review with a SHA-256 manifest',"qualityClose.manifest = signManifest(state, QUALITY_CLOSE_MEANING, qualityCloseSubject(order, qualityClose), at);",1);
+has('validation rechecks the signed quality review closure',"    if (!qualityCloseValid(order)) return false;",1);
+has('manifest verification rechecks the signed quality review closure',"recheck(`${order.id} quality close`, order.qualityClose.manifest, qualityCloseSubject(order, order.qualityClose));",1);
 {const serverSrc=fs.readFileSync(path.join(ROOT,'server','mes-host.mjs'),'utf8');ok('the server allows MES.sendBackToBuilding as a reviewed action',serverSrc.split("'MES.sendBackToBuilding'").length-1===1&&src.split("'MES.sendBackToBuilding'").length-1===1);}
 
 // ---- the production build ----
