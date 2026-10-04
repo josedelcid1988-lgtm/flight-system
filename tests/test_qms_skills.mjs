@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createHost } from '../server/mes-host.mjs';
+import { loadSample } from './lib/production-sample.mjs';
 import { fileURLToPath } from 'node:url';
-const host=createHost(fileURLToPath(new URL('../index.html',import.meta.url))),{MES,FlightManeuver}=host,state=MES.ensureMasterWIs(MES.seed());
+const host=createHost(fileURLToPath(new URL('../index.html',import.meta.url))),{MES,FlightManeuver}=host,state=loadSample(host,MES.seed()); // Production ships no WIs (issue #247): load the sample WIs as this suite's data.
 const qe={username:'skill-qe',displayName:'Quality Engineer',role:'qe'},qm={username:'skill-qm',displayName:'Quality Manager',role:'qm'},admin={username:'skill-admin',displayName:'Master Access',role:'admin'};
 const as=(account,fn)=>host.withAccount(account,fn,state);let checks=0;const check=(name,ok)=>{checks++;assert.ok(ok,name);console.log(`ok ${name}`);};
 FlightManeuver.ensure(state);

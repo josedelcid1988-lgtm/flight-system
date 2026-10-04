@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import { Readable, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { createHost } from '../server/mes-host.mjs';
+import { loadSample } from './lib/production-sample.mjs';
 import { createServer, makeHash } from '../server/server.mjs';
 
 const host = createHost(fileURLToPath(new URL('../index.html', import.meta.url)));
@@ -149,7 +150,7 @@ const openBoard = (h, state) => h.withAccount(qm, () => {
 // ---- smaller write paths (#78): each checks the capability of the page control that calls it ----
 {
   const state = MES.seed();
-  MES.ensureMasterWIs(state);
+  loadSample(host, state); // Production ships no WIs (issue #247): load the sample WIs as this suite's data.
   FlightManeuver.ensure(state);
   const run = (who, fn) => host.withAccount(who, fn, state);
   const wi = state.masterWIs.find(w => w.status === 'Released' && MES.SERIALIZED_PARTS.includes(w.partNumber));
@@ -265,7 +266,7 @@ const openBoard = (h, state) => h.withAccount(qm, () => {
 // ---- NC ticket files (#101): removing a file from a ticket needs a record authority, like other quality records ----
 {
   const state = MES.seed();
-  MES.ensureMasterWIs(state);
+  loadSample(host, state); // Production ships no WIs (issue #247): load the sample WIs as this suite's data.
   const run = (who, fn) => host.withAccount(who, fn, state);
   const wi = state.masterWIs.find(w => w.status === 'Released');
   const created = run(qm, () => MES.addOrder(state, { masterWI: `${wi.id}|${wi.revision}`, pedigree: 'Development', subcategory: 'Mfg.', quantity: 1, aircraft: MES.AIRCRAFT[0], site: MES.SITES[0] }));

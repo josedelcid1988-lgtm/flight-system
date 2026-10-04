@@ -116,12 +116,12 @@ const unit = host.MES.EQUIPMENT_UNITS.find(item => item.workCenterId === 'NASH-P
 const capacityBeforeService = host.MES.workCenterCapacity(state, unit.workCenterId, date);
 const equipmentArea = host.MES.addEquipmentArea(state, { name: 'Integration bay', site: 'NASH' });
 assert.equal(equipmentArea.ok, true, 'organization setup can add a site-scoped equipment area');
-// Seed tools carry real calibration due dates that lapse. Record a current calibration for one through the real write path,
-// so the tool is in calibration whatever the date and the refusal checks below test maintenance, not expiry.
+// Production ships no tool snapshot (issue #247). Record a current calibration for a test tool through the real write
+// path, so the tool is in calibration whatever the date and the refusal checks below test maintenance, not expiry.
 const dayOffset = days => new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
-const seedTool = host.MES.CAL_TOOLS.find(tool => !host.MES.isTorqueTool(tool));
+const seedTool = { tag: 'TEST-PLAN-001', description: 'DIGITAL CALIPER', serial: 'TP-001', location: 'Production Floor', torque: 'no' };
 const calibrationRecorder = { username: 'cal-recorder', displayName: 'Calibration Recorder', role: 'qm', roles: ['qm'] };
-const currentCalibration = host.withAccount(calibrationRecorder, () => host.MES.recordCalibration(state, { tag: seedTool.tag, description: seedTool.description, serial: seedTool.serial, calibratedAt: dayOffset(-1), expires: dayOffset(365), status: 'In Calibration', location: seedTool.location, note: 'Test-owned current calibration' }), state);
+const currentCalibration = host.withAccount(calibrationRecorder, () => host.MES.recordCalibration(state, { tag: seedTool.tag, description: seedTool.description, torque: seedTool.torque, serial: seedTool.serial, calibratedAt: dayOffset(-1), expires: dayOffset(365), status: 'In Calibration', location: seedTool.location, note: 'Test-owned current calibration' }), state);
 assert.equal(currentCalibration.ok, true, currentCalibration.message);
 const linkedTool = seedTool;
 assert.equal(host.MES.toolCheck(linkedTool.tag, new Date().toISOString(), state).ok, true, 'the tool is in calibration before any maintenance is opened');

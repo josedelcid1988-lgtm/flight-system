@@ -4,6 +4,7 @@
 // from NFF. NFF orders also do not use up the first-article slot of a WI revision. No role lifts any of it:
 // these checks run as Master Access.
 import {chromium} from 'playwright';
+import {loadSampleInPage} from './lib/production-sample.mjs';
 const TESTS=decodeURI(new URL('.',import.meta.url).pathname);
 const FIXTURES=process.env.FS_FIXTURES_DIR?process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):TESTS+'fixtures/';
 const PROD='file://'+FIXTURES+'publish.html';
@@ -16,9 +17,11 @@ const run=(fn,a)=>p.evaluate(fn,a);
 await p.goto(PROD);await p.waitForTimeout(900);
 await run(()=>{const un=document.querySelector('#sk-boot input[name=username]');const f=un.closest('form');const set=(el,v)=>{el.value=v;el.dispatchEvent(new Event('input',{bubbles:true}));};set(un,'jdoe');set(f.querySelector('input[type=password]'),'demo1234');const cf=f.querySelector('input[name=confirm]');if(cf)set(cf,'demo1234');const d=f.querySelector('input[name=displayName]');if(d)set(d,'Jordan Doe');f.requestSubmit();});
 await p.waitForTimeout(2600);
+// Production ships no WIs or tools (issue #247): load the sample WIs and test tools as this suite's data.
+await loadSampleInPage(p,{tools:true});
 ok('these checks run as Master Access',await run(()=>skAuth.role()==='admin'));
 const NFF_RE='not for flight and not for credit';
-ok('a Production lot may be used on a Development NFF order',await run(()=>MES.lotInStock('SR-2401','LOT-2401-0088','Development NFF')));
+ok('a Production lot may be used on a Development NFF order',await run(()=>MES.lotBuildClassAllowed({buildClass:'Production'},'Development NFF')));
 ok('a Development NFF lot cannot enter Production or Prototype work',await run(()=>!MES.lotBuildClassAllowed({buildClass:'Development NFF'},'Production')&&!MES.lotBuildClassAllowed({buildClass:'Development NFF'},'Prototype')&&MES.lotBuildClassAllowed({buildClass:'Development NFF'},'Development NFF')));
 
 // Orders from the same released WI: one NFF, one Production, one Development.

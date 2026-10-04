@@ -8,6 +8,28 @@
 // capabilities of their real role so a pilot can rehearse with them. Every other demo account
 // (demo, master, safety, certification and any account a person creates) has full access.
 
+import * as SAMPLE from './sample-data.mjs';
+
+// The production build ships each sample declaration below empty (issue #247). A deviation finds the empty form
+// and puts back the sample source from sample-data.mjs, so only the demo carries sample data.
+const EMPTY = Object.freeze({
+  NETSUITE_STOCK: '  const NETSUITE_STOCK = Object.freeze({});\n',
+  DEFAULT_KIT: '  function materials(ready = false) {\n    return [];\n  }\n',
+  DEMO_PARTS: '  const DEMO_PARTS = Object.freeze([]);\n',
+  DEMO_FINISHED_STOCK: '  const DEMO_FINISHED_STOCK = Object.freeze({});\n',
+  DEMO_MBOM: '  const DEMO_MBOM = Object.freeze({});\n',
+  DEMO_COMPONENT_LOTS: '  const DEMO_COMPONENT_LOTS = Object.freeze([]);\n',
+  DEMO_LEAD_ACTUALS: '  const DEMO_LEAD_ACTUALS = Object.freeze([]);\n',
+  STAMP_HOLDERS: '  const STAMP_HOLDERS = Object.freeze([]);\n',
+  seedMasterWIs: '  function seedMasterWIs() {\n    return [];\n  }\n',
+  STD_REWORK_SEED: '  const STD_REWORK_SEED = [];\n',
+  PLANNED_ORDER_SEED: '    const seed = [];\n',
+});
+const escapeRe = text => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const emptyOf = names => new RegExp(names.map(n => escapeRe(EMPTY[n])).join('|'), 'g');
+const sampleFor = (m, id) => `${m.match(/^ */)[0]}/* DEMO ${id}: sample data */\n${SAMPLE[Object.keys(EMPTY).find(n => EMPTY[n] === m)]}`;
+const EMPTY_CAL = "const CAL_SNAPSHOT = '';\n  const CAL_TOOLS = Object.freeze([].map(([tag, description, serial, expires, status, location]) => Object.freeze({ tag, description, serial, expires, status, location })));";
+
 export const PILOT_SEATS = Object.freeze(['tech', 'quality', 'mfgeng', 'operations', 'engineering']);
 const FULL = "(typeof window!=='undefined'&&window.__demoFull&&window.__demoFull())";
 const NEVER = id => `=== '__demo_never_matches__' /* DEMO ${id} */`;
@@ -161,15 +183,14 @@ const LIST = [
     why: 'The full-access demo accounts (D-6) hold configure-qms whatever their role, so their calibration entries record and validate. Production accepts only the Quality Manager and System Administrator signer roles. Pilot seats are still refused by the configure-qms gate.',
     find: 'const calibrationSignerRole = role => CALIBRATION_SIGNER_ROLES.includes(role);', count: 1,
     replace: (ctx, m, id) => `const calibrationSignerRole = role => typeof role === 'string' && !!role.trim(); /* DEMO ${id} */` },
-  { area: 'Data', title: 'Calibrated tool snapshot follows the first-load day',
-    why: 'The demo seeds carry no calibration log, so demo tool checks read the Calibrated Tool Log snapshot shipped in the production file, and every snapshot tool would expire within a year of capture and block every operation that needs tooling. The snapshot label and every snapshot tool expiry move forward by the same days as the seed dates (D-35), counted from the day the browser first loaded the demo, so the spacing between tools is kept and tools still come due as days pass. Signed buy-offs keep the tool expiries they recorded. Production keeps the shipped snapshot. Source: tools/demo/seed-dates.mjs.',
-    find: /const CAL_SNAPSHOT = '[^']*';\n  const CAL_TOOLS = Object\.freeze\(\[\[.*?\]\]\.map\(\(\[tag, description, serial, expires, status, location\]\) => Object\.freeze\(\{ tag, description, serial, expires, status, location \}\)\)\);/g, count: 1,
+  { area: 'Data', title: 'Sample calibrated tool snapshot, following the first-load day',
+    why: 'Production ships no tool snapshot: every tool in use comes from the signed calibration log that a QA Manager records or imports. The demo seeds carry no calibration log, so the demo loads the sample Calibrated Tool Log snapshot in tools/demo/cal-snapshot.json for its tool checks. Every sample tool would expire within a year of capture and block every operation that needs tooling, so the snapshot label and every tool expiry move forward by the same days as the seed dates (D-35), counted from the day the browser first loaded the demo; the spacing between tools is kept and tools still come due as days pass. Signed buy-offs keep the tool expiries they recorded. Source: tools/demo/seed-dates.mjs.',
+    find: EMPTY_CAL, count: 1,
     replace: (ctx, m, id) => {
       const firstLoad = `(function(){try{return localStorage.getItem(${JSON.stringify(ctx.seedMark)})||undefined;}catch(e){return undefined;}})()`;
-      const snapshot = /^const CAL_SNAPSHOT = ('[^']*');/.exec(m)[1];
-      return m
-        .replace(/^const CAL_SNAPSHOT = '[^']*';/, () => `/* DEMO ${id} */ const DEMO_CAL = (${ctx.calRebase})(${snapshot}, (typeof window !== 'undefined' && window.__DEMO_SEED) || null, ${firstLoad});\n  const CAL_SNAPSHOT = DEMO_CAL.snapshot;`)
-        .replace(/Object\.freeze\(\{ tag, description, serial, expires, status, location \}\)\)\);$/, () => 'Object.freeze({ tag, description, serial, expires: DEMO_CAL.expires(expires), status, location })));');
+      // A JSON string is a valid JavaScript string literal; "<" is escaped so no label can close the script element.
+      const snapshot = JSON.stringify(String(ctx.calSnapshot.snapshot)).replace(/</g, '\\u003c');
+      return `/* DEMO ${id} */ const DEMO_CAL = (${ctx.calRebase})(${snapshot}, (typeof window !== 'undefined' && window.__DEMO_SEED) || null, ${firstLoad});\n  const CAL_SNAPSHOT = DEMO_CAL.snapshot;\n  const CAL_TOOLS = Object.freeze(${JSON.stringify(ctx.calSnapshot.tools).replace(/</g, '\\u003c')}.map(([tag, description, serial, expires, status, location]) => Object.freeze({ tag, description, serial, expires: DEMO_CAL.expires(expires), status, location })));`;
     } },
   { area: 'Accounts', title: 'Separate account storage key',
     why: 'The demo keeps its known-password accounts (D-4) under skyryse-mes-demo-auth-v1, so opening the demo in a browser that also holds the production build never adds master, demo or any other demo1234 account to the production account list, and the production page never sees a demo account. The production key stays frozen.',
@@ -211,6 +232,14 @@ const LIST = [
     why: 'Production refuses a FAIR, 8130-9 or AQI signature when the signer has no current stamp of an allowed type (expired, not yet issued, or an additional stamp paused for training, #579). The demo signs with the account\'s first Active stamp of an allowed type, as it did before that rule, so a scenario is not stopped by stamp dates. An account with no Active stamp of an allowed type is still refused.',
     find: '    const current = checked.find(c => !c.problem);\n', count: 1,
     replace: (ctx, m, id) => `    const current = checked.find(c => !c.problem) || checked[0]; /* DEMO ${id} */\n` },
+  { area: 'Data', title: 'Sample NetSuite stock, default kit lines and MRP forecast tables',
+    why: 'Production ships no stock, starts every work order kit empty and ships empty forecast tables, so a production planned order records no NetSuite read until the live read is connected. The demo loads the sample lots (for example LOT-2401-0088), starts each new work order kit with the three sample lines those lots fill (SR-2401, SR-2402, SR-2403), and loads the finished goods on hand and the DEMO-marked bill of materials, component lots and lead-time actuals, so kitting and the Flight Plan forecast can be walked. Source: tools/demo/sample-data.mjs.',
+    find: emptyOf(['NETSUITE_STOCK', 'DEFAULT_KIT', 'DEMO_PARTS', 'DEMO_FINISHED_STOCK', 'DEMO_MBOM', 'DEMO_COMPONENT_LOTS', 'DEMO_LEAD_ACTUALS']), count: 7,
+    replace: (ctx, m, id) => sampleFor(m, id) },
+  { area: 'Data', title: 'Sample master WIs, planned orders, stamp placeholders and starter rework drafts for a new demo workspace',
+    why: 'A new production workspace starts with an empty master WI library, no planned orders, an empty stamp register and an empty standard rework library. The demo seeds carry their own; when a demo workspace is reset it starts again with the sample released WIs, the sample planned orders, the numbered stamp placeholders and generic role credentials, and the starter rework drafts, as earlier builds did. Source: tools/demo/sample-data.mjs.',
+    find: emptyOf(['STAMP_HOLDERS', 'seedMasterWIs', 'STD_REWORK_SEED', 'PLANNED_ORDER_SEED']), count: 4,
+    replace: (ctx, m, id) => sampleFor(m, id) },
 ];
 
 export const DEVIATIONS = LIST.map((d, i) => Object.freeze({ ...d, id: `D-${i + 1}` }));

@@ -1,0 +1,3716 @@
+{
+ "version": 3,
+ "profile": {
+  "name": "Morgan Lee",
+  "role": "Quality Manager",
+  "credentialId": "SR-QM-001"
+ },
+ "orders": [
+  {
+   "id": "WO-10001",
+   "title": "Flight controls integration kit",
+   "partNumber": "SR-FC-200",
+   "serial": "SN-10001",
+   "revision": "C",
+   "pedigree": "Production",
+   "subcategory": "Mfg.",
+   "site": "HHR",
+   "priority": "Normal",
+   "aircraft": "C2",
+   "quantity": 1,
+   "status": "Draft",
+   "owner": "Assembly operator",
+   "start": "2026-10-01",
+   "due": "2026-10-08",
+   "materials": [
+    {
+     "id": "kit-1",
+     "name": "Interface module",
+     "partNumber": "SR-2401",
+     "required": 1,
+     "ready": false
+    },
+    {
+     "id": "kit-2",
+     "name": "Harness set",
+     "partNumber": "SR-2402",
+     "required": 1,
+     "ready": false
+    },
+    {
+     "id": "kit-3",
+     "name": "Mounting pack",
+     "partNumber": "SR-2403",
+     "required": 1,
+     "ready": false
+    }
+   ],
+   "operations": [
+    {
+     "id": "op-010",
+     "title": "Verify kit at bench",
+     "description": "Build step: match the kit issued by stores against the work package and confirm every line is present before starting assembly.",
+     "done": false,
+     "note": "",
+     "buyoff": null,
+     "evidence": [],
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "topLevelType": "Manufacturing",
+     "requiresTooling": false,
+     "callouts": [],
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Pull the kit",
+       "instruction": "Locate the issued kit for this work order and confirm the kit label matches the work order number.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Match part numbers",
+       "instruction": "Compare each kit item’s part number and lot or serial number against the Kit tab.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Report shortages",
+       "instruction": "If anything is missing or damaged, stop and create an NC before continuing.",
+       "recordsTorque": false
+      }
+     ],
+     "stepChecks": {},
+     "attachments": []
+    },
+    {
+     "id": "op-020",
+     "title": "Confirm configuration",
+     "description": "Confirm the work package is at the revision this work order was released to.",
+     "done": false,
+     "note": "",
+     "buyoff": null,
+     "evidence": [],
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "topLevelType": "Manufacturing",
+     "requiresTooling": false,
+     "callouts": [],
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Open the master WI",
+       "instruction": "Open the master WI and confirm its revision matches the one shown on this work order.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Check the part revision",
+       "instruction": "Confirm the part number and revision on the traveler match the drawing called out in the WI.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Confirm effectivity",
+       "instruction": "Verify any engineering changes listed on the work order are incorporated before starting assembly.",
+       "recordsTorque": false
+      }
+     ],
+     "stepChecks": {},
+     "attachments": []
+    },
+    {
+     "id": "op-030",
+     "title": "Record assembly completion",
+     "description": "Record the build-completion note for this operation.",
+     "done": false,
+     "note": "",
+     "buyoff": null,
+     "evidence": [],
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "topLevelType": "Manufacturing",
+     "requiresTooling": true,
+     "callouts": [],
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Prepare the work area",
+       "instruction": "Clean the bench, verify the ESD mat and wrist strap, and stage the kit.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Assemble per WI",
+       "instruction": "Complete the assembly sequence shown in the WI figures. Log each calibrated tool you use.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Torque and witness mark",
+       "instruction": "Torque fasteners to the values in the WI and apply witness marks.",
+       "recordsTorque": true
+      },
+      {
+       "id": "step-4",
+       "title": "Record completion",
+       "instruction": "Write a completion note describing what was built and any observations.",
+       "recordsTorque": false
+      }
+     ],
+     "stepChecks": {},
+     "attachments": []
+    },
+    {
+     "id": "op-040",
+     "title": "Record inspection result",
+     "description": "Document the inspection result against the acceptance criteria for this operation.",
+     "done": false,
+     "note": "",
+     "buyoff": null,
+     "evidence": [],
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": true,
+     "topLevelType": "Manufacturing",
+     "requiresTooling": true,
+     "callouts": [],
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Set up inspection",
+       "instruction": "Gather the inspection tools listed in the WI and confirm they are in calibration.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Inspect features",
+       "instruction": "Measure each characteristic called out in the inspection table and compare it to tolerance.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Record results",
+       "instruction": "Record measured values. Any out-of-tolerance result needs an NC before buy-off.",
+       "recordsTorque": false
+      }
+     ],
+     "stepChecks": {},
+     "attachments": []
+    },
+    {
+     "id": "op-050",
+     "title": "Verify evidence package",
+     "description": "Check that every required work record is present before handoff.",
+     "done": false,
+     "note": "",
+     "buyoff": null,
+     "evidence": [],
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": false,
+     "topLevelType": "Manufacturing",
+     "requiresTooling": false,
+     "callouts": [],
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Collect records",
+       "instruction": "Confirm every prior operation has a stamp, date, and completion note.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Check evidence",
+       "instruction": "Verify linked reports, photos, or recordings are attached and reviewed.",
+       "recordsTorque": false
+      }
+     ],
+     "stepChecks": {},
+     "attachments": []
+    },
+    {
+     "id": "op-060",
+     "title": "Prepare QA handoff",
+     "description": "Prepare the completed record for quality review.",
+     "done": false,
+     "note": "",
+     "buyoff": null,
+     "evidence": [],
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": false,
+     "topLevelType": "Manufacturing",
+     "requiresTooling": false,
+     "callouts": [],
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Review the traveler",
+       "instruction": "Read through the full traveler for open items, holds, or missing entries.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Hand off to QA",
+       "instruction": "Notify Quality that the work order is ready for final review.",
+       "recordsTorque": false
+      }
+     ],
+     "stepChecks": {},
+     "attachments": []
+    }
+   ],
+   "masterWI": {
+    "id": "MWI-0001",
+    "revision": "A",
+    "title": "Flight controls integration kit master work order"
+   },
+   "history": [
+    {
+     "id": "WO-10001-event-1",
+     "at": "2026-10-01T09:42:39.775Z",
+     "action": "Flagged as an FAI order. First work order from MWI-0001 Rev A, a revised work instruction.",
+     "actor": "Pat Admin · ACCT-pilot-admin",
+     "build": {
+      "version": "v82",
+      "sha256": "unstamped"
+     }
+    },
+    {
+     "id": "WO-10001-event-2",
+     "at": "2026-10-01T09:42:39.775Z",
+     "action": "Work order cloned from master WI MWI-0001 Rev A. Intended aircraft C2. Revision C: Current revision. Production / Mfg. Pre-release QA approval not required.",
+     "actor": "Pat Admin · ACCT-pilot-admin",
+     "build": {
+      "version": "v82",
+      "sha256": "unstamped"
+     }
+    },
+    {
+     "id": "WO-10001-event-3",
+     "at": "2026-10-01T09:42:39.775Z",
+     "action": "Serial number auto-assigned at creation: FC-200-00001.",
+     "actor": "Pat Admin · ACCT-pilot-admin",
+     "build": {
+      "version": "v82",
+      "sha256": "unstamped"
+     }
+    }
+   ],
+   "tickets": [],
+   "reports": [],
+   "sourceBuild": null,
+   "creationVersion": 1,
+   "sourceTicket": null,
+   "releaseApproval": null,
+   "fai": {
+    "required": true,
+    "wi": "MWI-0001 Rev A",
+    "at": "2026-10-01T09:42:39.774Z",
+    "by": {
+     "name": "Morgan Lee",
+     "role": "Quality Manager",
+     "credentialId": "SR-QM-001"
+    },
+    "reason": "First work order from MWI-0001 Rev A, a revised work instruction."
+   },
+   "drawingRev": "C",
+   "wiRev": "A",
+   "woRev": "Baseline",
+   "revisions": [
+    {
+     "rev": "Baseline",
+     "at": "2026-10-01T09:42:39.775Z",
+     "summary": "Work order issued at Baseline.",
+     "changes": [
+      "Initial issue. No changes recorded against this work order yet."
+     ],
+     "approvedBy": null,
+     "drawingRev": "C",
+     "wiRev": "A",
+     "partRevision": "C",
+     "quantity": 1
+    }
+   ],
+   "aog": null
+  }
+ ],
+ "activity": [
+  {
+   "id": "WO-10001-event-3",
+   "at": "2026-10-01T09:42:39.775Z",
+   "action": "Serial number auto-assigned at creation: FC-200-00001.",
+   "actor": "Pat Admin · ACCT-pilot-admin",
+   "build": {
+    "version": "v82",
+    "sha256": "unstamped"
+   },
+   "orderId": "WO-10001"
+  },
+  {
+   "id": "WO-10001-event-2",
+   "at": "2026-10-01T09:42:39.775Z",
+   "action": "Work order cloned from master WI MWI-0001 Rev A. Intended aircraft C2. Revision C: Current revision. Production / Mfg. Pre-release QA approval not required.",
+   "actor": "Pat Admin · ACCT-pilot-admin",
+   "build": {
+    "version": "v82",
+    "sha256": "unstamped"
+   },
+   "orderId": "WO-10001"
+  },
+  {
+   "id": "WO-10001-event-1",
+   "at": "2026-10-01T09:42:39.775Z",
+   "action": "Flagged as an FAI order. First work order from MWI-0001 Rev A, a revised work instruction.",
+   "actor": "Pat Admin · ACCT-pilot-admin",
+   "build": {
+    "version": "v82",
+    "sha256": "unstamped"
+   },
+   "orderId": "WO-10001"
+  }
+ ],
+ "planner": {
+  "days": {},
+  "signals": [],
+  "calendar": {
+   "connectors": {
+    "ical": false,
+    "google": false,
+    "outlook": false
+   },
+   "blocks": [],
+   "escalations": []
+  }
+ },
+ "audits": [],
+ "certifications": [],
+ "supplierApprovals": [],
+ "qualityValues": [],
+ "qualityVerdicts": [],
+ "controlledDocuments": [],
+ "modelAdapterHistory": [],
+ "aiActionLog": [],
+ "aiSkillDrafts": [],
+ "aiSkillTriggers": [],
+ "aiSkillTriggerHistory": [],
+ "calibrationLog": [
+  {
+   "id": "CALLOG-00001",
+   "tag": "CAL-022",
+   "description": "DIGITAL CALIPER",
+   "serial": "150151267",
+   "calibratedAt": "2026-09-20",
+   "expires": "2027-09-20",
+   "status": "In Calibration",
+   "location": "Production Floor",
+   "note": "Recalibrated; snapshot tag, no torque answer",
+   "recordedAt": "2026-10-01T09:42:39.752Z",
+   "recordedBy": "Quinn Manager · ACCT-qa-manager",
+   "signerRole": "Quality Manager",
+   "calibrationSignature": {
+    "manifest": {
+     "meaning": "Calibration recorded",
+     "at": "2026-10-01T09:42:39.752Z",
+     "signer": {
+      "name": "Quinn Manager",
+      "role": "Quality Manager",
+      "credentialId": "ACCT-qa-manager",
+      "account": "qa-manager"
+     },
+     "algorithm": "SHA-256",
+     "hash": "f7de08c4a23b006fe559b0156981a06e47401fb192d3d19e9af9d12047053088",
+     "subject": {
+      "id": "CALLOG-00001",
+      "tag": "CAL-022",
+      "description": "DIGITAL CALIPER",
+      "serial": "150151267",
+      "calibratedAt": "2026-09-20",
+      "expires": "2027-09-20",
+      "status": "In Calibration",
+      "location": "Production Floor",
+      "note": "Recalibrated; snapshot tag, no torque answer",
+      "recordedAt": "2026-10-01T09:42:39.752Z",
+      "recordedBy": "Quinn Manager · ACCT-qa-manager",
+      "supersedes": null,
+      "signerRole": "Quality Manager"
+     },
+     "authenticated": false,
+     "build": {
+      "version": "v82",
+      "sha256": "unstamped"
+     }
+    }
+   },
+   "previousHash": null
+  },
+  {
+   "id": "CALLOG-00002",
+   "tag": "NONE-174",
+   "description": "TORQUE SCREWDRIVER",
+   "serial": "TQ-174",
+   "calibratedAt": "2026-09-20",
+   "expires": "2027-03-20",
+   "status": "In Calibration",
+   "location": "Production Floor",
+   "note": "Snapshot torque tool, no torque answer",
+   "torque": true,
+   "recordedAt": "2026-10-01T09:42:39.757Z",
+   "recordedBy": "Quinn Manager · ACCT-qa-manager",
+   "signerRole": "Quality Manager",
+   "calibrationSignature": {
+    "manifest": {
+     "meaning": "Calibration recorded",
+     "at": "2026-10-01T09:42:39.757Z",
+     "signer": {
+      "name": "Quinn Manager",
+      "role": "Quality Manager",
+      "credentialId": "ACCT-qa-manager",
+      "account": "qa-manager"
+     },
+     "algorithm": "SHA-256",
+     "hash": "196a5d656455d2757e03971b3700ac2b301b2af4f246ae1fe903947b74617ec2",
+     "subject": {
+      "id": "CALLOG-00002",
+      "tag": "NONE-174",
+      "description": "TORQUE SCREWDRIVER",
+      "serial": "TQ-174",
+      "calibratedAt": "2026-09-20",
+      "expires": "2027-03-20",
+      "status": "In Calibration",
+      "location": "Production Floor",
+      "note": "Snapshot torque tool, no torque answer",
+      "recordedAt": "2026-10-01T09:42:39.757Z",
+      "recordedBy": "Quinn Manager · ACCT-qa-manager",
+      "supersedes": null,
+      "torque": true,
+      "signerRole": "Quality Manager"
+     },
+     "authenticated": false,
+     "build": {
+      "version": "v82",
+      "sha256": "unstamped"
+     }
+    }
+   },
+   "previousHash": "fb53a22ecb161377dd5fb0bed726e7e568a265eb574d53aab70e4488a4442b9c"
+  },
+  {
+   "id": "CALLOG-00003",
+   "tag": "LOG-001",
+   "description": "BENCH SCALE",
+   "serial": "SC-1",
+   "calibratedAt": "2026-09-21",
+   "expires": "2027-09-21",
+   "status": "In Calibration",
+   "location": "Receiving",
+   "note": "Log-only tool",
+   "torque": false,
+   "recordedAt": "2026-10-01T09:42:39.759Z",
+   "recordedBy": "Quinn Manager · ACCT-qa-manager",
+   "signerRole": "Quality Manager",
+   "calibrationSignature": {
+    "manifest": {
+     "meaning": "Calibration recorded",
+     "at": "2026-10-01T09:42:39.759Z",
+     "signer": {
+      "name": "Quinn Manager",
+      "role": "Quality Manager",
+      "credentialId": "ACCT-qa-manager",
+      "account": "qa-manager"
+     },
+     "algorithm": "SHA-256",
+     "hash": "0864df94c23f4b0de35d0e3e2e42a86bba0853d280620fdf5bbb6ca2cc48065a",
+     "subject": {
+      "id": "CALLOG-00003",
+      "tag": "LOG-001",
+      "description": "BENCH SCALE",
+      "serial": "SC-1",
+      "calibratedAt": "2026-09-21",
+      "expires": "2027-09-21",
+      "status": "In Calibration",
+      "location": "Receiving",
+      "note": "Log-only tool",
+      "recordedAt": "2026-10-01T09:42:39.759Z",
+      "recordedBy": "Quinn Manager · ACCT-qa-manager",
+      "supersedes": null,
+      "torque": false,
+      "signerRole": "Quality Manager"
+     },
+     "authenticated": false,
+     "build": {
+      "version": "v82",
+      "sha256": "unstamped"
+     }
+    }
+   },
+   "previousHash": "b70ec77ad3e47ab3f0da8bf313be1003dee42165fe509b0eff67e9fe3e42819d"
+  }
+ ],
+ "modelAdapter": {
+  "enabled": false,
+  "provider": "",
+  "settingName": "",
+  "serverConfigured": false,
+  "configuredBy": null,
+  "configuredAt": null
+ },
+ "inventoryLedger": {
+  "transactions": []
+ },
+ "resources": {
+  "maintenance": [
+   {
+    "id": "MNT-00001",
+    "assetTag": "PS-007",
+    "type": "Calibration",
+    "description": "Snapshot power supply out for repair",
+    "status": "Open",
+    "openedBy": {
+     "name": "Pat Admin",
+     "role": "System Administrator",
+     "credentialId": "ACCT-pilot-admin"
+    },
+    "openedAt": "2026-10-01T09:42:39.763Z",
+    "closedBy": null,
+    "closedAt": null,
+    "result": ""
+   }
+  ],
+  "areas": [],
+  "units": [
+   {
+    "id": "UNIT-0001",
+    "tag": "UNIT-0001",
+    "name": "Bench meter",
+    "workCenterId": "NASH-PRODUCTION",
+    "site": "NASH",
+    "areaId": null,
+    "toolTag": "DMM-08",
+    "active": true
+   }
+  ]
+ },
+ "projectPlan": {
+  "projects": [],
+  "objectives": [],
+  "milestones": [],
+  "sprints": []
+ },
+ "blockers": [],
+ "stamps": [
+  {
+   "id": "STP-0001",
+   "number": "SKY-0000",
+   "name": "Unassigned SKY-0000",
+   "department": "Quality",
+   "type": "Quality",
+   "buyoffType": "Quality",
+   "account": null,
+   "status": "Active",
+   "issued": "2026-01-01",
+   "expires": "2028-01-01",
+   "qualifications": [
+    {
+     "buyoffType": "Quality",
+     "expires": "2028-01-01"
+    }
+   ],
+   "history": [
+    {
+     "at": "2026-10-01T09:42:39.733Z",
+     "by": "system",
+     "action": "Seeded as an open placeholder. Enter the holder, assign the account and set the PIN, or import the register from CSV."
+    }
+   ]
+  },
+  {
+   "id": "STP-0002",
+   "number": "SKY-0001",
+   "name": "Unassigned SKY-0001",
+   "department": "Production",
+   "type": "Production",
+   "buyoffType": "Technician",
+   "account": null,
+   "status": "Active",
+   "issued": "2026-01-01",
+   "expires": "2028-01-01",
+   "qualifications": [
+    {
+     "buyoffType": "Technician",
+     "expires": "2028-01-01"
+    }
+   ],
+   "history": [
+    {
+     "at": "2026-10-01T09:42:39.733Z",
+     "by": "system",
+     "action": "Seeded as an open placeholder. Enter the holder, assign the account and set the PIN, or import the register from CSV."
+    }
+   ]
+  },
+  {
+   "id": "STP-0003",
+   "number": "SKY-0002",
+   "name": "Unassigned SKY-0002",
+   "department": "Quality",
+   "type": "Quality",
+   "buyoffType": "Quality",
+   "account": null,
+   "status": "Active",
+   "issued": "2026-01-01",
+   "expires": "2028-01-01",
+   "qualifications": [
+    {
+     "buyoffType": "Quality",
+     "expires": "2028-01-01"
+    }
+   ],
+   "history": [
+    {
+     "at": "2026-10-01T09:42:39.733Z",
+     "by": "system",
+     "action": "Seeded as an open placeholder. Enter the holder, assign the account and set the PIN, or import the register from CSV."
+    }
+   ]
+  },
+  {
+   "id": "STP-0004",
+   "number": "SKY-0003",
+   "name": "Unassigned SKY-0003",
+   "department": "Quality",
+   "type": "Quality",
+   "buyoffType": "Quality",
+   "account": null,
+   "status": "Active",
+   "issued": "2026-01-01",
+   "expires": "2028-01-01",
+   "qualifications": [
+    {
+     "buyoffType": "Quality",
+     "expires": "2028-01-01"
+    }
+   ],
+   "history": [
+    {
+     "at": "2026-10-01T09:42:39.733Z",
+     "by": "system",
+     "action": "Seeded as an open placeholder. Enter the holder, assign the account and set the PIN, or import the register from CSV."
+    }
+   ]
+  },
+  {
+   "id": "STP-0005",
+   "number": "SKY-0004",
+   "name": "Unassigned SKY-0004",
+   "department": "Production",
+   "type": "Production",
+   "buyoffType": "Technician",
+   "account": null,
+   "status": "Active",
+   "issued": "2026-01-01",
+   "expires": "2028-01-01",
+   "qualifications": [
+    {
+     "buyoffType": "Technician",
+     "expires": "2028-01-01"
+    }
+   ],
+   "history": [
+    {
+     "at": "2026-10-01T09:42:39.733Z",
+     "by": "system",
+     "action": "Seeded as an open placeholder. Enter the holder, assign the account and set the PIN, or import the register from CSV."
+    }
+   ]
+  },
+  {
+   "id": "STP-0006",
+   "number": "SKY-0005",
+   "name": "Unassigned SKY-0005",
+   "department": "Quality",
+   "type": "Quality",
+   "buyoffType": "Quality",
+   "account": null,
+   "status": "Active",
+   "issued": "2026-01-01",
+   "expires": "2028-01-01",
+   "qualifications": [
+    {
+     "buyoffType": "Quality",
+     "expires": "2028-01-01"
+    }
+   ],
+   "history": [
+    {
+     "at": "2026-10-01T09:42:39.733Z",
+     "by": "system",
+     "action": "Seeded as an open placeholder. Enter the holder, assign the account and set the PIN, or import the register from CSV."
+    }
+   ]
+  },
+  {
+   "id": "STP-0007",
+   "number": "SKY-0006",
+   "name": "Unassigned SKY-0006",
+   "department": "Quality",
+   "type": "Quality",
+   "buyoffType": "Quality",
+   "account": null,
+   "status": "Active",
+   "issued": "2026-01-01",
+   "expires": "2028-01-01",
+   "qualifications": [
+    {
+     "buyoffType": "Quality",
+     "expires": "2028-01-01"
+    }
+   ],
+   "history": [
+    {
+     "at": "2026-10-01T09:42:39.733Z",
+     "by": "system",
+     "action": "Seeded as an open placeholder. Enter the holder, assign the account and set the PIN, or import the register from CSV."
+    }
+   ]
+  },
+  {
+   "id": "STP-0008",
+   "number": "SKY-0007",
+   "name": "Technician",
+   "department": "Production",
+   "type": "Technician",
+   "buyoffType": "Technician",
+   "account": null,
+   "status": "Retired",
+   "issued": "2026-01-01",
+   "expires": null,
+   "qualifications": [
+    {
+     "buyoffType": "Technician",
+     "expires": null
+    }
+   ],
+   "history": [
+    {
+     "at": "2026-10-01T09:42:39.733Z",
+     "by": "system",
+     "action": "Seeded as a generic role credential and retired: stamps are issued to named people."
+    }
+   ]
+  },
+  {
+   "id": "STP-0009",
+   "number": "SKY-0008",
+   "name": "Quality inspector",
+   "department": "Quality",
+   "type": "Quality",
+   "buyoffType": "Quality",
+   "account": null,
+   "status": "Retired",
+   "issued": "2026-01-01",
+   "expires": null,
+   "qualifications": [
+    {
+     "buyoffType": "Quality",
+     "expires": null
+    }
+   ],
+   "history": [
+    {
+     "at": "2026-10-01T09:42:39.733Z",
+     "by": "system",
+     "action": "Seeded as a generic role credential and retired: stamps are issued to named people."
+    }
+   ]
+  },
+  {
+   "id": "STP-0010",
+   "number": "SKY-0009",
+   "name": "A&P mechanic",
+   "department": "Maintenance",
+   "type": "A&P",
+   "buyoffType": "A&P",
+   "account": null,
+   "status": "Retired",
+   "issued": "2026-01-01",
+   "expires": null,
+   "qualifications": [
+    {
+     "buyoffType": "A&P",
+     "expires": null
+    }
+   ],
+   "history": [
+    {
+     "at": "2026-10-01T09:42:39.733Z",
+     "by": "system",
+     "action": "Seeded as a generic role credential and retired: stamps are issued to named people."
+    }
+   ]
+  },
+  {
+   "id": "STP-0011",
+   "number": "SKY-0010",
+   "name": "Design engineer",
+   "department": "Engineering",
+   "type": "Engineering",
+   "buyoffType": "Engineering",
+   "account": null,
+   "status": "Retired",
+   "issued": "2026-01-01",
+   "expires": null,
+   "qualifications": [
+    {
+     "buyoffType": "Engineering",
+     "expires": null
+    }
+   ],
+   "history": [
+    {
+     "at": "2026-10-01T09:42:39.733Z",
+     "by": "system",
+     "action": "Seeded as a generic role credential and retired: stamps are issued to named people."
+    }
+   ]
+  },
+  {
+   "id": "STP-0012",
+   "number": "SKY-0011",
+   "name": "Authorized inspector",
+   "department": "Quality",
+   "type": "8130-9 AI",
+   "buyoffType": "8130-9 Authorized Inspector",
+   "account": null,
+   "status": "Retired",
+   "issued": "2026-01-01",
+   "expires": null,
+   "qualifications": [
+    {
+     "buyoffType": "8130-9 Authorized Inspector",
+     "expires": null
+    }
+   ],
+   "history": [
+    {
+     "at": "2026-10-01T09:42:39.733Z",
+     "by": "system",
+     "action": "Seeded as a generic role credential and retired: stamps are issued to named people."
+    }
+   ]
+  },
+  {
+   "id": "STP-0013",
+   "number": "SKY-0012",
+   "name": "Conformity inspector",
+   "department": "Quality",
+   "type": "Conformity",
+   "buyoffType": "Conformity Inspector",
+   "account": null,
+   "status": "Retired",
+   "issued": "2026-01-01",
+   "expires": null,
+   "qualifications": [
+    {
+     "buyoffType": "Conformity Inspector",
+     "expires": null
+    }
+   ],
+   "history": [
+    {
+     "at": "2026-10-01T09:42:39.733Z",
+     "by": "system",
+     "action": "Seeded as a generic role credential and retired: stamps are issued to named people."
+    }
+   ]
+  }
+ ],
+ "masterWIs": [
+  {
+   "id": "MWI-0001",
+   "revision": "B",
+   "status": "Draft",
+   "partNumber": "SR-FC-200",
+   "partRevision": "C",
+   "title": "Flight controls integration kit master work order",
+   "operations": [
+    {
+     "id": "op-010",
+     "title": "Verify kit at bench",
+     "description": "Build step: match the kit issued by stores against the work package and confirm every line is present before starting assembly.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Pull the kit",
+       "instruction": "Locate the issued kit for this work order and confirm the kit label matches the work order number.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Match part numbers",
+       "instruction": "Compare each kit item’s part number and lot or serial number against the Kit tab.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Report shortages",
+       "instruction": "If anything is missing or damaged, stop and create an NC before continuing.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-020",
+     "title": "Confirm configuration",
+     "description": "Confirm the work package is at the revision this work order was released to.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Open the master WI",
+       "instruction": "Open the master WI and confirm its revision matches the one shown on this work order.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Check the part revision",
+       "instruction": "Confirm the part number and revision on the traveler match the drawing called out in the WI.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Confirm effectivity",
+       "instruction": "Verify any engineering changes listed on the work order are incorporated before starting assembly.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-030",
+     "title": "Record assembly completion",
+     "description": "Record the build-completion note for this operation.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": true,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Prepare the work area",
+       "instruction": "Clean the bench, verify the ESD mat and wrist strap, and stage the kit.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Assemble per WI",
+       "instruction": "Complete the assembly sequence shown in the WI figures. Log each calibrated tool you use.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Torque and witness mark",
+       "instruction": "Torque fasteners to the values in the WI and apply witness marks.",
+       "recordsTorque": true
+      },
+      {
+       "id": "step-4",
+       "title": "Record completion",
+       "instruction": "Write a completion note describing what was built and any observations.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-040",
+     "title": "Record inspection result",
+     "description": "Document the inspection result against the acceptance criteria for this operation.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": true,
+     "requiresTooling": true,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Set up inspection",
+       "instruction": "Gather the inspection tools listed in the WI and confirm they are in calibration.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Inspect features",
+       "instruction": "Measure each characteristic called out in the inspection table and compare it to tolerance.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Record results",
+       "instruction": "Record measured values. Any out-of-tolerance result needs an NC before buy-off.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-050",
+     "title": "Verify evidence package",
+     "description": "Check that every required work record is present before handoff.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Collect records",
+       "instruction": "Confirm every prior operation has a stamp, date, and completion note.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Check evidence",
+       "instruction": "Verify linked reports, photos, or recordings are attached and reviewed.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-060",
+     "title": "Prepare QA handoff",
+     "description": "Prepare the completed record for quality review.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Review the traveler",
+       "instruction": "Read through the full traveler for open items, holds, or missing entries.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Hand off to QA",
+       "instruction": "Notify Quality that the work order is ready for final review.",
+       "recordsTorque": false
+      }
+     ]
+    }
+   ],
+   "history": [
+    {
+     "at": "2026-09-14T17:00:00.000Z",
+     "action": "Revision B started from Rev A.",
+     "actor": "Engineer · SR-ME-001"
+    }
+   ]
+  },
+  {
+   "id": "MWI-0001",
+   "revision": "A",
+   "status": "Released",
+   "partNumber": "SR-FC-200",
+   "partRevision": "C",
+   "title": "Flight controls integration kit master work order",
+   "operations": [
+    {
+     "id": "op-010",
+     "title": "Verify kit at bench",
+     "description": "Build step: match the kit issued by stores against the work package and confirm every line is present before starting assembly.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Pull the kit",
+       "instruction": "Locate the issued kit for this work order and confirm the kit label matches the work order number.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Match part numbers",
+       "instruction": "Compare each kit item’s part number and lot or serial number against the Kit tab.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Report shortages",
+       "instruction": "If anything is missing or damaged, stop and create an NC before continuing.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-020",
+     "title": "Confirm configuration",
+     "description": "Confirm the work package is at the revision this work order was released to.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Open the master WI",
+       "instruction": "Open the master WI and confirm its revision matches the one shown on this work order.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Check the part revision",
+       "instruction": "Confirm the part number and revision on the traveler match the drawing called out in the WI.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Confirm effectivity",
+       "instruction": "Verify any engineering changes listed on the work order are incorporated before starting assembly.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-030",
+     "title": "Record assembly completion",
+     "description": "Record the build-completion note for this operation.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": true,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Prepare the work area",
+       "instruction": "Clean the bench, verify the ESD mat and wrist strap, and stage the kit.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Assemble per WI",
+       "instruction": "Complete the assembly sequence shown in the WI figures. Log each calibrated tool you use.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Torque and witness mark",
+       "instruction": "Torque fasteners to the values in the WI and apply witness marks.",
+       "recordsTorque": true
+      },
+      {
+       "id": "step-4",
+       "title": "Record completion",
+       "instruction": "Write a completion note describing what was built and any observations.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-040",
+     "title": "Record inspection result",
+     "description": "Document the inspection result against the acceptance criteria for this operation.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": true,
+     "requiresTooling": true,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Set up inspection",
+       "instruction": "Gather the inspection tools listed in the WI and confirm they are in calibration.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Inspect features",
+       "instruction": "Measure each characteristic called out in the inspection table and compare it to tolerance.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Record results",
+       "instruction": "Record measured values. Any out-of-tolerance result needs an NC before buy-off.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-050",
+     "title": "Verify evidence package",
+     "description": "Check that every required work record is present before handoff.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Collect records",
+       "instruction": "Confirm every prior operation has a stamp, date, and completion note.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Check evidence",
+       "instruction": "Verify linked reports, photos, or recordings are attached and reviewed.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-060",
+     "title": "Prepare QA handoff",
+     "description": "Prepare the completed record for quality review.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Review the traveler",
+       "instruction": "Read through the full traveler for open items, holds, or missing entries.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Hand off to QA",
+       "instruction": "Notify Quality that the work order is ready for final review.",
+       "recordsTorque": false
+      }
+     ]
+    }
+   ],
+   "releasedAt": "2026-09-01T16:00:00.000Z",
+   "history": [
+    {
+     "at": "2026-09-01T16:00:00.000Z",
+     "action": "Released by QA.",
+     "actor": "QA reviewer · SR-QA-001"
+    }
+   ]
+  },
+  {
+   "id": "MWI-0002",
+   "revision": "A",
+   "status": "Released",
+   "partNumber": "SR-CI-110",
+   "partRevision": "B",
+   "title": "Cabin interface assembly master work order",
+   "operations": [
+    {
+     "id": "op-010",
+     "title": "Verify kit at bench",
+     "description": "Build step: match the kit issued by stores against the work package and confirm every line is present before starting assembly.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Pull the kit",
+       "instruction": "Locate the issued kit for this work order and confirm the kit label matches the work order number.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Match part numbers",
+       "instruction": "Compare each kit item’s part number and lot or serial number against the Kit tab.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Report shortages",
+       "instruction": "If anything is missing or damaged, stop and create an NC before continuing.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-020",
+     "title": "Confirm configuration",
+     "description": "Confirm the work package is at the revision this work order was released to.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Open the master WI",
+       "instruction": "Open the master WI and confirm its revision matches the one shown on this work order.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Check the part revision",
+       "instruction": "Confirm the part number and revision on the traveler match the drawing called out in the WI.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Confirm effectivity",
+       "instruction": "Verify any engineering changes listed on the work order are incorporated before starting assembly.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-030",
+     "title": "Record assembly completion",
+     "description": "Record the build-completion note for this operation.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": true,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Prepare the work area",
+       "instruction": "Clean the bench, verify the ESD mat and wrist strap, and stage the kit.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Assemble per WI",
+       "instruction": "Complete the assembly sequence shown in the WI figures. Log each calibrated tool you use.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Torque and witness mark",
+       "instruction": "Torque fasteners to the values in the WI and apply witness marks.",
+       "recordsTorque": true
+      },
+      {
+       "id": "step-4",
+       "title": "Record completion",
+       "instruction": "Write a completion note describing what was built and any observations.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-040",
+     "title": "Record inspection result",
+     "description": "Document the inspection result against the acceptance criteria for this operation.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": true,
+     "requiresTooling": true,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Set up inspection",
+       "instruction": "Gather the inspection tools listed in the WI and confirm they are in calibration.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Inspect features",
+       "instruction": "Measure each characteristic called out in the inspection table and compare it to tolerance.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Record results",
+       "instruction": "Record measured values. Any out-of-tolerance result needs an NC before buy-off.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-050",
+     "title": "Verify evidence package",
+     "description": "Check that every required work record is present before handoff.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Collect records",
+       "instruction": "Confirm every prior operation has a stamp, date, and completion note.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Check evidence",
+       "instruction": "Verify linked reports, photos, or recordings are attached and reviewed.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-060",
+     "title": "Prepare QA handoff",
+     "description": "Prepare the completed record for quality review.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Review the traveler",
+       "instruction": "Read through the full traveler for open items, holds, or missing entries.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Hand off to QA",
+       "instruction": "Notify Quality that the work order is ready for final review.",
+       "recordsTorque": false
+      }
+     ]
+    }
+   ],
+   "releasedAt": "2026-09-01T16:00:00.000Z",
+   "history": [
+    {
+     "at": "2026-09-01T16:00:00.000Z",
+     "action": "Released by QA.",
+     "actor": "QA reviewer · SR-QA-001"
+    }
+   ]
+  },
+  {
+   "id": "MWI-0003",
+   "revision": "A",
+   "status": "Released",
+   "partNumber": "SR-BE-030",
+   "partRevision": "A",
+   "title": "Bench evaluation unit master work order",
+   "operations": [
+    {
+     "id": "op-010",
+     "title": "Verify kit at bench",
+     "description": "Build step: match the kit issued by stores against the work package and confirm every line is present before starting assembly.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Pull the kit",
+       "instruction": "Locate the issued kit for this work order and confirm the kit label matches the work order number.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Match part numbers",
+       "instruction": "Compare each kit item’s part number and lot or serial number against the Kit tab.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Report shortages",
+       "instruction": "If anything is missing or damaged, stop and create an NC before continuing.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-020",
+     "title": "Confirm configuration",
+     "description": "Confirm the work package is at the revision this work order was released to.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Open the master WI",
+       "instruction": "Open the master WI and confirm its revision matches the one shown on this work order.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Check the part revision",
+       "instruction": "Confirm the part number and revision on the traveler match the drawing called out in the WI.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Confirm effectivity",
+       "instruction": "Verify any engineering changes listed on the work order are incorporated before starting assembly.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-030",
+     "title": "Record assembly completion",
+     "description": "Record the build-completion note for this operation.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": true,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Prepare the work area",
+       "instruction": "Clean the bench, verify the ESD mat and wrist strap, and stage the kit.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Assemble per WI",
+       "instruction": "Complete the assembly sequence shown in the WI figures. Log each calibrated tool you use.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Torque and witness mark",
+       "instruction": "Torque fasteners to the values in the WI and apply witness marks.",
+       "recordsTorque": true
+      },
+      {
+       "id": "step-4",
+       "title": "Record completion",
+       "instruction": "Write a completion note describing what was built and any observations.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-040",
+     "title": "Record inspection result",
+     "description": "Document the inspection result against the acceptance criteria for this operation.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": true,
+     "requiresTooling": true,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Set up inspection",
+       "instruction": "Gather the inspection tools listed in the WI and confirm they are in calibration.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Inspect features",
+       "instruction": "Measure each characteristic called out in the inspection table and compare it to tolerance.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Record results",
+       "instruction": "Record measured values. Any out-of-tolerance result needs an NC before buy-off.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-050",
+     "title": "Verify evidence package",
+     "description": "Check that every required work record is present before handoff.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Collect records",
+       "instruction": "Confirm every prior operation has a stamp, date, and completion note.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Check evidence",
+       "instruction": "Verify linked reports, photos, or recordings are attached and reviewed.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-060",
+     "title": "Prepare QA handoff",
+     "description": "Prepare the completed record for quality review.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Review the traveler",
+       "instruction": "Read through the full traveler for open items, holds, or missing entries.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Hand off to QA",
+       "instruction": "Notify Quality that the work order is ready for final review.",
+       "recordsTorque": false
+      }
+     ]
+    }
+   ],
+   "releasedAt": "2026-09-01T16:00:00.000Z",
+   "history": [
+    {
+     "at": "2026-09-01T16:00:00.000Z",
+     "action": "Released by QA.",
+     "actor": "QA reviewer · SR-QA-001"
+    }
+   ]
+  },
+  {
+   "id": "MWI-0004",
+   "revision": "A",
+   "status": "Released",
+   "partNumber": "SR-AV-140",
+   "partRevision": "B",
+   "title": "Avionics control unit master work order",
+   "operations": [
+    {
+     "id": "op-010",
+     "title": "Verify kit at bench",
+     "description": "Build step: match the kit issued by stores against the work package and confirm every line is present before starting assembly.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Pull the kit",
+       "instruction": "Locate the issued kit for this work order and confirm the kit label matches the work order number.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Match part numbers",
+       "instruction": "Compare each kit item’s part number and lot or serial number against the Kit tab.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Report shortages",
+       "instruction": "If anything is missing or damaged, stop and create an NC before continuing.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-020",
+     "title": "Confirm configuration",
+     "description": "Confirm the work package is at the revision this work order was released to.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Open the master WI",
+       "instruction": "Open the master WI and confirm its revision matches the one shown on this work order.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Check the part revision",
+       "instruction": "Confirm the part number and revision on the traveler match the drawing called out in the WI.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Confirm effectivity",
+       "instruction": "Verify any engineering changes listed on the work order are incorporated before starting assembly.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-030",
+     "title": "Record assembly completion",
+     "description": "Record the build-completion note for this operation.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": true,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Prepare the work area",
+       "instruction": "Clean the bench, verify the ESD mat and wrist strap, and stage the kit.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Assemble per WI",
+       "instruction": "Complete the assembly sequence shown in the WI figures. Log each calibrated tool you use.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Torque and witness mark",
+       "instruction": "Torque fasteners to the values in the WI and apply witness marks.",
+       "recordsTorque": true
+      },
+      {
+       "id": "step-4",
+       "title": "Record completion",
+       "instruction": "Write a completion note describing what was built and any observations.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-040",
+     "title": "Record inspection result",
+     "description": "Document the inspection result against the acceptance criteria for this operation.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": true,
+     "requiresTooling": true,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Set up inspection",
+       "instruction": "Gather the inspection tools listed in the WI and confirm they are in calibration.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Inspect features",
+       "instruction": "Measure each characteristic called out in the inspection table and compare it to tolerance.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Record results",
+       "instruction": "Record measured values. Any out-of-tolerance result needs an NC before buy-off.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-050",
+     "title": "Verify evidence package",
+     "description": "Check that every required work record is present before handoff.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Collect records",
+       "instruction": "Confirm every prior operation has a stamp, date, and completion note.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Check evidence",
+       "instruction": "Verify linked reports, photos, or recordings are attached and reviewed.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-060",
+     "title": "Prepare QA handoff",
+     "description": "Prepare the completed record for quality review.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Review the traveler",
+       "instruction": "Read through the full traveler for open items, holds, or missing entries.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Hand off to QA",
+       "instruction": "Notify Quality that the work order is ready for final review.",
+       "recordsTorque": false
+      }
+     ]
+    }
+   ],
+   "releasedAt": "2026-09-01T16:00:00.000Z",
+   "history": [
+    {
+     "at": "2026-09-01T16:00:00.000Z",
+     "action": "Released by QA.",
+     "actor": "QA reviewer · SR-QA-001"
+    }
+   ]
+  },
+  {
+   "id": "MWI-0005",
+   "revision": "A",
+   "status": "Released",
+   "partNumber": "SR-CT-220",
+   "partRevision": "A",
+   "title": "Control interface kit master work order",
+   "operations": [
+    {
+     "id": "op-010",
+     "title": "Verify kit at bench",
+     "description": "Build step: match the kit issued by stores against the work package and confirm every line is present before starting assembly.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Pull the kit",
+       "instruction": "Locate the issued kit for this work order and confirm the kit label matches the work order number.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Match part numbers",
+       "instruction": "Compare each kit item’s part number and lot or serial number against the Kit tab.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Report shortages",
+       "instruction": "If anything is missing or damaged, stop and create an NC before continuing.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-020",
+     "title": "Confirm configuration",
+     "description": "Confirm the work package is at the revision this work order was released to.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Open the master WI",
+       "instruction": "Open the master WI and confirm its revision matches the one shown on this work order.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Check the part revision",
+       "instruction": "Confirm the part number and revision on the traveler match the drawing called out in the WI.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Confirm effectivity",
+       "instruction": "Verify any engineering changes listed on the work order are incorporated before starting assembly.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-030",
+     "title": "Record assembly completion",
+     "description": "Record the build-completion note for this operation.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": true,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Prepare the work area",
+       "instruction": "Clean the bench, verify the ESD mat and wrist strap, and stage the kit.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Assemble per WI",
+       "instruction": "Complete the assembly sequence shown in the WI figures. Log each calibrated tool you use.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Torque and witness mark",
+       "instruction": "Torque fasteners to the values in the WI and apply witness marks.",
+       "recordsTorque": true
+      },
+      {
+       "id": "step-4",
+       "title": "Record completion",
+       "instruction": "Write a completion note describing what was built and any observations.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-040",
+     "title": "Record inspection result",
+     "description": "Document the inspection result against the acceptance criteria for this operation.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": true,
+     "requiresTooling": true,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Set up inspection",
+       "instruction": "Gather the inspection tools listed in the WI and confirm they are in calibration.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Inspect features",
+       "instruction": "Measure each characteristic called out in the inspection table and compare it to tolerance.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Record results",
+       "instruction": "Record measured values. Any out-of-tolerance result needs an NC before buy-off.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-050",
+     "title": "Verify evidence package",
+     "description": "Check that every required work record is present before handoff.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Collect records",
+       "instruction": "Confirm every prior operation has a stamp, date, and completion note.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Check evidence",
+       "instruction": "Verify linked reports, photos, or recordings are attached and reviewed.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-060",
+     "title": "Prepare QA handoff",
+     "description": "Prepare the completed record for quality review.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Review the traveler",
+       "instruction": "Read through the full traveler for open items, holds, or missing entries.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Hand off to QA",
+       "instruction": "Notify Quality that the work order is ready for final review.",
+       "recordsTorque": false
+      }
+     ]
+    }
+   ],
+   "releasedAt": "2026-09-01T16:00:00.000Z",
+   "history": [
+    {
+     "at": "2026-09-01T16:00:00.000Z",
+     "action": "Released by QA.",
+     "actor": "QA reviewer · SR-QA-001"
+    }
+   ]
+  },
+  {
+   "id": "MWI-0006",
+   "revision": "A",
+   "status": "Released",
+   "partNumber": "SR-SL-060",
+   "partRevision": "A",
+   "title": "Systems lab assembly master work order",
+   "operations": [
+    {
+     "id": "op-010",
+     "title": "Verify kit at bench",
+     "description": "Build step: match the kit issued by stores against the work package and confirm every line is present before starting assembly.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Pull the kit",
+       "instruction": "Locate the issued kit for this work order and confirm the kit label matches the work order number.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Match part numbers",
+       "instruction": "Compare each kit item’s part number and lot or serial number against the Kit tab.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Report shortages",
+       "instruction": "If anything is missing or damaged, stop and create an NC before continuing.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-020",
+     "title": "Confirm configuration",
+     "description": "Confirm the work package is at the revision this work order was released to.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Open the master WI",
+       "instruction": "Open the master WI and confirm its revision matches the one shown on this work order.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Check the part revision",
+       "instruction": "Confirm the part number and revision on the traveler match the drawing called out in the WI.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Confirm effectivity",
+       "instruction": "Verify any engineering changes listed on the work order are incorporated before starting assembly.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-030",
+     "title": "Record assembly completion",
+     "description": "Record the build-completion note for this operation.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": true,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Prepare the work area",
+       "instruction": "Clean the bench, verify the ESD mat and wrist strap, and stage the kit.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Assemble per WI",
+       "instruction": "Complete the assembly sequence shown in the WI figures. Log each calibrated tool you use.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Torque and witness mark",
+       "instruction": "Torque fasteners to the values in the WI and apply witness marks.",
+       "recordsTorque": true
+      },
+      {
+       "id": "step-4",
+       "title": "Record completion",
+       "instruction": "Write a completion note describing what was built and any observations.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-040",
+     "title": "Record inspection result",
+     "description": "Document the inspection result against the acceptance criteria for this operation.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": true,
+     "requiresTooling": true,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Set up inspection",
+       "instruction": "Gather the inspection tools listed in the WI and confirm they are in calibration.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Inspect features",
+       "instruction": "Measure each characteristic called out in the inspection table and compare it to tolerance.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Record results",
+       "instruction": "Record measured values. Any out-of-tolerance result needs an NC before buy-off.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-050",
+     "title": "Verify evidence package",
+     "description": "Check that every required work record is present before handoff.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Collect records",
+       "instruction": "Confirm every prior operation has a stamp, date, and completion note.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Check evidence",
+       "instruction": "Verify linked reports, photos, or recordings are attached and reviewed.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-060",
+     "title": "Prepare QA handoff",
+     "description": "Prepare the completed record for quality review.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Review the traveler",
+       "instruction": "Read through the full traveler for open items, holds, or missing entries.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Hand off to QA",
+       "instruction": "Notify Quality that the work order is ready for final review.",
+       "recordsTorque": false
+      }
+     ]
+    }
+   ],
+   "releasedAt": "2026-09-01T16:00:00.000Z",
+   "history": [
+    {
+     "at": "2026-09-01T16:00:00.000Z",
+     "action": "Released by QA.",
+     "actor": "QA reviewer · SR-QA-001"
+    }
+   ]
+  },
+  {
+   "id": "MWI-0007",
+   "revision": "A",
+   "status": "Released",
+   "partNumber": "SR-HC-050",
+   "partRevision": "A",
+   "title": "Harness set master work order",
+   "operations": [
+    {
+     "id": "op-010",
+     "title": "Verify kit at bench",
+     "description": "Build step: match the kit issued by stores against the work package and confirm every line is present before starting assembly.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Pull the kit",
+       "instruction": "Locate the issued kit for this work order and confirm the kit label matches the work order number.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Match part numbers",
+       "instruction": "Compare each kit item’s part number and lot or serial number against the Kit tab.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Report shortages",
+       "instruction": "If anything is missing or damaged, stop and create an NC before continuing.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-020",
+     "title": "Confirm configuration",
+     "description": "Confirm the work package is at the revision this work order was released to.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Open the master WI",
+       "instruction": "Open the master WI and confirm its revision matches the one shown on this work order.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Check the part revision",
+       "instruction": "Confirm the part number and revision on the traveler match the drawing called out in the WI.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Confirm effectivity",
+       "instruction": "Verify any engineering changes listed on the work order are incorporated before starting assembly.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-030",
+     "title": "Record assembly completion",
+     "description": "Record the build-completion note for this operation.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": true,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Prepare the work area",
+       "instruction": "Clean the bench, verify the ESD mat and wrist strap, and stage the kit.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Assemble per WI",
+       "instruction": "Complete the assembly sequence shown in the WI figures. Log each calibrated tool you use.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Torque and witness mark",
+       "instruction": "Torque fasteners to the values in the WI and apply witness marks.",
+       "recordsTorque": true
+      },
+      {
+       "id": "step-4",
+       "title": "Record completion",
+       "instruction": "Write a completion note describing what was built and any observations.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-040",
+     "title": "Record inspection result",
+     "description": "Document the inspection result against the acceptance criteria for this operation.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": true,
+     "requiresTooling": true,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Set up inspection",
+       "instruction": "Gather the inspection tools listed in the WI and confirm they are in calibration.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Inspect features",
+       "instruction": "Measure each characteristic called out in the inspection table and compare it to tolerance.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Record results",
+       "instruction": "Record measured values. Any out-of-tolerance result needs an NC before buy-off.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-050",
+     "title": "Verify evidence package",
+     "description": "Check that every required work record is present before handoff.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Collect records",
+       "instruction": "Confirm every prior operation has a stamp, date, and completion note.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Check evidence",
+       "instruction": "Verify linked reports, photos, or recordings are attached and reviewed.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-060",
+     "title": "Prepare QA handoff",
+     "description": "Prepare the completed record for quality review.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Review the traveler",
+       "instruction": "Read through the full traveler for open items, holds, or missing entries.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Hand off to QA",
+       "instruction": "Notify Quality that the work order is ready for final review.",
+       "recordsTorque": false
+      }
+     ]
+    }
+   ],
+   "releasedAt": "2026-09-01T16:00:00.000Z",
+   "history": [
+    {
+     "at": "2026-09-01T16:00:00.000Z",
+     "action": "Released by QA.",
+     "actor": "QA reviewer · SR-QA-001"
+    }
+   ]
+  },
+  {
+   "id": "MWI-0008",
+   "revision": "A",
+   "status": "Released",
+   "partNumber": "SR-DI-090",
+   "partRevision": "A",
+   "title": "Display integration fixture master work order",
+   "operations": [
+    {
+     "id": "op-010",
+     "title": "Verify kit at bench",
+     "description": "Build step: match the kit issued by stores against the work package and confirm every line is present before starting assembly.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Pull the kit",
+       "instruction": "Locate the issued kit for this work order and confirm the kit label matches the work order number.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Match part numbers",
+       "instruction": "Compare each kit item’s part number and lot or serial number against the Kit tab.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Report shortages",
+       "instruction": "If anything is missing or damaged, stop and create an NC before continuing.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-020",
+     "title": "Confirm configuration",
+     "description": "Confirm the work package is at the revision this work order was released to.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Open the master WI",
+       "instruction": "Open the master WI and confirm its revision matches the one shown on this work order.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Check the part revision",
+       "instruction": "Confirm the part number and revision on the traveler match the drawing called out in the WI.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Confirm effectivity",
+       "instruction": "Verify any engineering changes listed on the work order are incorporated before starting assembly.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-030",
+     "title": "Record assembly completion",
+     "description": "Record the build-completion note for this operation.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": true,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Prepare the work area",
+       "instruction": "Clean the bench, verify the ESD mat and wrist strap, and stage the kit.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Assemble per WI",
+       "instruction": "Complete the assembly sequence shown in the WI figures. Log each calibrated tool you use.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Torque and witness mark",
+       "instruction": "Torque fasteners to the values in the WI and apply witness marks.",
+       "recordsTorque": true
+      },
+      {
+       "id": "step-4",
+       "title": "Record completion",
+       "instruction": "Write a completion note describing what was built and any observations.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-040",
+     "title": "Record inspection result",
+     "description": "Document the inspection result against the acceptance criteria for this operation.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": true,
+     "requiresTooling": true,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Set up inspection",
+       "instruction": "Gather the inspection tools listed in the WI and confirm they are in calibration.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Inspect features",
+       "instruction": "Measure each characteristic called out in the inspection table and compare it to tolerance.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Record results",
+       "instruction": "Record measured values. Any out-of-tolerance result needs an NC before buy-off.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-050",
+     "title": "Verify evidence package",
+     "description": "Check that every required work record is present before handoff.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Collect records",
+       "instruction": "Confirm every prior operation has a stamp, date, and completion note.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Check evidence",
+       "instruction": "Verify linked reports, photos, or recordings are attached and reviewed.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-060",
+     "title": "Prepare QA handoff",
+     "description": "Prepare the completed record for quality review.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Review the traveler",
+       "instruction": "Read through the full traveler for open items, holds, or missing entries.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Hand off to QA",
+       "instruction": "Notify Quality that the work order is ready for final review.",
+       "recordsTorque": false
+      }
+     ]
+    }
+   ],
+   "releasedAt": "2026-09-01T16:00:00.000Z",
+   "history": [
+    {
+     "at": "2026-09-01T16:00:00.000Z",
+     "action": "Released by QA.",
+     "actor": "QA reviewer · SR-QA-001"
+    }
+   ]
+  },
+  {
+   "id": "MWI-0009",
+   "revision": "A",
+   "status": "Released",
+   "partNumber": "SR-IH-040",
+   "partRevision": "A",
+   "title": "Inspection fixture master work order",
+   "operations": [
+    {
+     "id": "op-010",
+     "title": "Verify kit at bench",
+     "description": "Build step: match the kit issued by stores against the work package and confirm every line is present before starting assembly.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Pull the kit",
+       "instruction": "Locate the issued kit for this work order and confirm the kit label matches the work order number.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Match part numbers",
+       "instruction": "Compare each kit item’s part number and lot or serial number against the Kit tab.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Report shortages",
+       "instruction": "If anything is missing or damaged, stop and create an NC before continuing.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-020",
+     "title": "Confirm configuration",
+     "description": "Confirm the work package is at the revision this work order was released to.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Open the master WI",
+       "instruction": "Open the master WI and confirm its revision matches the one shown on this work order.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Check the part revision",
+       "instruction": "Confirm the part number and revision on the traveler match the drawing called out in the WI.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Confirm effectivity",
+       "instruction": "Verify any engineering changes listed on the work order are incorporated before starting assembly.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-030",
+     "title": "Record assembly completion",
+     "description": "Record the build-completion note for this operation.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": true,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Prepare the work area",
+       "instruction": "Clean the bench, verify the ESD mat and wrist strap, and stage the kit.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Assemble per WI",
+       "instruction": "Complete the assembly sequence shown in the WI figures. Log each calibrated tool you use.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Torque and witness mark",
+       "instruction": "Torque fasteners to the values in the WI and apply witness marks.",
+       "recordsTorque": true
+      },
+      {
+       "id": "step-4",
+       "title": "Record completion",
+       "instruction": "Write a completion note describing what was built and any observations.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-040",
+     "title": "Record inspection result",
+     "description": "Document the inspection result against the acceptance criteria for this operation.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": true,
+     "requiresTooling": true,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Set up inspection",
+       "instruction": "Gather the inspection tools listed in the WI and confirm they are in calibration.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Inspect features",
+       "instruction": "Measure each characteristic called out in the inspection table and compare it to tolerance.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Record results",
+       "instruction": "Record measured values. Any out-of-tolerance result needs an NC before buy-off.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-050",
+     "title": "Verify evidence package",
+     "description": "Check that every required work record is present before handoff.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Collect records",
+       "instruction": "Confirm every prior operation has a stamp, date, and completion note.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Check evidence",
+       "instruction": "Verify linked reports, photos, or recordings are attached and reviewed.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-060",
+     "title": "Prepare QA handoff",
+     "description": "Prepare the completed record for quality review.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Review the traveler",
+       "instruction": "Read through the full traveler for open items, holds, or missing entries.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Hand off to QA",
+       "instruction": "Notify Quality that the work order is ready for final review.",
+       "recordsTorque": false
+      }
+     ]
+    }
+   ],
+   "releasedAt": "2026-09-01T16:00:00.000Z",
+   "history": [
+    {
+     "at": "2026-09-01T16:00:00.000Z",
+     "action": "Released by QA.",
+     "actor": "QA reviewer · SR-QA-001"
+    }
+   ]
+  },
+  {
+   "id": "MWI-0010",
+   "revision": "A",
+   "status": "Released",
+   "partNumber": "SR-IN-030",
+   "partRevision": "A",
+   "title": "Installation kit master work order",
+   "operations": [
+    {
+     "id": "op-010",
+     "title": "Verify kit at bench",
+     "description": "Build step: match the kit issued by stores against the work package and confirm every line is present before starting assembly.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Pull the kit",
+       "instruction": "Locate the issued kit for this work order and confirm the kit label matches the work order number.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Match part numbers",
+       "instruction": "Compare each kit item’s part number and lot or serial number against the Kit tab.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Report shortages",
+       "instruction": "If anything is missing or damaged, stop and create an NC before continuing.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-020",
+     "title": "Confirm configuration",
+     "description": "Confirm the work package is at the revision this work order was released to.",
+     "requiresRecording": false,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Open the master WI",
+       "instruction": "Open the master WI and confirm its revision matches the one shown on this work order.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Check the part revision",
+       "instruction": "Confirm the part number and revision on the traveler match the drawing called out in the WI.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Confirm effectivity",
+       "instruction": "Verify any engineering changes listed on the work order are incorporated before starting assembly.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-030",
+     "title": "Record assembly completion",
+     "description": "Record the build-completion note for this operation.",
+     "requiresRecording": true,
+     "buyoffType": "Technician",
+     "inspectionPoint": false,
+     "requiresTooling": true,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Prepare the work area",
+       "instruction": "Clean the bench, verify the ESD mat and wrist strap, and stage the kit.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Assemble per WI",
+       "instruction": "Complete the assembly sequence shown in the WI figures. Log each calibrated tool you use.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Torque and witness mark",
+       "instruction": "Torque fasteners to the values in the WI and apply witness marks.",
+       "recordsTorque": true
+      },
+      {
+       "id": "step-4",
+       "title": "Record completion",
+       "instruction": "Write a completion note describing what was built and any observations.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-040",
+     "title": "Record inspection result",
+     "description": "Document the inspection result against the acceptance criteria for this operation.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": true,
+     "requiresTooling": true,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Set up inspection",
+       "instruction": "Gather the inspection tools listed in the WI and confirm they are in calibration.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Inspect features",
+       "instruction": "Measure each characteristic called out in the inspection table and compare it to tolerance.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-3",
+       "title": "Record results",
+       "instruction": "Record measured values. Any out-of-tolerance result needs an NC before buy-off.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-050",
+     "title": "Verify evidence package",
+     "description": "Check that every required work record is present before handoff.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Collect records",
+       "instruction": "Confirm every prior operation has a stamp, date, and completion note.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Check evidence",
+       "instruction": "Verify linked reports, photos, or recordings are attached and reviewed.",
+       "recordsTorque": false
+      }
+     ]
+    },
+    {
+     "id": "op-060",
+     "title": "Prepare QA handoff",
+     "description": "Prepare the completed record for quality review.",
+     "requiresRecording": false,
+     "buyoffType": "Quality",
+     "inspectionPoint": false,
+     "requiresTooling": false,
+     "steps": [
+      {
+       "id": "step-1",
+       "title": "Review the traveler",
+       "instruction": "Read through the full traveler for open items, holds, or missing entries.",
+       "recordsTorque": false
+      },
+      {
+       "id": "step-2",
+       "title": "Hand off to QA",
+       "instruction": "Notify Quality that the work order is ready for final review.",
+       "recordsTorque": false
+      }
+     ]
+    }
+   ],
+   "releasedAt": "2026-09-01T16:00:00.000Z",
+   "history": [
+    {
+     "at": "2026-09-01T16:00:00.000Z",
+     "action": "Released by QA.",
+     "actor": "QA reviewer · SR-QA-001"
+    }
+   ]
+  }
+ ],
+ "serialLog": [
+  {
+   "id": "SNL-00001",
+   "serial": "FC-200-00001",
+   "partNumber": "SR-FC-200",
+   "revision": "C",
+   "orderId": "WO-10001",
+   "unit": 1,
+   "status": "Assigned",
+   "assignedAt": "2026-10-01T09:42:39.775Z",
+   "assignedBy": {
+    "name": "Morgan Lee",
+    "role": "Quality Manager",
+    "credentialId": "SR-QM-001"
+   },
+   "auto": true
+  }
+ ],
+ "lotSequence": 0,
+ "savedViews": [
+  {
+   "id": "view-flagged",
+   "name": "Quality queue",
+   "filters": {
+    "search": "",
+    "status": "All",
+    "site": "All",
+    "aircraft": "All",
+    "flagged": true
+   }
+  },
+  {
+   "id": "view-building",
+   "name": "Building",
+   "filters": {
+    "search": "",
+    "status": "Building",
+    "site": "All",
+    "aircraft": "All",
+    "flagged": false
+   }
+  }
+ ],
+ "plannedOrders": [
+  {
+   "id": "PO-20006",
+   "masterWI": {
+    "id": "MWI-0001",
+    "revision": "A",
+    "title": "Flight controls integration kit master work order"
+   },
+   "configuration": {
+    "partNumber": "SR-FC-200",
+    "partRevision": "C",
+    "pedigree": "Production",
+    "subcategory": "Mfg.",
+    "site": null,
+    "aircraft": "C2"
+   },
+   "quantity": 2,
+   "needDate": "2026-11-15",
+   "status": "Planned",
+   "workOrder": null,
+   "netsuite": {
+    "snapshotAt": "2026-09-15 15:13",
+    "onHand": 1
+   },
+   "createdAt": "2026-10-01T09:42:39.763Z",
+   "createdBy": {
+    "name": "Pat Admin",
+    "role": "System Administrator",
+    "credentialId": "ACCT-pilot-admin"
+   },
+   "history": [
+    {
+     "at": "2026-10-01T09:42:39.763Z",
+     "action": "Planned from MWI-0001 Rev A · SR-FC-200 Rev C. NetSuite on hand 1 at snapshot 2026-09-15 15:13.",
+     "actor": "Pat Admin · ACCT-pilot-admin"
+    }
+   ]
+  },
+  {
+   "id": "PO-20005",
+   "masterWI": {
+    "id": "MWI-0007",
+    "revision": "A",
+    "title": "Harness set master work order"
+   },
+   "configuration": {
+    "partNumber": "SR-HC-050",
+    "partRevision": "A",
+    "pedigree": "Production",
+    "subcategory": "FAI",
+    "site": "NASH",
+    "aircraft": "C5"
+   },
+   "quantity": 2,
+   "needDate": "2026-10-20",
+   "status": "Cancelled",
+   "workOrder": null,
+   "netsuite": {
+    "snapshotAt": "2026-09-15 15:13",
+    "onHand": 6
+   },
+   "createdAt": "2026-10-01T09:42:39.735Z",
+   "createdBy": {
+    "name": "Flight Plan seed",
+    "role": "Flight Plan",
+    "credentialId": "DEMO"
+   },
+   "history": [
+    {
+     "at": "2026-10-01T09:42:39.735Z",
+     "action": "Planned from MWI-0007 Rev A · SR-HC-050 Rev A. NetSuite on hand 6 at snapshot 2026-09-15 15:13.",
+     "actor": "Flight Plan seed · DEMO"
+    },
+    {
+     "at": "2026-10-01T09:42:39.735Z",
+     "action": "Cancelled: Demand withdrawn (DEMO).",
+     "actor": "Morgan Lee · SR-QM-001"
+    }
+   ]
+  },
+  {
+   "id": "PO-20004",
+   "masterWI": {
+    "id": "MWI-0001",
+    "revision": "A",
+    "title": "Flight controls integration kit master work order"
+   },
+   "configuration": {
+    "partNumber": "SR-FC-200",
+    "partRevision": "C",
+    "pedigree": "Development",
+    "subcategory": "Installation",
+    "site": "HHR",
+    "aircraft": "C4"
+   },
+   "quantity": 1,
+   "needDate": "2026-09-12",
+   "status": "Planned",
+   "workOrder": null,
+   "netsuite": {
+    "snapshotAt": "2026-09-15 15:13",
+    "onHand": 1
+   },
+   "createdAt": "2026-10-01T09:42:39.735Z",
+   "createdBy": {
+    "name": "Flight Plan seed",
+    "role": "Flight Plan",
+    "credentialId": "DEMO"
+   },
+   "history": [
+    {
+     "at": "2026-10-01T09:42:39.735Z",
+     "action": "Planned from MWI-0001 Rev A · SR-FC-200 Rev C. NetSuite on hand 1 at snapshot 2026-09-15 15:13.",
+     "actor": "Flight Plan seed · DEMO"
+    }
+   ]
+  },
+  {
+   "id": "PO-20003",
+   "masterWI": {
+    "id": "MWI-0002",
+    "revision": "A",
+    "title": "Cabin interface assembly master work order"
+   },
+   "configuration": {
+    "partNumber": "SR-CI-110",
+    "partRevision": "B",
+    "pedigree": "Production",
+    "subcategory": "Mfg.",
+    "site": "HHR",
+    "aircraft": "C4"
+   },
+   "quantity": 2,
+   "needDate": "2026-10-02",
+   "status": "Firm",
+   "workOrder": null,
+   "netsuite": {
+    "snapshotAt": "2026-09-15 15:13",
+    "onHand": 3
+   },
+   "createdAt": "2026-10-01T09:42:39.735Z",
+   "createdBy": {
+    "name": "Flight Plan seed",
+    "role": "Flight Plan",
+    "credentialId": "DEMO"
+   },
+   "history": [
+    {
+     "at": "2026-10-01T09:42:39.735Z",
+     "action": "Planned from MWI-0002 Rev A · SR-CI-110 Rev B. NetSuite on hand 3 at snapshot 2026-09-15 15:13.",
+     "actor": "Flight Plan seed · DEMO"
+    },
+    {
+     "at": "2026-10-01T09:42:39.735Z",
+     "action": "Firmed. A future MRP regeneration will not remove this order.",
+     "actor": "Morgan Lee · SR-QM-001"
+    }
+   ]
+  },
+  {
+   "id": "PO-20002",
+   "masterWI": {
+    "id": "MWI-0007",
+    "revision": "A",
+    "title": "Harness set master work order"
+   },
+   "configuration": {
+    "partNumber": "SR-HC-050",
+    "partRevision": "A",
+    "pedigree": "Production",
+    "subcategory": "Mfg.",
+    "site": "CMA",
+    "aircraft": "C2"
+   },
+   "quantity": 10,
+   "needDate": "2026-09-30",
+   "status": "Firm",
+   "workOrder": null,
+   "netsuite": {
+    "snapshotAt": "2026-09-15 15:13",
+    "onHand": 6
+   },
+   "createdAt": "2026-10-01T09:42:39.735Z",
+   "createdBy": {
+    "name": "Flight Plan seed",
+    "role": "Flight Plan",
+    "credentialId": "DEMO"
+   },
+   "history": [
+    {
+     "at": "2026-10-01T09:42:39.735Z",
+     "action": "Planned from MWI-0007 Rev A · SR-HC-050 Rev A. NetSuite on hand 6 at snapshot 2026-09-15 15:13.",
+     "actor": "Flight Plan seed · DEMO"
+    },
+    {
+     "at": "2026-10-01T09:42:39.735Z",
+     "action": "Firmed. A future MRP regeneration will not remove this order.",
+     "actor": "Morgan Lee · SR-QM-001"
+    }
+   ]
+  },
+  {
+   "id": "PO-20001",
+   "masterWI": {
+    "id": "MWI-0001",
+    "revision": "A",
+    "title": "Flight controls integration kit master work order"
+   },
+   "configuration": {
+    "partNumber": "SR-FC-200",
+    "partRevision": "C",
+    "pedigree": "Production",
+    "subcategory": "Mfg.",
+    "site": "HHR",
+    "aircraft": "C3"
+   },
+   "quantity": 4,
+   "needDate": "2026-10-09",
+   "status": "Planned",
+   "workOrder": null,
+   "netsuite": {
+    "snapshotAt": "2026-09-15 15:13",
+    "onHand": 1
+   },
+   "createdAt": "2026-10-01T09:42:39.735Z",
+   "createdBy": {
+    "name": "Flight Plan seed",
+    "role": "Flight Plan",
+    "credentialId": "DEMO"
+   },
+   "history": [
+    {
+     "at": "2026-10-01T09:42:39.735Z",
+     "action": "Planned from MWI-0001 Rev A · SR-FC-200 Rev C. NetSuite on hand 1 at snapshot 2026-09-15 15:13.",
+     "actor": "Flight Plan seed · DEMO"
+    }
+   ]
+  }
+ ],
+ "reworkLibrary": [
+  {
+   "id": "SRW-001",
+   "title": "Re-torque fastener(s) to drawing value",
+   "description": "Re-torque fastener(s) to drawing value. Starter content: review against the part, the drawing and the NC before QA approval.",
+   "classification": "Rework",
+   "buyoffType": "Technician",
+   "requiresTooling": true,
+   "steps": [
+    {
+     "title": "Remove torque stripe",
+     "instruction": "Remove the existing torque stripe from the affected fastener(s) with an approved solvent."
+    },
+    {
+     "title": "Loosen and clean",
+     "instruction": "Back off the fastener, inspect threads for damage, clean as required."
+    },
+    {
+     "title": "Re-torque",
+     "instruction": "Torque to the drawing or WI value with a calibrated tool. Record the value and tool."
+    },
+    {
+     "title": "Apply torque stripe",
+     "instruction": "Apply a new torque stripe across fastener and substrate."
+    }
+   ],
+   "status": "Draft",
+   "uses": 0,
+   "createdBy": "Starter library",
+   "createdAt": "2026-09-19T00:00:00.000Z",
+   "ops": [
+    {
+     "classification": "Rework",
+     "title": "Re-torque fastener(s) to drawing value",
+     "description": "Re-torque fastener(s) to drawing value. Starter content: review against the part, the drawing and the NC before QA approval.",
+     "buyoffType": "Technician",
+     "requiresTooling": true,
+     "steps": [
+      {
+       "title": "Remove torque stripe",
+       "instruction": "Remove the existing torque stripe from the affected fastener(s) with an approved solvent."
+      },
+      {
+       "title": "Loosen and clean",
+       "instruction": "Back off the fastener, inspect threads for damage, clean as required."
+      },
+      {
+       "title": "Re-torque",
+       "instruction": "Torque to the drawing or WI value with a calibrated tool. Record the value and tool."
+      },
+      {
+       "title": "Apply torque stripe",
+       "instruction": "Apply a new torque stripe across fastener and substrate."
+      }
+     ]
+    },
+    {
+     "classification": "Inspection",
+     "title": "Rework inspection: Re-torque fastener(s) to drawing value",
+     "description": "Inspect the rework performed by the preceding operation: Re-torque fastener(s) to drawing value.",
+     "buyoffType": "Quality",
+     "requiresTooling": false,
+     "steps": [
+      {
+       "title": "Standard inspection",
+       "instruction": "Inspect all operations performed since the last inspection point. Check for FOD, FOD damage and workmanship."
+      },
+      {
+       "title": "Verify the rework",
+       "instruction": "Verify the rework against the NC disposition and the drawing or WI requirement. Record the result."
+      },
+      {
+       "title": "Inspect the surrounding area",
+       "instruction": "Inspect the reworked area and adjacent parts for damage, FOD and workmanship."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "SRW-002",
+   "title": "Replace connector backshell and re-terminate",
+   "description": "Replace connector backshell and re-terminate. Starter content: review against the part, the drawing and the NC before QA approval.",
+   "classification": "Rework",
+   "buyoffType": "Technician",
+   "requiresTooling": true,
+   "steps": [
+    {
+     "title": "De-mate and remove backshell",
+     "instruction": "De-mate the connector, remove the backshell and strain relief. Protect the pins."
+    },
+    {
+     "title": "Inspect contacts",
+     "instruction": "Inspect contacts and wires for damage. Replace any damaged contact per the harness drawing."
+    },
+    {
+     "title": "Install backshell",
+     "instruction": "Install the backshell and strain relief. Torque to the drawing value."
+    },
+    {
+     "title": "Continuity check",
+     "instruction": "Perform a continuity check on affected circuits and record the result."
+    }
+   ],
+   "status": "Draft",
+   "uses": 0,
+   "createdBy": "Starter library",
+   "createdAt": "2026-09-19T00:00:00.000Z",
+   "ops": [
+    {
+     "classification": "Rework",
+     "title": "Replace connector backshell and re-terminate",
+     "description": "Replace connector backshell and re-terminate. Starter content: review against the part, the drawing and the NC before QA approval.",
+     "buyoffType": "Technician",
+     "requiresTooling": true,
+     "steps": [
+      {
+       "title": "De-mate and remove backshell",
+       "instruction": "De-mate the connector, remove the backshell and strain relief. Protect the pins."
+      },
+      {
+       "title": "Inspect contacts",
+       "instruction": "Inspect contacts and wires for damage. Replace any damaged contact per the harness drawing."
+      },
+      {
+       "title": "Install backshell",
+       "instruction": "Install the backshell and strain relief. Torque to the drawing value."
+      },
+      {
+       "title": "Continuity check",
+       "instruction": "Perform a continuity check on affected circuits and record the result."
+      }
+     ]
+    },
+    {
+     "classification": "Inspection",
+     "title": "Rework inspection: Replace connector backshell and re-terminate",
+     "description": "Inspect the rework performed by the preceding operation: Replace connector backshell and re-terminate.",
+     "buyoffType": "Quality",
+     "requiresTooling": false,
+     "steps": [
+      {
+       "title": "Standard inspection",
+       "instruction": "Inspect all operations performed since the last inspection point. Check for FOD, FOD damage and workmanship."
+      },
+      {
+       "title": "Verify the rework",
+       "instruction": "Verify the rework against the NC disposition and the drawing or WI requirement. Record the result."
+      },
+      {
+       "title": "Inspect the surrounding area",
+       "instruction": "Inspect the reworked area and adjacent parts for damage, FOD and workmanship."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "SRW-003",
+   "title": "Solder joint rework per J-STD-001",
+   "description": "Solder joint rework per J-STD-001. Starter content: review against the part, the drawing and the NC before QA approval.",
+   "classification": "Rework",
+   "buyoffType": "Technician",
+   "requiresTooling": false,
+   "steps": [
+    {
+     "title": "Remove defective joint",
+     "instruction": "Remove solder from the defective joint with wick or vacuum. Protect adjacent parts."
+    },
+    {
+     "title": "Clean",
+     "instruction": "Clean the area and inspect the pad and lead for damage."
+    },
+    {
+     "title": "Re-solder",
+     "instruction": "Re-solder per J-STD-001 at the class called out on the drawing."
+    },
+    {
+     "title": "Inspect",
+     "instruction": "Inspect the joint under magnification and record the result."
+    }
+   ],
+   "status": "Draft",
+   "uses": 0,
+   "createdBy": "Starter library",
+   "createdAt": "2026-09-19T00:00:00.000Z",
+   "ops": [
+    {
+     "classification": "Rework",
+     "title": "Solder joint rework per J-STD-001",
+     "description": "Solder joint rework per J-STD-001. Starter content: review against the part, the drawing and the NC before QA approval.",
+     "buyoffType": "Technician",
+     "requiresTooling": false,
+     "steps": [
+      {
+       "title": "Remove defective joint",
+       "instruction": "Remove solder from the defective joint with wick or vacuum. Protect adjacent parts."
+      },
+      {
+       "title": "Clean",
+       "instruction": "Clean the area and inspect the pad and lead for damage."
+      },
+      {
+       "title": "Re-solder",
+       "instruction": "Re-solder per J-STD-001 at the class called out on the drawing."
+      },
+      {
+       "title": "Inspect",
+       "instruction": "Inspect the joint under magnification and record the result."
+      }
+     ]
+    },
+    {
+     "classification": "Inspection",
+     "title": "Rework inspection: Solder joint rework per J-STD-001",
+     "description": "Inspect the rework performed by the preceding operation: Solder joint rework per J-STD-001.",
+     "buyoffType": "Quality",
+     "requiresTooling": false,
+     "steps": [
+      {
+       "title": "Standard inspection",
+       "instruction": "Inspect all operations performed since the last inspection point. Check for FOD, FOD damage and workmanship."
+      },
+      {
+       "title": "Verify the rework",
+       "instruction": "Verify the rework against the NC disposition and the drawing or WI requirement. Record the result."
+      },
+      {
+       "title": "Inspect the surrounding area",
+       "instruction": "Inspect the reworked area and adjacent parts for damage, FOD and workmanship."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "SRW-004",
+   "title": "Touch-up finish or coating per spec",
+   "description": "Touch-up finish or coating per spec. Starter content: review against the part, the drawing and the NC before QA approval.",
+   "classification": "Repair",
+   "buyoffType": "Technician",
+   "requiresTooling": false,
+   "steps": [
+    {
+     "title": "Prepare surface",
+     "instruction": "Mask the area. Clean and abrade the damaged coating per the finish spec."
+    },
+    {
+     "title": "Apply touch-up",
+     "instruction": "Apply the touch-up material called out on the drawing within its shelf life. Record the material lot."
+    },
+    {
+     "title": "Cure and inspect",
+     "instruction": "Cure per the material data sheet and inspect coverage and color code."
+    }
+   ],
+   "status": "Draft",
+   "uses": 0,
+   "createdBy": "Starter library",
+   "createdAt": "2026-09-19T00:00:00.000Z",
+   "ops": [
+    {
+     "classification": "Repair",
+     "title": "Touch-up finish or coating per spec",
+     "description": "Touch-up finish or coating per spec. Starter content: review against the part, the drawing and the NC before QA approval.",
+     "buyoffType": "Technician",
+     "requiresTooling": false,
+     "steps": [
+      {
+       "title": "Prepare surface",
+       "instruction": "Mask the area. Clean and abrade the damaged coating per the finish spec."
+      },
+      {
+       "title": "Apply touch-up",
+       "instruction": "Apply the touch-up material called out on the drawing within its shelf life. Record the material lot."
+      },
+      {
+       "title": "Cure and inspect",
+       "instruction": "Cure per the material data sheet and inspect coverage and color code."
+      }
+     ]
+    },
+    {
+     "classification": "Inspection",
+     "title": "Rework inspection: Touch-up finish or coating per spec",
+     "description": "Inspect the rework performed by the preceding operation: Touch-up finish or coating per spec.",
+     "buyoffType": "Quality",
+     "requiresTooling": false,
+     "steps": [
+      {
+       "title": "Standard inspection",
+       "instruction": "Inspect all operations performed since the last inspection point. Check for FOD, FOD damage and workmanship."
+      },
+      {
+       "title": "Verify the rework",
+       "instruction": "Verify the rework against the NC disposition and the drawing or WI requirement. Record the result."
+      },
+      {
+       "title": "Inspect the surrounding area",
+       "instruction": "Inspect the reworked area and adjacent parts for damage, FOD and workmanship."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "SRW-005",
+   "title": "Remove and replace component",
+   "description": "Remove and replace component. Starter content: review against the part, the drawing and the NC before QA approval.",
+   "classification": "Rework",
+   "buyoffType": "Technician",
+   "requiresTooling": true,
+   "steps": [
+    {
+     "title": "Remove component",
+     "instruction": "Remove the nonconforming component. Quarantine it with the NC tag."
+    },
+    {
+     "title": "Install replacement",
+     "instruction": "Install a conforming replacement from stock. Record its part number and lot or serial."
+    },
+    {
+     "title": "Torque and verify",
+     "instruction": "Torque fasteners to the drawing value and verify the installation."
+    }
+   ],
+   "status": "Draft",
+   "uses": 0,
+   "createdBy": "Starter library",
+   "createdAt": "2026-09-19T00:00:00.000Z",
+   "ops": [
+    {
+     "classification": "Rework",
+     "title": "Remove and replace component",
+     "description": "Remove and replace component. Starter content: review against the part, the drawing and the NC before QA approval.",
+     "buyoffType": "Technician",
+     "requiresTooling": true,
+     "steps": [
+      {
+       "title": "Remove component",
+       "instruction": "Remove the nonconforming component. Quarantine it with the NC tag."
+      },
+      {
+       "title": "Install replacement",
+       "instruction": "Install a conforming replacement from stock. Record its part number and lot or serial."
+      },
+      {
+       "title": "Torque and verify",
+       "instruction": "Torque fasteners to the drawing value and verify the installation."
+      }
+     ]
+    },
+    {
+     "classification": "Inspection",
+     "title": "Rework inspection: Remove and replace component",
+     "description": "Inspect the rework performed by the preceding operation: Remove and replace component.",
+     "buyoffType": "Quality",
+     "requiresTooling": false,
+     "steps": [
+      {
+       "title": "Standard inspection",
+       "instruction": "Inspect all operations performed since the last inspection point. Check for FOD, FOD damage and workmanship."
+      },
+      {
+       "title": "Verify the rework",
+       "instruction": "Verify the rework against the NC disposition and the drawing or WI requirement. Record the result."
+      },
+      {
+       "title": "Inspect the surrounding area",
+       "instruction": "Inspect the reworked area and adjacent parts for damage, FOD and workmanship."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "SRW-006",
+   "title": "Clean and re-inspect for FOD",
+   "description": "Clean and re-inspect for FOD. Starter content: review against the part, the drawing and the NC before QA approval.",
+   "classification": "Rework",
+   "buyoffType": "Technician",
+   "requiresTooling": false,
+   "steps": [
+    {
+     "title": "Clean",
+     "instruction": "Clean the affected area and remove all foreign objects. Account for all tools."
+    },
+    {
+     "title": "Re-inspect",
+     "instruction": "Re-inspect the area and adjacent areas for FOD and damage."
+    }
+   ],
+   "status": "Draft",
+   "uses": 0,
+   "createdBy": "Starter library",
+   "createdAt": "2026-09-19T00:00:00.000Z",
+   "ops": [
+    {
+     "classification": "Rework",
+     "title": "Clean and re-inspect for FOD",
+     "description": "Clean and re-inspect for FOD. Starter content: review against the part, the drawing and the NC before QA approval.",
+     "buyoffType": "Technician",
+     "requiresTooling": false,
+     "steps": [
+      {
+       "title": "Clean",
+       "instruction": "Clean the affected area and remove all foreign objects. Account for all tools."
+      },
+      {
+       "title": "Re-inspect",
+       "instruction": "Re-inspect the area and adjacent areas for FOD and damage."
+      }
+     ]
+    },
+    {
+     "classification": "Inspection",
+     "title": "Rework inspection: Clean and re-inspect for FOD",
+     "description": "Inspect the rework performed by the preceding operation: Clean and re-inspect for FOD.",
+     "buyoffType": "Quality",
+     "requiresTooling": false,
+     "steps": [
+      {
+       "title": "Standard inspection",
+       "instruction": "Inspect all operations performed since the last inspection point. Check for FOD, FOD damage and workmanship."
+      },
+      {
+       "title": "Verify the rework",
+       "instruction": "Verify the rework against the NC disposition and the drawing or WI requirement. Record the result."
+      },
+      {
+       "title": "Inspect the surrounding area",
+       "instruction": "Inspect the reworked area and adjacent parts for damage, FOD and workmanship."
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "calibrationLogStart": {
+  "firstId": "CALLOG-00001",
+  "firstHash": "fb53a22ecb161377dd5fb0bed726e7e568a265eb574d53aab70e4488a4442b9c",
+  "recordedAt": "2026-10-01T09:42:39.752Z"
+ },
+ "calibrationLogHead": {
+  "count": 3,
+  "hash": "8cfe9231181cea3c5e796f793742d1ef1facca85cf7d1eab00bd76d1ad63caa0",
+  "legacyCount": 0
+ },
+ "maneuver": {
+  "cars": [],
+  "mrb": [],
+  "ncs": [],
+  "sprs": [],
+  "pfmeas": [],
+  "__ticketsV2": 2
+ }
+}

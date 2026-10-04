@@ -5,6 +5,7 @@
 //    entry cannot be written or saved, the account is unchanged and the workspace keeps no partial entry.
 //    A Master Access account cannot grant Support Access to itself (the server already refuses this).
 import {chromium} from 'playwright';
+import {loadSampleInPage} from './lib/production-sample.mjs';
 const TESTS=decodeURI(new URL('.',import.meta.url).pathname);
 const FIXTURES=process.env.FS_FIXTURES_DIR?process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):TESTS+'fixtures/';
 const PROD='file://'+FIXTURES+'publish.html';
@@ -27,6 +28,8 @@ await run(async([AUTH])=>{const a=JSON.parse(localStorage.getItem(AUTH));const s
 
 // ---- 1. a step performer stays on the operation after the step is unchecked ----
 await as('jdoe');
+// Production ships no WIs (issue #247): load the sample WIs as this suite's data.
+await loadSampleInPage(p);
 const W=await run(()=>{const wi=state.masterWIs.find(x=>x.status==='Released');const r=MES.addOrder(state,{masterWI:wi.id+'|'+wi.revision,pedigree:'Production',subcategory:'Mfg.',quantity:1,aircraft:MES.AIRCRAFT[0],site:MES.SITES[0]});const o=MES.getOrder(state,r.id);MES.advance(state,r.id);o.materials.forEach(m=>{const l=MES.availableLots(m.partNumber)[0];MES.setMaterialLot(state,r.id,m.id,l?l.lot:'L1');MES.setMaterial(state,r.id,m.id,true);});MES.addKitFile(state,r.id,{name:'kit.pdf',type:'application/pdf',size:10,dataUrl:null});MES.advance(state,r.id);save();
   const op=o.operations[0],insp=o.operations.find(x=>x.inspectionPoint);return {id:r.id,status:o.status,op:op.id,step:op.steps[0].id,insp:insp&&insp.id,inspIsLater:!!insp&&o.operations.indexOf(insp)>0&&!op.inspectionPoint};});
 ok('fixture: a Building order with a build operation and a later inspection operation',W.status==='Building'&&W.inspIsLater,JSON.stringify(W));

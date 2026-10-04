@@ -13,6 +13,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { DEVIATIONS, PILOT_SEATS } from './demo/deviations.mjs';
 import { rebaseDemoSeed, rebaseCalSnapshot } from './demo/seed-dates.mjs';
+import * as SAMPLE from './demo/sample-data.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const at = p => path.join(ROOT, p);
@@ -58,8 +59,14 @@ export function buildDemo(production, dataset) {
     overlay: read('tools/demo/overlay.js').replace('__SEED_MARK__', seedMark),
     rebase: rebaseDemoSeed.toString(),
     calRebase: rebaseCalSnapshot.toString(),
+    calSnapshot: JSON.parse(read('tools/demo/cal-snapshot.json')),
   };
   if (ctx.seed.includes('</script')) throw new Error(`tools/demo/seed-${dataset}.json contains "</script" and would break the page.`);
+  // Every sample the deviations write into a <script> element: a script terminator or comment opener in any of them
+  // would end the element and let the rest run as markup.
+  for (const [file, text] of [['tools/demo/cal-snapshot.json', JSON.stringify(ctx.calSnapshot)], ...Object.entries(SAMPLE).map(([name, source]) => [`tools/demo/sample-data.mjs (${name})`, source])]) {
+    if (/<\/script|<!--/i.test(text)) throw new Error(`${file} contains "</script" or "<!--" and would break the page.`);
+  }
   let out = production;
   for (const dev of DEVIATIONS) out = applyOne(out, dev, ctx);
   return out;

@@ -6,6 +6,7 @@
 // stored with scrypt. Every rule is checked together with the refusal it exists to make.
 import {chromium} from 'playwright';
 import {createHash} from 'node:crypto';
+import {loadSampleInPage} from './lib/production-sample.mjs';
 const TESTS=decodeURI(new URL('.',import.meta.url).pathname);
 const FIXTURES=process.env.FS_FIXTURES_DIR?process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):TESTS+'fixtures/';
 const PROD='file://'+FIXTURES+'publish.html';
@@ -26,9 +27,13 @@ await run(async([AUTH])=>{const a=JSON.parse(localStorage.getItem(AUTH));const s
   add('pqm','Parker Manager','qm');add('kqe','Kai Quality','qe');add('sqs','Sam Supervisor','qs');add('ttech','Toni Tech','technician');add('priv','Pat Rivera','qe');localStorage.setItem(AUTH,JSON.stringify(a));},[AUTH]);
 
 // ---------------- stamp register ----------------
+ok('a new production register is empty: no placeholders, no role credentials, no people (issue #247)',await run(()=>Array.isArray(state.stamps)&&state.stamps.length===0&&MES.stampRegister(state).length===0));
+// A register saved under an earlier build keeps its numbered placeholders, and the rules for filling them still
+// apply: load that register (the demo sample), with the sample WIs and test tools, as this suite's data.
+await loadSampleInPage(p,{stamps:true,tools:true});
 const fresh=await run(()=>state.stamps.map(s=>({n:s.number,name:s.name,status:s.status,account:s.account,ph:MES.isPlaceholderStamp(s)})));
-ok('the register ships with SKY-0000 to SKY-0006 as open placeholders, no people',fresh.slice(0,7).every((s,i)=>s.n===`SKY-000${i}`&&s.name===`Unassigned SKY-000${i}`&&s.ph&&!s.account),JSON.stringify(fresh.slice(0,7)));
-ok('SKY-0007 onward are the generic role credentials, retired',fresh.slice(7).length===6&&fresh.slice(7).every((s,i)=>s.n===`SKY-${String(7+i).padStart(4,'0')}`&&s.status==='Retired'),JSON.stringify(fresh.slice(7)));
+ok('a saved register keeps SKY-0000 to SKY-0006 as open placeholders, no people',fresh.slice(0,7).every((s,i)=>s.n===`SKY-000${i}`&&s.name===`Unassigned SKY-000${i}`&&s.ph&&!s.account),JSON.stringify(fresh.slice(0,7)));
+ok('in a saved register SKY-0007 onward are the generic role credentials, retired',fresh.slice(7).length===6&&fresh.slice(7).every((s,i)=>s.n===`SKY-${String(7+i).padStart(4,'0')}`&&s.status==='Retired'),JSON.stringify(fresh.slice(7)));
 await as('pqm');
 const first=await run(f=>MES.issueStamp(state,{name:'Pat Rivera',buyoffType:'Quality',account:'priv',expires:f}),future());
 ok('a blank number takes the first open placeholder, SKY-0000',first.ok&&first.number==='SKY-0000'&&await run(()=>state.stamps.find(s=>s.number==='SKY-0000').name==='Pat Rivera'),JSON.stringify(first));

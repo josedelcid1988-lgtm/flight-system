@@ -2,6 +2,7 @@
 // up and restorable. App: off by default; when on, queues every committed write, posts it, survives the
 // server being down (queue, flag, retry with backoff, recover) and never sends a password or PIN hash.
 import {chromium} from 'playwright';
+import {loadSampleInPage} from './lib/production-sample.mjs';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -94,7 +95,7 @@ await m.close();
 
 // ================= app =================
 const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{});
-const signUp=async p=>{await p.goto(PROD);await p.waitForTimeout(900);await p.evaluate(()=>{const un=document.querySelector('#sk-boot input[name=username]');const f=un.closest('form');const set=(el,v)=>{el.value=v;el.dispatchEvent(new Event('input',{bubbles:true}));};set(un,'jdoe');set(f.querySelector('input[type=password]'),'demo1234');const cf=f.querySelector('input[name=confirm]');if(cf)set(cf,'demo1234');const d=f.querySelector('input[name=displayName]');if(d)set(d,'Jordan Doe');f.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));});await p.waitForTimeout(2600);};
+const signUp=async p=>{await p.goto(PROD);await p.waitForTimeout(900);await p.evaluate(()=>{const un=document.querySelector('#sk-boot input[name=username]');const f=un.closest('form');const set=(el,v)=>{el.value=v;el.dispatchEvent(new Event('input',{bubbles:true}));};set(un,'jdoe');set(f.querySelector('input[type=password]'),'demo1234');const cf=f.querySelector('input[name=confirm]');if(cf)set(cf,'demo1234');const d=f.querySelector('input[name=displayName]');if(d)set(d,'Jordan Doe');f.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));});await p.waitForTimeout(2600);/* Production ships no WIs (issue #247): load the sample WIs as this suite's data. */await loadSampleInPage(p);};
 const mkOrder=p=>p.evaluate(()=>{const wi=state.masterWIs.find(x=>x.status==='Released');const r=MES.addOrder(state,{masterWI:wi.id+'|'+wi.revision,pedigree:'Production',subcategory:'Mfg.',quantity:1,aircraft:MES.AIRCRAFT[0],site:MES.SITES[0]});return {ok:r.ok,saved:save(),id:r.id};});
 
 // Mirror off (the shipped default): nothing leaves the page and nothing is queued.

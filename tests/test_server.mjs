@@ -673,7 +673,7 @@ try {
     delete doc.maneuver;
     delete doc.plannedOrders;
     delete doc.blockers;
-    delete doc.masterWIs;
+    // The master WI library is not derived state: production no longer seeds one (issue #247), so it stays.
     const plantedEtag = server.store.putDoc('default', JSON.stringify(doc), before.etag, 'server-test-fixture');
     assert.ok(plantedEtag, 'the stale derived state is planted');
     const acted = await api('POST', '/workspace/actions/MES.pruneExpiredNotices', { token, body: { args: [] }, headers: { 'If-Match': plantedEtag } });
@@ -685,7 +685,7 @@ try {
     assert.equal(stale.autoClosed, true);
     assert.ok(after.maneuver && Array.isArray(after.maneuver.cars), 'maneuver defaults converge on the server commit');
     assert.ok(Array.isArray(after.plannedOrders), 'plan defaults converge on the server commit');
-    assert.ok(Array.isArray(after.masterWIs) && after.masterWIs.length > 0, 'master WI defaults converge on the server commit');
+    assert.equal(JSON.stringify(after.masterWIs), JSON.stringify(doc.masterWIs), 'the master WI library is kept as stored on the server commit');
     assert.ok(Array.isArray(after.blockers), 'planning blockers recompute on the server commit');
   });
   await check('an invalid converged workspace refuses the write and keeps the previous record', async () => {
@@ -741,7 +741,7 @@ try {
       assert.equal(loaded.status, 200, JSON.stringify(loaded.json));
       assert.ok(loaded.json.maneuver && Array.isArray(loaded.json.maneuver.cars), 'init converges maneuver defaults');
       assert.ok(Array.isArray(loaded.json.plannedOrders), 'init converges plan defaults');
-      assert.ok(Array.isArray(loaded.json.masterWIs) && loaded.json.masterWIs.length > 0, 'init converges master WIs');
+      assert.ok(Array.isArray(loaded.json.masterWIs) && loaded.json.masterWIs.length === 0, 'init converges an empty master WI library: production seeds no sample WIs (issue #247)');
       assert.ok(Array.isArray(loaded.json.blockers), 'init recomputes planning blockers');
       const initStale = loaded.json.assignments.find(a => a.id === 'A-INIT');
       assert.ok(initStale, 'the planted assignment survived initialization');

@@ -5,6 +5,7 @@
 // Your credentials keeps only the signed-in person's own items; individually granted authorities read in
 // words; the stamp register fits a 1024x768 tablet (one header row, no wrapped words, nothing clipped).
 import {chromium} from 'playwright';
+import {loadSampleInPage} from './lib/production-sample.mjs';
 const TESTS=decodeURI(new URL('.',import.meta.url).pathname);
 const FIXTURES=process.env.FS_FIXTURES_DIR?process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):TESTS+'fixtures/';
 const PROD='file://'+FIXTURES+'publish.html';
@@ -27,6 +28,9 @@ await p.waitForTimeout(2600);
 await run(async([AUTH])=>{const a=JSON.parse(localStorage.getItem(AUTH));const salt='00112233445566778899aabbccddeeff';const hex=b=>[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');const hash=hex(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(salt+':demo1234')));
   const add=(username,displayName,role)=>{if(!a.users.some(u=>u.username===username))a.users.push({username,displayName,salt,hash,role,createdAt:new Date().toISOString(),createdBy:'jdoe'});};
   add('pqm','Parker Manager','qm');add('kqe','Kai Quality','qe');add('ttech','Toni Tech','technician');localStorage.setItem(AUTH,JSON.stringify(a));},[AUTH]);
+
+// Production ships an empty stamp register (#331): load the sample register so there are placeholders to assign.
+await loadSampleInPage(p,{wis:false,stamps:true});
 
 // ---------------- refusal: an account without manage-access ----------------
 for (const user of ['ttech','kqe']) {

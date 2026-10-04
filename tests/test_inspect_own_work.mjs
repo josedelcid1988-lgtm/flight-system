@@ -4,6 +4,7 @@
 // and Support Access included. Development NFF orders are the one exception, and it is recorded.
 import {chromium} from 'playwright';
 import {assignTestRoles} from './lib/roles.mjs';
+import {loadSampleInPage} from './lib/production-sample.mjs';
 const TESTS=decodeURI(new URL('.',import.meta.url).pathname);
 const FIXTURES=process.env.FS_FIXTURES_DIR?process.env.FS_FIXTURES_DIR.replace(/\/?$/,'/'):TESTS+'fixtures/';
 const PROD='file://'+FIXTURES+'publish.html';
@@ -25,6 +26,8 @@ await run(async([AUTH])=>{const a=JSON.parse(localStorage.getItem(AUTH));const s
 
 // Quality stamp for the independent inspector, issued by Master Access.
 await as('jdoe');
+// Production ships no WIs or tools (issue #247): load the sample WIs and test tools as this suite's data.
+await loadSampleInPage(p,{tools:true});
 const assigned=await assignTestRoles(p,{rsup:['qe']});
 ok('setup: the Support Access account also holds the Quality role after training',assigned===true,String(assigned));
 const stamp=await run(()=>{const r=MES.issueStamp(state,{number:'QI-77',name:'Quinn Inspector',department:'Quality',buyoffType:'Quality',account:'qinsp',expires:'2029-01-01'});if(!r.ok)return r.message;const st=state.stamps.find(s=>s.number==='QI-77');st.account='qinsp';const pin=MES.setStampPin(state,st.id,'2468','2468');if(!pin.ok)return pin.message;save();return true;});
@@ -40,8 +43,8 @@ ok('fixture: three build operations, one inspection operation, then two Quality 
 
 // Build one operation as the signed-in account (steps, torque and consumables filled; tools logged).
 const build=(W,support,stampNo,pin)=>run(([W,support,stampNo,pin])=>{const o=MES.getOrder(state,W);const op=o.operations.find(x=>!x.done);const today=d=>new Date(Date.now()+d*86400000).toISOString().slice(0,10);
-  for(const s of op.steps||[]){if(op.stepChecks&&op.stepChecks[s.id])continue;const pl={};if(s.recordsTorque){const t=MES.CAL_TOOLS.find(t=>MES.isTorqueTool(t)&&MES.toolCheck(t.tag).ok);Object.assign(pl,{value:45,unit:MES.TORQUE_UNITS[0],tool:t?t.tag:''});}if(Array.isArray(s.consumables)&&s.consumables.length)pl.consumables=s.consumables.map(c=>({name:c,lot:'LOT-CONS-0042',expires:today(200)}));const r=MES.setStepCheck(state,W,op.id,s.id,true,pl);if(!r.ok)return 'step: '+r.message;}
-  const tools=op.requiresTooling?[MES.CAL_TOOLS.find(t=>MES.toolCheck(t.tag).ok&&!MES.isTorqueTool(t)).tag]:[];
+  for(const s of op.steps||[]){if(op.stepChecks&&op.stepChecks[s.id])continue;const pl={};if(s.recordsTorque){const t=MES.calibratedToolChecks(state).map(c=>c.tool).find(t=>MES.isTorqueTool(t)&&MES.toolCheck(t.tag,undefined,state).ok);Object.assign(pl,{value:45,unit:MES.TORQUE_UNITS[0],tool:t?t.tag:''});}if(Array.isArray(s.consumables)&&s.consumables.length)pl.consumables=s.consumables.map(c=>({name:c,lot:'LOT-CONS-0042',expires:today(200)}));const r=MES.setStepCheck(state,W,op.id,s.id,true,pl);if(!r.ok)return 'step: '+r.message;}
+  const tools=op.requiresTooling?[MES.calibratedToolChecks(state).map(c=>c.tool).find(t=>MES.toolCheck(t.tag,undefined,state).ok&&!MES.isTorqueTool(t)).tag]:[];
   const r=MES.completeOperation(state,W,op.id,'Built to the work instruction.',{tools,noTools:!tools.length,toolControlAck:true,...(stampNo?{stampNumber:stampNo,pin}:{}),...(support?{supportReason:'Stamp register not yet loaded for this account; lead confirmed.'}:{})});save();return r.ok?op.id:'buy-off: '+r.message;},[W,support,stampNo,pin]);
 
 await as('mhale');const b1=await build(W1);                 // Op 010 by Master Access
@@ -52,7 +55,7 @@ ok('buy-offs and step checks now record the account that performed them',await r
 
 const tryInspect=(W,opts={})=>run(([W,opts])=>{const c=structuredClone(state);const o=MES.getOrder(c,W);const op=o.operations.find(x=>!x.done);const s=op.steps[0];const step=MES.setStepCheck(c,W,op.id,s.id,true,opts.support?{supportReason:'Inspector out today, lead asked me to cover.'}:{});
   const c2=structuredClone(state);const o2=MES.getOrder(c2,W);const op2=o2.operations.find(x=>!x.done);op2.stepChecks=Object.fromEntries(op2.steps.map(x=>[x.id,{name:'Quinn Inspector',role:'Quality stamp holder',credentialId:'QI-77',account:'qinsp',at:new Date().toISOString()}]));
-  const buy=MES.completeOperation(c2,W,op2.id,'Inspected.',{tools:op2.requiresTooling?[MES.CAL_TOOLS.find(t=>MES.toolCheck(t.tag).ok&&!MES.isTorqueTool(t)).tag]:[],noTools:!op2.requiresTooling,standardInspection:true,toolControlAck:true,...(opts.support?{supportReason:'Inspector out today, lead asked me to cover.'}:{})});
+  const buy=MES.completeOperation(c2,W,op2.id,'Inspected.',{tools:op2.requiresTooling?[MES.calibratedToolChecks(state).map(c=>c.tool).find(t=>MES.toolCheck(t.tag,undefined,state).ok&&!MES.isTorqueTool(t)).tag]:[],noTools:!op2.requiresTooling,standardInspection:true,toolControlAck:true,...(opts.support?{supportReason:'Inspector out today, lead asked me to cover.'}:{})});
   return {op:op.id,step:step.ok,stepMsg:step.message,buy:buy.ok,buyMsg:buy.message};},[W,opts]);
 
 // ---- refusals: Master Access, Support Access (even with a reason), and a QA Manager ----
@@ -75,7 +78,7 @@ ok('Quality cannot buy off a build operation',narrowBuy.ok===false&&/cannot buy 
 ok('Quality holds inspect-steps and not operate-steps',await run(()=>skAuth.can('inspect-steps')&&!skAuth.can('operate-steps')));
 const inspected=await run(([W1])=>{const opts=MES.profileOptions(state);const mine=opts.find(o=>o.buyoffType==='Quality'&&/QI-77/.test(o.label||''));if(!mine)return 'no Quality credential offered';const sel=MES.selectProfile(state,mine.id);if(!sel.ok)return sel.message;
   const o=MES.getOrder(state,W1);const op=o.operations.find(x=>!x.done);for(const s of op.steps){const r=MES.setStepCheck(state,W1,op.id,s.id,true,{});if(!r.ok)return 'step: '+r.message;}
-  const tools=op.requiresTooling?[MES.CAL_TOOLS.find(t=>MES.toolCheck(t.tag).ok&&!MES.isTorqueTool(t)).tag]:[];
+  const tools=op.requiresTooling?[MES.calibratedToolChecks(state).map(c=>c.tool).find(t=>MES.toolCheck(t.tag,undefined,state).ok&&!MES.isTorqueTool(t)).tag]:[];
   const r=MES.completeOperation(state,W1,op.id,'Inspected against the drawing.',{tools,noTools:!tools.length,standardInspection:true,toolControlAck:true,stampNumber:'QI-77',pin:'2468'});save();return r.ok?true:'buy-off: '+r.message;},[W1]);
 ok('an independent Quality inspector checks off and buys off the inspection',inspected===true,String(inspected));
 
@@ -106,7 +109,7 @@ await as('jdoe');
 const W3=await run(()=>{const wi=state.masterWIs.find(x=>x.status==='Released');const r=MES.addOrder(state,{masterWI:wi.id+'|'+wi.revision,pedigree:'Development NFF',subcategory:'Mfg.',quantity:1,aircraft:MES.AIRCRAFT[0],site:MES.SITES[0]});if(!r.ok)throw new Error(r.message);const o=MES.getOrder(state,r.id);let a=MES.advance(state,r.id);if(!a.ok)throw new Error(a.message);o.materials.forEach(m=>{const l=MES.availableLots(m.partNumber)[0];MES.setMaterialLot(state,r.id,m.id,l?l.lot:'L1');MES.setMaterial(state,r.id,m.id,true);});MES.addKitFile(state,r.id,{name:'kit.pdf',type:'application/pdf',size:10,dataUrl:null});a=MES.advance(state,r.id);if(!a.ok)throw new Error(a.message);save();return r.id;});
 await as('mhale');const n1=await build(W3);const n2=await build(W3);const n3=await build(W3);
 ok('fixture: Master Access builds the three operations of a Development NFF order',[n1,n2,n3].every(x=>/^op-/.test(x)),JSON.stringify([n1,n2,n3]));
-const nff=await run(([W])=>{const o=MES.getOrder(state,W);const op=o.operations.find(x=>!x.done);const refusal=MES.ownWorkHit(state,o,op);const steps=op.steps.map(s=>MES.setStepCheck(state,W,op.id,s.id,true));const buy=MES.completeOperation(state,W,op.id,'Inspected on a development build.',{tools:op.requiresTooling?[MES.CAL_TOOLS.find(t=>MES.toolCheck(t.tag).ok&&!MES.isTorqueTool(t)).tag]:[],noTools:!op.requiresTooling,standardInspection:true,toolControlAck:true});return {hit:!!refusal,steps:steps.every(x=>x.ok),stepMsg:(steps.find(x=>!x.ok)||{}).message||'',buy:buy.ok,buyMsg:buy.message,note:o.history.some(h=>/own-work exception/.test(h.action))};},[W3]);
+const nff=await run(([W])=>{const o=MES.getOrder(state,W);const op=o.operations.find(x=>!x.done);const refusal=MES.ownWorkHit(state,o,op);const steps=op.steps.map(s=>MES.setStepCheck(state,W,op.id,s.id,true));const buy=MES.completeOperation(state,W,op.id,'Inspected on a development build.',{tools:op.requiresTooling?[MES.calibratedToolChecks(state).map(c=>c.tool).find(t=>MES.toolCheck(t.tag,undefined,state).ok&&!MES.isTorqueTool(t)).tag]:[],noTools:!op.requiresTooling,standardInspection:true,toolControlAck:true});return {hit:!!refusal,steps:steps.every(x=>x.ok),stepMsg:(steps.find(x=>!x.ok)||{}).message||'',buy:buy.ok,buyMsg:buy.message,note:o.history.some(h=>/own-work exception/.test(h.action))};},[W3]);
 ok('on a Development NFF order the builder may inspect their own work',nff.hit&&nff.steps&&nff.buy,JSON.stringify(nff));
 ok('the order history records that the own-work exception was used',nff.note,JSON.stringify(nff));
 ok('the exception is Development NFF only: production still refuses',await run(()=>MES.OWN_WORK_EXEMPT_PEDIGREES.length===1&&MES.OWN_WORK_EXEMPT_PEDIGREES[0]==='Development NFF'));

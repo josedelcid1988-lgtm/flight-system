@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { createServer } from '../server/server.mjs';
+import { SAMPLE_WIS } from './lib/production-sample.mjs';
 
 const server = createServer({ dbPath: ':memory:', host: '127.0.0.1', quiet: true, setupCode: 'record-path-setup-code' });
 const browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
@@ -106,6 +107,13 @@ try {
   });
   assert.equal(rebound, 1, 'a successful shared workspace load binds the credential again');
 
+  // Production ships no WIs (issue #247): store the sample WIs in the shared workspace as this suite's data.
+  {
+    const stored = server.store.getDoc('default'), doc = JSON.parse(stored.json);
+    if (!(doc.masterWIs || []).length) { doc.masterWIs = structuredClone(SAMPLE_WIS); assert.ok(server.store.putDoc('default', JSON.stringify(doc), stored.etag, 'record-path-test-fixture'), 'the sample WIs are stored'); }
+    await page.evaluate(() => loadServerWorkspace());
+    await page.waitForFunction(() => state.masterWIs.length > 0, null, { timeout: 15000 });
+  }
   // A traveler is printed only when its print record can reach the server.
   const orderId = await page.evaluate(() => {
     const wi = state.masterWIs.find(item => item.status === 'Released');
