@@ -59,11 +59,12 @@ function runOne(file, env) {
 }
 
 async function mirrorFixtures() {
-  const { createMirror, verifyChain } = await import(path.join(ROOT, 'server/mirror/server.mjs'));
+  const { createMirror } = await import(path.join(ROOT, 'server/mirror/server.mjs'));
   const tmp = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'fs-suites-mirror-'));
-  // The mirror refuses to start without a token: run it as IT does, with a one-run token the fixtures carry.
-  const token = crypto.randomBytes(18).toString('base64url');
-  const mirror = createMirror({ dbPath: path.join(tmp, 'mirror.sqlite'), backupDir: path.join(tmp, 'backups'), port: 0, backupEveryMinutes: 0, token, allowOrigin: '*' });
+  // The mirror refuses to start without its tokens: run it as IT does, with one-run tokens. The fixtures carry
+  // only the write token, as the page does; the operator token stays here.
+  const token = crypto.randomBytes(18).toString('base64url'), writeToken = crypto.randomBytes(18).toString('base64url');
+  const mirror = createMirror({ dbPath: path.join(tmp, 'mirror.sqlite'), backupDir: path.join(tmp, 'backups'), port: 0, backupEveryMinutes: 0, token, writeToken, allowOrigin: '*' });
   const addr = await mirror.listen();
   const url = `http://127.0.0.1:${addr.port}`;
   // Mirror fixtures keep the repository's tests/fixtures depth because their relative
@@ -74,9 +75,10 @@ async function mirrorFixtures() {
   for (const f of fs.readdirSync(path.join(TESTS, 'fixtures')).filter(f => f.endsWith('.html'))) {
     const html = fs.readFileSync(path.join(TESTS, 'fixtures', f), 'utf8');
     if (!html.includes('<head>')) throw new Error(`${f} has no <head> to add the mirror setting to.`);
-    fs.writeFileSync(path.join(dir, f), html.replace('<head>', `<head><script>window.SK_MIRROR={url:${JSON.stringify(url)},token:${JSON.stringify(token)},batchSize:100};window.__FS_SUITE_DEMO_MIRROR__=window.SK_MIRROR;</script>`));
+    // The demo builds take a mirror only from __FS_SUITE_DEMO_MIRROR__ (never SK_MIRROR), so the suite names it twice.
+    fs.writeFileSync(path.join(dir, f), html.replace('<head>', `<head><script>window.SK_MIRROR={url:${JSON.stringify(url)},token:${JSON.stringify(writeToken)},batchSize:100};window.__FS_SUITE_DEMO_MIRROR__=window.SK_MIRROR;</script>`));
   }
-  return { url, dir, tmp, mirror, verifyChain };
+  return { url, dir, tmp, mirror };
 }
 
 // What a results file was produced against, so it can be matched to the exact build and commit it tested
@@ -119,7 +121,8 @@ async function main() {
   }));
   let mirrorSummary = null;
   if (m) {
-    const v = m.verifyChain(m.mirror.db);
+    // Checked against the anchored tip as well, so rows missing from the end would fail the run too.
+    const v = m.mirror.verify();
     const rows = Number(m.mirror.db.prepare('SELECT COUNT(*) n FROM records').get().n);
     mirrorSummary = { url: m.url, records: rows, chainIntact: v.ok, firstBreak: v.firstBreak };
     console.log(`mirror received ${rows} records; chain ${v.ok ? 'intact' : 'BROKEN at row ' + v.firstBreak.id}`);

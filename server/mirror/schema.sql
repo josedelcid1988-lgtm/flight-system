@@ -6,7 +6,8 @@
 -- (passwords, PINs and their hashes are never included). prev_sha256 chains every row to the one before
 -- it across the whole table: it is the SHA-256 of the previous row's fields (see linkHash in
 -- server.mjs), 64 zeros for the first row. GET /api/v1/verify walks the chain and reports the first
--- row where it breaks.
+-- row where it breaks. The row count and the link of the last row are also kept outside the database
+-- (the chain anchor file), so rows removed from the end or a changed last row are found.
 CREATE TABLE IF NOT EXISTS records (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   client_write_id TEXT    NOT NULL UNIQUE,
@@ -23,7 +24,10 @@ CREATE TABLE IF NOT EXISTS records (
   server_ts       TEXT    NOT NULL,
   build_version   TEXT    NOT NULL,
   build_sha256    TEXT    NOT NULL,
-  client_id       TEXT    NOT NULL
+  client_id       TEXT    NOT NULL,
+  -- SHA-256 of this record's signature manifests (manifestSetHash in server.mjs). It is part of the row's
+  -- link, so a manifest changed, added or removed breaks the chain. Null on rows written before it existed.
+  manifests_sha256 TEXT
 );
 CREATE INDEX IF NOT EXISTS records_entity ON records (entity_type, entity_id);
 
@@ -50,3 +54,15 @@ CREATE TRIGGER IF NOT EXISTS manifests_no_update BEFORE UPDATE ON signature_mani
 BEGIN SELECT RAISE(ABORT, 'signature_manifests are append-only: UPDATE is not allowed'); END;
 CREATE TRIGGER IF NOT EXISTS manifests_no_delete BEFORE DELETE ON signature_manifests
 BEGIN SELECT RAISE(ABORT, 'signature_manifests are append-only: DELETE is not allowed'); END;
+
+-- Facts about the database itself, written once and never changed. legacy_through is the id of the last row
+-- written before manifests_sha256 existed (0 for a database created with it). Only rows up to that id may lack
+-- manifests_sha256; verify refuses a row without it anywhere else.
+CREATE TABLE IF NOT EXISTS mirror_meta (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS meta_no_update BEFORE UPDATE ON mirror_meta
+BEGIN SELECT RAISE(ABORT, 'mirror_meta is append-only: UPDATE is not allowed'); END;
+CREATE TRIGGER IF NOT EXISTS meta_no_delete BEFORE DELETE ON mirror_meta
+BEGIN SELECT RAISE(ABORT, 'mirror_meta is append-only: DELETE is not allowed'); END;

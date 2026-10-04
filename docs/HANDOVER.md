@@ -190,7 +190,7 @@ with manual handoffs and IT connects each system without changing the rules.
 | **PDM** (SolidWorks) | `SK_INTEGRATIONS.pdm`. | ECO numbers and drawing links are recorded by hand on the design ECR and the WI. | A bridge route for released revisions and ECOs. |
 | **LMS** | `SK_INTEGRATIONS.lms` (course ids for ESD and FOD). | An access administrator records training expiry on the stamp register. | Feed expiry dates to the stamp register; the buy-off training check already reads them. |
 | **Slack** | `window.skIntegrations.slack.post` (route `/slack/post`); an operation can link a Slack thread. | Messages are saved locally on the operation and say they were not sent. | A bridge route with a Slack app token held server-side. |
-| **Persistence** | `window.SK_MIRROR.url` and `token`. | Off. | Section 6. |
+| **Persistence** | `window.SK_MIRROR.url` (https, or http to this machine only) and `token` (the mirror's append-only write token, never the operator token). | Off. | Section 6. |
 
 ## 8. Working on it
 

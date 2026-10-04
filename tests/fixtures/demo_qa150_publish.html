@@ -14695,7 +14695,10 @@ function holdActionButtons(o,h){const me=skActorId();const out=[];
    skyryse-mes-sync-queue-v1, and posts the queue to the mirror server (server/, POST /api/v1/writes).
    Nothing in the engine waits on the server: a failed post leaves the records queued and flagged, and
    they are retried with backoff until the server confirms them. Passwords, stamp PINs and their hashes
-   and salts are never queued or sent; accounts are mirrored as name, role and Support Access only. */
+   and salts are never queued or sent; accounts are mirrored as name, role and Support Access only.
+   The url must be https unless it is this machine (localhost or 127.0.0.1): records and the token never
+   cross the network in plain HTTP. Each post names the newest row the server confirmed; if the server no
+   longer has it (it was restored from a backup), every record on this device is sent again. */
 /* DEMO D-39 */ window.SK_MIRROR = window.__demoMirrorPreset || { url: '', token: '', batchSize: 50 };
 (function () {
   'use strict';
@@ -14704,15 +14707,86 @@ function holdActionButtons(o,h){const me=skActorId();const out=[];
   var QUEUE_KEY = 'skyryse-mes-demo-sync-queue-v1'/* DEMO D-40 */, SENT_KEY = 'skyryse-mes-demo-sync-sent-v1'/* DEMO D-40 */, CLIENT_KEY = 'skyryse-mes-demo-sync-client-v1'/* DEMO D-40 */, AUTH_KEY = 'skyryse-mes-demo-auth-v1'/* DEMO D-38 */;
   var off = { enabled: false, commit: function () {}, status: function () { return { enabled: false, unsynced: 0, rejected: 0 }; }, flush: function () { return Promise.resolve(); } };
   if (!base) { window.skMirror = off; return; }
+  var plainRemote = (function () { try { var u = new URL(base); return u.protocol !== 'https:' && !(u.protocol === 'http:' && /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])$/.test(u.hostname)); } catch (e) { return true; } })();
+  if (plainRemote) {
+    var why = 'Mirror off: ' + base + ' is not an https address. Records and the mirror token are sent only over https, or plain http to this machine. Ask IT for the https address of the mirror.';
+    window.skMirror = { enabled: false, refused: why, commit: function () {}, status: function () { return { enabled: false, unsynced: 0, rejected: 0, lastError: why }; }, flush: function () { return Promise.resolve(); } };
+    try { console.warn(why); } catch (e) { /* no console */ }
+    return;
+  }
 
   var read = function (key, fallback) { try { var v = JSON.parse(localStorage.getItem(key) || 'null'); return v === null ? fallback : v; } catch (e) { return fallback; } };
   var client = read(CLIENT_KEY, null);
-  if (!client || typeof client.id !== 'string') { client = { id: 'client-' + (window.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2)), seq: 0 }; }
+  if (!client || typeof client.id !== 'string') client = { id: 'client-' + (window.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2)), seq: 0 };
+  // Every client id this device has used is registered the moment it is made, under a key of its own, so a snapshot
+  // can cover records written under any of them (two tabs opened at once on first use can each make one before either
+  // is saved). The shared client record is written only when the tab saves its queue, and a tab then adopts the id
+  // another tab saved first: a page that only loads never writes a key another tab may be writing at the same time.
+  var ID_PREFIX = 'skyryse-mes-demo-sync-id-v1'/* DEMO D-40 */ + ':';
+  var registerId = function (id) { try { if (localStorage.getItem(ID_PREFIX + id) !== '1') localStorage.setItem(ID_PREFIX + id, '1'); } catch (e) { /* the snapshot lists this tab's id anyway */ } };
+  var deviceIds = function () {
+    var ids = {}; ids[client.id] = 1;
+    try { for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k && k.indexOf(ID_PREFIX) === 0) ids[k.slice(ID_PREFIX.length)] = 1; } } catch (e) {}
+    return Object.keys(ids).sort();
+  };
+  registerId(client.id);
+  // Record and snapshot times come from a device clock that never moves backward, even when the system clock
+  // does, so a snapshot's takenAt orders it against this device's records.
+  var CLOCK_KEY = 'skyryse-mes-demo-sync-clock-v1'/* DEMO D-40 */, memClock = 0;
+  var stamp = function () {
+    var last = Math.max(memClock, Number(read(CLOCK_KEY, 0)) || 0), t = Math.max(Date.now(), last + 1);
+    memClock = t; try { localStorage.setItem(CLOCK_KEY, String(t)); } catch (e) { /* this tab stays monotonic in memory */ }
+    return new Date(t).toISOString();
+  };
   var queue = read(QUEUE_KEY, []); if (!Array.isArray(queue)) queue = [];
   var sent = read(SENT_KEY, {}); if (!sent || typeof sent !== 'object') sent = {};
+  if (!client.tombs || typeof client.tombs !== 'object') client.tombs = {};
+  var tombs = client.tombs;
+  // A device upgraded from a build without acknowledgements has confirmed records but no lastAck to name, so it
+  // cannot tell whether the mirror was restored meanwhile. Its first confirmed post sends everything once.
+  var needBaseline = false; // set once the acknowledgement slots can be read, below
   var lastJson = {};          // entity key -> JSON last queued in this page (fast path; sent holds the hashes across reloads)
-  var inflight = null, retryTimer = null, attempt = 0, lastError = '', lastSyncAt = null, memoryOnly = false;
+  var inflight = null, retryTimer = null, attempt = 0, lastError = '', lastSyncAt = null, memoryOnly = false, resentAt = null, lastWs = null;
+  // Acknowledgements: each page writes only its own slot (ACK_PREFIX + its page id), so two tabs never overwrite
+  // each other's, and localStorage needs no lock. The device's acknowledgement is the highest row id over all slots
+  // of the newest epoch; a reset after a restore writes a new epoch, which outranks every older slot. An ack stored
+  // by an older build in the client record counts as one more slot and is never rewritten.
+  var ACK_PREFIX = 'skyryse-mes-demo-sync-ack-v1'/* DEMO D-40 */ + ':', ACK_PRUNE_MS = 10 * 60 * 1000;
+  var pageId = 'page-' + (window.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
+  // Write ids are unique per page (client id, page id, a counter of this page), so two tabs of one device never
+  // reuse an id, whether for ordinary writes or for a resend after a restore.
+  var pageSeq = 0;
+  // This page's newest acknowledgement, also kept in memory: when the browser refuses to save it, the tab still
+  // names it on its next post and so still finds a restore.
+  var memAck = null;
+  function ackSlots() {
+    var out = [];
+    if (memAck) out.push({ key: null, epoch: memAck.epoch, ack: memAck.ack, at: 0 });
+    if (client.ack && Number.isInteger(client.ack.id)) out.push({ key: null, epoch: Number.isInteger(client.ackEpoch) ? client.ackEpoch : 0, ack: client.ack, at: 0 });
+    try { for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k && k.indexOf(ACK_PREFIX) === 0) { var v = read(k, null); if (v && Number.isInteger(v.epoch)) out.push({ key: k, epoch: v.epoch, ack: v.ack && Number.isInteger(v.ack.id) ? v.ack : null, at: Number(v.at) || 0 }); } } } catch (e) {}
+    return out;
+  }
+  function currentAck() {
+    var slots = ackSlots(), epoch = 0, ack = null;
+    slots.forEach(function (sl) { if (sl.epoch > epoch) epoch = sl.epoch; });
+    slots.forEach(function (sl) { if (sl.epoch === epoch && sl.ack && (!ack || sl.ack.id > ack.id)) ack = sl.ack; });
+    return { epoch: epoch, ack: ack, slots: slots };
+  }
+  function writeAck(epoch, ack) {
+    if (!memAck || epoch > memAck.epoch || (epoch === memAck.epoch && ack && (!memAck.ack || ack.id > memAck.ack.id))) memAck = { epoch: epoch, ack: ack };
+    var mine = read(ACK_PREFIX + pageId, null);
+    if (mine && mine.epoch === epoch && mine.ack && ack && mine.ack.id >= ack.id) return;
+    try { localStorage.setItem(ACK_PREFIX + pageId, JSON.stringify({ epoch: epoch, ack: ack, at: Date.now() })); } catch (e) { memoryOnly = true; }
+    // Slots left by closed pages that no longer decide anything (an older epoch, or below the device's ack) and
+    // were not written for ten minutes are removed; the slot that holds the device's ack is never removed.
+    var cur = currentAck(), now = Date.now();
+    cur.slots.forEach(function (sl) { if (!sl.key || sl.key === ACK_PREFIX + pageId || now - sl.at < ACK_PRUNE_MS) return; if (sl.epoch < cur.epoch || (cur.ack && sl.ack && sl.ack.id < cur.ack.id)) { try { localStorage.removeItem(sl.key); } catch (e) {} } });
+  }
+  needBaseline = !currentAck().ack && Object.keys(sent).length > 0;
   var persist = function () {
+    // Another tab may have saved the device's client id first; this tab adopts it (its own id stays registered).
+    var stored = read(CLIENT_KEY, null);
+    if (stored && typeof stored.id === 'string' && stored.id !== client.id) { client.id = stored.id; registerId(client.id); }
     try { localStorage.setItem(QUEUE_KEY, JSON.stringify(queue)); localStorage.setItem(SENT_KEY, JSON.stringify(sent)); localStorage.setItem(CLIENT_KEY, JSON.stringify(client)); memoryOnly = false; }
     catch (e) { memoryOnly = true; }
   };
@@ -14771,26 +14845,33 @@ function holdActionButtons(o,h){const me=skActorId();const out=[];
     var meta = function (name) { var m = document.querySelector('meta[name="' + name + '"]'); return m ? m.getAttribute('content') : ''; };
     return window.MES && typeof MES.buildStamp === 'function' ? MES.buildStamp() : { version: meta('fs-build') || 'unstamped', sha256: meta('fs-build-sha256') || 'unstamped' };
   }
+  // A deleted entity is queued as a delete record and remembered as a tombstone (the newest 5000 are kept).
+  function pushDelete(key, acct, b, now) {
+    var type = key.split('|')[0], id = key.slice(type.length + 1), json = JSON.stringify({ entityType: type, entityId: id, deleted: true });
+    pageSeq += 1;
+    queue.push({ clientWriteId: client.id + '-' + pageId + '-' + pageSeq, storeKey: type === 'account' ? AUTH_KEY : (typeof KEY !== 'undefined' ? KEY : 'skyryse-mes-work-order-v1'), entityType: type, entityId: id, operation: 'delete', payloadJson: json, payloadSha256: hash(json), actor: acct ? acct.name + ' · ' + acct.credentialId : null, credential: acct ? acct.credentialId : null, clientTs: now, buildVersion: b.version, buildSha256: b.sha256, manifests: [], synced: false });
+    delete tombs[key]; tombs[key] = 1;
+    var keys = Object.keys(tombs); if (keys.length > 5000) keys.slice(0, keys.length - 5000).forEach(function (k) { delete tombs[k]; });
+  }
   function enqueue(map, onlyTypes) {
     var acct = window.skAuth && typeof skAuth.actor === 'function' ? skAuth.actor() : null;
-    var b = build(), now = new Date().toISOString(), added = 0;
+    var b = build(), now = stamp(), added = 0;
     Object.keys(map).forEach(function (key) {
       var e = map[key], json = JSON.stringify(scrub(e.value));
       if (lastJson[key] === json) return;
       var h = hash(json);
       if (sent[key] === h) { lastJson[key] = json; return; }
-      client.seq += 1;
-      queue.push({ clientWriteId: client.id + '-' + client.seq, storeKey: e.storeKey, entityType: e.type, entityId: e.id, operation: 'upsert', payloadJson: json, payloadSha256: h, actor: acct ? acct.name + ' · ' + acct.credentialId : null, credential: acct ? acct.credentialId : null, clientTs: now, buildVersion: b.version, buildSha256: b.sha256, manifests: manifestsOf(JSON.parse(json), e.type, []), synced: false });
+      pageSeq += 1;
+      queue.push({ clientWriteId: client.id + '-' + pageId + '-' + pageSeq, storeKey: e.storeKey, entityType: e.type, entityId: e.id, operation: 'upsert', payloadJson: json, payloadSha256: h, actor: acct ? acct.name + ' · ' + acct.credentialId : null, credential: acct ? acct.credentialId : null, clientTs: now, buildVersion: b.version, buildSha256: b.sha256, manifests: manifestsOf(JSON.parse(json), e.type, []), synced: false });
       sent[key] = h; lastJson[key] = json; added += 1;
+      if (tombs[key]) delete tombs[key];
     });
     Object.keys(sent).forEach(function (key) {
       var type = key.split('|')[0];
       // A workspace commit owns every entity type except accounts; the account pass owns accounts only.
       var mine = onlyTypes[0] === '*' ? type !== 'account' : onlyTypes.indexOf(type) >= 0;
       if (map[key] || !mine) return;
-      var id = key.slice(type.length + 1), json = JSON.stringify({ entityType: type, entityId: id, deleted: true });
-      client.seq += 1;
-      queue.push({ clientWriteId: client.id + '-' + client.seq, storeKey: type === 'account' ? AUTH_KEY : (typeof KEY !== 'undefined' ? KEY : 'skyryse-mes-work-order-v1'), entityType: type, entityId: id, operation: 'delete', payloadJson: json, payloadSha256: hash(json), actor: acct ? acct.name + ' · ' + acct.credentialId : null, credential: acct ? acct.credentialId : null, clientTs: now, buildVersion: b.version, buildSha256: b.sha256, manifests: [], synced: false });
+      pushDelete(key, acct, b, now);
       delete sent[key]; delete lastJson[key]; added += 1;
     });
     if (added) persist();
@@ -14801,8 +14882,10 @@ function holdActionButtons(o,h){const me=skActorId();const out=[];
   function commit(ws) {
     try {
       var storeKey = typeof KEY !== 'undefined' ? KEY : 'skyryse-mes-work-order-v1';
+      lastWs = ws;
       enqueue(entities(ws, storeKey), ['*']);
       enqueue(accountEntities(), ['account']);
+      retryRecovery();
       paint(); schedule(0);
     } catch (e) { lastError = 'Mirror could not queue this change: ' + e.message; paint(); }
   }
@@ -14811,18 +14894,36 @@ function holdActionButtons(o,h){const me=skActorId();const out=[];
   // still be in the queue.
   function pending() { var R = window.skLegacyDemoReview, hold = !!(R && R.holdAccounts()), all = !!(R && R.holdMirror()); return queue.filter(function (r) { return !r.rejected && !all && !(hold && r.entityType === 'account'); }); }
   function schedule(ms) { if (retryTimer) return; retryTimer = setTimeout(function () { retryTimer = null; flush(); }, ms); }
-  function flush() {
+  // With probe set and nothing queued, the post carries no records and only names the newest confirmed row, so a
+  // device with nothing to send still learns that the mirror was restored (see PROBE_MS below).
+  function flush(probe) {
     if (inflight) return inflight;
+    var head = pending().slice(0, Math.max(1, Math.min(500, Number(cfg.batchSize) || 50)));
+    if (head.some(function (r) { return r.entityType === 'snapshot'; })) { refreshSnapshots(); persist(); }
     var batch = pending().slice(0, Math.max(1, Math.min(500, Number(cfg.batchSize) || 50)));
-    if (!batch.length) { paint(); return Promise.resolve(); }
+    var sentWith = currentAck(), reqEpoch = sentWith.epoch;
+    if (!batch.length && !(probe === true && sentWith.ack)) { paint(); return Promise.resolve(); }
     var headers = { 'content-type': 'application/json' }; if (cfg.token) headers.authorization = 'Bearer ' + cfg.token;
-    var body = JSON.stringify({ clientId: client.id, records: batch.map(function (r) { var c = {}; Object.keys(r).forEach(function (k) { if (k !== 'synced' && k !== 'rejected') c[k] = r[k]; }); return c; }) });
+    var body = JSON.stringify({ clientId: client.id, lastAck: sentWith.ack || undefined, records: batch.map(function (r) { var c = {}; Object.keys(r).forEach(function (k) { if (k !== 'synced' && k !== 'rejected') c[k] = r[k]; }); return c; }) });
     inflight = fetch(base + '/api/v1/writes', { method: 'POST', headers: headers, body: body })
       .then(function (res) { return res.json().catch(function () { return {}; }).then(function (j) { if (!res.ok || !j.ok) throw new Error((j.error && j.error.message) || ('HTTP ' + res.status)); return j; }); })
       .then(function (j) {
         var done = {}, bad = {};
-        (j.results || []).forEach(function (r) { if (r.status === 'stored' || r.status === 'duplicate') done[r.clientWriteId] = 1; else if (r.status === 'rejected') bad[r.clientWriteId] = r.reason || 'rejected'; });
+        var fresh = null;
+        (j.results || []).forEach(function (r) {
+          if (r.status === 'stored' || r.status === 'duplicate') { done[r.clientWriteId] = 1; if (Number.isInteger(r.id) && (!fresh || r.id > fresh.id)) fresh = { id: r.id, clientWriteId: r.clientWriteId, link: r.link }; }
+          else if (r.status === 'rejected') bad[r.clientWriteId] = r.reason || 'rejected';
+        });
         queue = queue.filter(function (r) { return !done[r.clientWriteId]; });
+        if (batch.some(function (r) { return r.entityType === 'snapshot' && done[r.clientWriteId]; })) setRecoveryPending(false);
+        // After a restore (or on a device's first post since upgrading), only rows confirmed in this answer are
+        // known to be on the server; everything else is sent again.
+        var nowEpoch = currentAck().epoch;
+        if (j.ackCheck === 'missing' || needBaseline) { writeAck(nowEpoch + 1, fresh); needBaseline = false; resendAll(); }
+        // Another tab found a restore while this request was out: this answer predates it, so its row may be gone.
+        // It is not recorded in the new epoch; everything is sent again instead.
+        else if (nowEpoch !== reqEpoch) resendAll();
+        else if (fresh) writeAck(nowEpoch, fresh);
         queue.forEach(function (r) { if (bad[r.clientWriteId]) r.rejected = bad[r.clientWriteId]; });
         persist(); attempt = 0; lastError = Object.keys(bad).length ? 'The mirror refused ' + Object.keys(bad).length + ' record(s): ' + bad[Object.keys(bad)[0]] : ''; lastSyncAt = new Date().toISOString();
         inflight = null; paint();
@@ -14835,7 +14936,88 @@ function holdActionButtons(o,h){const me=skActorId();const out=[];
       });
     return inflight;
   }
-  function status() { return { enabled: true, unsynced: queue.length, rejected: queue.filter(function (r) { return r.rejected; }).length, lastError: lastError, lastSyncAt: lastSyncAt, clientId: client.id, memoryOnly: memoryOnly, url: base }; }
+  // The server no longer holds a row it confirmed to this device (it was restored from a backup taken before
+  // that row). Forget what was confirmed and queue every entity and account again, so nothing this device
+  // holds is missing from the restored mirror. The rows confirmed since the restore are kept by the server.
+  // Deletions are re-sent too: every entity this device deleted is kept as a tombstone, so a restored mirror
+  // that holds an entity from before its deletion is told again that it is gone.
+  // The workspace a recovery resend is built from. Another tab may have saved a newer workspace, and its storage
+  // event may not have reached this tab yet, so the copy saved in this browser is read every time, never this
+  // tab's memory alone; it is used only once it passes validation. This tab's last committed workspace is used
+  // instead only when this device could not save it (the offline copy is known to be older, or there is none) and
+  // no other tab is known to have changed it. Otherwise there is no trusted list, and no snapshot is sent: an old
+  // list would mark entities another tab made as deleted.
+  function recoveryWorkspace(wsKey) {
+    var stale = typeof storageBlocked !== 'undefined' && storageBlocked === true;
+    var localOlder = typeof offlineCopyStale !== 'undefined' && offlineCopyStale === true;
+    var saved = localOlder ? null : read(wsKey, null);
+    if (saved && window.MES && typeof MES.validate === 'function') {
+      try { if (!MES.validate(saved)) { var up = typeof MES.upgrade === 'function' ? MES.upgrade(saved) : null; saved = up && MES.validate(up) ? up : null; } } catch (e) { saved = null; }
+    }
+    if (saved) return saved;
+    if (stale) return null;
+    if (localOlder || read(wsKey, null) === null) return lastWs || (typeof state !== 'undefined' && state) || null;
+    return null;
+  }
+  function resendAll() {
+    // Pending from now until the server confirms this recovery's snapshot (flush clears it then), so a recovery
+    // whose records are lost before they are sent runs again.
+    setRecoveryPending(true);
+    sent = {}; lastJson = {};
+    var wsKey = typeof KEY !== 'undefined' ? KEY : 'skyryse-mes-work-order-v1';
+    var ws = recoveryWorkspace(wsKey);
+    if (ws) enqueue(entities(ws, wsKey), ['*']);
+    enqueue(accountEntities(), ['account']);
+    var acct = window.skAuth && typeof skAuth.actor === 'function' ? skAuth.actor() : null, b = build(), now = stamp();
+    // Without a trusted workspace only account deletions are re-sent: a workspace entity this tab deleted may have
+    // been made again by another tab. The next committed write queues every workspace entity again (sent is empty).
+    Object.keys(tombs).forEach(function (key) { if (!sent[key] && (ws || key.indexOf('account|') === 0)) pushDelete(key, acct, b, now); });
+    // A snapshot record lists every entity this device holds. A reader of the mirror treats an entity written under
+    // any of the snapshot's clientIds as deleted when it is absent from the snapshot and its last record was
+    // written before takenAt (both from the device clock, which never moves backward), which
+    // also covers deletions made before tombstones existed. Its list is rebuilt from the saved workspace just
+    // before it is sent (refreshSnapshots), so another tab's entity saved meanwhile is listed, and one saved after
+    // that read carries a later time. Without a trusted workspace the recovery stays pending (RECOVERY_KEY)
+    // and runs again once one is available, so the deletions and snapshot are not lost.
+    if (!ws) { resentAt = new Date().toISOString(); persist(); return; }
+    pageSeq += 1;
+    queue.push({ clientWriteId: client.id + '-' + pageId + '-' + pageSeq, storeKey: wsKey, entityType: 'snapshot', entityId: client.id, operation: 'upsert', payloadJson: '', payloadSha256: '', actor: acct ? acct.name + ' · ' + acct.credentialId : null, credential: acct ? acct.credentialId : null, clientTs: now, buildVersion: b.version, buildSha256: b.sha256, manifests: [], synced: false });
+    resentAt = new Date().toISOString();
+    refreshSnapshots();
+    persist();
+  }
+  // Rebuilds each queued snapshot from the saved workspace as it is now. A snapshot whose list changed gets a new
+  // write id (the server refuses an id reused for another payload). With no trusted workspace the snapshot is
+  // dropped and the recovery is left pending.
+  function refreshSnapshots() {
+    if (!queue.some(function (r) { return r.entityType === 'snapshot' && !r.rejected; })) return;
+    var wsKey = typeof KEY !== 'undefined' ? KEY : 'skyryse-mes-work-order-v1', ws = recoveryWorkspace(wsKey);
+    if (!ws) { queue = queue.filter(function (r) { return r.entityType !== 'snapshot'; }); setRecoveryPending(true); return; }
+    var keys = Object.keys(entities(ws, wsKey)).concat(Object.keys(accountEntities())).sort();
+    queue.forEach(function (r) {
+      if (r.entityType !== 'snapshot' || r.rejected) return;
+      var old = null; try { old = r.payloadJson ? JSON.parse(r.payloadJson) : null; } catch (e) { old = null; }
+      if (old && JSON.stringify(old.keys) === JSON.stringify(keys)) return;
+      var now = stamp(), json = JSON.stringify({ snapshot: true, clientId: client.id, clientIds: deviceIds(), takenAt: now, keys: keys });
+      if (old) { pageSeq += 1; r.clientWriteId = client.id + '-' + pageId + '-' + pageSeq; }
+      r.payloadJson = json; r.payloadSha256 = hash(json); r.clientTs = now;
+    });
+  }
+  // A pending recovery is kept under its own key, which only a recovery sets or clears, so a tab that holds an older
+  // copy of the client record cannot drop it when it saves that record; this tab's own setting is also kept in
+  // memory in case the browser refuses the write.
+  var RECOVERY_KEY = 'skyryse-mes-demo-sync-recovery-v1'/* DEMO D-40 */, memRecovery = false;
+  function recoveryPending() { return memRecovery || read(RECOVERY_KEY, false) === true; }
+  function setRecoveryPending(on) {
+    memRecovery = on;
+    try { if (on) localStorage.setItem(RECOVERY_KEY, 'true'); else localStorage.removeItem(RECOVERY_KEY); } catch (e) { memoryOnly = true; }
+  }
+  // A recovery left pending (no trusted workspace when it ran) runs once one is available.
+  function retryRecovery() {
+    if (!recoveryPending() || queue.some(function (r) { return r.entityType === 'snapshot' && !r.rejected; })) return;
+    if (recoveryWorkspace(typeof KEY !== 'undefined' ? KEY : 'skyryse-mes-work-order-v1')) resendAll();
+  }
+  function status() { return { enabled: true, ack: currentAck().ack, unsynced: queue.length, rejected: queue.filter(function (r) { return r.rejected; }).length, lastError: lastError, lastSyncAt: lastSyncAt, clientId: client.id, memoryOnly: memoryOnly, url: base, resentAt: resentAt }; }
   function paint() {
     try {
       var el = document.getElementById('sync-indicator');
@@ -14854,10 +15036,26 @@ function holdActionButtons(o,h){const me=skActorId();const out=[];
   style.textContent = '.sync-indicator{display:inline-flex;align-items:center;gap:4px;margin-right:8px;padding:2px 8px;border-radius:999px;font:600 12px/18px var(--font,sans-serif);white-space:nowrap;background:#e8f3ea;color:#1d5b2e}.sync-indicator::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}.sync-indicator[data-state=pending]{background:#fff4de;color:#7a4b00}.sync-indicator[data-state=rejected]{background:#fde8e8;color:#8a1c1c}';
   document.head.appendChild(style);
   window.addEventListener('sk-auth-saved', function () { try { enqueue(accountEntities(), ['account']); paint(); schedule(0); } catch (e) { /* retried on the next commit */ } });
-  window.addEventListener('online', function () { attempt = 0; schedule(0); });
-  window.skMirror = { enabled: true, commit: commit, status: status, flush: flush };
+  // A device whose queue is empty never posts, so without this it would not find out that the mirror was restored
+  // to a backup older than the rows it last confirmed until its next change. It asks on load, when it comes back
+  // online, when the tab is shown again and every five minutes; a restore found this way sends everything again.
+  var PROBE_MS = 5 * 60 * 1000;
+  // A device upgraded from a build without acknowledgements has none to name, so it cannot probe; with nothing
+  // queued it would never post. It sends everything once instead (its baseline), and the answer gives it an
+  // acknowledgement to probe with from then on.
+  var probe = function () {
+    if (needBaseline && !pending().length && !currentAck().ack) { needBaseline = false; resendAll(); return flush(); }
+    if (recoveryPending()) { retryRecovery(); if (pending().length) return flush(); }
+    return pending().length ? flush() : flush(true);
+  };
+  window.addEventListener('online', function () { attempt = 0; if (pending().length) schedule(0); else probe(); });
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible' && !pending().length) probe(); });
+  setInterval(function () { if (!pending().length) probe(); }, PROBE_MS);
+  window.skMirror = { enabled: true, commit: commit, status: status, flush: flush, probe: probe };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', paint); else paint();
-  if (queue.length) schedule(500);
+  // On load a recovery still pending (its snapshot never confirmed, or its records lost with this or another tab's
+  // queue) runs again before anything else is sent.
+  setTimeout(function () { retryRecovery(); if (pending().length) schedule(0); else probe(); }, queue.length ? 500 : 1500);
 })();
 </script>
 <script id="sk-hardening">

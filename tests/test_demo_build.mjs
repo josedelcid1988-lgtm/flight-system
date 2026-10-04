@@ -148,7 +148,7 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  // The suite runner's --mirror run sets its own mirror in the page head, so writes are caught by their path, recorded
  // and refused, whichever mirror the page names: what was queued stays in the queue.
  const mirrorPosts=[];await ctx.route(/mirror-legacy\.test|\/api\/v1\/writes/,route=>{try{mirrorPosts.push(...(JSON.parse(route.request().postData()||'{}').records||[]));}catch(e){}route.abort();});
- await ctx.addInitScript(()=>{window.SK_MIRROR={url:'http://mirror-legacy.test',token:'legacy-mirror-token',batchSize:50};});
+ await ctx.addInitScript(()=>{window.SK_MIRROR={url:'https://mirror-legacy.test',token:'legacy-mirror-token',batchSize:50};});
  const demoUsers=JSON.parse(fs.readFileSync(path.join(ROOT,'tools/demo/accounts.json'),'utf8')).users;
  await ctx.addInitScript(users=>{if(sessionStorage.getItem('seeded')||!/publish\.html$/.test(location.pathname))return;sessionStorage.setItem('seeded','1');
   // qa.boss was added in the older demo by its master with a chosen password and Master Access; tech.two by qa.boss.
@@ -271,7 +271,7 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
 {const ctx=await b.newContext({viewport:{width:1440,height:1000}});
  const H={salt:'01',hash:'ecad7597c83a96d133e45f9e9d271cbb0d1815dbae29b38b5148be7822799576'};
  const posts=[];await ctx.route(/mirror-full\.test|\/api\/v1\/writes/,route=>{try{posts.push(...(JSON.parse(route.request().postData()||'{}').records||[]));}catch(e){}route.fulfill({status:500,contentType:'application/json',body:'{"ok":false}'});});
- await ctx.addInitScript(H=>{window.SK_MIRROR={url:'http://mirror-full.test',token:'full-token',batchSize:50};const real=Storage.prototype.setItem;
+ await ctx.addInitScript(H=>{window.SK_MIRROR={url:'https://mirror-full.test',token:'full-token',batchSize:50};const real=Storage.prototype.setItem;
   Storage.prototype.setItem=function(k,v){if(this===window.localStorage&&k==='skyryse-mes-legacy-demo-review-v1')throw new DOMException('full','QuotaExceededError');return real.call(this,k,v);};},H);
  // The accounts are seeded once, by a page that closes once another page has seen them. A seed written from every page's init script could land
  // late from one tab and replace the account list after the leftovers were added.
@@ -310,7 +310,7 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
 // workspace record, and still no account record.
 {const ctx=await b.newContext({viewport:{width:1440,height:1000}});const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));
  const posts=[];await ctx.route(/mirror-hold\.test|\/api\/v1\/writes/,route=>{try{posts.push(...(JSON.parse(route.request().postData()||'{}').records||[]));}catch(e){}route.fulfill({status:500,contentType:'application/json',body:'{"ok":false}'});});
- await ctx.addInitScript(()=>{window.SK_MIRROR={url:'http://mirror-hold.test',token:'hold-token',batchSize:50};const real=Storage.prototype.setItem;
+ await ctx.addInitScript(()=>{window.SK_MIRROR={url:'https://mirror-hold.test',token:'hold-token',batchSize:50};const real=Storage.prototype.setItem;
   const refuseQueue=!/queueOk/.test(location.search);
   Storage.prototype.setItem=function(k,v){if(this===window.localStorage&&(k==='skyryse-mes-legacy-demo-account-queue-v1'||(refuseQueue&&k==='skyryse-mes-sync-queue-v1')))throw new DOMException('full','QuotaExceededError');return real.call(this,k,v);};
   if(sessionStorage.getItem('seeded'))return;sessionStorage.setItem('seeded','1');
