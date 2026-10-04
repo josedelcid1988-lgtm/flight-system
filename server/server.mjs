@@ -602,8 +602,9 @@ export function createServer(options = {}) {
           await wrapped;
           const a = await store.account(username);
           const good = !!a && !a.sso && await verifyPassword(a, password);
-          if (!a) await scryptAsync(password, 'no-such-account', SCRYPT);
-          if (!good) { const f = await noteFailure(username); await store.audit(username, 'signin-failed'); send(res, 401, { error: `Incorrect username or password.${f.until > Date.now() ? ' Account locked for 5 minutes.' : ''}` }); return; }
+          // An unknown or identity-provider account does the same password work as a local one, so response time does not tell them apart.
+          if (!a || a.sso) await scryptAsync(password, 'no-such-account', SCRYPT);
+          if (!good) { const f = await noteFailure(username); await store.audit(username, 'signin-failed'); send(res, 401, { error: `Account or password is incorrect. Check both and try again, or ask a QA Manager to reset your password.${f.until > Date.now() ? ' Account locked for 5 minutes.' : ''}` }); return; }
           await store.clearLockout(username);
           if (hashKind(a.hash) !== 'current') { const from = hashKind(a.hash); await store.upsertAccount({ ...a, salt: '', hash: await makeHash(password) }); await store.audit(username, 'password-rehash', { from }); }
           const s = await store.openSession(username, clock()); await store.audit(username, 'signin');

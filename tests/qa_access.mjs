@@ -58,7 +58,7 @@ try {
   await page.locator('#account-switch-user').selectOption('master');
   await page.locator('#account-switch-password').fill('wrong-password');
   await page.locator('#account-switch-form button[type=submit]').click();
-  assert.match(await page.locator('#account-switch-error').innerText(),/Incorrect password/);
+  assert.match(await page.locator('#account-switch-error').innerText(),/^Account or password is incorrect\. Check both and try again, or ask a QA Manager to reset your password\./);
   assert.equal(await page.evaluate(()=>skAuth.user().username),'access-test');
   await page.locator('#account-switch-password').fill(replacement);
   await page.locator('#account-switch-form button[type=submit]').click();

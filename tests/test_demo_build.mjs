@@ -261,7 +261,8 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  {const other=await ctx.newPage();await other.goto('file://'+FIXTURES+BLANK);
   await other.evaluate(v=>{if(!localStorage.getItem('skyryse-mes-legacy-demo-review-v1'))localStorage.setItem('skyryse-mes-legacy-demo-review-v1',v);},v);
   for(const end=Date.now()+60000;Date.now()<end;){if(await p.evaluate(()=>!!localStorage.getItem('skyryse-mes-legacy-demo-review-v1')).catch(()=>false))break;await p.waitForTimeout(250);}
-  await p.reload();await p.waitForTimeout(900);await other.close();}
+  // Wait for the review gate to render rather than a fixed delay; under parallel CI load 900 ms was not always enough (#559).
+  await p.reload();await p.waitForFunction(()=>!!document.getElementById('sk-legacy-review'),null,{timeout:20000}).catch(()=>{});await other.close();}
  const open=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),user:window.skAuth&&skAuth.user()&&skAuth.user().username}));
  ok('that tab is then closed and its Operations session ends',open.gate&&!open.user,JSON.stringify(open));
  await ctx.close();}
@@ -275,9 +276,13 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
   Storage.prototype.setItem=function(k,v){if(this===window.localStorage&&k==='skyryse-mes-legacy-demo-review-v1')throw new DOMException('full','QuotaExceededError');return real.call(this,k,v);};},H);
  // The accounts are seeded once, by a page that closes once another page has seen them. A seed written from every page's init script could land
  // late from one tab and replace the account list after the leftovers were added.
+ // The seed is written by script once a blank page of the origin has loaded, not by an init script as the tab's first
+ // page starts: under load that write can stay in the writing tab and never reach another page (#556). No page opens the
+ // sign-in screen until another page has seen the seed: a page loaded without it shows first-account setup, never sign-in.
  const s=await ctx.newPage();s.on('pageerror',e=>errs.push(e.message));
-  await s.addInitScript(H=>{if(localStorage.getItem('seeded'))return;localStorage.setItem('seeded','1');
-   localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify({users:[{username:'ops9',displayName:'Ops Nine',...H,role:'ops',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'mlee',displayName:'Morgan Lee',...H,role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'}]}));},H);
+  await s.goto('file://'+FIXTURES+BLANK);
+  await s.evaluate(H=>localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify({users:[{username:'ops9',displayName:'Ops Nine',...H,role:'ops',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'mlee',displayName:'Morgan Lee',...H,role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'}]})),H);
+  await settled(ctx,()=>/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||''));
   await s.goto('file://'+FIXTURES+'publish.html');await s.waitForFunction(()=>!document.getElementById('sk-login').hidden,null,{timeout:20000});
  // A page already open on the sign-in screen (an active signed-in tab would rewrite shared storage from its own copy).
  // The seeding page stays open until this page sees the seed: a page closed just after its write can lose it (#556).

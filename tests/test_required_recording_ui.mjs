@@ -8,7 +8,9 @@ import { chromium } from 'playwright';
 const FIXTURES = process.env.FS_FIXTURES_DIR ? 'file://' + process.env.FS_FIXTURES_DIR.replace(/\/?$/, '/') : new URL('./fixtures/', import.meta.url).href;
 const ORDER = 'WO-10009', OP = 'op-030';
 // WO-10009 is not an Installation order, so the refusal says "a recording", matching the Operation evidence heading.
-const REFUSAL = /^Save and review a recording before buying off this operation\.$/;
+// The stamp prompt checks the buy-off prerequisites first (#334) and refuses inside the prompt with its own wording;
+// the operation form's refusal is kept for a buy-off that reaches it.
+const REFUSAL = /^(Save and review a recording before buying off this operation\.|Not ready to buy off\. Attach and review the operation recording\.)$/;
 const browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
 const errors = [];
 
@@ -73,8 +75,12 @@ async function attemptBuyoff(page) {
   await page.locator('#operation-form .task-actions [data-action="buyoff-now"]').click();
   await page.locator('#step-stamp-form').waitFor({ state: 'attached' });
   await page.evaluate(() => { const form = document.getElementById('step-stamp-form'); if (form.elements.stampNumber) form.elements.stampNumber.value = 'DEMO'; form.requestSubmit(); });
-  await page.waitForFunction(({ id, opId }) => MES.getOrder(state, id).operations.find(op => op.id === opId).done || (document.getElementById('operation-error')?.textContent || '').trim(), { id: ORDER, opId: OP });
-  return page.evaluate(({ id, opId }) => ({ done: MES.getOrder(state, id).operations.find(op => op.id === opId).done, error: (document.getElementById('operation-error')?.textContent || '').trim() }), { id: ORDER, opId: OP });
+  const errorText = () => (document.getElementById('step-stamp-error')?.textContent || '').trim() || (document.getElementById('operation-error')?.textContent || '').trim();
+  await page.waitForFunction(({ id, opId, read }) => MES.getOrder(state, id).operations.find(op => op.id === opId).done || new Function('return (' + read + ')()')(), { id: ORDER, opId: OP, read: errorText.toString() });
+  const result = await page.evaluate(({ id, opId, read }) => ({ done: MES.getOrder(state, id).operations.find(op => op.id === opId).done, error: new Function('return (' + read + ')()')() }), { id: ORDER, opId: OP, read: errorText.toString() });
+  // A refusal leaves the prompt open with the stamp number kept; close it before the next step.
+  if (!result.done) { await page.evaluate(() => document.querySelector('dialog[open] [data-action="close-dialog"]')?.click()); await page.locator('#step-stamp-form').waitFor({ state: 'detached' }).catch(() => {}); }
+  return result;
 }
 
 async function uploadClip(page) {
