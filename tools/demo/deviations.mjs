@@ -94,7 +94,7 @@ const LIST = [
     replace: (ctx, m, id) => `if(false/* DEMO ${id} */&&!MES.masterAccess()&&form.dataset.supportReason===undefined){const stampResult` },
   { area: 'Separation of duties', title: 'Engine separation-of-duties comparisons never match',
     why: 'One person can author and approve, request and decide, prepare and sign, so a flow can be walked alone. Production enforces every one of these.',
-    find: /=== actor\(state\)\.credentialId/g, count: 14,
+    find: /=== actor\(state\)\.credentialId/g, count: 16,
     replace: (ctx, m, id) => NEVER(id) },
   { area: 'Separation of duties', title: 'Closure, software push and change approval self-checks never match',
     why: 'Same as the rule above for the checks that compare against the current actor held in a local variable.',
@@ -211,6 +211,14 @@ const LIST = [
     why: 'Production refuses a FAIR, 8130-9 or AQI signature when the signer has no current stamp of an allowed type (expired, not yet issued, or an additional stamp paused for training, #579). The demo signs with the account\'s first Active stamp of an allowed type, as it did before that rule, so a scenario is not stopped by stamp dates. An account with no Active stamp of an allowed type is still refused.',
     find: '    const current = checked.find(c => !c.problem);\n', count: 1,
     replace: (ctx, m, id) => `    const current = checked.find(c => !c.problem) || checked[0]; /* DEMO ${id} */\n` },
+  { area: 'Separation of duties', title: 'A PFMEA contributor may give the Safety Team buy-off',
+    why: 'One person can review operations as no-risk, close actions, complete the analysis and give the Safety Team buy-off, so a critical safety WI can be walked alone. Production refuses this to every role, Master Access and Support Access included.',
+    find: '    if (MES.pfmeaContributors(t).has(actor(state).credentialId)) return fail(', count: 1,
+    replace: (ctx, m, id) => `    if (false /* DEMO ${id} */ && MES.pfmeaContributors(t).has(actor(state).credentialId)) return fail(` },
+  { area: 'Separation of duties', title: 'A PFMEA action owner may give the Safety Team buy-off',
+    why: 'The person named as owner of a PFMEA action can also give the Safety Team buy-off, so a critical safety WI can be walked alone. Production refuses the buy-off to anyone the action owner names by name, account or credential.',
+    find: '{ const owned = MES.pfmeaActionOwnerRows(t, actor(state)); if (owned.length) return fail(', count: 1,
+    replace: (ctx, m, id) => `{ const owned = MES.pfmeaActionOwnerRows(t, actor(state)); if (false /* DEMO ${id} */ && owned.length) return fail(` },
 ];
 
 export const DEVIATIONS = LIST.map((d, i) => Object.freeze({ ...d, id: `D-${i + 1}` }));

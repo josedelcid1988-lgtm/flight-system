@@ -85,13 +85,15 @@ export function createHost(indexPath, html = fs.readFileSync(indexPath, 'utf8'))
     }
     return [...held];
   };
-  const shimFor = (account, state) => account ? {
+  // directory: the tenant's accounts, so an engine command that names another person (an action owner) resolves them
+  // against the real account list on the server, as the page does against its own.
+  const shimFor = (account, state, directory) => account ? {
     ROLES: roles.ROLES,
     can: cap => capsOf(account, state).includes(cap),
     roleCan: (role, cap) => (Array.isArray(role) ? role : [role]).some(key => (roles.ROLE_CAPS[key] || roles.EVERYONE).includes(cap)),
     role: () => roleOf(account, state),
     user: () => ({ username: account.username, displayName: account.displayName, role: roleOf(account, state), roles: rolesOf(account, state), supportAccess: account.supportAccess === true }),
-    users: () => [],
+    users: () => (Array.isArray(directory) ? directory : []).filter(a => a && typeof a.username === 'string').map(a => ({ username: a.username, name: a.displayName, role: roleOf(a, state), roles: rolesOf(a, state) })),
     actor: () => {
       const role = roles.ROLES.find(item => item.key === roleOf(account, state));
       return { name: account.displayName, role: role ? role.profileRole : 'General user', roles: rolesOf(account, state), credentialId: `ACCT-${account.username}`, account: account.username, accountRole: roleOf(account, state), supportAccess: account.supportAccess === true };
@@ -99,9 +101,9 @@ export function createHost(indexPath, html = fs.readFileSync(indexPath, 'utf8'))
     ,
     supportAccess: () => account.supportAccess === true
   } : null;
-  function withAccount(account, fn, state) {
+  function withAccount(account, fn, state, directory) {
     const before = sandbox.skAuth;
-    sandbox.skAuth = shimFor(account, state);
+    sandbox.skAuth = shimFor(account, state, directory);
     try { return fn(); } finally { sandbox.skAuth = before; }
   }
   function resolve(name) {

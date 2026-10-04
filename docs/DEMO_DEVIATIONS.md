@@ -19,7 +19,7 @@ The accounts `tech`, `quality`, `mfgeng`, `operations`, `engineering` are pilot 
 their real role (Technician, Quality, Manufacturing Engineering, Operations, Engineering) so a pilot
 can rehearse the real hand-offs. Every other demo account (`demo`, `master`, `safety`,
 `certification` and any account a person creates) has full access (D-6 to D-36). The stamp,
-PIN and separation-of-duties relaxations (D-13 to D-47; D-20 to D-33) apply to every
+PIN and separation-of-duties relaxations (D-13 to D-47; D-20 to D-49) apply to every
 demo account so no scenario stalls. Sign in with any account and the password `demo1234`.
 
 Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-28 to D-29).
@@ -57,7 +57,7 @@ Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-2
 | D-17 | Stamps | PIN step-up lifted for FAIR and 8130-9 signatures | The inspector signing a FAIR or an 8130-9 is not asked for a stamp PIN. The PIN check itself is unchanged. | 1 |
 | D-18 | Stamps | Stamp PIN fields optional at buy-off | The buy-off panel and the stamp prompt do not require a PIN, since a demo stamp is not asked for one. | 2 |
 | D-19 | Stamps | Buy-off form does not pre-check the stamp in the browser | The engine is the only check (and the stamp deviations above relax it), so the form never blocks on a demo stamp. | 1 |
-| D-20 | Separation of duties | Engine separation-of-duties comparisons never match | One person can author and approve, request and decide, prepare and sign, so a flow can be walked alone. Production enforces every one of these. | 14 |
+| D-20 | Separation of duties | Engine separation-of-duties comparisons never match | One person can author and approve, request and decide, prepare and sign, so a flow can be walked alone. Production enforces every one of these. | 16 |
 | D-21 | Separation of duties | Closure, software push and change approval self-checks never match | Same as the rule above for the checks that compare against the current actor held in a local variable. | 3 |
 | D-22 | Separation of duties | Two approvals from one discipline allowed | A pedigree change can be approved twice from the same discipline. | 1 |
 | D-23 | Separation of duties | Flight Maneuver same-person checks never match | Root cause and verification, and one person one MRB seat, are lifted in the demo. | 1 |
@@ -85,3 +85,5 @@ Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-2
 | D-45 | Accounts | Local sign-in only | Whatever identity provider the production file or the page sets, the demo signs in only with its own local accounts (D-4) and the password demo1234. It never starts the production single sign-on redirect, never receives a production identity token, and signing out never calls the production provider. | 1 |
 | D-46 | Accounts | Never the production server | Whatever server setting a deployment, proxy or page puts in front of the demo (window.FLIGHT_SERVER, which the Flight System server writes only into its production page), the demo removes it before any of its own scripts run and keeps it unset, so the demo never signs in to the production server, never loads or writes the shared production workspace, and always works on its own browser storage under its relaxed rules. | 1 |
 | D-47 | Stamps | FAIR and 8130-9 signatures accept a lapsed register stamp | Production refuses a FAIR, 8130-9 or AQI signature when the signer has no current stamp of an allowed type (expired, not yet issued, or an additional stamp paused for training, #579). The demo signs with the account's first Active stamp of an allowed type, as it did before that rule, so a scenario is not stopped by stamp dates. An account with no Active stamp of an allowed type is still refused. | 1 |
+| D-48 | Separation of duties | A PFMEA contributor may give the Safety Team buy-off | One person can review operations as no-risk, close actions, complete the analysis and give the Safety Team buy-off, so a critical safety WI can be walked alone. Production refuses this to every role, Master Access and Support Access included. | 1 |
+| D-49 | Separation of duties | A PFMEA action owner may give the Safety Team buy-off | The person named as owner of a PFMEA action can also give the Safety Team buy-off, so a critical safety WI can be walked alone. Production refuses the buy-off to anyone the action owner names by name, account or credential. | 1 |
