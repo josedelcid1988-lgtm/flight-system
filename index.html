@@ -3506,6 +3506,121 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     });
     return { ok: failures.length === 0, complete: legacy === 0, legacy, checked, recomputed, failures };
   }
+  // Signed subjects for the Flight Maneuver signatures, shared by their signing sites and verifyImportProvenance.
+  const mrbDecisionSubject = (m, status, note) => ({ id: m.id, orderId: m.orderId, ticketId: m.ticketId, partNumber: m.partNumber, serials: m.serials, proposed: m.proposed, votes: (m.votes || []).map(v => ({ seat: v.seat, vote: v.vote, by: v.by && v.by.credentialId, at: v.at })), status, note });
+  const carClosureSubject = (car, note) => ({ id: car.id, title: car.title, severity: car.severity, rootCause: car.rootCause && car.rootCause.statement, actions: (car.actions || []).map(a => ({ id: a.id, description: a.description, completedAt: a.completedAt })), verification: car.verification && car.verification.at, effectiveness: car.effectiveness && car.effectiveness.result, note });
+  const ncApprovalSubject = (t, code, quantity, note) => ({ id: t.id, partNumber: t.partNumber, serial: t.serial, lot: t.lot, disposition: t.dispo && t.dispo.decision, defect: code, quantity, mrbId: t.mrbId, note });
+  // Builds v82 and later store the signed subject in every manifest; v81 and earlier did not (#481, #512). v82 replaced
+  // v81 on main at V82_RELEASED_AT. A browser still running v81 after that (offline, or an old cached page) keeps signing
+  // without a subject, and every v81 manifest carries its v81 build stamp, so a later one must show it.
+  const SUBJECT_BUILD_MAJOR = 82, V82_RELEASED_AT = Date.parse('2026-09-28T22:38:38Z');
+  const subjectEraBuild = b => plain(b) && /^v(\d+)/.test(String(b.version || '')) && Number(/^v(\d+)/.exec(b.version)[1]) >= SUBJECT_BUILD_MAJOR;
+  // Everything a FAIR verification signs is recomputable from the order. The FAIR identifier is left out: it gains the
+  // inventory lot number when the order moves to inventory after the FAIR is signed.
+  const fairBound = snap => plain(snap) && plain(snap.form1) ? { ...snap, form1: { ...snap.form1, fairId: undefined } } : null;
+  const sameSigned = (a, b) => canonical(JSON.parse(JSON.stringify(a ?? null))) === canonical(JSON.parse(JSON.stringify(b ?? null)));
+  // Run before a workspace from outside becomes the authoritative copy (an empty-server initialization or a browser
+  // migration). verifyManifests proves each stored subject matches its hash; this also proves that a FAIR verification,
+  // an MRB decision, a CAR closure and a stock NC approval still say what was signed, and that no signature was
+  // downgraded to the v81 shape, which stores no subject, against what its build stamp, its date and the record's own history allow.
+  // The hashes are unkeyed, so a forger who rewrites a record's whole history coherently is not caught here (#363).
+  function verifyImportProvenance(state) {
+    const failures = []; const fm = plain(state) && plain(state.maneuver) ? state.maneuver : {};
+    const time = v => { const n = Date.parse(v); return Number.isFinite(n) ? n : null; };
+    // The first time this workspace shows a v82 or later build at work: a stored subject, or a v82+ build stamp on a
+    // manifest, an order history event or a Support Overrides entry. No v81 signature can follow it in the same workspace.
+    let era = null; const seen = (at, yes) => { const n = time(at); if (yes && n !== null && (era === null || n < era)) era = n; };
+    const subjectless = [];
+    const walk = (node, path) => {
+      if (Array.isArray(node)) { node.forEach((x, i) => walk(x, `${path}[${i}]`)); return; }
+      if (!plain(node)) return;
+      if (typeof node.at === 'string' && plain(node.build) && !plain(node.signer)) seen(node.at, subjectEraBuild(node.build));
+      Object.keys(node).forEach(k => {
+        if (k === 'manifest' && plain(node[k])) { const m = node[k]; if (plain(m.subject)) seen(m.at, true); else { seen(m.at, subjectEraBuild(m.build)); subjectless.push([`${path}.manifest`, m]); } }
+        else if (k === 'body' && /^state\.aiSkillDrafts\[\d+\]$/.test(path)) return;
+        else if (k !== 'manifest') walk(node[k], `${path}.${k}`);
+      });
+    };
+    walk(state, 'state');
+    subjectless.forEach(([where, m]) => {
+      if (subjectEraBuild(m.build)) failures.push({ where, reason: `it was signed by build ${m.build.version}, which stores the signed subject, but the subject is missing` });
+      else if (time(m.at) !== null && time(m.at) >= V82_RELEASED_AT && !(plain(m.build) && /^v\d+/.test(String(m.build.version || '')))) failures.push({ where, reason: 'it has no signed subject and no build stamp, but it is dated after v82, which stores the subject, replaced v81 on 2026-09-28' });
+      else if (era !== null && time(m.at) !== null && time(m.at) >= era) failures.push({ where, reason: 'it has no signed subject, but it is dated after this workspace was already signed by a build that stores one' });
+    });
+    const refuse = (where, reason) => failures.push({ where, reason });
+    // A v81 signature cannot predate the steps it signs.
+    const before = (m, times) => { const t = time(m.at); return t !== null && times.map(time).some(x => x !== null && x > t); };
+    const escaped = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // A signed step keeps its manifest: removing it would leave the record readable as signed with nothing to check.
+    // Builds before v80 wrote some signed steps without a manifest; every build since signs them, so a step signed on or
+    // after v82 shipped, or with no readable time, must carry one.
+    const recent = at => !(time(at) !== null && time(at) < V82_RELEASED_AT);
+    const unsigned = (record, where, at = record && record.at) => { if (plain(record) && !plain(record.manifest) && recent(at)) refuse(where, 'the record says it was signed, but its signature manifest is missing'); };
+    (state.orders || []).forEach(order => {
+      (order.operations || []).forEach(op => { if (plain(op) && plain(op.buyoff)) unsigned(op.buyoff, `${order.id} ${op.id} buy-off`); });
+      // The order history records each buy-off with the build that made it. When a v82 build recorded more completions of
+      // an operation title than there are signed buy-offs with that title, an unsigned one with that title lost its manifest.
+      const ops = (order.operations || []).filter(op => plain(op) && plain(op.buyoff)), events = (order.history || []).concat(order.historyArchive || []);
+      ops.filter(op => !plain(op.buyoff.manifest)).forEach(op => {
+        const title = `Completed operation recorded: ${op.title}.`;
+        const v82 = events.filter(e => plain(e) && subjectEraBuild(e.build) && String(e.action || '').startsWith(title)).length;
+        const signed = ops.filter(o => o.title === op.title && plain(o.buyoff.manifest)).length;
+        if (v82 > signed) refuse(`${order.id} ${op.id} buy-off`, 'the order history records this buy-off by a build that signs every buy-off, but its signature manifest is missing');
+      });
+      if (plain(order.closure) && order.closure.approvedAt) unsigned(order.closure, `${order.id} closure`, order.closure.approvedAt);
+      // A rework or repair ticket is resolved by its approved plan, which signs nothing at resolution. Pre-release QA
+      // approvals are not checked here: engineering changes and disposition approvals re-apply them unsigned.
+      (order.tickets || []).forEach(t => { if (plain(t) && t.status === 'Resolved' && !(plain(t.reworkPlan) && t.resolution === t.reworkPlan.approval)) unsigned({ manifest: t.manifest }, `${order.id} ${t.id} disposition approval`, t.resolvedAt); });
+      if (plain(order.fair)) [['verified', 'FAIR verification'], ['reviewed', 'FAIR review (box 22)'], ['approved', 'FAIR QA approval']].forEach(([k, label]) => unsigned(order.fair[k], `${order.id} ${label}`));
+    });
+    // A closed escape from before the ticket restructure becomes a resolved stock NC with its old closure, no source, no
+    // disposition, no MRB and no affected record (FlightManeuver.ensure). raiseNC always records the source and approveNC
+    // the disposition and affected quantity, so taking this shape erases what an approval signs, as deleting the NC would.
+    const migratedEscape = t => !Object.hasOwn(t, 'source') && plain(t.escape) && t.dispo === null && t.affected === null && t.mrbId === null && (t.history || []).some(e => plain(e) && e.actor === 'system' && /^Migrated from escape /.test(String(e.action || '')));
+    // A signed step shows its signer and time on the record; both must be the manifest's. Signed or not, a step cannot be
+    // dated before the steps it follows, so neither a downgrade nor a deleted manifest can be hidden by moving its time.
+    const signedStep = (record, where, after, chronology) => {
+      if (!plain(record)) return;
+      const m = plain(record.manifest) ? record.manifest : null, at = m ? m.at : record.at;
+      if (m && record.at !== undefined && record.at !== m.at) refuse(where, 'the time shown on the record is not the signed time');
+      // The person shown is the person who signed: name, role and credential, and the account when both record one.
+      const person = p => ({ name: p.name, role: p.role, credentialId: p.credentialId });
+      if (m && plain(record.by) && plain(m.signer) && (!sameSigned(person(record.by), person(m.signer)) || (record.by.account && m.signer.account && record.by.account !== m.signer.account))) refuse(where, 'the signer shown on the record is not the person who signed');
+      // The signing time is not hashed, so the order of signed steps is checked whatever the manifest stores.
+      if (before({ at }, after)) refuse(where, chronology);
+    };
+    (fm.mrb || []).forEach(b => {
+      if (!plain(b) || !plain(b.decision)) return;
+      const where = `${b.id} MRB decision`; unsigned(b.decision, where);
+      signedStep(b.decision, where, [b.openedAt, ...(b.votes || []).map(v => plain(v) ? v.at : null)], 'it is dated before the board was convened or before a vote it decides');
+      const m = b.decision.manifest; if (plain(m) && plain(m.subject) && !sameSigned(m.subject, mrbDecisionSubject(b, b.decision.status, b.decision.note))) refuse(where, 'the board record no longer matches what was signed');
+    });
+    (fm.cars || []).forEach(c => {
+      if (!plain(c) || !plain(c.closure)) return;
+      const where = `${c.id} closure`; unsigned(c.closure, where);
+      signedStep(c.closure, where, [c.raisedAt, c.rootCause && c.rootCause.at, c.verification && c.verification.at, c.effectiveness && c.effectiveness.at, ...(c.actions || []).map(a => plain(a) ? a.completedAt : null)], 'it is dated before the steps it closes');
+      const m = c.closure.manifest; if (plain(m) && plain(m.subject) && !sameSigned(m.subject, carClosureSubject(c, c.closure.note))) refuse(where, 'the corrective action no longer matches what was signed');
+    });
+    (fm.ncs || []).forEach(t => {
+      if (!plain(t) || !plain(t.resolution) || migratedEscape(t)) return;
+      const where = `${t.id} disposition approval`, a = plain(t.affected) ? t.affected : {}; unsigned(t.resolution, where);
+      signedStep(t.resolution, where, [t.createdAt, t.dispo && t.dispo.at], 'it is dated before the nonconformance or its disposition');
+      const m = t.resolution.manifest; if (plain(m) && plain(m.subject) && !sameSigned(m.subject, ncApprovalSubject(t, { defectCode: a.defectCode, defectName: a.defectName, subCode: a.subCode, subName: a.subName }, a.quantity, t.resolution.note))) refuse(where, 'the nonconformance no longer matches what was signed');
+    });
+    (state.orders || []).forEach(order => {
+      const f = order.fair; if (!plain(f) || !plain(f.verified)) return;
+      const m = plain(f.verified.manifest) ? f.verified.manifest : null, where = `${order.id} FAIR verification`, at = m ? m.at : f.verified.at;
+      signedStep(f.verified, where, [], '');
+      signedStep(f.reviewed, `${order.id} FAIR review (box 22)`, [f.verified.at], 'it is dated before the verification it reviews');
+      signedStep(f.approved, `${order.id} FAIR QA approval`, [f.verified.at, plain(f.reviewed) ? f.reviewed.at : null], 'it is dated before the verification or the box 22 review it approves');
+      if (m && plain(m.subject)) { const by = plain(f.verified.by) ? f.verified.by : {}, live = fairBound({ ...fairSnapshot(state, order), ...(Object.hasOwn(m.subject, 'stamp') ? { stamp: by.stamp || null } : {}), ...(by.override ? { override: by.override } : {}) }); if (!live || !sameSigned(fairBound(m.subject), live)) refuse(where, 'Forms 1 to 3 no longer match what was verified'); return; }
+      const days = (f.chars || []).map(c => plain(c) && /^\d{4}-\d{2}-\d{2}$/.test(c.date || '') ? c.date : null).filter(Boolean);
+      const verifiedEvent = new RegExp(`^AS9102 FAIR ${escaped(order.id)}\\b.* verified`);
+      if (days.some(d => d > String(at).slice(0, 10))) refuse(where, 'it is dated before characteristic results it verifies');
+      else if ((order.history || []).concat(order.historyArchive || []).some(e => plain(e) && subjectEraBuild(e.build) && verifiedEvent.test(String(e.action || '')))) refuse(where, 'the order history records this verification by a build that stores the signed subject, but the subject is missing');
+    });
+    return { ok: failures.length === 0, failures };
+  }
   const actor = state => { const acct = accountActor(); return acct ? { name: acct.name, role: acct.role, credentialId: acct.credentialId } : profileSnapshot(state.profile); };
   const accountRole = () => { const acct = accountActor(); return acct ? acct.accountRole : null; };
   // The signed-in account's username, or null outside a signed-in session (tests, standalone profile mode).
@@ -6034,7 +6149,9 @@ const OP_BOM_MAX = 12;
     const gaps = fairReview(state, order); if (gaps.length) return fail(gaps.join(' '));
     const v = inspectorSign(state, INSPECTION_BUYOFF_TYPES, execution); if (!v.ok) return v;
     const at = new Date().toISOString(), snap = fairSnapshot(state, order);
-    fair.verified = { by: signerOf(state, v), at, manifest: signManifest(state, 'AS9102 FAIR verified (blocks 20 and 21)', { ...snap, ...(v.override ? { override: v.override } : {}) }, at) };
+    // The inspection stamp shown in blocks 20 and 21 is signed with the forms, so it cannot be changed afterwards.
+    const by = signerOf(state, v);
+    fair.verified = { by, at, manifest: signManifest(state, 'AS9102 FAIR verified (blocks 20 and 21)', { ...snap, stamp: by.stamp || null, ...(v.override ? { override: v.override } : {}) }, at) };
     fair.status = 'Verified';
     record(state, order, `AS9102 FAIR ${fairId(order)} verified (blocks 20 and 21): ${fair.type} FAI, ${fair.chars.length} characteristics, nonconformance ${snap.form1.nonconformance}.`);
     return { ok: true, message: 'FAIR verified. A second person reviews and approves it in box 22 next.' };
@@ -8921,7 +9038,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
   MES.seed = () => { const state = ensurePlanner(seedWithPlanner()); ['audits','certifications','supplierApprovals','qualityValues','qualityVerdicts','controlledDocuments','modelAdapterHistory','aiActionLog','aiSkillDrafts','aiSkillTriggers','aiSkillTriggerHistory','calibrationLog'].forEach(key=>{if(!Array.isArray(state[key]))state[key]=[];}); if(!plain(state.modelAdapter))state.modelAdapter=emptyModelAdapter(); ensureInventoryLedger(state); ensureResources(state); ensureProjects(state); syncPlanningBlockers(state); return state; };
   const upgradeWithPlanner = MES.upgrade;
   MES.upgrade = state => { const upgraded = upgradeWithPlanner(state); if (!upgraded) return null; ensurePlanner(upgraded); if(!Array.isArray(upgraded.controlledDocuments))upgraded.controlledDocuments=[];if(!Array.isArray(upgraded.modelAdapterHistory))upgraded.modelAdapterHistory=[];if(!Array.isArray(upgraded.aiActionLog))upgraded.aiActionLog=[];if(!Array.isArray(upgraded.aiSkillDrafts))upgraded.aiSkillDrafts=[];if(!Array.isArray(upgraded.aiSkillTriggers))upgraded.aiSkillTriggers=[];if(!Array.isArray(upgraded.aiSkillTriggerHistory))upgraded.aiSkillTriggerHistory=[];if(!Array.isArray(upgraded.calibrationLog))upgraded.calibrationLog=[];if(!plain(upgraded.modelAdapter))upgraded.modelAdapter=emptyModelAdapter(); ensureInventoryLedger(upgraded); ensureResources(upgraded); ensureProjects(upgraded); retireOutOfBoundSprints(upgraded); syncPlanningBlockers(upgraded); return upgraded; };
-  Object.assign(MES, { archivable, archiveOrders, archivedOrderValid, ownWorkRefusal, coveredBuildOps, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, verifyManifests, reviewFair, NFF, recordTraining, personTraining, trainingCurrentFor, trainingCertificateValid, ownWorkHit, OWN_WORK_EXEMPT_PEDIGREES, scryptHex, PIN_KDF, saveTraining, trainingCatalog, requiredTrainings, trainingDef, TRAINING_CODE_RE, importStamps, stampRegisterCsv, nextStampNumber, isPlaceholderStamp, STAMP_NUMBER_RE, wiAuthors, wiAuthorRefusal, wiPeerReviewRefusal, buildStamp, buildStampValid, supportActor, supportGrant, logSupport, SUPPORT_RULES, SUPPORT_KINDS, recordSupportAccess, noteDemoBypassRemoved, supportLogValid, recordCalibration, importCalibrations, updateCalibration, calibrationStatus, calibrationChainProblem, calibrationEntryHash, calibrationLegacyHash, calibrationLogChanges, recordCalibrationArchive, calibrationArchivable, calibrationArchiveSummary, calibrationArchivedEntries, calibrationArchiveHeldProblem, calibrationCapacity, CALIBRATION_LOG_LIMIT, calibrationCurrentIds, calibratedToolChecks, toolUseRecords, calibrationEntryValid, CALIBRATION_STATUSES });
+  Object.assign(MES, { archivable, archiveOrders, archivedOrderValid, ownWorkRefusal, coveredBuildOps, isEngineeringProfile, isQAProfile, engineeringChange, submitEngineeringChange, verifyManifests, verifyImportProvenance, mrbDecisionSubject, carClosureSubject, ncApprovalSubject, reviewFair, NFF, recordTraining, personTraining, trainingCurrentFor, trainingCertificateValid, ownWorkHit, OWN_WORK_EXEMPT_PEDIGREES, scryptHex, PIN_KDF, saveTraining, trainingCatalog, requiredTrainings, trainingDef, TRAINING_CODE_RE, importStamps, stampRegisterCsv, nextStampNumber, isPlaceholderStamp, STAMP_NUMBER_RE, wiAuthors, wiAuthorRefusal, wiPeerReviewRefusal, buildStamp, buildStampValid, supportActor, supportGrant, logSupport, SUPPORT_RULES, SUPPORT_KINDS, recordSupportAccess, noteDemoBypassRemoved, supportLogValid, recordCalibration, importCalibrations, updateCalibration, calibrationStatus, calibrationChainProblem, calibrationEntryHash, calibrationLegacyHash, calibrationLogChanges, recordCalibrationArchive, calibrationArchivable, calibrationArchiveSummary, calibrationArchivedEntries, calibrationArchiveHeldProblem, calibrationCapacity, CALIBRATION_LOG_LIMIT, calibrationCurrentIds, calibratedToolChecks, toolUseRecords, calibrationEntryValid, CALIBRATION_STATUSES });
   Object.assign(MES, { SOURCE_INSPECTION_CLASS, SOURCE_INSPECTION_CODES, CONFORMITY_SUBCODES, TEST_SUBCODES, operationType, migrateOperationTypes, sourceInspectionCodes, conformitySubcodes, testSubcodes, operationSubcodes, operationSubcode, saveSourceInspectionCodes, saveOperationSubcodes, mrbTrainingTiers, saveMrbTrainingTiers, recordSourceInspection, sourceInspectionHolds, sourceInspectionWorkspaceValid });
   MES.roleDeniedMessage = roleDeniedMessage;
   const validateWithSourceInspection = MES.validate;
@@ -9590,7 +9707,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const who = actor(state);
     if (sameActor(who, car.rootCause.by)) return fail('Separation of duties: the person who recorded the root cause cannot close the request. Use another Quality credential.');
     const at = now();
-    const subject = { id: car.id, title: car.title, severity: car.severity, rootCause: car.rootCause.statement, actions: car.actions.map(a => ({ id: a.id, description: a.description, completedAt: a.completedAt })), verification: car.verification.at, effectiveness: car.effectiveness.result, note };
+    const subject = MES.carClosureSubject(car, note);
     car.closure = { note, by: who, at, manifest: MES.signManifest(state, 'Corrective action closure', subject, at) };
     car.status = 'Closed';
     log(state, car, `Closed: ${note}`);
@@ -9663,7 +9780,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     note = clean(note); if (!text(note, 2000)) return fail('Record the board decision rationale (1 to 2,000 characters).');
     const status = m.votes.every(v => v.vote === 'Approve') ? 'Approved' : 'Rejected';
     const at = now();
-    const subject = { id: m.id, orderId: m.orderId, ticketId: m.ticketId, partNumber: m.partNumber, serials: m.serials, proposed: m.proposed, votes: m.votes.map(v => ({ seat: v.seat, vote: v.vote, by: v.by.credentialId, at: v.at })), status, note };
+    const subject = MES.mrbDecisionSubject(m, status, note);
     m.decision = { status, note, by: actor(state), at, manifest: MES.signManifest(state, `MRB ${status.toLowerCase()}`, subject, at) };
     m.status = status;
     log(state, m, `Board decision ${status}: ${note}`);
@@ -9815,7 +9932,7 @@ const ATTACH_KINDS = Object.freeze(['mrb','cars','ncs','sprs']);
     const qty = Number(input && input.quantity || t.quantity); if (!Number.isInteger(qty) || qty < 1 || qty > t.quantity) return fail(`Affected quantity is 1 to ${t.quantity}.`);
     t.affected = { ...code, quantity: qty, serials: t.serial ? [t.serial] : [] };
     const at = now();
-    const subject = { id: t.id, partNumber: t.partNumber, serial: t.serial, lot: t.lot, disposition: t.dispo.decision, defect: code, quantity: qty, mrbId: t.mrbId, note };
+    const subject = MES.ncApprovalSubject(t, code, qty, note);
     t.resolution = { note, by: who, at, manifest: MES.signManifest(state, 'NC disposition approval', subject, at) };
     t.status = 'Resolved';
     if (t.dispo.decision === 'Use for Dev' && t.pedigree === 'Production') { t.pedigree = 'Development'; log(state, t, 'Pedigree downgraded Production to Development by QA Manager approval of Use for Dev.'); }
@@ -10041,8 +10158,8 @@ const ATTACH_KINDS = Object.freeze(['mrb','cars','ncs','sprs']);
       verification: { note: 'Reviewed template Rev D, WI-SR-FC-200 Rev C, and the four wrenches with guards fitted. Observed two torque steps executed with the unit read back before torquing.', by: qe, at: daysAgo(11) },
       effectiveness: { checkDate: dayAgo(4), result: 'Effective', note: 'Fourteen installation orders since the change with zero torque nonconformances; step data shows unit recorded every time.', by: qe, at: daysAgo(4) },
       closure: null, cancelled: null, raisedBy: qe, raisedAt: daysAgo(30), history: [h(daysAgo(30), 'Raised (Major, source NC). Owner Harper Olsen.', qe), h(daysAgo(28), 'Containment recorded.', me), h(daysAgo(24), 'Root cause recorded (Method).', me), h(daysAgo(17), 'Action CA-1 completed.', me), h(daysAgo(13), 'Action CA-2 completed.', me), h(daysAgo(11), 'Actions verified.', qe), h(daysAgo(4), 'Effectiveness check: effective.', qe)] };
-    const subject = { id: c1.id, title: c1.title, severity: c1.severity, rootCause: c1.rootCause.statement, actions: c1.actions.map(a => ({ id: a.id, description: a.description, completedAt: a.completedAt })), verification: c1.verification.at, effectiveness: c1.effectiveness.result, note: 'Root cause addressed at the template level; effectiveness demonstrated across fourteen orders.' };
-    c1.closure = { note: subject.note, by: qe, at: closedAt, manifest: { meaning: 'Corrective action closure', at: closedAt, signer: { ...qe }, algorithm: 'SHA-256', hash: MES.sha256(MES.canonical(subject)), authenticated: false, build: MES.buildStamp() } };
+    const subject = MES.carClosureSubject(c1, 'Root cause addressed at the template level; effectiveness demonstrated across fourteen orders.');
+    c1.closure = { note: subject.note, by: qe, at: closedAt, manifest: { meaning: 'Corrective action closure', at: closedAt, signer: { ...qe }, algorithm: 'SHA-256', hash: MES.sha256(MES.canonical(subject)), subject: JSON.parse(JSON.stringify(subject)), authenticated: false, build: MES.buildStamp() } };
     c1.history.push(h(closedAt, `Closed: ${subject.note}`, qe));
     // An open CAR mid-way through the chain.
     const c2 = { id: 'CAR-1002', title: 'Harness connector pin retention failures at ATP', description: 'Two harness assemblies failed pin retention at ATP. Pins backed out of the 38-pin connector under the pull test.', sourceType: 'Observation', severity: 'Major', link: { orderId: null, ticketId: null, ref: 'SPR-101, SPR-102' }, dueDate: ahead(9), owner: me, status: 'Actions',
@@ -12151,7 +12268,7 @@ let serverPush=Promise.resolve();
 let serverWorkspaceReady=false,serverActionQueue=[],serverActionPending=0,serverActionStopped=false,serverSnapshotRetryPending=false,serverReconcilePending=false,serverActionChain=Promise.resolve();
 const serverMutatorName=/^(?:run|add|update|remove|delete|create|complete|close|issue|approve|reject|sign|mark|assign|advance|resolve|disposition|request|release|record|submit|start|stop|review|accept|return|void|reopen|split|move|link|verify|raise|cancel|withdraw|incorporate|peer|roll|set|save|store|open|finish|grant|revoke|capture|attach|detach|quarantine|repair|replace|send|change|configure|stamp|buyoff|log|tick|decide|vote|reset|publish|apply|import|reinspect|firm|convert|carry|propose|escalate|select|clock|aqi|post|acknowledge|edit|revise|ping|push|ical|check|notify|qa|note)/i;
 const serverMutatorExact=new Set(['containNC','effectivenessCheck','pfmeaSafetyBuyoff','pruneExpiredNotices']);
-const serverMutatorExclude=new Set(['repair','signManifest','verifyManifests','verifyAIActionLog','stampCheck','stampRegister','stampRegisterProblem','stampRegisterCsv','stampCredential','stampHolderFor','ticketAttachments','openProcessECRs','syncAssignments','buyoffCredential','ensure','seedDemoRecords','icalExport','openMaintenanceFor','recordAIAction','logSupport','noteDemoBypassRemoved','releaseWIFromPfmea','quarantineOrder','rollWorkOrderRevision']);
+const serverMutatorExclude=new Set(['repair','signManifest','verifyManifests','verifyImportProvenance','verifyAIActionLog','stampCheck','stampRegister','stampRegisterProblem','stampRegisterCsv','stampCredential','stampHolderFor','ticketAttachments','openProcessECRs','syncAssignments','buyoffCredential','ensure','seedDemoRecords','icalExport','openMaintenanceFor','recordAIAction','logSupport','noteDemoBypassRemoved','releaseWIFromPfmea','quarantineOrder','rollWorkOrderRevision']);
 // The reviewed commands the server accepts (server/mes-host.mjs actionAllow). A function is sent as a command only
 // when it is named here; the prefix rule alone is not enough.
 const serverMutatorAllow=new Set(['MES.addSavedView','MES.removeSavedView','MES.recordCalibration','MES.importCalibrations','MES.updateCalibration','MES.recordCalibrationArchive','MES.addAttachment','MES.addTicketAttachment','MES.removeTicketAttachment','MES.removeAttachment','MES.logAogBroadcast','MES.resolveAog','MES.setSchedule','MES.editOrderOperation','MES.setWIStepImage','MES.selectProfile','MES.assignSerial','MES.voidSerial','MES.moveToInventory','MES.markNetSuitePosted','MES.addKitFile','MES.linkOpToTicket','MES.saveReworkTemplate','MES.removeReworkTemplate','MES.saveOpAsReworkTemplate','MES.approveReworkTemplate','MES.addStandardRework','MES.setWIDrawing','MES.releaseUnreleasedWI','MES.rejectInspection','MES.logTravelerPrint','MES.saveFairHeader','MES.setFairIndex','MES.addFairForm2','MES.setFairTest','MES.addFairChar','MES.updateFairChar','MES.verifyFair','MES.approveFair','MES.reopenFair','MES.startConformity','MES.saveConformity','MES.checkConformity','MES.complete8130_9','MES.void8130_9','MES.aqiSign8130_9','MES.notifyCertification','MES.addDarFinding','MES.acceptDarFinding','MES.recordDarApproval','MES.record8130_3','MES.closeConformity','MES.issueFromOrder','MES.returnIssuedOrder','MES.qaReviewMasterWI','MES.setImpactDecision','MES.linkECO','MES.setWICriticalSafety','MES.addPfmeaRow','MES.updatePfmeaRow','MES.setStampPin','MES.setMsdsBook','MES.tickFodItem','MES.removeKitFile','MES.addMasterWI','MES.importMasterWIs','MES.updateMasterWI','MES.saveWIOperations','MES.releaseMasterWI','MES.reviseMasterWI','MES.setStepCheck','MES.pushATPSoftware','MES.reviewATPPush','MES.linkATPSoftware','MES.addPurchaseOrder','MES.requestOrderClosure','MES.postNotice','MES.acknowledgeNotice','MES.updateNotice','MES.pruneExpiredNotices','MES.requestWorkOrder','MES.decideWORequest','MES.submitECRRequest','MES.reviewFeedbackECR','MES.linkECRJira','MES.incorporateECRs','MES.decideOrderClosure','MES.assignWork','MES.completeAssignment','MES.pingAssignment','MES.addOrderOperation','MES.removeOrderOperation','MES.approveSequenceChange','MES.setMaterialLot','MES.releaseApproval','MES.approveRelease','MES.approveECR','MES.approveEngineeringChange','MES.advance','MES.setMaterial','MES.setPriority','MES.completeOperation','MES.closeOrder','MES.sendBackToBuilding','MES.addOrder','MES.importWorkOrders','MES.addAdhocOrder','MES.splitOrder','MES.splitRequestOrder','MES.requestPedigreeChange','MES.approvePedigreeChange','MES.peerReviewMasterWI','MES.dispositionTicket','MES.addNote','MES.createTicket','MES.resolveTicket','MES.returnDisposition','MES.closeSplitRequest','MES.rejectEngineeringChange','MES.rejectSequenceChange','MES.rejectPedigreeChange','MES.returnRelease','MES.returnMasterWI','MES.withdrawClosure','MES.closeECRRequest','MES.updateProfile','MES.attachEvidence','MES.reviewEvidence','MES.rejectEvidence','MES.removeEvidence','MES.issueStamp','MES.updateStamp','MES.addMessage','MES.setSlackThread','MES.createBigThreePlan','MES.decideBigThree','MES.carryBigThree','MES.proposeBigThreeTimeBlock','MES.decideBigThreeTimeBlock','MES.escalateBigThree','MES.setPlanningCalendarSync','MES.icalImport','MES.openAudit','MES.closeAuditFinding','MES.closeAudit','MES.issueCertification','MES.approveSupplier','MES.storeQualityValue','MES.recordQualityVerdict','MES.createControlledDocument','MES.startControlledDocumentRevision','MES.reviewControlledDocument','MES.releaseControlledDocument','MES.configureModelAdapter','MES.setForm3Plan','MES.setSkillTrigger','MES.runSkill','MES.reviewSkillDraft','MES.updateSkillDraft','MES.acceptSkillDraft','MES.addEquipmentArea','MES.addEquipmentUnit','MES.createProject','MES.addProjectObjective','MES.addProjectMilestone','MES.setProjectSensitivity','MES.linkWorkOrderProject','MES.createSprint','MES.recordMaintenance','MES.closeMaintenance','MES.recordExternalReceipt','MES.clockOnOperation','MES.clockOffOperation','MES.postInventoryTransaction','MES.submitEngineeringChange','MES.reviewFair','MES.recordTraining','MES.saveTraining','MES.importStamps','MES.recordSupportAccess','MES.saveSourceInspectionCodes','MES.saveOperationSubcodes','MES.saveMrbTrainingTiers','MES.recordSourceInspection','FlightPlan.addPlannedOrder','FlightPlan.firm','FlightPlan.cancel','FlightPlan.convert','FlightManeuver.raiseCAR','FlightManeuver.recordContainment','FlightManeuver.recordRootCause','FlightManeuver.addAction','FlightManeuver.completeAction','FlightManeuver.verifyCAR','FlightManeuver.effectivenessCheck','FlightManeuver.closeCAR','FlightManeuver.cancelCAR','FlightManeuver.openMRB','FlightManeuver.voteMRB','FlightManeuver.decideMRB','FlightManeuver.linkCAR','FlightManeuver.addRecordFile','FlightManeuver.removeRecordFile','FlightManeuver.raiseNC','FlightManeuver.dispositionNC','FlightManeuver.containNC','FlightManeuver.approveNC','FlightManeuver.linkReworkOrder','FlightManeuver.raiseSPR','FlightManeuver.linkSPRJira','FlightManeuver.closeSPR','FlightManeuver.requestSCAR','FlightManeuver.linkSCARJira','FlightManeuver.closeSCAR','FlightManeuver.openPFMEA','FlightManeuver.setPfmeaScope','FlightManeuver.addPfmeaMode','FlightManeuver.removePfmeaMode','FlightManeuver.markOpNoRisk','FlightManeuver.completePfmeaAnalysis','FlightManeuver.setPfmeaAction','FlightManeuver.closePfmeaAction','FlightManeuver.completePfmeaActions','FlightManeuver.pfmeaSafetyBuyoff']);

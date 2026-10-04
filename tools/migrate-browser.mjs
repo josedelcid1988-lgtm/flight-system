@@ -34,6 +34,9 @@ export function inspectMigration(input, host = createHost(path.join(ROOT, 'index
   }
   const manifests = host.MES.verifyManifests(state);
   if (!manifests.ok) throw new Error(`Signature manifest verification found ${manifests.failures.length} damaged manifest(s).`);
+  // The server refuses the same documents at initialization; refuse them here first so the dry run says so (#481, #512).
+  const provenance = host.MES.verifyImportProvenance(state);
+  if (!provenance.ok) { const f = provenance.failures[0]; throw new Error(`The signed record at ${f.where} cannot be shown to be unchanged: ${f.reason}${provenance.failures.length > 1 ? ` (${provenance.failures.length} signed records in all)` : ''}. Export the workspace again from the browser that holds it, without editing the file.`); }
   const evidence = linkedEvidence(state).map(item => ({ id: item.id, size: item.size, mimeType: item.mimeType, sha256: item.sha256 || null }));
   const mediaSource = source.media && typeof source.media === 'object' ? source.media : {};
   const missingMedia = evidence.filter(item => !mediaSource[item.id]).map(({ id, size }) => ({ id, size }));
