@@ -3596,6 +3596,9 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // which the quantity chain subtracts after the change it followed.
   const appliedEngineeringChange = order => Array.isArray(order?.engineeringChanges) ? order.engineeringChanges.filter(change => change.status === 'Applied').at(-1) || null: null;
   const splitEngineeringMessage = change => `Engineering change ${change.id} set this work order to ${change.after.quantity} unit${change.after.quantity === 1 ? '' : 's'}, and that approved quantity can only change through another engineering change. To move units off this order, submit an engineering change to the reduced quantity, then open a new work order for the units taken off.`;
+  // Split numbers already taken under a base order id. A closed split order may have moved to the server archive, so the
+  // numbers its parent (or any live order) still lists in splitInto or engineeringSplits stay reserved too.
+  const usedSplitNumbers = (state, base) => new Set(state.orders.flatMap(o => [o.id, ...(Array.isArray(o.splitInto) ? o.splitInto : []), ...(Array.isArray(o.engineeringSplits) ? o.engineeringSplits.map(split => split && split.orderId) : [])]).filter(id => typeof id === 'string' && id.startsWith(`${base}-Split-`)).map(id => parseInt(id.slice(`${base}-Split-`.length), 10)));
   const selfApprovalMessage = 'The requester cannot approve their own engineering change. Use a different QA credential.';
   // #542: once a work order is sent to QA it is frozen. Only QA records (NC, notes, messages, QA evidence files, FAIR,
   // conformity and 8130-9, Review & close) may be written; anything else waits for a signed QA send back to Building.
@@ -7605,7 +7608,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (!Number.isInteger(qty) || qty < 1 || qty >= order.quantity) return fail(`Enter a quantity from 1 to ${order.quantity - 1} to move onto the new work order.`);
     if (state.orders.length >= MAX_ORDERS) return fail('A workspace holds up to 100 work orders. Reset the workspace to start again.');
     const base = order.id.replace(/-Split-\d+$/, '');
-    const used = new Set(state.orders.map(o => o.id).filter(id => id.startsWith(`${base}-Split-`)).map(id => parseInt(id.slice(`${base}-Split-`.length), 10)));
+    const used = usedSplitNumbers(state, base);
     let seq = 1; while (used.has(seq)) seq++;
     if (seq > 99) return fail(`${base} has already been split 99 times.`);
     const id = `${base}-Split-${seq}`;
@@ -7645,11 +7648,15 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (!['Draft', 'Kitting', 'Building'].includes(order.status)) return fail('Units can be split out while the order is in Draft, Kitting, or Building.');
     if (engineeringChange(order)) return fail(engineeringHoldMessage);
     if (pendingSequenceChange(order)) return fail(sequenceHoldMessage);
+    // A QA release names the order's quantity. The split changes it on both orders, so Quality fulfils the request and
+    // re-releases each order at its new quantity, the way QA re-releases an applied engineering change (#697).
+    const rerelease = requiresReleaseQA(order) && !!releaseApproval(order);
+    if (rerelease && !isQAProfile(actor(state))) return fail(`${order.id} carries a QA release for ${order.quantity} unit${order.quantity === 1 ? '' : 's'}, and this split changes that quantity. Ask a Quality Engineer or QA Manager to fulfil the split request: they re-release both work orders at their new quantities.`);
     const qty = Number(sr.quantity);
     if (!Number.isInteger(qty) || qty < 1 || qty >= order.quantity) return fail(`This request covers ${sr.quantity} of ${order.quantity} units. Close it as Not required instead.`);
     if (state.orders.length >= MAX_ORDERS) return fail('A workspace holds up to 100 work orders. Reset the workspace to start again.');
     const base = order.id.replace(/-Split-\d+$/, '');
-    const used = new Set(state.orders.map(o => o.id).filter(id => id.startsWith(`${base}-Split-`)).map(id => parseInt(id.slice(`${base}-Split-`.length), 10)));
+    const used = usedSplitNumbers(state, base);
     let seq = 1; while (used.has(seq)) seq++;
     if (seq > 99) return fail(`${base} has already been split 99 times.`);
     const id = `${base}-Split-${seq}`;
@@ -7686,6 +7693,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const applied = appliedEngineeringChange(order);
     const splitAt = new Date(Math.max(Date.now(), applied ? Date.parse(applied.qaApproval.at) : 0)).toISOString();
     if (applied) order.engineeringSplits = [...(Array.isArray(order.engineeringSplits) ? order.engineeringSplits : []), { orderId: id, requestId: sr.id, quantity: qty, afterChange: applied.id, by: actor(state), at: splitAt }];
+    if (rerelease) [order, child].forEach(o => { o.releaseApproval = { ...actor(state), at: splitAt, virtual: true, configuration: releaseConfiguration(o) }; });
     order.splitInto = [...(Array.isArray(order.splitInto) ? order.splitInto : []), id];
     state.orders.splice(state.orders.indexOf(order) + 1, 0, child);
     ensureInventory(state);
@@ -7697,8 +7705,8 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     ensureRevisions(state);
     Object.assign(sr, { status: 'Split completed', note: `${qty} unit${qty === 1 ? '' : 's'} moved onto ${id}.`, closedBy: actor(state), closedAt: splitAt, orderId: id });
     record(state, child, `Split from ${order.id} for ${sr.id}: ${qty} of ${order.quantity + qty} units moved with their completed operations.${moving.length ? ` Serials moved: ${moving.map(e => e.serial).join(', ')}.` : ''}${ticket ? ` ${ticket.id} moved with these units.` : ''}${recopied ? ` ${recopied} evidence record${recopied === 1 ? '' : 's'} copied as metadata; the recordings stay on ${order.id}.` : ''}`);
-    record(state, order, `Split request ${sr.id} fulfilled: ${qty} affected unit${qty === 1 ? '' : 's'} moved onto ${id}. ${order.quantity} remain on this order.${ticket ? ` ${ticket.id} moved to ${id}, so this order continues without that hold.` : ''}${applied ? ` Engineering change ${applied.id} stays as approved at ${applied.after.quantity} unit${applied.after.quantity === 1 ? '' : 's'}; this split is recorded against it.` : ''}`);
-    return { ok: true, id, message: `${id} created with ${qty} unit${qty === 1 ? '' : 's'}${ticket ? ` and ${ticket.id}` : ''}. ${order.quantity} remain on ${order.id}.` };
+    record(state, order, `Split request ${sr.id} fulfilled: ${qty} affected unit${qty === 1 ? '' : 's'} moved onto ${id}. ${order.quantity} remain on this order.${ticket ? ` ${ticket.id} moved to ${id}, so this order continues without that hold.` : ''}${applied ? ` Engineering change ${applied.id} stays as approved at ${applied.after.quantity} unit${applied.after.quantity === 1 ? '' : 's'}; this split is recorded against it.` : ''}${rerelease ? ` QA re-release by ${actor(state).name} (${actor(state).credentialId}): ${order.id} at ${order.quantity} unit${order.quantity === 1 ? '' : 's'}, ${id} at ${qty}.` : ''}`);
+    return { ok: true, id, message: `${id} created with ${qty} unit${qty === 1 ? '' : 's'}${ticket ? ` and ${ticket.id}` : ''}. ${order.quantity} remain on ${order.id}.${rerelease ? ' Both work orders are re-released by QA at their new quantities.' : ''}` };
   }
 
   // ---- work orders as a table: CSV import ------------------------------------------------------------------

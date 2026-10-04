@@ -191,6 +191,83 @@ function openSplitRequest(state, n, quantity) {
   ok('the workspace still validates after the cap', MES.validate(state), JSON.stringify(MES.diagnose(state)));
 }
 
+{
+  // A quantity change applied before the build: two split requests in a row both record against it.
+  const state = fresh();
+  const ec = applyChange(state, { quantity: 4, reason: 'Two more units for the build.' });
+  const first = host.withAccount(qm, () => MES.splitRequestOrder(state, ID, openSplitRequest(state, 1, 1)), state);
+  const second = host.withAccount(qm, () => MES.splitRequestOrder(state, ID, openSplitRequest(state, 2, 2)), state);
+  const o = MES.getOrder(state, ID);
+  ok('two split requests after a quantity change both run and the workspace validates', first.ok && second.ok && o.quantity === 1 && o.engineeringSplits.map(s => s.quantity).join() === '1,2' && o.engineeringSplits.every(s => s.afterChange === ec) && MES.validate(state), JSON.stringify([first, second, MES.diagnose(state)]));
+  // The hand split stays refused on the same order: the change records still name 4 units.
+  const before = snap(state);
+  const hand = host.withAccount(qm, () => MES.splitOrder(state, ID, 1), state);
+  ok('a split by hand is still refused after an applied change', hand.ok === false && hand.message.startsWith(`Engineering change ${ec} set this work order to 4 units,`) && snap(state) === before, JSON.stringify(hand));
+}
+{
+  // A pending change still holds a split request, and nothing is recorded.
+  const state = fresh();
+  applyChange(state, { quantity: 4, reason: 'Two more units for the build.' });
+  const spr = openSplitRequest(state, 1, 1);
+  assert.ok(host.withAccount(me, () => MES.submitEngineeringChange(state, ID, { quantity: 5, reason: 'One more unit.' }), state).ok);
+  const before = snap(state);
+  const r = host.withAccount(qm, () => MES.splitRequestOrder(state, ID, spr), state);
+  ok('a split request with a pending engineering change keeps the hold message and changes nothing', r.ok === false && r.message === 'An engineering change is pending. QA re-release is required before work can continue.' && snap(state) === before, JSON.stringify(r));
+}
+{
+  // Codex P1 on 717f4cc: once a split order has moved to the server archive its number stays taken, so the next split
+  // gets a new id and the parent's split records stay unique and valid.
+  const state = fresh();
+  applyChange(state, { quantity: 4, reason: 'Two more units for the build.' });
+  const first = host.withAccount(qm, () => MES.splitRequestOrder(state, ID, openSplitRequest(state, 1, 1)), state);
+  const archive = id => { state.orders = state.orders.filter(o => o.id !== id); state.activity = state.activity.filter(a => a.orderId !== id); };
+  archive(first.id);
+  ok('the parent stays valid with its first split order archived', MES.validate(state), JSON.stringify(MES.diagnose(state)));
+  const second = host.withAccount(qm, () => MES.splitRequestOrder(state, ID, openSplitRequest(state, 2, 1)), state);
+  ok('the next split request after an archived split order gets a new id', second.ok && first.id === `${ID}-Split-1` && second.id === `${ID}-Split-2`, JSON.stringify([first, second]));
+  ok('both split records stay on the parent and the workspace validates', MES.getOrder(state, ID).engineeringSplits.map(s => s.orderId).join() === `${ID}-Split-1,${ID}-Split-2` && MES.validate(state), JSON.stringify(MES.diagnose(state)));
+  // The hand split allocates the same way.
+  const plain = fresh();
+  const hand1 = host.withAccount(qm, () => MES.splitOrder(plain, ID, 1), plain);
+  plain.orders = plain.orders.filter(o => o.id !== hand1.id); plain.activity = plain.activity.filter(a => a.orderId !== hand1.id);
+  MES.getOrder(plain, ID).quantity = 2;
+  const hand2 = host.withAccount(qm, () => MES.splitOrder(plain, ID, 1), plain);
+  ok('a hand split after an archived split order also gets a new id', hand2.ok && hand2.id === `${ID}-Split-2`, JSON.stringify(hand2));
+}
+
+{
+  // Codex P1 on 717f4cc (#697): an order that needs a QA release carries one naming its quantity. A split request
+  // changes that quantity on both orders, so Quality fulfils it and re-releases each order at its new quantity; any
+  // other account is refused and nothing changes. With and without an applied engineering change.
+  for (const withChange of [false, true]) {
+    const state = fresh();
+    const q = MES.getOrder(state, ID);
+    q.subcategory = 'FAI';
+    q.releaseApproval = { name: 'Quincy Manager', role: 'Quality Manager', credentialId: 'ACCT-split-qm', at: new Date(Date.now() - 60000).toISOString(), virtual: true, configuration: { partNumber: q.partNumber, revision: q.revision, pedigree: q.pedigree, subcategory: q.subcategory, quantity: q.quantity, site: q.site ?? null, sourceOrderId: null, sourceTicketId: null } };
+    // Applying the change re-releases the order at 4 units under the QA approver, as approveEngineeringChange does.
+    if (withChange) applyChange(state, { quantity: 4, reason: 'Two more units for the build.' });
+    const label = withChange ? 'after an applied change' : 'with no engineering change';
+    ok(`the FAI order with a QA release validates (${label})`, MES.validate(state), JSON.stringify(MES.diagnose(state)));
+    const reviewer = { name: 'Quincy Manager', role: 'Quality Manager', credentialId: 'ACCT-split-qm' };
+    q.splitRequests = [{ id: `SPR-${ID.slice(3)}-1`, ticketId: 'NC-99001', quantity: 1, of: q.quantity, serials: [], reason: 'NC-99001 Rework: 1 unit affected.', status: 'Open', requestedBy: reviewer, at: new Date().toISOString() }];
+    const before = snap(state);
+    const refused = host.withAccount(me, () => MES.splitRequestOrder(state, ID, `SPR-${ID.slice(3)}-1`), state);
+    ok(`a non-Quality account is refused, naming the QA release and who can fulfil it (${label})`, refused.ok === false && refused.message === `${ID} carries a QA release for ${q.quantity} unit${q.quantity === 1 ? '' : 's'}, and this split changes that quantity. Ask a Quality Engineer or QA Manager to fulfil the split request: they re-release both work orders at their new quantities.` && NO_EM_DASH(refused.message) && snap(state) === before, JSON.stringify(refused));
+    const total = q.quantity;
+    const r = host.withAccount(qm, () => MES.splitRequestOrder(state, ID, `SPR-${ID.slice(3)}-1`), state);
+    const parent = MES.getOrder(state, ID), child = MES.getOrder(state, r.id);
+    ok(`Quality fulfils the split request and the workspace validates (${label})`, r.ok && r.message.endsWith('Both work orders are re-released by QA at their new quantities.') && MES.validate(state) && MES.diagnose(state) === null, JSON.stringify([r, MES.diagnose(state)]));
+    ok(`both orders carry a QA release for their new quantity, signed by the Quality account that split them (${label})`, parent.releaseApproval.configuration.quantity === total - 1 && child.releaseApproval.configuration.quantity === 1 && [parent, child].every(x => x.releaseApproval.credentialId === 'ACCT-split-qm' && x.releaseApproval.role === 'Quality Manager'), JSON.stringify([parent.releaseApproval, child.releaseApproval]));
+    ok(`the parent history names the QA re-release (${label})`, parent.history.some(e => e.action.includes(`QA re-release by Quincy Manager (ACCT-split-qm): ${ID} at ${total - 1} unit${total - 1 === 1 ? '' : 's'}, ${r.id} at 1.`)));
+    const repaired = JSON.parse(JSON.stringify(state)); MES.repair(repaired);
+    ok(`repair clears no release approval and sets nothing aside (${label})`, !(repaired.quarantine || []).length && !!MES.getOrder(repaired, ID).releaseApproval && !!MES.getOrder(repaired, r.id).releaseApproval);
+  }
+  // An order that needs no QA release (Production Mfg.) keeps the split open to the other split roles.
+  const state = fresh();
+  applyChange(state, { quantity: 4, reason: 'Two more units for the build.' });
+  const byMe = host.withAccount(me, () => MES.splitRequestOrder(state, ID, openSplitRequest(state, 1, 1)), state);
+  ok('Manufacturing Engineering still fulfils a split request on an order with no QA release', byMe.ok && MES.validate(state), JSON.stringify(byMe));
+}
 // ---- Part 2: the Split quantity dialog in the demo build ----
 {
   const b = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
