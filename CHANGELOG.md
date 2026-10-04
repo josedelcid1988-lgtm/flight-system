@@ -10,7 +10,7 @@
   open audits are neutral blue; a Draft controlled document uses the new neutral `.pill.draft`. The calibration log is a
   table (entry, tool tag, status, due date, recorded by) with the note and signature in an expandable row. FAIR and
   conformity stamp PIN fields are tied to their labels. Trace search and archived print or export say they are busy and
-  hold their buttons while the server answers, and say plainly when it does not. The Hangar holds panel counts every
+  hold their buttons while the server answers, and say plainly when it does not, even if a new search is submitted meanwhile. The Hangar holds panel counts every
   held order and links to All work orders filtered to a new On hold status, which lists exactly the orders the Hangar counted. On hold and Blocked are worked out live, so
   saving either as a view is refused with that reason and a next step instead of the generic refusal; saved view
   validation is unchanged. The work order queue footer reads "Work order progress

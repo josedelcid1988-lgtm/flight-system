@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { ArrowRight, ArrowUpRight, Ban, Box, Boxes, CalendarClock, Check, ChevronRight, CircleAlert, Clock, Download, ExternalLink, FileText, Info, Layers, Link, List, Lock, Plus, Search, Shield, SlidersHorizontal, TriangleAlert, Upload, User, Video, Wrench, X, Zap } from 'lucide-react';
@@ -631,6 +631,19 @@ function SerialDrawer({ item, onClose, onTrace, onOpen }) {
   </dialog>;
 }
 
+// An archived print or export outlives the island: a new trace search makes the page render again and mounts a fresh
+// TraceSearch while the request is still running. Its busy and failure state is kept here, outside the component, so the
+// new mount still holds the buttons and a later failure still reaches the operator.
+const archiveOp = (() => {
+  let snapshot = { busy: null, note: '' };
+  const listeners = new Set();
+  return {
+    get: () => snapshot,
+    set: patch => { snapshot = { ...snapshot, ...patch }; listeners.forEach(listener => listener()); },
+    subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); }
+  };
+})();
+
 function TraceSearch({ state, MES, initialQuery, onSearch, onReport, onRoute }) {
   const [query, setQuery] = useState(initialQuery || '');
   const [compact, setCompact] = useState(() => { try { return localStorage.getItem(`${densityKey}-trace`) === 'compact'; } catch { return false; } });
@@ -655,11 +668,12 @@ function TraceSearch({ state, MES, initialQuery, onSearch, onReport, onRoute }) 
     return () => { current = false; clearTimeout(timer); };
   }, [query]);
   // An archived order is read-only on the server: open its printed record or download its signed export there.
-  const [archiveNote, setArchiveNote] = useState('');
-  const [archiveBusy, setArchiveBusy] = useState(null);
+  const { busy: archiveBusy, note: archiveNote } = useSyncExternalStore(archiveOp.subscribe, archiveOp.get);
+  const setArchiveNote = note => archiveOp.set({ note });
+  const setArchiveBusy = busy => archiveOp.set({ busy });
   const openArchived = async (orderId, kind) => {
     const server = typeof window !== 'undefined' && window.skServer?.active ? window.skServer : null;
-    if (!server || archiveBusy) return;
+    if (!server || archiveOp.get().busy) return;
     setArchiveNote('');
     // Open the print tab now, inside the click: a tab opened after the fetch can be blocked as a pop-up.
     const tab = kind === 'print' ? window.open('', '_blank') : null;

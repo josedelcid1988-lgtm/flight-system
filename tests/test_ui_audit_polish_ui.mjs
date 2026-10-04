@@ -182,6 +182,21 @@ try {
     check('a refused archived export names the status and says to retry later, not to sign in', /could not be opened from the archive \(503\)\. The server could not answer\. Retry in a few minutes/.test(exportUnavailable) && !/Sign in again/.test(exportUnavailable), exportUnavailable);
     const exportExpired = await refuseExport(401);
     check('an archived export refused for an expired session says to sign in again', /could not be opened from the archive \(401\)\. Sign in again, then retry\./.test(exportExpired), exportExpired);
+    // Submitting the search while an export runs makes the page render again and mounts a fresh island. The busy line,
+    // the held buttons and a later failure must survive that remount.
+    await exportButton.click();
+    await page.locator('[data-archive-busy]').waitFor();
+    await page.evaluate(() => { document.querySelector('.fr-trace').dataset.mountedBefore = '1'; });
+    await search.press('Enter');
+    check('submitting the search remounts the island', await page.evaluate(() => !document.querySelector('.fr-trace').dataset.mountedBefore));
+    check('the archive busy line survives the remount', await page.locator('[data-archive-busy]').count() === 1 && /Preparing the export for WO-ARCH-1/.test(await page.locator('[data-archive-busy]').innerText()));
+    await settle('resolve', { ok: true, status: 200, json: { results: [{ source: 'archive', orderId: 'WO-ARCH-1', title: 'Archived assembly', partNumber: 'SR-1', serials: ['FC-200-00001'], lots: [], closedAt: '2026-01-02' }] } });
+    await exportButton.waitFor();
+    check('archived print and export stay disabled in the new mount while the export runs', await exportButton.isDisabled() && await printButton.isDisabled());
+    await page.evaluate(() => window.__archiveFetch.reject(new Error('offline')));
+    await page.locator('[data-archive-busy]').waitFor({ state: 'detached' });
+    check('the export failure reaches the operator in the new mount', /WO-ARCH-1 could not be opened because the server did not answer/.test(await page.locator('[data-archive-note]').innerText()));
+    check('archived print and export are enabled again in the new mount after the failure', await exportButton.isEnabled() && await printButton.isEnabled());
     // The busy line and a later failure stay visible when the search changes to one with no archived matches.
     await exportButton.click();
     await page.locator('[data-archive-busy]').waitFor();
