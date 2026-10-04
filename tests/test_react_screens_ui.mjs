@@ -47,7 +47,9 @@ try {
   await calForm.locator('[name="note"]').fill('Lab cert 12');
   await calForm.locator('button[type="submit"]').click();
   await page.waitForFunction(() => (state.calibrationLog || []).some(e => e.tag === 'UI-CAL-01'));
-  assert.match(await page.locator('#main #flight-react-island').innerText(), /UI-CAL-01 · DIGITAL CALIPER · due/, 'the recorded calibration is listed in the React calibration log');
+  // The calibration log is a table (entry, tool tag, status, due date, recorded by) since the Jinx UX audit.
+  const calRow = page.locator('#main #flight-react-island table.calibration-table tr[data-calibration-entry]', { hasText: 'UI-CAL-01' }).first();
+  assert.deepEqual(await calRow.locator('td').evaluateAll(cells => [cells[1].innerText.replace(/\s+/g, ' ').trim(), cells[3].innerText.trim()]), ['UI-CAL-01 DIGITAL CALIPER', calDue], 'the recorded calibration is listed in the React calibration log with its due date');
   assert.deepEqual(errors, [], 'recording a calibration from the React view raises no page errors');
   // #35 review (Codex 4133296954): the current entry for each tag has a correction form that appends a signed
   // correction through MES.updateCalibration; superseded entries do not offer one.
@@ -77,7 +79,8 @@ try {
   await undatedForm.locator('button[type="submit"]').click();
   await page.waitForFunction(() => (state.calibrationLog || []).some(e => e.tag === 'SR0077'));
   assert.deepEqual(await page.evaluate(() => { const e = state.calibrationLog.find(x => x.tag === 'SR0077'); return { status: e.status, calibratedAt: e.calibratedAt, expires: e.expires, valid: MES.validate(state) }; }), { status: 'Retired', calibratedAt: '', expires: '', valid: true }, 'the undated Retired entry is recorded and the workspace validates');
-  assert.match(await page.locator('#main #flight-react-island').innerText(), /SR0077 · LOAD CELL · no calibration dates/, 'the React log shows an undated Retired entry without a due date');
+  const retiredRow = page.locator('#main #flight-react-island table.calibration-table tr[data-calibration-entry]', { hasText: 'SR0077' }).first();
+  assert.deepEqual(await retiredRow.locator('td').evaluateAll(cells => [cells[1].innerText.replace(/\s+/g, ' ').trim(), cells[2].innerText.trim(), cells[3].innerText.trim()]), ['SR0077 LOAD CELL', 'Retired', 'No calibration dates'], 'the React log shows an undated Retired entry without a due date');
   assert.deepEqual(errors, [], 'retiring a never-calibrated tool from the React view raises no page errors');
 
   const report = await show('trace-report', "traceQuery = 'FC-200-00001';");
