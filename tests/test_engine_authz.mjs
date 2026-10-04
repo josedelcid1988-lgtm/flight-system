@@ -37,12 +37,12 @@ const roleRefused = result => !!result && result.ok === false && /Your role cann
   const files = () => (FlightManeuver.get(state, 'ncs', nc.id).attachments || []).map(f => f.id);
   const fileId = files().at(-1);
   for (const who of [general, technician, operator]) {
-    const result = run(who, () => FlightManeuver.removeRecordFile(state, 'ncs', nc.id, fileId));
+    const result = run(who, () => FlightManeuver.removeRecordFile(state, 'ncs', nc.id, fileId, 'Attached in error.'));
     check(`${who.displayName} (${who.role}) cannot remove a file from a quality record and the file stays`, roleRefused(result) && files().includes(fileId));
   }
-  check('Manufacturing Engineering (dispo-nc) removes a file from a quality record', run(me, () => FlightManeuver.removeRecordFile(state, 'ncs', nc.id, fileId)).ok && !files().includes(fileId));
+  check('Manufacturing Engineering (dispo-nc) removes a file from a quality record', run(me, () => FlightManeuver.removeRecordFile(state, 'ncs', nc.id, fileId, 'Attached in error.')).ok && !files().includes(fileId));
   const again = run(technician, () => FlightManeuver.addRecordFile(state, 'ncs', nc.id, photo));
-  check('Quality (approve-nc) removes a file from a quality record', again.ok && run(qe, () => FlightManeuver.removeRecordFile(state, 'ncs', nc.id, files().at(-1))).ok && files().length === 0);
+  check('Quality (approve-nc) removes a file from a quality record', again.ok && run(qe, () => FlightManeuver.removeRecordFile(state, 'ncs', nc.id, files().at(-1), 'Attached in error.')).ok && files().length === 0);
   check('the workspace is valid after the record file checks', MES.validate(state));
 }
 
@@ -82,11 +82,11 @@ const openBoard = (h, state) => h.withAccount(qm, () => {
   // Removing an open record's file: dispo-nc or approve-nc only.
   for (const who of [general, technician, operator, safety]) {
     const before = JSON.stringify(state);
-    const result = run(who, () => FlightManeuver.removeRecordFile(state, 'ncs', ncId, files('ncs', ncId)[0]));
+    const result = run(who, () => FlightManeuver.removeRecordFile(state, 'ncs', ncId, files('ncs', ncId)[0], 'Attached in error.'));
     check(`${who.displayName} (${who.role}) cannot remove a file from an open NC and nothing changes`, roleRefused(result) && JSON.stringify(state) === before && run(who, () => FlightManeuver.canRemoveFiles('ncs', FlightManeuver.get(state, 'ncs', ncId))) === false);
   }
-  check('Manufacturing Engineering (dispo-nc) removes a file from an open NC', run(me, () => FlightManeuver.canRemoveFiles('ncs', FlightManeuver.get(state, 'ncs', ncId))) && (() => { const id = files('ncs', ncId)[0]; return run(me, () => FlightManeuver.removeRecordFile(state, 'ncs', ncId, id)).ok && !files('ncs', ncId).includes(id); })());
-  check('Quality (approve-nc) removes a file from an open MRB board', (() => { const id = files('mrb', mrbId)[0]; return run(qe, () => FlightManeuver.removeRecordFile(state, 'mrb', mrbId, id)).ok && !files('mrb', mrbId).includes(id); })());
+  check('Manufacturing Engineering (dispo-nc) removes a file from an open NC', run(me, () => FlightManeuver.canRemoveFiles('ncs', FlightManeuver.get(state, 'ncs', ncId))) && (() => { const id = files('ncs', ncId)[0]; return run(me, () => FlightManeuver.removeRecordFile(state, 'ncs', ncId, id, 'Attached in error.')).ok && !files('ncs', ncId).includes(id); })());
+  check('Quality (approve-nc) removes a file from an open MRB board', (() => { const id = files('mrb', mrbId)[0]; return run(qe, () => FlightManeuver.removeRecordFile(state, 'mrb', mrbId, id, 'Attached in error.')).ok && !files('mrb', mrbId).includes(id); })());
   // Removing once the record is closed: refused for every role, the QA Manager included, and the file stays.
   check('a Quality manager cancels the CAR for the closed record check', run(qm, () => FlightManeuver.cancelCAR(state, car.id, 'Raised in error.')).ok);
   // A problem report taken to Closed through the engine: raised, sent to Jira, closed from Jira, with a file on it first.
@@ -100,7 +100,7 @@ const openBoard = (h, state) => h.withAccount(qm, () => {
     const fileId = files(kind, rec.id)[0];
     for (const who of [qm, qe, me]) {
       const before = JSON.stringify(state);
-      const result = run(who, () => FlightManeuver.removeRecordFile(state, kind, rec.id, fileId));
+      const result = run(who, () => FlightManeuver.removeRecordFile(state, kind, rec.id, fileId, 'Attached in error.'));
       check(`${who.displayName} (${who.role}) cannot remove a file from ${/^[aeiou]/.test(word) ? 'an' : 'a'} ${word} ${label} and nothing changes`, result.ok === false && result.message.includes(`is ${word}, so its files can no longer be removed`) && JSON.stringify(state) === before && files(kind, rec.id).includes(fileId) && run(who, () => FlightManeuver.canRemoveFiles(kind, FlightManeuver.get(state, kind, rec.id))) === false);
     }
     check(`${/^[aeiou]/.test(word) ? 'An' : 'A'} ${word} ${label} still takes a new file`, run(technician, () => FlightManeuver.addRecordFile(state, kind, rec.id, photo)).ok);
@@ -137,12 +137,12 @@ const openBoard = (h, state) => h.withAccount(qm, () => {
     check('over the server a Technician attaches a file to an open MRB board', (await post(tech, 'addRecordFile', ['mrb', mrbId, photo])).status === 200 && (await files('mrb', mrbId)).length === 1);
     check('over the server a Technician attaches a file to a resolved NC', (await post(tech, 'addRecordFile', ['ncs', resolvedId, photo])).status === 200 && (await files('ncs', resolvedId)).length === 1);
     const onBoard = (await files('mrb', mrbId))[0], onResolved = (await files('ncs', resolvedId))[0];
-    const techRemove = await post(tech, 'removeRecordFile', ['mrb', mrbId, onBoard]);
+    const techRemove = await post(tech, 'removeRecordFile', ['mrb', mrbId, onBoard, 'Attached in error.']);
     check('over the server a Technician cannot remove a file from an open MRB board (403) and it stays', techRemove.status === 403 && (await files('mrb', mrbId)).includes(onBoard));
     const before = (await server.store.getDoc('default')).etag;
-    const closedRemove = await post(quality, 'removeRecordFile', ['ncs', resolvedId, onResolved]);
+    const closedRemove = await post(quality, 'removeRecordFile', ['ncs', resolvedId, onResolved, 'Attached in error.']);
     check('over the server Quality cannot remove a file from a resolved NC (403), the workspace is not written and the file stays', closedRemove.status === 403 && /can no longer be removed/.test(closedRemove.json.error) && (await server.store.getDoc('default')).etag === before && (await files('ncs', resolvedId)).includes(onResolved));
-    check('over the server Quality removes a file from an open MRB board', (await post(quality, 'removeRecordFile', ['mrb', mrbId, onBoard])).status === 200 && !(await files('mrb', mrbId)).includes(onBoard));
+    check('over the server Quality removes a file from an open MRB board', (await post(quality, 'removeRecordFile', ['mrb', mrbId, onBoard, 'Attached in error.'])).status === 200 && !(await files('mrb', mrbId)).includes(onBoard));
   } finally { server.store.close(); }
 }
 
@@ -186,8 +186,8 @@ const openBoard = (h, state) => h.withAccount(qm, () => {
   for (const who of [general, qe]) check(`${who.role} without a stamp cannot add an operation attachment`, roleRefused(run(who, () => MES.addAttachment(state, created.id, op.id, file))) && opFiles().length === 0);
   const attached = run(technician, () => MES.addAttachment(state, created.id, op.id, file));
   check('a Technician (operate-steps) adds an operation attachment', attached.ok && opFiles().length === 1);
-  check('a General User cannot remove an operation attachment', roleRefused(run(general, () => MES.removeAttachment(state, created.id, op.id, opFiles()[0]))) && opFiles().length === 1);
-  check('a Technician (operate-steps) removes an operation attachment', run(technician, () => MES.removeAttachment(state, created.id, op.id, opFiles()[0])).ok && opFiles().length === 0);
+  check('a General User cannot remove an operation attachment', roleRefused(run(general, () => MES.removeAttachment(state, created.id, op.id, opFiles()[0], 'Attached in error.'))) && opFiles().length === 1);
+  check('a Technician (operate-steps) removes an operation attachment', run(technician, () => MES.removeAttachment(state, created.id, op.id, opFiles()[0], 'Attached in error.')).ok && opFiles().length === 0);
 
   // Incorporating MCRs into a WI revision: edit-wi, on a draft revision only.
   const mcr = run(qm, () => MES.submitECRRequest(state, { type: 'process', title: 'Torque callout', description: 'Add the torque value.', reason: 'Missing value.', wiId: wi.id, wiRevision: wi.revision, opId: wi.operations[0].id }));
@@ -281,11 +281,11 @@ const openBoard = (h, state) => h.withAccount(qm, () => {
   check('anyone who can raise an NC still attaches a file to the ticket', run(technician, () => MES.addTicketAttachment(state, created.id, ticket().id, photo)).ok && ticketFiles().length === 1);
   for (const who of [general, technician, operator]) {
     const before = JSON.stringify(state);
-    check(`${who.displayName} (${who.role}) cannot remove a file from an NC ticket and nothing changes`, roleRefused(run(who, () => MES.removeTicketAttachment(state, created.id, ticket().id, ticketFiles()[0]))) && JSON.stringify(state) === before);
+    check(`${who.displayName} (${who.role}) cannot remove a file from an NC ticket and nothing changes`, roleRefused(run(who, () => MES.removeTicketAttachment(state, created.id, ticket().id, ticketFiles()[0], 'Attached in error.'))) && JSON.stringify(state) === before);
   }
-  check('Manufacturing Engineering (dispo-nc) removes a file from an NC ticket', run(me, () => MES.removeTicketAttachment(state, created.id, ticket().id, ticketFiles()[0])).ok && ticketFiles().length === 0);
+  check('Manufacturing Engineering (dispo-nc) removes a file from an NC ticket', run(me, () => MES.removeTicketAttachment(state, created.id, ticket().id, ticketFiles()[0], 'Attached in error.')).ok && ticketFiles().length === 0);
   check('the file is attached again for the Quality check', run(technician, () => MES.addTicketAttachment(state, created.id, ticket().id, photo)).ok && ticketFiles().length === 1);
-  check('Quality (approve-nc) removes a file from an NC ticket', run(qe, () => MES.removeTicketAttachment(state, created.id, ticket().id, ticketFiles()[0])).ok && ticketFiles().length === 0);
+  check('Quality (approve-nc) removes a file from an NC ticket', run(qe, () => MES.removeTicketAttachment(state, created.id, ticket().id, ticketFiles()[0], 'Attached in error.')).ok && ticketFiles().length === 0);
   check('the workspace is valid after the ticket file checks', MES.validate(state));
 }
 
