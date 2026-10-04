@@ -7,7 +7,7 @@ import { makeZip } from './package-release.mjs';
 import { buildId } from './stamp-build.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const INCLUDED_DIRS = ['.github', 'artifacts/design', 'assets', 'docs', 'planner', 'qms', 'server', 'src', 'tests', 'tools'];
+const INCLUDED_DIRS = ['.github', 'artifacts/design', 'assets', 'docs', 'qms', 'server', 'src', 'tests', 'tools'];
 const INCLUDED_FILES = [
   '.gitignore', 'AGENTS.md', 'CHANGELOG.md', 'HANDOVER-v82.md', 'KNOWN-ISSUES.md', 'README.md', 'TESTING.md', 'VERSION.md',
   'index.html', 'demo.html', 'package.json', 'package-lock.json'
