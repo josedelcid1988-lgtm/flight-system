@@ -74,9 +74,17 @@ const errs=[];
 // a check depends on the tab's first storage writes, and other pages open it to see a write (#556). The mirror run
 // copies only the HTML fixtures, so the page is written here.
 const BLANK=`_same_origin_blank_${process.pid}.html`;fs.writeFileSync(FIXTURES+BLANK,'<!doctype html><meta charset=utf-8><title>blank</title>');process.on('exit',()=>fs.rmSync(FIXTURES+BLANK,{force:true}));
+const PRESET=`_preset_${process.pid}_`;
 // Before a reload that depends on a write made just before it, wait until another page of the origin sees the write:
 // under load a write can otherwise be lost to the reload (#556).
 const settled=async(ctx,seen)=>{const probe=await ctx.newPage();await probe.goto('file://'+FIXTURES+BLANK);await probe.waitForFunction(seen,null,{timeout:60000});await probe.close();};
+// A sign-in that leaves #sk-boot up for 20 s names what the page shows (the sign-in error, the greeting, whether the tab is
+// visible), so a refused sign-in and a slow one are told apart in the CI log.
+const bootGone=async(p,note='')=>{
+ await p.evaluate(()=>{const w=window;if(w.__bg)return;w.__bg={t0:performance.now(),auth:null,gone:null,long:[]};try{new PerformanceObserver(l=>l.getEntries().forEach(e=>w.__bg.long.push([Math.round(e.startTime),Math.round(e.duration)]))).observe({entryTypes:['longtask']});}catch(e){}w.addEventListener('sk-auth',()=>{w.__bg.auth=Math.round(performance.now());},{once:true});new MutationObserver(()=>{if(!document.getElementById('sk-boot')&&w.__bg.gone===null)w.__bg.gone=Math.round(performance.now());}).observe(document.documentElement,{childList:true,subtree:true});}).catch(()=>{});
+ try{await p.waitForFunction(()=>!document.getElementById('sk-boot'),null,{timeout:20000});}catch(e){
+  await p.waitForFunction(()=>!document.getElementById('sk-boot'),null,{timeout:100000}).catch(()=>{});
+  const s=await p.evaluate(()=>{const b=window.__bg||{},er=document.getElementById('sk-login-error');return {error:er&&er.textContent,bootPresent:!!document.getElementById('sk-boot'),visibility:document.visibilityState,seen:sessionStorage.getItem('sk-boot-seen'),now:Math.round(performance.now()),t0:b.t0&&Math.round(b.t0),authAt:b.auth,goneAt:b.gone,longTasks:(b.long||[]).length,longTop:(b.long||[]).sort((x,y)=>y[1]-x[1]).slice(0,5)};}).catch(x=>'page unreadable: '+x);throw new Error('sk-boot still present after 20 s '+note+JSON.stringify(s));}};
 async function open(file,user){const ctx=await b.newContext({viewport:{width:1440,height:1000}});if(user)await ctx.addInitScript(([u,sess])=>{sessionStorage.setItem(sess,u);sessionStorage.setItem('sk-boot-seen','1');sessionStorage.setItem('sk-mnv-landing-seen','1');},[user,/demo/.test(path.basename(file))?'skyryse-mes-demo-session-v1':'skyryse-mes-session-v1']);const p=await ctx.newPage();p.on('pageerror',e=>errs.push(file+': '+e.message));await p.goto('file://'+path.join(ROOT,file));await p.waitForTimeout(1500);return {p,ctx};}
 const REAL={tech:['operate-steps'],operations:['operate','operate-steps'],mfgeng:['edit-wi','create-wo','dispo-nc'],quality:['approve-wo','approve-nc'],engineering:['push-software']};
 const NOT={tech:['create-wo','approve-wo','edit-wi','dispo-nc','manage-access'],operations:['create-wo','approve-wo','edit-wi','approve-nc'],mfgeng:['approve-wo','approve-wi','approve-nc'],quality:['edit-wi','create-wo','dispo-nc','operate'],engineering:['edit-wi','approve-nc','operate','create-wo']};
@@ -116,7 +124,7 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  await p.evaluate(()=>{localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify({users:[{username:'master',displayName:'Production Master',salt:'00',hash:'f'.repeat(64),role:'admin',createdAt:new Date().toISOString()}]}));localStorage.setItem('skyryse-mes-lockout-v1',JSON.stringify({master:{fails:2,until:0}}));localStorage.removeItem('skyryse-mes-security-v1');});
  await p.goto('file://'+FIXTURES+'demo_publish.html');await p.waitForFunction(()=>!!document.querySelector('#sk-boot input[name=username]'));
  await p.locator('#sk-boot input[name=username]').fill('master');await p.locator('#sk-boot input[name=password]').fill('demo1234');
- await p.locator('#sk-boot form').evaluate(f=>f.requestSubmit());await p.waitForFunction(()=>!document.getElementById('sk-boot'),null,{timeout:20000});
+ await p.locator('#sk-boot form').evaluate(f=>f.requestSubmit());await bootGone(p);
  const demoIn=await p.evaluate(()=>({user:skAuth.user()&&skAuth.user().username,demoSession:sessionStorage.getItem('skyryse-mes-demo-session-v1'),prodSession:sessionStorage.getItem('skyryse-mes-session-v1'),prodSec:localStorage.getItem('skyryse-mes-security-v1'),demoSec:(localStorage.getItem('skyryse-mes-demo-security-v1')||'').length}));
  ok('signing in to the demo as master keeps the session and sign-in record under demo keys',demoIn.user==='master'&&demoIn.demoSession==='master'&&demoIn.prodSession===null&&demoIn.prodSec===null&&demoIn.demoSec>0,JSON.stringify(demoIn));
  await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(900);
@@ -134,7 +142,7 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  const q=await p.evaluate(()=>JSON.parse(localStorage.getItem('skyryse-mes-sync-queue-v1')).map(r=>r.clientWriteId));
  ok('opening the demo drops queued records that name the demo workspace and keeps production ones',JSON.stringify(q)==='["prod-1"]',JSON.stringify(q));
  await p.locator('#sk-boot input[name=username]').fill('master');await p.locator('#sk-boot input[name=password]').fill('demo1234');
- await p.locator('#sk-boot form').evaluate(f=>f.requestSubmit());await p.waitForFunction(()=>!document.getElementById('sk-boot'),null,{timeout:20000});
+ await p.locator('#sk-boot form').evaluate(f=>f.requestSubmit());await bootGone(p);
  const ev=await p.evaluate(async()=>{const a=await MESMedia.get('EV-olddemo-1');const none=await MESMedia.get('EV-notthere-1');const copied=await new Promise(done=>{const r=indexedDB.open('skyryse-mes-demo-evidence-v1');r.onsuccess=()=>{const d=r.result;if(!d.objectStoreNames.contains('recordings')){d.close();done(false);return;}const g=d.transaction('recordings','readonly').objectStore('recordings').get('EV-olddemo-1');g.onsuccess=()=>{d.close();done(g.result instanceof Blob&&g.result.size===2048);};};r.onerror=()=>done(false);});return {size:a&&a.size,none,copied};});
  ok('a recording an earlier demo record names is read from the old evidence store and copied into the demo store; an unknown one is still missing',ev.size===2048&&ev.none===null&&ev.copied===true,JSON.stringify(ev));
  await p.evaluate(()=>window.skSignOut('user'));await p.waitForTimeout(400);
@@ -150,7 +158,12 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  const mirrorPosts=[];await ctx.route(/mirror-legacy\.test|\/api\/v1\/writes/,route=>{try{mirrorPosts.push(...(JSON.parse(route.request().postData()||'{}').records||[]));}catch(e){}route.abort();});
  await ctx.addInitScript(()=>{window.SK_MIRROR={url:'http://mirror-legacy.test',token:'legacy-mirror-token',batchSize:50};});
  const demoUsers=JSON.parse(fs.readFileSync(path.join(ROOT,'tools/demo/accounts.json'),'utf8')).users;
- await ctx.addInitScript(users=>{if(sessionStorage.getItem('seeded')||!/publish\.html$/.test(location.pathname))return;sessionStorage.setItem('seeded','1');
+ // The older demo's leftovers are written by script once a blank page of the origin has loaded, and another page confirms them
+ // before production opens. An init script guarded by a session storage flag wrote them again on any later load whose
+ // path ended in publish.html, the demo's included, whenever that flag was lost under load: the demo then signed in against
+ // accounts the script had just rewritten and the sign-in below timed out (#556).
+ await p.goto('file://'+FIXTURES+BLANK);
+ await p.evaluate(users=>{
   // qa.boss was added in the older demo by its master with a chosen password and Master Access; tech.two by qa.boss.
   // qa2 is a Master Access account a production user created; it could have been made while a demo page was open.
   localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify({users:[{username:'mlee',displayName:'Morgan Lee',salt:'01',hash:'ecad7597c83a96d133e45f9e9d271cbb0d1815dbae29b38b5148be7822799576',role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'ops1',displayName:'Ops One',salt:'01',hash:'ecad7597c83a96d133e45f9e9d271cbb0d1815dbae29b38b5148be7822799576',role:'ops',createdAt:'2026-09-02T00:00:00.000Z',createdBy:'mlee'},{username:'qa2',displayName:'QA Two',salt:'01',hash:'ecad7597c83a96d133e45f9e9d271cbb0d1815dbae29b38b5148be7822799576',role:'admin',createdAt:'2026-09-02T00:00:00.000Z',createdBy:'mlee'},...users,{username:'qa.boss',displayName:'QA Boss',salt:'01',hash:'ecad7597c83a96d133e45f9e9d271cbb0d1815dbae29b38b5148be7822799576',role:'admin',createdAt:'2026-09-03T00:00:00.000Z',createdBy:'master'},{username:'tech.two',displayName:'Tech Two',salt:'00',hash:'f'.repeat(64),role:'technician',createdAt:'2026-09-04T00:00:00.000Z',createdBy:'qa.boss'},{username:'__proto__',displayName:'Proto',salt:'00',hash:'f'.repeat(64),role:'admin',createdAt:'2026-09-05T00:00:00.000Z',createdBy:'master'}]}));
@@ -163,9 +176,7 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
   const acct=(id,cw,createdBy,op)=>({clientWriteId:cw,storeKey:'skyryse-mes-auth-v1',entityType:'account',entityId:id,operation:op||'upsert',payloadJson:JSON.stringify(op==='delete'?{entityType:'account',entityId:id,deleted:true}:{username:id,role:'admin',createdBy})});
   localStorage.setItem('skyryse-mes-sync-queue-v1',JSON.stringify([{clientWriteId:'old-demo-1',storeKey:'skyryse-mes-work-order-qa100-v1'},{clientWriteId:'prod-1',storeKey:'skyryse-mes-work-order-v1'},acct('master','old-demo-acct-1','demo build'),acct('qa.boss','old-demo-acct-2','master'),acct('ghost','old-demo-acct-3','qa.boss'),acct('tech.two','old-demo-acct-4',null,'delete'),acct('mlee','prod-acct-1','mlee'),acct('retired1','prod-acct-2',null,'delete')]));
   localStorage.setItem('skyryse-mes-security-v1',JSON.stringify([{at:'2026-09-03T00:00:00.000Z',page:'/srv/flight/demo.html',type:'signin',username:'master'},{at:'2026-09-03T00:01:00.000Z',page:'/srv/flight/demo.html',type:'role-change',username:'qa.boss',by:'master'},{at:'2026-09-03T00:02:00.000Z',page:'/srv/flight/index.html',type:'signin',username:'mlee'}]));},demoUsers);
- // The tab opens a blank page of the origin first: writes made by the first page a fresh tab loads can be lost when
- // that page is reloaded soon after (#556).
- await p.goto('file://'+FIXTURES+BLANK);
+ await settled(ctx,()=>/"qa\.boss"/.test(localStorage.getItem('skyryse-mes-auth-v1')||'')&&!!localStorage.getItem('skyryse-mes-security-v1'));
  await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(1200);
  const r=await p.evaluate(()=>({users:JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.map(u=>u.username),queue:JSON.parse(localStorage.getItem('skyryse-mes-sync-queue-v1')).map(x=>x.clientWriteId),notice:(document.getElementById('sk-legacy-demo-notice')||{}).textContent||null,gate:(document.getElementById('sk-legacy-review')||{}).textContent||null,demoAuth:JSON.parse(localStorage.getItem('skyryse-mes-demo-auth-v1')||'{"users":[]}').users,legacyAccounts:JSON.parse(localStorage.getItem('skyryse-mes-legacy-demo-accounts-v1')||'[]'),heldAccounts:JSON.parse(localStorage.getItem('skyryse-mes-legacy-demo-account-queue-v1')||'[]'),queueRaw:localStorage.getItem('skyryse-mes-sync-queue-v1'),sent:localStorage.getItem('skyryse-mes-sync-sent-v1'),drafts:localStorage.getItem('skyryse-mes-drafts-v1'),demoDrafts:JSON.parse(localStorage.getItem('skyryse-mes-demo-drafts-v1')||'[]'),legacyDrafts:JSON.parse(localStorage.getItem('skyryse-mes-legacy-demo-drafts-v1')||'[]'),locks:JSON.parse(localStorage.getItem('skyryse-mes-lockout-v1')||'{}'),legacyLocks:JSON.parse(localStorage.getItem('skyryse-mes-legacy-demo-lockout-v1')||'{}'),log:localStorage.getItem('skyryse-mes-security-v1')||'',demoLog:JSON.parse(localStorage.getItem('skyryse-mes-demo-security-v1')||'[]')}));
  ok('the refusal case is real: the older demo accounts include master',demoUsers.some(u=>u.username==='master'&&u.createdBy==='demo build'));
@@ -213,7 +224,7 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  await p.evaluate(()=>sessionStorage.removeItem('skyryse-mes-session-v1'));
  await p.goto('file://'+FIXTURES+'demo_publish.html');await p.waitForFunction(()=>!!document.querySelector('#sk-boot input[name=username]'));
  await p.locator('#sk-boot input[name=username]').fill('qa.boss');await p.locator('#sk-boot input[name=password]').fill('chosen-pass-1');
- await p.locator('#sk-boot form').evaluate(f=>f.requestSubmit());await p.waitForFunction(()=>!document.getElementById('sk-boot'),null,{timeout:20000});
+ await p.locator('#sk-boot form').evaluate(f=>f.requestSubmit());await bootGone(p);
  ok('an account made in the older demo signs in to the demo with its chosen password',await p.evaluate(()=>skAuth.user()&&skAuth.user().username)==='qa.boss');
  await p.evaluate(()=>sessionStorage.removeItem('skyryse-mes-demo-session-v1'));
  // Clearing the browser's site data reopens it: production starts over with first-account setup.
@@ -236,7 +247,7 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  const demoProvider=await p.evaluate(()=>window.skIdentity&&window.skIdentity.provider);
  ok('the demo keeps local sign-in and never contacts the production provider',demoProvider==='local'&&fetched.length===0,JSON.stringify({demoProvider,fetched}));
  await p.locator('#sk-boot input[name=username]').fill('master');await p.locator('#sk-boot input[name=password]').fill('demo1234');
- await p.locator('#sk-boot form').evaluate(f=>f.requestSubmit());await p.waitForFunction(()=>!document.getElementById('sk-boot'),null,{timeout:20000});
+ await p.locator('#sk-boot form').evaluate(f=>f.requestSubmit());await bootGone(p);
  ok('a demo account signs in with demo1234 although production names a provider',await p.evaluate(()=>skAuth.user()&&skAuth.user().username)==='master');
  await ctx.close();}
 // A standalone tab already open when another tab records the review closes too.
@@ -348,7 +359,7 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  calls.length=0;
  await p.goto('file://'+FIXTURES+'demo_publish.html');await p.waitForFunction(()=>!!document.querySelector('#sk-boot input[name=username]'));
  await p.locator('#sk-boot input[name=username]').fill('master');await p.locator('#sk-boot input[name=password]').fill('demo1234');
- await p.locator('#sk-boot form').evaluate(f=>f.requestSubmit());await p.waitForFunction(()=>!document.getElementById('sk-boot'),null,{timeout:20000});
+ await p.locator('#sk-boot form').evaluate(f=>f.requestSubmit());await bootGone(p);
  const d=await p.evaluate(()=>({server:window.FLIGHT_SERVER,active:!!(window.skServer&&window.skServer.active),user:skAuth.user()&&skAuth.user().username,set:(()=>{window.FLIGHT_SERVER={api:'/api'};return window.FLIGHT_SERVER;})()}));
  ok('the demo removes a production server setting, cannot be given one later, signs in locally and never calls that server',d.server===undefined&&!d.active&&d.user==='master'&&d.set===undefined&&calls.length===0,JSON.stringify({d,calls}));
  await ctx.close();}
@@ -375,7 +386,7 @@ ok('the demo keeps saved table filters under its own key',/'skyryse-mes-demo-tab
  await ctx.addInitScript(f=>{if(sessionStorage.getItem('seeded'))return;sessionStorage.setItem('seeded','1');localStorage.setItem('skyryse-mes-tablefilters-v1',f);},prodFilters);
  await p.goto('file://'+FIXTURES+'demo_publish.html');await p.waitForFunction(()=>!!document.querySelector('#sk-boot input[name=username]'));
  await p.locator('#sk-boot input[name=username]').fill('master');await p.locator('#sk-boot input[name=password]').fill('demo1234');
- await p.locator('#sk-boot form').evaluate(f=>f.requestSubmit());await p.waitForFunction(()=>!document.getElementById('sk-boot'),null,{timeout:20000});
+ await p.locator('#sk-boot form').evaluate(f=>f.requestSubmit());await bootGone(p);
  const r=await p.evaluate(async()=>{const click=attrs=>{const e=document.createElement('span');Object.entries(attrs).forEach(([k,v])=>e.setAttribute(k,v));document.body.appendChild(e);e.click();e.remove();};
   const real=window.prompt;window.prompt=()=>'Prod view';try{click({'data-tbl-save':'orders'});}finally{window.prompt=real;}
   const saved=localStorage.getItem('skyryse-mes-demo-tablefilters-v1');
@@ -432,14 +443,14 @@ ok('creating an account writes an account-create event with the creator, only on
  await ctx.addInitScript(()=>{window.SK_MIRROR={url:'https://mirror-preset.example',token:'preset-write-token-'+'x'.repeat(16),batchSize:50};});
  // Copies without the mirror tools/run-suites.mjs --mirror injects, so this check means the same in both runs.
  const strip=h=>h.replace(/<head><script>window\.SK_MIRROR=[^<]*<\/script>/,'<head>');
- for(const f of ['publish.html','demo_publish.html'])fs.writeFileSync(FIXTURES+'_preset_'+f,strip(fs.readFileSync(FIXTURES+f,'utf8')));
- await p.goto('file://'+FIXTURES+'_preset_publish.html');await p.waitForTimeout(700);
+ for(const f of ['publish.html','demo_publish.html'])fs.writeFileSync(FIXTURES+PRESET+f,strip(fs.readFileSync(FIXTURES+f,'utf8')));
+ await p.goto('file://'+FIXTURES+PRESET+'publish.html');await p.waitForTimeout(700);
  const prodGot=await p.evaluate(()=>window.SK_MIRROR&&window.SK_MIRROR.url);
  ok('the refusal case is real: production takes an SK_MIRROR set before load',prodGot==='https://mirror-preset.example',String(prodGot));
- await p.goto('file://'+FIXTURES+'_preset_demo_publish.html');await p.waitForTimeout(900);
+ await p.goto('file://'+FIXTURES+PRESET+'demo_publish.html');await p.waitForTimeout(900);
  const demoGot=await p.evaluate(()=>({url:window.SK_MIRROR&&window.SK_MIRROR.url,token:window.SK_MIRROR&&window.SK_MIRROR.token,enabled:!!(window.skMirror&&window.skMirror.enabled)}));
  ok('the demo ignores an SK_MIRROR set before load: no address, no token, mirror off, nothing sent',demoGot.url===''&&demoGot.token===''&&!demoGot.enabled&&hits.length===0,JSON.stringify({demoGot,hits}));
- await ctx.close();for(const f of ['publish.html','demo_publish.html'])fs.rmSync(FIXTURES+'_preset_'+f,{force:true});}
+ await ctx.close();for(const f of ['publish.html','demo_publish.html'])fs.rmSync(FIXTURES+PRESET+f,{force:true});}
 // The demo build itself never runs that cleanup on its own accounts.
 ok('the cleanup is switched off in the demo build and active in production',/function purgeLegacyDemoState\(\)\{return;\/\* DEMO D-\d+ \*\//.test(curated)&&/function purgeLegacyDemoState\(\)\{\n var REVIEW=/.test(prod));
 // It runs before anything that reads accounts or the mirror queue: identity (whose Okta callback makes sign-in wait),
