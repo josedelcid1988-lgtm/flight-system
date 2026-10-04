@@ -211,7 +211,9 @@ realm('globalThis.Date = globalThis.__RealDate;')();
     // Twenty-seventh review: a prohibition ends at its clause, so a later tightening still records.
     'Do not overtighten; tighten bolts to spec and apply torque stripe', 'Do not loosen, tighten bolts at specified torque points', 'If not damaged tighten the nut and inspect torque stripe',
     // Review of 9d72913: a prohibition ends at a coordinated positive action.
-    'Work without disturbing the harness and tighten the B-nut; inspect torque stripe', 'Avoid scratching the housing or tighten the B-nut, inspect torque stripe', 'Never disturb the harness but tighten the B-nut and inspect torque stripe'];
+    'Work without disturbing the harness and tighten the B-nut; inspect torque stripe', 'Avoid scratching the housing or tighten the B-nut, inspect torque stripe', 'Never disturb the harness but tighten the B-nut and inspect torque stripe',
+    // Security review of 98cdfeb: a prohibition cancels only the tighten verb right after it.
+    'Do not loosen the locknut prior to tightening the B-nut; inspect torque stripe', 'Do not disturb the harness following tightening of the B-nut; inspect torque stripe', 'Do not loosen or tighten the B-nut; inspect torque stripe', 'Do not over-tighten the B-nut; inspect torque stripe'];
   check('MES.stepRecordsTorque: a torque action records a torque value, also on marked, paint-marked, sealed or seal-named parts', actions.every(t => MES.stepRecordsTorque(t) === true), actions.filter(t => !MES.stepRecordsTorque(t)).join(', '));
   const state = fresh(), order = state.orders.find(o => o.status === 'Draft' && o.operations.length), op = order.operations[0];
   op.steps = [{ id: 'step-1', title: 'Install bracket', instruction: 'Install bracket', recordsTorque: true }];
