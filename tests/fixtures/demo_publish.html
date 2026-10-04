@@ -10401,6 +10401,7 @@ const ATTACH_KINDS = Object.freeze(['mrb','cars','ncs','sprs']);
     }).join('');
     const kit = order.materials.map(m => `<tr><td>${escape(m.partNumber)}</td><td>${escape(m.name)}</td><td>${escape(m.required)}</td><td>${escape(m.lot || '')}</td>${stamp}${stamp}</tr>`).join('');
     const meta = [['Work order', order.id], ['Part number / rev', `${order.partNumber} Rev ${order.revision}`], ['Description', order.title], ['Quantity', order.quantity], ['Serials', serials.join(', ') || 'Lot-tracked'], ['Pedigree', `${order.pedigree} / ${order.subcategory || ''}`], ['Master WI', order.masterWI ? `${order.masterWI.id} Rev ${order.masterWI.revision}` : 'Ad hoc'], ['Drawing rev', order.drawingRev || order.revision], ['WO rev', order.woRev || 'Baseline'], ['Aircraft', order.aircraft || ''], ['Site', order.site || ''], ['Due', order.due || ''], ['FAI order', order.fai && order.fai.required ? 'YES · complete AS9102 FAIR' : 'No']];
+    if (order.status === 'Closed') meta.unshift(['Status', order.closedAs ? `Closed as ${order.closedAs}` : 'Closed']);
     return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>F-850-001 Traveler · ${escape(order.id)}</title><style>
       body{font:12px/1.4 Arial,sans-serif;color:#111;margin:24px}h1{font-size:20px;margin:0}h2{font-size:14px;margin:16px 0 6px;text-transform:uppercase;letter-spacing:.04em}
       .top{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #111;padding-bottom:8px}.big{font:700 28px/1 Arial,sans-serif;letter-spacing:.04em}
