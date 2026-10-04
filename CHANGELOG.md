@@ -38,7 +38,7 @@ numbers and record number formats have not changed in any entry below.
   seal per WI-123") makes it a torque command. Any other word after the marker, such as the part ("torque seal
   retaining nut", "torque seal electrical connector"), makes it a torque action, so an unlisted word records the
   value instead of skipping it. A torque action ("Carefully torque seal nut", "Retorque seal nut", "Torque sealing
-  plug per WI-123"), any step that says tighten, secure or fasten (unless a prohibition such as "Do not" or "Never" comes immediately before the verb:
+  plug per WI-123"), any step that says tighten, retighten, secure or fasten in any form (unless a prohibition such as "Do not" or "Never" comes immediately before the verb:
   "Do not tighten the B-nut" is exempt, "Do not loosen the locknut prior to tightening the B-nut" is not), and any
   step that names a torque target always record the value, tool and unit. "At specified torque locations" is exempt only beside marker work on the same step. Adding and
   editing an operation, default steps and the migration of older steps (title and instruction read as two

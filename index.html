@@ -2316,7 +2316,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // drawing, WI or specified value) record it too. A bare number ("to 3 fasteners") is not a target.
   const TORQUE_TARGET = /\d\s*(?:in|ft)[- .]?(?:lbs?|lbf|oz)\b|\d\s*(?:inch|foot)[- ]?(?:pounds?|lbs?)\b|\d\s*lbf[- .]?(?:in|ft)\b|\d\s*(?:n[·.]?m|nm)\b|\b(?:drawing|wi|specified)\s+(?:torque\s+)?value\b|\bspecified\s+torque\b(?!\s+(?:locations?|points?|positions?)\b)/i;
   // "Specified torque locations" names where torque was applied; it is not itself a torque action. Tightening is.
-  const TORQUE_TIGHTEN = /\b(?:tighten|tightens|tightened|tightening|re-tighten|retighten|secure|secures|secured|securing|fasten|fastens|fastened|fastening)\b/gi;
+  const TORQUE_TIGHTEN = /\b(?:re-?)?(?:tighten(?:s|ed|ing)?|secur(?:e|es|ed|ing)|fasten(?:s|ed|ing)?)\b/gi;
   // A tighten verb that follows a prohibition in the same clause ("Do not tighten the B-nut; inspect torque stripe") applies no torque.
   // A prohibition cancels a tighten verb only when it comes immediately before it ("Do not tighten the B-nut", "Avoid tightening").
   // Anything between them, such as "Do not loosen the locknut prior to tightening the B-nut", leaves the tightening in force.

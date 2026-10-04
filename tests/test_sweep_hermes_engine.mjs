@@ -217,7 +217,9 @@ realm('globalThis.Date = globalThis.__RealDate;')();
     // Review of 723b0e4: "torquing" is a torque action even though it does not contain the word torque.
     'Remove torque seal before torquing the fastener', 'Remove torque stripe before re-torquing the fastener', 'Begin torquing the B-nut', 'Torquing sequence per drawing',
     // Security review of 723b0e4: a positive fastening verb is a torque action even beside specified torque locations.
-    'Secure bolts at specified torque locations and apply torque stripe', 'Fasten the B-nut at specified torque points; inspect torque stripe', 'Secure the fitting, then apply torque seal'];
+    'Secure bolts at specified torque locations and apply torque stripe', 'Fasten the B-nut at specified torque points; inspect torque stripe', 'Secure the fitting, then apply torque seal',
+    // Review of 52165bf: every inflection of retighten is a tighten verb.
+    'Retightening the B-nut; inspect torque stripe', 'Retightened the B-nut; inspect torque seal', 'Retightens the B-nut; inspect torque stripe', 'Re-securing the fitting; inspect torque stripe'];
   check('MES.stepRecordsTorque: a torque action records a torque value, also on marked, paint-marked, sealed or seal-named parts', actions.every(t => MES.stepRecordsTorque(t) === true), actions.filter(t => !MES.stepRecordsTorque(t)).join(', '));
   const state = fresh(), order = state.orders.find(o => o.status === 'Draft' && o.operations.length), op = order.operations[0];
   op.steps = [{ id: 'step-1', title: 'Install bracket', instruction: 'Install bracket', recordsTorque: true }];
