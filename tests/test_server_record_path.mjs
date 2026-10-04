@@ -192,6 +192,28 @@ try {
   assert.match(roleReason.message, /kept in the server audit trail/, `the reason is said to go to the server audit trail: ${roleReason.message}`);
   assert.doesNotMatch(roleReason.message, /device/, 'the server-mode reason message does not name this device');
 
+  // Codex review on #621: with a server, a skill run input or draft body is measured before the action is copied for
+  // the server, so a refused shape is never serialized in the tab and gets the engine's own refusal, not the encoding one.
+  const shaped = await page.evaluate(() => {
+    const stringify = JSON.stringify; let copied = 0;
+    const wide = Array.from({ length: 1000000 }, () => ({}));
+    let deep = {}; for (let i = 0; i < 3000; i++) deep = { next: deep };
+    JSON.stringify = function (value, ...rest) { if (Array.isArray(value) && (value.includes(wide) || value.includes(deep))) copied++; return stringify.call(this, value, ...rest); };
+    try {
+      const queued = serverActionQueue.length;
+      const wideRun = MES.runSkill(state, 'drawing-review', wide);
+      const deepRun = MES.runSkill(state, 'drawing-review', deep);
+      const wideEdit = MES.updateSkillDraft(state, 'AID-NONE', wide, 'Record path check.');
+      return { copied, queued: serverActionQueue.length - queued, wideRun, deepRun, wideEdit: wideEdit.ok };
+    } finally { JSON.stringify = stringify; }
+  });
+  assert.equal(shaped.copied, 0, 'a refused skill input or draft body is not serialized for the server');
+  assert.equal(shaped.queued, 0, 'nothing is queued for the server');
+  assert.equal(shaped.wideRun.ok, false);
+  assert.match(shaped.wideRun.message, /more than 50,000 values/, `a wide run input gets the value-count refusal: ${shaped.wideRun.message}`);
+  assert.equal(shaped.deepRun.ok, false);
+  assert.match(shaped.deepRun.message, /nested too deeply/, `a deep run input gets the depth refusal, not the encoding one: ${shaped.deepRun.message}`);
+  assert.equal(shaped.wideEdit, false, 'a wide draft body is refused');
   const views = await serverViews();
   assert.ok(views.includes('Record path sent') && !views.some(name => name.startsWith('Refused')), `the server record is unchanged by the refused attempts: ${views.join(', ')}`);
   assert.deepEqual(errors, []);

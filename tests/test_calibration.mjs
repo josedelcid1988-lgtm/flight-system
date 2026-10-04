@@ -345,6 +345,92 @@ check('an archive candidate holding a __proto__ key is refused, while a clean cl
   let rp = null, rq = null, threw = null;
   try { rp = runHist(() => MES.updateSkillDraft(hist, spc.draftId, JSON.parse(deepProto), 'A deeply nested body with the forbidden key.')); rq = runHist(() => MES.updateSkillDraft(hist, spc.draftId, JSON.parse(deepPlain), 'A deeply nested body without the forbidden key.')); } catch (e) { threw = e; }
   check('a deeply nested draft body is refused with the __proto__ message, and one without the key with a plain depth message, never a throw', !threw && rp && !rp.ok && /__proto__/.test(rp.message) && rq && !rq.ok && /nested too deeply/.test(rq.message)); }
+// #586: the depth refusal is measured without recursion before the body is hashed or signed. Between the depth plain
+// JSON.stringify accepts and the much smaller depth the recursive canonical hash survives, updateSkillDraft threw a
+// RangeError instead of refusing. Every depth in that band, and well below it, now gets the plain refusal and changes
+// nothing; a body at the 64-level limit still saves and verifies, and a deeply nested skill run input is refused too.
+{ const nested = depth => { let value = { x: 1 }; for (let n = 1; n < depth; n += 1) value = { a: value }; return value; };
+  const draft = () => hist.aiSkillDrafts.find(d => d.id === spc.draftId);
+  for (const depth of [65, 300, 2500, 3000, 3500, 4000]) {
+    const before = JSON.stringify(draft());
+    let r = null, threw = null;
+    try { r = runHist(() => MES.updateSkillDraft(hist, spc.draftId, nested(depth), 'A body nested past the depth limit.')); } catch (e) { threw = e; }
+    check(`a draft body nested ${depth} deep is refused with the plain depth message, never a throw, and the draft is unchanged`, !threw && r && !r.ok && /nested too deeply to save: more than 64 levels\. Flatten it to 64 levels or fewer/.test(r.message) && JSON.stringify(draft()) === before);
+  }
+  const atLimit = runHist(() => MES.updateSkillDraft(hist, spc.draftId, nested(64), 'A body nested exactly at the depth limit.'));
+  check('a draft body nested exactly 64 deep still saves, and every signature verifies', atLimit.ok && MES.validate(hist) && MES.verifyManifests(hist).ok);
+  // Codex review on #621: the budget is spent before a child is queued, so a wide value (a root list of a million empty
+  // objects, or a flat list of numbers) is refused at 50,000 values instead of after every child has been queued.
+  const valueCount = /holds more than 50,000 values\. Keep it under 50 KB/, textCount = /holds more than 50,000 characters of text\. Keep it under 50 KB/;
+  for (const [label, wide, expected] of [['a list of 1,000,000 empty objects', Array.from({ length: 1000000 }, () => ({})), valueCount], ['a list of 60,000 numbers', Array.from({ length: 60000 }, (_, i) => i), valueCount], ['an object with 60,000 keys', Object.fromEntries(Array.from({ length: 60000 }, (_, i) => [`k${i}`, i])), textCount], ['one string of 10,000,000 characters', 'x'.repeat(10000000), textCount], ['one key of 60,000 characters', { ['k'.repeat(60000)]: 1 }, textCount]]) {
+    const before = JSON.stringify(draft());
+    let r = null, threw = null;
+    try { r = runHist(() => MES.updateSkillDraft(hist, spc.draftId, { wide }, 'A body wider than the value budget.')); } catch (e) { threw = e; }
+    check(`a draft body holding ${label} is refused with the plain budget message, never a throw, and the draft is unchanged`, !threw && r && !r.ok && expected.test(r.message) && JSON.stringify(draft()) === before);
+  }
+  // Codex review on #621: the shape walk runs before the __proto__ check, whose first step serializes the whole body, so
+  // a wide body is refused by its value count without being serialized; a deep but small body keeps the key message.
+  { const before = JSON.stringify(draft());
+    const wideProto = JSON.parse(`{"__proto__":1,"wide":[${Array(200000).fill('{}').join(',')}]}`);
+    let r = null, threw = null;
+    try { r = runHist(() => MES.updateSkillDraft(hist, spc.draftId, wideProto, 'A wide body that also holds the forbidden key.')); } catch (e) { threw = e; }
+    check('a wide draft body that also holds a __proto__ key gets the value-count refusal, so it is measured before it is serialized', !threw && r && !r.ok && /holds more than 50,000 values/.test(r.message) && JSON.stringify(draft()) === before); }
+  // Cursor security review on #621: passing the depth limit only marks the body, so a body both deep and wide (side by
+  // side, or a wide list below a deep chain) is still counted and refused by its value count before the __proto__ check
+  // serializes it.
+  { const deepChain = (depth, leaf) => { let value = leaf; for (let n = 0; n < depth; n += 1) value = { a: value }; return value; };
+    const bodies = [
+      ['a wide list beside a 70-level chain', { wide: Array.from({ length: 200000 }, () => ({})), deep: deepChain(70, { x: 1 }) }],
+      ['a wide list at the bottom of a 70-level chain', { deep: deepChain(70, Array.from({ length: 200000 }, () => ({}))) }]
+    ];
+    for (const [label, body] of bodies) {
+      const before = JSON.stringify(draft());
+      // Parsed from text so the __proto__ key is an own key, as it is in a request body.
+      const withProto = JSON.parse(`{"__proto__":1,${JSON.stringify(body).slice(1)}`);
+      let r = null, threw = null;
+      try { r = runHist(() => MES.updateSkillDraft(hist, spc.draftId, withProto, 'A body both deep and wide.')); } catch (e) { threw = e; }
+      check(`a draft body holding ${label} gets the value-count refusal, never a throw, and the draft is unchanged`, !threw && r && !r.ok && /holds more than 50,000 values/.test(r.message) && JSON.stringify(draft()) === before);
+    } }
+  { const draftsBefore = hist.aiSkillDrafts.length;
+    let rw = null, threwWide = null;
+    try { rw = runHist(() => MES.runSkill(hist, { skill: 'spc-chart-builder', values: [10.1, 10.2, 9.9], extra: Array.from({ length: 1000000 }, () => ({})), reason: 'A skill run input wider than the value budget.' })); } catch (e) { threwWide = e; }
+    check('a skill run input holding a list of 1,000,000 empty objects is refused with the value-count message and no draft is added', !threwWide && rw && !rw.ok && /holds more than 50,000 values/.test(rw.message) && hist.aiSkillDrafts.length === draftsBefore); }
+  // Codex review on #621: a skill run input with an own __proto__ key is refused before it is hashed. The canonical
+  // form drops that key, so two inputs differing only there would hash the same and the second run would be returned
+  // as a duplicate of the first.
+  for (const nested of [false, true]) {
+    const draftsBefore = hist.aiSkillDrafts.length, logBefore = (hist.aiActionLog || []).length;
+    const input = JSON.parse(nested ? '{"skill":"spc-chart-builder","values":[10.1,10.2,9.9],"extra":{"__proto__":{"x":1}},"reason":"A skill run input holding the forbidden key."}' : '{"skill":"spc-chart-builder","values":[10.1,10.2,9.9],"__proto__":{"x":1},"reason":"A skill run input holding the forbidden key."}');
+    let rp = null, threwProto = null;
+    try { rp = runHist(() => MES.runSkill(hist, input)); } catch (e) { threwProto = e; }
+    check(`a skill run input holding a ${nested ? 'nested' : 'top-level'} __proto__ key is refused with the key message, never a throw, and nothing is logged or drafted`, !threwProto && rp && !rp.ok && /Remove the "__proto__" key/.test(rp.message) && hist.aiSkillDrafts.length === draftsBefore && (hist.aiActionLog || []).length === logBefore);
+  }
+  // Codex review on #621: with the runSkill(state, skill, input) overload the raw input is measured before it is copied
+  // into the normalized input, so an object with a million keys is refused without being duplicated.
+  { const draftsBefore = hist.aiSkillDrafts.length, logBefore = (hist.aiActionLog || []).length;
+    const wideRaw = {}; for (let n = 0; n < 1000000; n += 1) wideRaw[`k${n}`] = n;
+    // Counting property reads shows the input was not copied: a spread reads every one of the million keys.
+    let reads = 0;
+    const counted = new Proxy(wideRaw, { get: (target, key, receiver) => { reads += 1; return Reflect.get(target, key, receiver); } });
+    let ro = null, threwRaw = null;
+    try { ro = runHist(() => MES.runSkill(hist, 'spc-chart-builder', counted)); } catch (e) { threwRaw = e; }
+    check('the runSkill(state, skill, input) overload refuses a raw input with a million keys by its budget, never a throw, and nothing is logged or drafted', !threwRaw && ro && !ro.ok && /Keep it under 50 KB/.test(ro.message) && hist.aiSkillDrafts.length === draftsBefore && (hist.aiActionLog || []).length === logBefore);
+    check('that raw input is refused before it is copied: fewer than 100,000 of its million keys are read', reads < 100000, `${reads} reads`);
+    let rd = null, threwDeep = null;
+    try { rd = runHist(() => MES.runSkill(hist, 'spc-chart-builder', nested(3000))); } catch (e) { threwDeep = e; }
+    check('the runSkill(state, skill, input) overload refuses a raw input nested 3000 deep with the depth message, never a throw', !threwDeep && rd && !rd.ok && /nested too deeply to save/.test(rd.message)); }
+  // Codex review on #621: text counts against the budget too, so a run input with few values but one huge string is
+  // refused before anything serializes it, even when its skill is not on the approved list.
+  for (const input of [{ skill: 'not-approved', blob: 'x'.repeat(10000000), reason: 'A byte-heavy run input.' }, { skill: 'spc-chart-builder', values: [10.1], blob: 'x'.repeat(10000000), reason: 'A byte-heavy run input.' }]) {
+    const draftsBefore = hist.aiSkillDrafts.length, logBefore = (hist.aiActionLog || []).length;
+    let rb = null, threwBlob = null;
+    try { rb = runHist(() => MES.runSkill(hist, input)); } catch (e) { threwBlob = e; }
+    check(`a run input for ${input.skill} holding one 10,000,000-character string is refused by the text budget, never a throw, and nothing is logged or drafted`, !threwBlob && rb && !rb.ok && /holds more than 50,000 characters of text/.test(rb.message) && hist.aiSkillDrafts.length === draftsBefore && (hist.aiActionLog || []).length === logBefore);
+  }
+  const drafts = hist.aiSkillDrafts.length;
+  let rs = null, threwRun = null;
+  try { rs = runHist(() => MES.runSkill(hist, { skill: 'spc-chart-builder', values: [10.1, 10.2, 9.9], extra: nested(3000), reason: 'A skill run input nested past the depth limit.' })); } catch (e) { threwRun = e; }
+  check('a skill run input nested 3000 deep is refused with the plain depth message, never a throw, and no draft is added', !threwRun && rs && !rs.ok && /nested too deeply to save/.test(rs.message) && hist.aiSkillDrafts.length === drafts); }
 // #64: the calibration log is append-only. Retirement, not deletion, removes a tool from use: a retired
 // tool reads unusable at point of use and its entries stay in the signed log.
 check('there is no calibration delete command', MES.deleteCalibration === undefined && MES.removeCalibration === undefined && host.resolveAction('MES.deleteCalibration') === null);
