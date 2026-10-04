@@ -3568,6 +3568,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       });
       (order.tickets || []).forEach(t => { if (!plain(t.manifest) || t.status !== 'Resolved') return; const carried = order.splitFrom && plain(t.carriedFrom) ? t.carriedFrom : null; recheck(`${order.id} ${t.id} approval`, t.manifest, carried ? { ...ticketSubject(order, t), orderId: carried.orderId } : ticketSubject(order, t)); });
       if (plain(order.closure) && plain(order.closure.manifest)) recheck(`${order.id} closure`, order.closure.manifest, closureSubject(state, order));
+      if (order.qualityClose !== undefined) { if (!plain(order.qualityClose) || !plain(order.qualityClose.manifest)) failures.push({ where: `${order.id} quality close`, reason: 'quality review closure is not signed' }); else recheck(`${order.id} quality close`, order.qualityClose.manifest, qualityCloseSubject(order, order.qualityClose)); }
       (Array.isArray(order.sendBacks) ? order.sendBacks : []).forEach(e => { if (!plain(e) || !plain(e.manifest)) { failures.push({ where: `${order.id} send back`, reason: 'send back to Building is not signed' }); return; } recheck(`${order.id} ${e.id} send back`, e.manifest, sendBackSubject(order, e)); });
       const fair = order.fair;
       if (plain(fair) && plain(fair.approved) && plain(fair.approved.manifest) && plain(fair.verified) && plain(fair.verified.manifest)) { recomputed++; const sub = { fair: fairId(order), verified: fair.verified.manifest.hash, ...(fair.approved.manifest.override ? { override: fair.approved.manifest.override } : {}) }; if (sha256(canonical(sub)) !== fair.approved.manifest.hash) failures.push({ where: `${order.id} FAIR approval`, reason: 'approval does not chain to the verified FAIR' }); }
@@ -3671,6 +3672,15 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const sendBackSubject = (order, entry) => ({ orderId: order.id, sendBackId: entry.id, revision: entry.revision, woRev: entry.woRev, rationale: entry.rationale, ticketId: entry.ticketId, from: entry.from, to: entry.to, by: entry.by && entry.by.credentialId, at: entry.at });
   const sendBackValid = (order, entry) => plain(entry) && /^SB-\d{1,4}$/.test(entry.id) && entry.from === 'Quality' && entry.to === 'Building' && str(entry.rationale, 300) && entry.rationale.length >= 1 && entry.rationale === entry.rationale.trim() && (entry.ticketId === null || (typeof entry.ticketId === 'string' && /^(IDR|NC)-\d{4,8}$/.test(entry.ticketId))) && str(entry.revision, 24) && str(entry.woRev, 40) && snapshotValid(entry.by) && timestamp(entry.at) && plain(entry.manifest) && entry.manifest.meaning === SEND_BACK_MEANING && entry.manifest.at === entry.at && entry.manifest.algorithm === 'SHA-256' && plain(entry.manifest.signer) && entry.manifest.signer.credentialId === entry.by.credentialId && entry.manifest.hash === sha256(canonical(sendBackSubject(order, entry)));
   const sendBacksValid = order => order.sendBacks === undefined || (Array.isArray(order.sendBacks) && order.sendBacks.length <= SEND_BACK_MAX && unique(order.sendBacks.map(e => e && e.id)) && order.sendBacks.every(e => sendBackValid(order, e)));
+  // #706: Review & close signs the quality review. The signature binds the work order, its part, revisions, serial and
+  // quantity, the hash of every operation buy-off and of the FAIR approval, and who signed and when, so an edit to any
+  // of them after closure fails verification. Orders closed before #706 carry no record and stay valid; none is invented.
+  const QUALITY_CLOSE_MEANING = 'Quality review complete. Work order closed';
+  const qualityCloseSubject = (order, rec) => ({ orderId: order.id, partNumber: order.partNumber, revision: order.revision, woRev: typeof order.woRev === 'string' && order.woRev ? order.woRev : 'Baseline', serial: order.serial, quantity: order.quantity, buyoffs: order.operations.map(op => ({ operationId: op.id, hash: plain(op.buyoff) && plain(op.buyoff.manifest) ? op.buyoff.manifest.hash : null })), fair: plain(order.fair) && plain(order.fair.approved) && plain(order.fair.approved.manifest) ? order.fair.approved.manifest.hash : null, by: rec.by && rec.by.credentialId, at: rec.at });
+  // A signed-in closer's credential is ACCT- plus a username of up to 40 characters, so it may run to 45.
+  const QUALITY_CLOSE_CREDENTIAL_MAX = 45;
+  const qualityCloserValid = p => plain(p) && str(p.name, 80) && !!p.name.trim() && str(p.role, 80) && str(p.credentialId, QUALITY_CLOSE_CREDENTIAL_MAX) && !!p.credentialId.trim();
+  const qualityCloseValid = order => order.qualityClose === undefined || (order.status === 'Closed' && !order.closedAs && plain(order.qualityClose) && qualityCloserValid(order.qualityClose.by) && timestamp(order.qualityClose.at) && plain(order.qualityClose.manifest) && order.qualityClose.manifest.meaning === QUALITY_CLOSE_MEANING && order.qualityClose.manifest.at === order.qualityClose.at && order.qualityClose.manifest.algorithm === 'SHA-256' && plain(order.qualityClose.manifest.signer) && order.qualityClose.manifest.signer.credentialId === order.qualityClose.by.credentialId && order.qualityClose.manifest.hash === sha256(canonical(qualityCloseSubject(order, order.qualityClose))));
   const correctiveOrder = order => ['Rework', 'Repair'].includes(order.subcategory);
   const releaseConfiguration = order => ({ partNumber: order.partNumber, revision: order.revision, pedigree: order.pedigree, subcategory: order.subcategory, quantity: order.quantity, site: order.site ?? null, sourceOrderId: order.sourceTicket?.orderId ?? null, sourceTicketId: order.sourceTicket?.ticketId ?? null });
   const releaseApprovalValid = (approval, order) => approval === null || (plain(approval) && requiresReleaseQA(order) && isQAProfile(approval) && timestamp(approval.at) && approval.virtual === true && plain(approval.configuration) && Object.entries(releaseConfiguration(order)).every(([key, value]) => approval.configuration[key] === value));
@@ -3807,6 +3817,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (version === 3 && (!([null, ...SUBCATEGORIES].includes(order.subcategory)) || !creationFieldsValid(order) || !order.operations.every(operationEvidenceValid) || !engineeringChangesValid(order))) return false;
     if (Object.hasOwn(order, 'pedigreeChange') && order.pedigreeChange !== null && !pedigreeChangeValid(order.pedigreeChange, order)) return false;
     if (!sendBacksValid(order)) return false;
+    if (!qualityCloseValid(order)) return false;
     return true;
   }
 
@@ -7481,7 +7492,10 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (blockingTickets(order).length) return fail('Resolve every open hold before completing the quality review.');
     if (order.materials.some(item => !item.ready) || order.operations.some(item => !item.done)) return fail('All materials and operations must be recorded before the quality review.');
     if (order.fai && order.fai.required && !(order.fair && order.fair.status === 'Approved')) return fail(`${order.id} is an FAI order, so it closes only after Skyryse QA approves its AS9102 FAIR (now: ${order.fair ? order.fair.status : 'not started'}). Open the First Article Inspection Report panel on the Quality tab: ${order.fair ? '' : 'start it, '}complete Forms 1 to 3, then Verify and Approve.`);
+    const at = new Date().toISOString(), qualityClose = { by: actor(state), at };
     order.status = 'Closed';
+    qualityClose.manifest = signManifest(state, QUALITY_CLOSE_MEANING, qualityCloseSubject(order, qualityClose), at);
+    order.qualityClose = qualityClose;
     record(state, order, 'Quality review complete. Work order closed.', 'Quality reviewer');
     return { ok: true, message: 'Work order closed.' };
   }
@@ -7665,7 +7679,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (approvalReset) order.releaseApproval = null;
     delete child.closureRequest; delete child.pedigreeChange; delete child.sequenceChange; delete child.splitRequests;
     // A QA send back is signed for the order it was made on (#542); it stays there and the new order starts without one.
-    delete child.sendBacks;
+    delete child.sendBacks; delete child.qualityClose;
     const backToDraft = [];
     [order, child].forEach(o => { if (o.status !== 'Draft' && requiresReleaseQA(o) && !releaseApproval(o)) { o.status = 'Draft'; backToDraft.push(o.id); } });
     order.splitInto = [...(Array.isArray(order.splitInto) ? order.splitInto : []), id];
@@ -7705,7 +7719,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     delete child.engineeringChanges; delete child.splitInto; delete child.splitRequests;
     delete child.closureRequest; delete child.pedigreeChange; delete child.sequenceChange; delete child.sequenceBaseline;
     // A QA send back is signed for the order it was made on (#542); it stays there and the new order starts without one.
-    delete child.sendBacks;
+    delete child.sendBacks; delete child.qualityClose;
     // Completed work carries over: these units were built alongside the rest up to this point.
     // Evidence ids are unique workspace-wide, so the child's copies are re-keyed; the recordings
     // themselves stay stored against the parent order's ids.
@@ -8332,6 +8346,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
       }
       if (!engineeringChangesValid(o)) return { where: id, detail: `${id} engineering change record is malformed.`, fix: null };
       if (!sendBacksValid(o)) return { where: id, detail: `${id} QA send back to Building record is malformed or does not match its signature. The saved work order was not changed; a QA Manager must review it.`, fix: null };
+      if (!qualityCloseValid(o)) return { where: id, detail: `${id} quality review closure record is malformed or does not match its signature. The saved work order was not changed; a QA Manager must review it.`, fix: null };
       return { where: id, detail: `${id} fails validation (${!STATUSES.includes(o.status) ? 'status' : !PEDIGREES.includes(o.pedigree) ? 'pedigree' : !PRIORITIES.includes(o.priority) ? 'priority' : !str(o.due, 10) ? 'due date' : !Array.isArray(o.materials) || !o.materials.length ? 'materials' : 'state rules'}).`, fix: null };
     }
     const tix = state.orders.flatMap(o => o.tickets.map(t => t.id)); const dupT = tix.find((t, i) => tix.indexOf(t) !== i);
