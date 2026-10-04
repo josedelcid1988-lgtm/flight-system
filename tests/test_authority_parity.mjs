@@ -5,7 +5,7 @@
 // same questions, and fails on any answer that differs: role by role, capability by capability, the manager route
 // gate, Support Access, and the inspector signature against the inspection stamp gate.
 //
-// Disagreements already reported and not yet fixed are listed in KNOWN with their issue. A listed disagreement
+// A disagreement that is already reported and not yet fixed is listed in KNOWN with its issue. A listed disagreement
 // keeps the suite green and is printed; a listed one that no longer happens fails ("now agrees, remove it from
 // KNOWN"), so the list cannot go stale. Nothing is skipped.
 //
@@ -38,17 +38,10 @@ const day = offset => pacificDay(Date.now() + offset * 86400000);
 
 // ---------------------------------------------------------------- known disagreements
 // Each entry names one fixture, one question and the exact answers it gives today (browser or first rule, server or
-// second rule). A different disagreement on the same question is not masked. Remove an entry in the pull request
-// that fixes its issue.
-const KNOWN = [
-  { issue: 580, fixture: 'extra-qm-lapsed', check: 'manager route GET /audit', browser: 'false', server: 'true' },
-  { issue: 580, fixture: 'extra-qm-missing-record', check: 'manager route GET /audit', browser: 'false', server: 'true' },
-  { issue: 580, fixture: 'extra-qm-no-role-training', check: 'manager route GET /audit', browser: 'false', server: 'true' },
-  // The same #580 gap seen inside the server: its engine host pauses the role, its route gate does not.
-  { issue: 580, fixture: 'extra-qm-lapsed', check: 'manager route (server host roleOf vs route)', browser: 'false', server: 'true' },
-  { issue: 580, fixture: 'extra-qm-missing-record', check: 'manager route (server host roleOf vs route)', browser: 'false', server: 'true' },
-  { issue: 580, fixture: 'extra-qm-no-role-training', check: 'manager route (server host roleOf vs route)', browser: 'false', server: 'true' }
-];
+// second rule): { issue, fixture, check, browser, server }. A different disagreement on the same question is not
+// masked. Remove an entry in the pull request that fixes its issue. Empty today: #579 and #580 were fixed on main
+// (#595, #633), and the comparisons that exposed them now guard the fixes.
+const KNOWN = [];
 const knownKey = (fixture, check) => `${fixture} | ${check}`;
 ok('KNOWN has no repeated entry', new Set(KNOWN.map(k => knownKey(k.fixture, k.check))).size === KNOWN.length);
 
