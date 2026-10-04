@@ -546,6 +546,11 @@ const repair = walk('seed-curated', 'WO-10003', 'Repair', {}, state => { MES.get
   const removed = edit(snap1, (s, t) => { MES.getOrder(s, id).tickets = MES.getOrder(s, id).tickets.filter(x => x !== t); });
   ok('Write gate: removing a signed ticket from a live work order is refused', /no longer on work order/.test(gate(snap1, removed) || ''), String(gate(snap1, removed)));
   const noApproval = edit(snap1, (s, t) => { delete t.reworkPlan.manifest; });
+  // Codex security P2 4175502270: the hold flag is part of the signed approval, so lifting it on an open signed ticket is refused.
+  const lifted = edit(snap1, (s, t) => { t.hold = false; });
+  ok('Hold: the signed approval binds the operation hold', MES.getOrder(snap1, id).tickets.find(t => t.id === created.id).reworkPlan.manifest.subject.hold === true);
+  ok('Hold: lifting the hold on an open signed Rework ticket is refused by validate and fails verifyManifests', MES.validate(lifted) === false && failsAt(lifted, new RegExp(`${created.id} rework approval`)), JSON.stringify(verify(lifted).failures));
+  ok('Hold: the signed ticket still blocks work until QA releases it', MES.blockingTickets(MES.getOrder(snap1, id)).some(t => t.id === created.id) && !MES.blockingTickets(MES.getOrder(snap2, id)).some(t => t.id === created.id));
   ok('Write gate: removing a signed approval is refused', /signed Quality approval/.test(gate(snap1, noApproval) || ''), String(gate(snap1, noApproval)));
   const reapproved = edit(snap1, (s, t) => { t.reworkPlan.manifest = { ...t.reworkPlan.manifest, hash: 'f'.repeat(64) }; });
   ok('Write gate: altering a signed approval is refused', /signed Quality approval/.test(gate(snap1, reapproved) || ''), String(gate(snap1, reapproved)));
