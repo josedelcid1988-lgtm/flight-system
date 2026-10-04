@@ -21,7 +21,19 @@ a proxy. Name `--host 0.0.0.0`, as above, only when network access is controlled
 by a firewall or trusted internal network. Configure TLS at the reverse proxy for browser access beyond
 the local machine.
 
-PostgreSQL is selected with `FLIGHT_DATABASE_URL`. See
+Every response carries browser security headers: `X-Content-Type-Options: nosniff`,
+`Referrer-Policy: no-referrer`, `X-Frame-Options: DENY` and a Content-Security-Policy with
+`frame-ancestors 'none'`. The page's policy lets it run only the scripts this server serves (its
+inline scripts are allowed by SHA-256 hash, computed by the server for each response) and connect
+only to this server. If `index.html` is set up to call another origin (an Okta issuer, the optional
+mirror or an integration bridge), list those origins in `FLIGHT_CSP_CONNECT_SRC`, separated by
+spaces, for example `FLIGHT_CSP_CONNECT_SRC="https://skyryse.okta.com"`. The server does not start
+if an entry is not an origin. See `server/security-headers.mjs` for the full policy and why each
+part is there.
+
+PostgreSQL is selected with `FLIGHT_DATABASE_URL`, not on the command line: a
+`--database-url` that carries a password is refused, because anyone who can list
+processes can read a command line. See
 [`docs/DATABASES.md`](docs/DATABASES.md) for server setup, backups, and the
 PostgreSQL integration check. The optional append-only browser mirror in
 `server/mirror/` is separate from the authenticated server.

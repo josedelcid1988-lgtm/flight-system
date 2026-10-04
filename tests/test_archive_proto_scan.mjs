@@ -121,9 +121,16 @@ const scan = (...args) => spawnSync(process.execPath, [CLI, ...args], { encoding
 
 // ---- an unreachable PostgreSQL store is an error (exit 2), and the connection string is never printed ----
 {
-  const run = scan('--database-url', 'postgresql://scanuser:not-a-real-secret@127.0.0.1:1/none');
+  const run = spawnSync(process.execPath, [CLI], { encoding: 'utf8', env: { ...process.env, FLIGHT_DATABASE_URL: 'postgresql://scanuser:not-a-real-secret@127.0.0.1:1/none', FLIGHT_DB: '' } });
   ok('postgres unreachable: exits 2', run.status === 2, `status=${run.status}`);
   ok('postgres: connection string not printed', !/not-a-real-secret/.test(run.stdout + run.stderr), run.stdout + run.stderr);
+}
+// ---- a --database-url that carries a password is refused before anything connects (#584) ----
+{
+  const run = scan('--database-url', 'postgresql://scanuser:not-a-real-secret@127.0.0.1:1/none');
+  ok('postgres password on the command line: exits 2', run.status === 2, `status=${run.status}`);
+  ok('postgres password on the command line: refused with the environment variable named', /carries a password/.test(run.stderr) && /FLIGHT_DATABASE_URL/.test(run.stderr) && !/Store:/.test(run.stdout), run.stdout + run.stderr);
+  ok('postgres password on the command line: connection string not printed', !/not-a-real-secret/.test(run.stdout + run.stderr), run.stdout + run.stderr);
 }
 
 fs.rmSync(TMP, { recursive: true, force: true });

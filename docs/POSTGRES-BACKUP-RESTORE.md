@@ -12,14 +12,20 @@ This note records the exact commands that were run against the live PostgreSQL t
 # be refused after the wipe, leaving the database empty.
 export FLIGHT_DATABASE_URL='<live-url>'
 
+# The server and its commands read FLIGHT_DATABASE_URL themselves. Do not pass it again on the
+# command line: a command line is readable from the process list, so a --database-url that
+# carries a password is refused and nothing runs (#584). This covers the server's own process
+# only: until #234 lands, pg_dump and pg_restore still receive the connection string, password
+# included, as their --dbname argument while they run.
+
 # 1. Stop the MES server that uses that database, so no write lands between the backup and the
 #    baseline below. Then take the backup and record the baseline (step 4 of the next section).
-node server/server.mjs --database-url "$FLIGHT_DATABASE_URL" --backup data/flight-backup.dump
+node server/server.mjs --backup data/flight-backup.dump
 
 # 2. Wipe and restore. Wipe is a DROP/CREATE of the target database, or
 #    restorePostgres(..., { clean: true }). The restore runs as one transaction, so a failed restore
 #    leaves the target unchanged, and it ends every session that was in the backup.
-node server/server.mjs --database-url "$FLIGHT_DATABASE_URL" --restore data/flight-backup.dump
+node server/server.mjs --restore data/flight-backup.dump
 
 # 3. Re-open and verify the content of every table plus the audit chain (next section).
 # openPostgres() refuses to start if the restored audit chain does not verify.
@@ -96,7 +102,7 @@ This command was not executed against a live PostgreSQL database. There is no `F
 
 ## What is required to finish the cycle
 
-1. The live connection string in `FLIGHT_DATABASE_URL` (or `--database-url`), with network reachability from the host that will run `pg_dump` / `pg_restore`.
+1. The live connection string in `FLIGHT_DATABASE_URL` (a `--database-url` that carries a password is refused; see #584), with network reachability from the host that will run `pg_dump` / `pg_restore`.
 2. PostgreSQL client tools on that host (`pg_dump`, `pg_restore`, and a `psql` that can count rows).
 3. An agreed maintenance window. Restore is offline: stop the MES server first, or restore into an empty database and point the server at it afterwards (`server/README.md`).
 4. A pre-wipe baseline to compare after the restore, taken with the server stopped (step 1 above). A row

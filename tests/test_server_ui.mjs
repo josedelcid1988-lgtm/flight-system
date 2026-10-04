@@ -13,6 +13,8 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
+  // The server's Content-Security-Policy (#583) must not block anything these flows use.
+  page.on('console', message => { if (/Content Security Policy/i.test(message.text())) errors.push(message.text()); });
   await page.goto(`http://127.0.0.1:${port}/`);
   await page.locator('#sk-login').waitFor({ state: 'visible' });
   await page.locator('#sk-displayname').fill('Server UI Admin');
@@ -175,6 +177,7 @@ try {
   aqiPage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const aqiErrors = [];
   aqiPage.on('pageerror', error => aqiErrors.push(error.message));
+  aqiPage.on('console', message => { if (/Content Security Policy/i.test(message.text())) aqiErrors.push(message.text()); });
   await aqiPage.goto(`http://127.0.0.1:${port}/`);
   await aqiPage.locator('#sk-login').waitFor({ state: 'visible' });
   await aqiPage.locator('#sk-username').fill('aqi-inspector');

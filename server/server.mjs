@@ -15,6 +15,7 @@ import { openPostgres, openPostgresReadOnly } from './db-postgres.mjs';
 import { scanArchiveProto } from './archive-proto-scan.mjs';
 import { createHost } from './mes-host.mjs';
 import { evidenceIdsInWorkspace } from './evidence-refs.mjs';
+import { EVIDENCE_CSP, connectSources, hashSource, inlineScriptHashes, pageCsp, withSecurityHeaders } from './security-headers.mjs';
 import { stamp, verify } from '../tools/stamp-build.mjs';
 
 process.on('warning', w => { if (w.name === 'ExperimentalWarning' && /SQLite/.test(w.message)) return; console.warn(w); });
@@ -163,6 +164,9 @@ export function createServer(options = {}) {
   // demo.html relaxes separation of duties, PINs and the stamp gate. It is a training page, not part of the
   // production server: served only when the operator asks (options.serveDemo, FLIGHT_SERVE_DEMO=1 or --serve-demo).
   const serveDemo = options.serveDemo !== undefined ? options.serveDemo === true : process.env.FLIGHT_SERVE_DEMO === '1';
+  // Origins the page may call besides this server (#583); an entry that is not an origin stops the server at start.
+  const cspConnect = connectSources(options.cspConnectSrc !== undefined ? options.cspConnectSrc : process.env.FLIGHT_CSP_CONNECT_SRC);
+  const htmlHeaders = (html, extraHashes = [], cache = false) => ({ 'Content-Type': MIME['.html'], 'Cache-Control': 'no-store', 'Content-Security-Policy': pageCsp([...inlineScriptHashes(html, { cache }), ...extraHashes], cspConnect) });
   const jira = options.jira || {};
   const jiraConfig = {
     baseUrl: String(jira.baseUrl || process.env.FLIGHT_JIRA_BASE_URL || '').replace(/\/$/, ''),
@@ -196,6 +200,31 @@ export function createServer(options = {}) {
   })();
 
   // ---- helpers ----
+  // Refused-action audit rows are rate limited per account (Codex security review on #606): an account looping refused
+  // calls would otherwise grow the hash-chained audit log without bound. Up to ACTION_REFUSAL_LIMIT rows per account per
+  // minute are written; the rest are counted, and the count is written as one action-refused-suppressed row when that
+  // account's next refusal falls in a later minute. The response to the caller is the same either way.
+  const ACTION_REFUSAL_LIMIT = 30, ACTION_REFUSAL_WINDOW_MS = 60 * 1000;
+  const refusalWindows = new Map();
+  // The window bookkeeping is done synchronously before any audit write is awaited, so concurrent refusals at a minute
+  // boundary see one window: one summary row, and at most ACTION_REFUSAL_LIMIT refusal rows, per account per minute.
+  // Companion rows (the evidence-refused row of an evidence refusal) count as part of the same refusal: written with it
+  // while under the limit, and suppressed with it past the limit.
+  const auditActionRefusal = async (username, detail, companions = []) => {
+    const at = clock(); let w = refusalWindows.get(username), summary = null;
+    if (w && at - w.start >= ACTION_REFUSAL_WINDOW_MS) {
+      if (w.suppressed) summary = { suppressed: w.suppressed, windowStart: new Date(w.start).toISOString(), limit: ACTION_REFUSAL_LIMIT };
+      w = null;
+    }
+    if (!w) {
+      if (refusalWindows.size >= 10000) for (const [key, value] of refusalWindows) if (at - value.start >= ACTION_REFUSAL_WINDOW_MS && !value.suppressed) refusalWindows.delete(key);
+      w = { start: at, written: 0, suppressed: 0 }; refusalWindows.set(username, w);
+    }
+    const write = w.written < ACTION_REFUSAL_LIMIT;
+    if (write) w.written += 1; else w.suppressed += 1;
+    if (summary) await store.audit(username, 'action-refused-suppressed', summary);
+    if (write) { for (const row of companions) await store.audit(username, row.action, row.detail); await store.audit(username, 'action-refused', detail); }
+  };
   const send = (res, status, body, headers = {}) => { const json = body === undefined ? '' : JSON.stringify(body); res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers }); res.end(json); };
   // An unexpected failure is logged here with its detail and a reference. The caller gets the reference and a
   // plain next step, never the error text: it can name files, SQL, or engine internals.
@@ -203,6 +232,7 @@ export function createServer(options = {}) {
     const reference = randomBytes(6).toString('hex').toUpperCase();
     log('error', reference, req.method, req.url, error && error.stack ? error.stack : String(error));
     send(res, 500, { error: `${what} Try again; if it keeps failing, give your administrator reference ${reference}.`, reference });
+    return reference;
   };
   // Bodies are counted in bytes against MAX_REQUEST_BYTES; a declared Content-Length over it is refused before reading.
   const readBody = req => new Promise((resolve, reject) => {
@@ -467,8 +497,9 @@ export function createServer(options = {}) {
     // to be set up. A signed-in page reads the list from GET /api/auth/accounts with its session.
     const accounts = await store.accounts();
     const ctx = { api: '/api', etag: null, workspace: null, workspaceAvailable: !!row, jiraConfigured, auth: { users: session ? accounts.map(publicAccount) : [], setupRequired: accounts.length === 0 }, account: session ? publicAccount(session.account) : null, served: new Date().toISOString() };
-    const script = `<script id="flight-server">window.FLIGHT_SERVER=${JSON.stringify(ctx).replace(/</g, '\\u003c')};</script>`;
-    return host.html.replace('<head>', `<head>${script}`);
+    const body = `window.FLIGHT_SERVER=${JSON.stringify(ctx).replace(/</g, '\\u003c')};`;
+    // The page's policy is built from the served file once and the hash of this per-request script (#583).
+    return { html: host.html.replace('<head>', `<head><script id="flight-server">${body}</script>`), headers: htmlHeaders(host.html, [hashSource(body)], true) };
   };
   // Writes the archive export JSON with each recording's bytes base64-encoded in bounded chunks, one recording at a
   // time and respecting backpressure, so an evidence-heavy archive never has to fit in memory as one object.
@@ -573,6 +604,8 @@ export function createServer(options = {}) {
   const serveStatic = (req, res, rel) => {
     const file = path.normalize(path.join(ROOT, rel));
     if (!file.startsWith(ROOT) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { send(res, 404, { error: 'Not found' }); return; }
+    // An HTML file (demo.html) is a page: it gets the page policy built from its own inline scripts.
+    if (path.extname(file) === '.html') { const html = fs.readFileSync(file, 'utf8'); res.writeHead(200, htmlHeaders(html, [], true)); res.end(html); return; }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'public, max-age=3600' });
     fs.createReadStream(file).pipe(res);
   };
@@ -581,9 +614,10 @@ export function createServer(options = {}) {
   async function handle(req, res) {
     const url = new URL(req.url, 'http://localhost');
     const p = url.pathname, m = req.method;
+    withSecurityHeaders(res);
     try {
       await storeReady;
-      if (p === '/' || p === '/index.html') { const pageSession = await sessionOf(req); res.writeHead(200, { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-store' }); res.end(await page(pageSession)); return; }
+      if (p === '/' || p === '/index.html') { const pageSession = await sessionOf(req); const served = await page(pageSession); res.writeHead(200, served.headers); res.end(served.html); return; }
       if (p.startsWith('/assets/') || (p === '/demo.html' && serveDemo) || p === '/favicon.ico') { serveStatic(req, res, p); return; }
       if (!p.startsWith('/api/')) { send(res, 404, { error: 'Not found' }); return; }
       const route = p.slice(4);
@@ -941,30 +975,43 @@ export function createServer(options = {}) {
       // -- actions: run an engine function server-side with the session's authority --
       const action = /^\/workspace\/actions\/([A-Za-z0-9_.]+)$/.exec(route);
       if (action && m === 'POST') {
+        // Every refusal on this route is audited, as PUT /workspace refusals are (#582): the action name, the status and
+        // a reason. The request arguments themselves are never recorded; reasons and engine messages are capped at 500
+        // characters.
+        const auditRefusal = async (status, reason, extra = {}, companions = []) => { await auditActionRefusal(session.username, { action: action[1].slice(0, 120), status, reason: String(reason).slice(0, 500), ...extra }, companions); };
         const fn = host.resolveAction(action[1]);
-        if (!fn) { send(res, 404, { error: `No action named ${action[1]}.` }); return; }
-        const body = await readJson(req), args = Array.isArray(body.args) ? body.args : [];
+        if (!fn) { await auditRefusal(404, 'no such action'); send(res, 404, { error: `No action named ${action[1]}.` }); return; }
+        let body; try { body = await readJson(req); } catch (e) { if (e.status === 400 || e.status === 413) await auditRefusal(e.status, e.status === 413 ? 'request body over the size limit' : 'request body is not JSON'); throw e; }
+        if (!body || typeof body !== 'object' || Array.isArray(body)) { await auditRefusal(400, 'request body is not a JSON object'); send(res, 400, { error: 'Send the action as a JSON object with an args list.' }); return; }
+        const args = Array.isArray(body.args) ? body.args : [];
         if (action[1] === 'MES.configureModelAdapter' && args[0]?.enabled === true) {
           const settingName = String(args[0]?.settingName || '');
           // One answer for a setting that is not listed and one that is listed but empty: the check reveals nothing
           // about other environment variables.
-          if (!modelAdapterSettings.includes(settingName) || !String(process.env[settingName] || '').trim()) { send(res, 422, { error: 'The named server environment setting is not configured for the model adapter. Ask the server operator to set it and list it in FLIGHT_MODEL_ADAPTER_SETTINGS. The model adapter remains off.' }); return; }
+          // The audit names the setting only when it is shaped like an environment variable name, never its value.
+          if (!modelAdapterSettings.includes(settingName) || !String(process.env[settingName] || '').trim()) { await auditRefusal(422, 'model adapter setting not configured', { settingName: /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(settingName) ? settingName : '(not a setting name)' }); send(res, 422, { error: 'The named server environment setting is not configured for the model adapter. Ask the server operator to set it and list it in FLIGHT_MODEL_ADAPTER_SETTINGS. The model adapter remains off.' }); return; }
           args.push(true); // This flag is derived by the server, never accepted from the client.
         }
         const { state, etag, problem, raw, registers } = await loadState();
-        if (!state) { send(res, problem ? 422 : 404, { error: problem || 'No workspace yet.' }); return; }
-        if (registers) { send(res, 422, { error: registers }); return; }
+        if (!state) { await auditRefusal(problem ? 422 : 404, problem || 'no workspace yet'); send(res, problem ? 422 : 404, { error: problem || 'No workspace yet.' }); return; }
+        if (registers) { await auditRefusal(422, registers); send(res, 422, { error: registers }); return; }
         const ifMatch = req.headers['if-match'] || null;
-        if (!ifMatch) { send(res, 428, { error: 'Include the current workspace ETag in If-Match before running an action.' }); return; }
-        if (ifMatch && ifMatch !== etag) { send(res, 409, { error: 'The workspace changed on another device. Reload to continue.', etag }); return; }
+        if (!ifMatch) { await auditRefusal(428, 'missing If-Match', { etag }); send(res, 428, { error: 'Include the current workspace ETag in If-Match before running an action.' }); return; }
+        if (ifMatch && ifMatch !== etag) { await auditRefusal(409, 'stale If-Match', { etag }); send(res, 409, { error: 'The workspace changed on another device. Reload to continue.', etag }); return; }
         let result;
-        try { result = host.withAccount(session.account, () => fn(state, ...args), state); } catch (e) { internalError(res, req, e, 'The action could not run. Nothing was saved.'); return; }
-        if (!result || result.ok === false) { await store.audit(session.username, 'action-refused', { action: action[1], message: result && result.message }); send(res, 403, { error: result ? result.message : 'Refused.', result }); return; }
-        const invalid = validState(state); if (invalid) { send(res, 422, { error: `The action would leave the workspace invalid: ${invalid}` }); return; }
-        { const bad = await evidenceProblem(raw, state, session); if (bad) { await store.audit(session.username, 'evidence-refused', { action: action[1], message: bad }); send(res, 422, { error: bad }); return; } }
+        try { result = host.withAccount(session.account, () => fn(state, ...args), state); } catch (e) {
+          // The 500 is already sent, so a failed audit write is logged under the same reference, never answered twice.
+          const reference = internalError(res, req, e, 'The action could not run. Nothing was saved.');
+          try { await auditRefusal(500, 'the engine action failed; the server log holds the detail', { reference }); } catch (auditError) { log('error', reference, 'the action-refused audit row could not be written', auditError && auditError.stack ? auditError.stack : String(auditError)); }
+          return;
+        }
+        if (!result || result.ok === false) { await auditRefusal(403, 'refused by the engine', { message: String(result && result.message || '').slice(0, 500) }); send(res, 403, { error: result ? result.message : 'Refused.', result }); return; }
+        const invalid = validState(state); if (invalid) { await auditRefusal(422, `would leave the workspace invalid: ${invalid}`); send(res, 422, { error: `The action would leave the workspace invalid: ${invalid}` }); return; }
+        // An evidence refusal keeps its own evidence-refused row (reports and tests read it) and joins the action trail.
+        { const bad = await evidenceProblem(raw, state, session); if (bad) { await auditRefusal(422, `evidence: ${bad}`, {}, [{ action: 'evidence-refused', detail: { action: action[1], status: 422, message: bad } }]); send(res, 422, { error: bad }); return; } }
         const done = await commitState(state, etag, session.username, [{ action: 'action', detail: { action: action[1], message: result.message } }]);
-        if (done.problem) { send(res, 422, { error: `The action would leave the workspace invalid: ${done.problem}` }); return; }
-        if (done.conflict) { send(res, 409, { error: 'The workspace changed while the action ran. Try again.' }); return; }
+        if (done.problem) { await auditRefusal(422, `would leave the workspace invalid: ${done.problem}`); send(res, 422, { error: `The action would leave the workspace invalid: ${done.problem}` }); return; }
+        if (done.conflict) { await auditRefusal(409, 'workspace changed while the action ran'); send(res, 409, { error: 'The workspace changed while the action ran. Try again.' }); return; }
         res.writeHead(200, { 'Content-Type': MIME['.json'], ETag: done.etag, ...(done.archived.length ? { 'X-Flight-Archived': done.archived.join(',') } : {}) }); res.end(JSON.stringify({ result, etag: done.etag, archived: done.archived })); return;
       }
       // -- evidence: bytes in SQLite, addressed by the EV ID the record carries, checked by SHA-256 --
@@ -996,7 +1043,9 @@ export function createServer(options = {}) {
         const row = await store.evidenceMeta(ev[1]); if (!row) { send(res, 404, { error: `The server holds no recording ${ev[1]}. Upload it from the device that captured it.` }); return; }
         if (!await mayReadEvidence(session, row)) { await refuseEvidenceRead(res, session, row); return; }
         const bytes = await store.evidenceBytes(ev[1]);
-        res.writeHead(200, { 'Content-Type': row.mime, 'Content-Length': bytes.length, 'X-Evidence-Sha256': row.sha256, 'Cache-Control': 'private, no-store' }); res.end(bytes); return;
+        // A download in a sandbox, never a document the browser renders or sniffs (#583).
+        const extension = { 'video/webm': '.webm', 'video/mp4': '.mp4', 'video/quicktime': '.mov' }[row.mime] || '';
+        res.writeHead(200, { 'Content-Type': row.mime, 'Content-Length': bytes.length, 'X-Evidence-Sha256': row.sha256, 'Cache-Control': 'private, no-store', 'Content-Disposition': `attachment; filename="${ev[1]}${extension}"`, 'Content-Security-Policy': EVIDENCE_CSP }); res.end(bytes); return;
       }
       if (ev && ev[2] === '/supersede' && m === 'POST') {
         if (!await manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can supersede evidence.' }); return; }
@@ -1081,7 +1130,7 @@ export function createServer(options = {}) {
           const stamp = await recordExtract(a.id, 'print', session.username, { order: a.entry.order, activity: a.entry.activity, archiveSha256: a.sha256, mode }, summary);
           html = html.replace('</body>', `${printExtractStamp(stamp)}</body>`);
           await store.audit(session.username, 'archive-print', { orderId: a.id, mode });
-          res.writeHead(200, { 'Content-Type': MIME['.html'], 'Cache-Control': 'no-store' }); res.end(html); return;
+          res.writeHead(200, htmlHeaders(html)); res.end(html); return;
         }
         // Export: the order with its signatures and history, its activity, and the bytes of its evidence. The extract
         // hash covers each recording's stored metadata, including its SHA-256, so the bytes are bound to the stamped
@@ -1220,19 +1269,62 @@ export function createServer(options = {}) {
   return server;
 }
 
+// Whether a PostgreSQL connection string carries a password or another secret (#584). It reads the string the way
+// libpq does where that matters and errs toward yes: a URI's user info runs to the first @ before any /, and a
+// host:port whose port is not a number is a password cut short by an unencoded /. A ?password= parameter or a
+// password=, sslpassword= or other secret keyword counts too. An empty password is none.
+const SECRET_SETTING = /^\s*(?:[a-z_]*password|oauth_client_secret|scram_(?:client|server)_key)\s*$/i;
+// The PostgreSQL client for Node (pg-connection-string) reads any value that is not a socket path as a URL relative to
+// postgres://base, whatever libpq would call it. So postgresql:/db?%70assword=x, which libpq takes for keyword syntax,
+// still sets the password there, and the user info runs to the last @ of the authority. This is that reading.
+function clientUrlHasPassword(raw) {
+  if (raw.startsWith('/')) return false;
+  const str = / |%[^a-f0-9]|%[a-f0-9][^a-f0-9]/i.test(raw) ? encodeURI(raw).replace(/%25(\d\d)/g, '%$1') : raw;
+  let url = null;
+  try { url = new URL(str, 'postgres://base'); } catch { try { url = new URL(str.replace('@/', '@___DUMMY___/'), 'postgres://base'); } catch { return false; } }
+  return Boolean(url.password) || [...url.searchParams].some(([key, setting]) => SECRET_SETTING.test(key) && setting !== '');
+}
+export function connectionStringHasPassword(value) {
+  const text = String(value || '').trim();
+  if (clientUrlHasPassword(String(value || ''))) return true;
+  const uri = /^[a-z][a-z0-9+.-]*:\/\//i.exec(text);
+  // keyword=value form: libpq allows white space around the =, and a quoted value may hold spaces.
+  if (!uri) return [...text.matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*=\s*('(?:\\.|[^'\\])*'?|[^\s']\S*|)/g)].some(([, key, value]) => SECRET_SETTING.test(key) && value !== '' && value !== "''");
+  const rest = text.slice(uri[0].length), at = rest.indexOf('@'), slash = rest.indexOf('/');
+  if (at >= 0 && (slash < 0 || at < slash)) { const userinfo = rest.slice(0, at); if (userinfo.includes(':') && userinfo.slice(userinfo.indexOf(':') + 1) !== '') return true; }
+  // An @ after the first / with a : before that / is a password cut short by an unencoded /, numeric or not
+  // (user:123/456@host). It is refused even though a database name with an @ and an explicit port reads the same way:
+  // that rare string can still be given in FLIGHT_DATABASE_URL.
+  else if (at >= 0 && rest.slice(0, slash).split(',').some(host => /:[^:\]]*$/.test(host))) return true;
+  const query = rest.includes('?') ? rest.slice(rest.indexOf('?') + 1) : '';
+  return query.split('&').some(part => { const eq = part.indexOf('='); let key = eq >= 0 ? part.slice(0, eq) : part; try { key = decodeURIComponent(key); } catch {} return SECRET_SETTING.test(key) && (eq < 0 || part.slice(eq + 1) !== ''); });
+}
+export const DATABASE_URL_PASSWORD_REFUSAL = 'The --database-url connection string carries a password. Anyone who can list processes on this machine can read a command line, so the server did not start and connected to nothing. Set the connection string in the FLIGHT_DATABASE_URL environment variable instead and leave out --database-url, or give --database-url without the password and set it in PGPASSWORD.';
+
 // The store a command line names: --db picks SQLite; otherwise --database-url or FLIGHT_DATABASE_URL picks
 // PostgreSQL; otherwise FLIGHT_DB or data/flight.sqlite. Operator tools use this so they open the same store.
-export function storeSettings(arg, env = process.env) {
-  const dbOverride = arg('db', null);
+// FLIGHT_DATABASE_URL is the way to give a password. A --database-url that carries one is refused (#584): the
+// command line of a running process is readable from the process list for its whole life. The refusal never
+// repeats the string.
+// Every --database-url on the command line is checked, written as --database-url <url> or --database-url=<url> and
+// however many times it appears, so a password in one that does not win is refused too instead of left in argv.
+export function storeSettings(arg, env = process.env, argv = process.argv) {
+  const given = argv.flatMap((item, i) => item === '--database-url' ? [argv[i + 1]] : String(item).startsWith('--database-url=') ? [String(item).slice('--database-url='.length)] : []).filter(Boolean);
+  if (given.some(connectionStringHasPassword)) throw Object.assign(new Error(DATABASE_URL_PASSWORD_REFUSAL), { code: 'DATABASE_URL_PASSWORD' });
+  const joined = argv.find(item => String(item).startsWith('--database-url='));
+  const dbOverride = arg('db', null), cliUrl = arg('database-url', null) || (joined ? joined.slice('--database-url='.length) || null : null);
+  if (cliUrl && connectionStringHasPassword(cliUrl)) throw Object.assign(new Error(DATABASE_URL_PASSWORD_REFUSAL), { code: 'DATABASE_URL_PASSWORD' });
   return {
     dbPath: dbOverride || env.FLIGHT_DB || path.join(ROOT, 'data', 'flight.sqlite'),
-    databaseUrl: arg('database-url', dbOverride ? null : env.FLIGHT_DATABASE_URL || null)
+    databaseUrl: cliUrl || (dbOverride ? null : env.FLIGHT_DATABASE_URL || null)
   };
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   const arg = (name, fallback) => { const i = process.argv.indexOf(`--${name}`); return i > 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback; };
-  const { dbPath, databaseUrl } = storeSettings(arg);
+  let settings;
+  try { settings = storeSettings(arg); } catch (e) { console.error(e.message); process.exit(1); }
+  const { dbPath, databaseUrl } = settings;
   const openCliStore = async () => databaseUrl ? openPostgres(databaseUrl) : openDb(dbPath);
   const backupTo = arg('backup', null), restoreFrom = arg('restore', null), unlockUser = arg('unlock', null);
   if (unlockUser) {
@@ -1250,7 +1342,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   } else if (restoreFrom) {
     // Offline restore of a pg_dump custom-format archive into the PostgreSQL target.
     // Stop the server first when restoring into its database.
-    if (!databaseUrl) { console.error('Restore targets PostgreSQL only: pass --database-url <connection string>.'); process.exit(1); }
+    if (!databaseUrl) { console.error('Restore targets PostgreSQL only: set FLIGHT_DATABASE_URL to its connection string.'); process.exit(1); }
     const { restorePostgres } = await import('./db-postgres.mjs');
     try { await restorePostgres(databaseUrl, restoreFrom); console.log(`Restored ${restoreFrom} into the PostgreSQL database. Every session in the backup was ended, so everyone signs in again. Start the server normally; it verifies the audit chain on startup and refuses a tampered restore.`); }
     catch (e) { console.error(`Restore failed: ${e.message} The restore runs as one transaction, so it left the database unchanged.`); process.exit(1); }

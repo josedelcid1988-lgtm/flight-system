@@ -410,6 +410,118 @@ try {
     } finally { delete process.env.FLIGHT_TEST_MODEL_KEY; }
   });
 
+  await check('every refused action is audited with its name, status and reason, and never its arguments (#582)', async () => {
+    const refused = async () => (await server.store.auditRows(1000)).filter(row => row.action === 'action-refused');
+    const latest = async () => JSON.parse((await refused())[0].detail);
+    now += 61 * 1000; // a fresh refusal window for this account (the earlier helper-refusal check used part of one)
+    const before = server.store.getDoc('default'), count = (await refused()).length;
+    const secret = 'argument-text-that-must-not-be-recorded';
+    const unknown = await api('POST', '/workspace/actions/MES.noSuchCommand', { token, body: { args: [secret] }, headers: { 'If-Match': before.etag } });
+    assert.equal(unknown.status, 404);
+    assert.equal(unknown.json.error, 'No action named MES.noSuchCommand.', 'the response text is unchanged');
+    assert.deepEqual(await latest(), { action: 'MES.noSuchCommand', status: 404, reason: 'no such action' });
+    const noMatch = await api('POST', '/workspace/actions/MES.setPriority', { token, body: { args: ['WO-10001', 'High', secret] } });
+    assert.equal(noMatch.status, 428);
+    assert.deepEqual(await latest(), { action: 'MES.setPriority', status: 428, reason: 'missing If-Match', etag: before.etag });
+    const stale = await api('POST', '/workspace/actions/MES.setPriority', { token, body: { args: ['WO-10001', 'High', secret] }, headers: { 'If-Match': '"stale-etag"' } });
+    assert.equal(stale.status, 409);
+    assert.deepEqual(await latest(), { action: 'MES.setPriority', status: 409, reason: 'stale If-Match', etag: before.etag });
+    const notJson = await api('POST', '/workspace/actions/MES.setPriority', { token, raw: true, body: `{"args":["${secret}"`, headers: { 'Content-Type': 'application/json', 'If-Match': before.etag } });
+    assert.equal(notJson.status, 400);
+    assert.deepEqual(await latest(), { action: 'MES.setPriority', status: 400, reason: 'request body is not JSON' });
+    for (const raw of ['null', '[1,2]', '"text"', '7']) {
+      const notObject = await api('POST', '/workspace/actions/MES.setPriority', { token, raw: true, body: raw, headers: { 'Content-Type': 'application/json', 'If-Match': before.etag } });
+      assert.equal(notObject.status, 400, `a ${raw} body is refused`);
+      assert.deepEqual(await latest(), { action: 'MES.setPriority', status: 400, reason: 'request body is not a JSON object' });
+    }
+    const tooLarge = await api('POST', '/workspace/actions/MES.setPriority', { token, headers: { 'Content-Length': String(MAX_REQUEST_BYTES + 1), 'If-Match': before.etag } });
+    assert.equal(tooLarge.status, 413);
+    assert.deepEqual(await latest(), { action: 'MES.setPriority', status: 413, reason: 'request body over the size limit' });
+    // A model adapter probe names the setting only when it looks like an environment variable name, never a value.
+    const probe = { enabled: true, provider: 'approved-model', rationale: 'Probe of an unlisted setting.' };
+    const unlisted = await api('POST', '/workspace/actions/MES.configureModelAdapter', { token, body: { args: [{ ...probe, settingName: 'PATH' }] }, headers: { 'If-Match': before.etag } });
+    assert.equal(unlisted.status, 422);
+    assert.deepEqual(await latest(), { action: 'MES.configureModelAdapter', status: 422, reason: 'model adapter setting not configured', settingName: 'PATH' });
+    await api('POST', '/workspace/actions/MES.configureModelAdapter', { token, body: { args: [{ ...probe, settingName: `x ${secret}` }] }, headers: { 'If-Match': before.etag } });
+    assert.equal((await latest()).settingName, '(not a setting name)');
+    // An engine refusal keeps its message and now carries its status too.
+    const s = '3333';
+    server.store.upsertAccount({ username: 'refused-basic', displayName: 'Refused basic user', role: 'general', salt: s, hash: sha(s, 'refused-basic-pass'), createdBy: 'one' });
+    const basic = await api('POST', '/auth/session', { body: { username: 'refused-basic', password: 'refused-basic-pass' } });
+    const engine = await api('POST', '/workspace/actions/MES.setPriority', { token: basic.json.token, body: { args: ['WO-10001', 'High'] }, headers: { 'If-Match': before.etag } });
+    assert.equal(engine.status, 403);
+    const engineRow = await latest();
+    assert.deepEqual([engineRow.action, engineRow.status, engineRow.reason], ['MES.setPriority', 403, 'refused by the engine']);
+    assert.equal(engineRow.message, engine.json.error);
+    // An action whose result would leave the workspace invalid (the post-action check) is refused and audited.
+    const resolveAction = server.host.resolveAction;
+    server.host.resolveAction = name => name === 'MES.setPriority' ? state => { state.orders = 'not a list'; return { ok: true, message: 'corrupted' }; } : resolveAction(name);
+    let invalid;
+    try { invalid = await api('POST', '/workspace/actions/MES.setPriority', { token, body: { args: ['WO-10001', 'High', secret] }, headers: { 'If-Match': before.etag } }); }
+    finally { server.host.resolveAction = resolveAction; }
+    assert.equal(invalid.status, 422);
+    assert.match(invalid.json.error, /^The action would leave the workspace invalid: /);
+    const invalidRow = await latest();
+    assert.deepEqual([invalidRow.action, invalidRow.status], ['MES.setPriority', 422]);
+    assert.match(invalidRow.reason, /^would leave the workspace invalid: /);
+    // An engine function that throws on malformed arguments is refused with 500 and audited with the reference the
+    // caller receives, never the arguments or the error text.
+    server.host.resolveAction = name => name === 'MES.setPriority' ? () => { throw new Error(`engine detail ${secret}`); } : resolveAction(name);
+    let thrown;
+    try { thrown = await api('POST', '/workspace/actions/MES.setPriority', { token, body: { args: [null, secret] }, headers: { 'If-Match': before.etag } }); }
+    finally { server.host.resolveAction = resolveAction; }
+    assert.equal(thrown.status, 500);
+    assert.deepEqual(await latest(), { action: 'MES.setPriority', status: 500, reason: 'the engine action failed; the server log holds the detail', reference: thrown.json.reference });
+    assert.equal((await refused()).length, count + 14, 'each refusal adds exactly one audit row');
+    assert.equal(JSON.stringify((await refused()).slice(0, 14)).includes(secret), false, 'no refusal row records the request arguments or the error text');
+    assert.equal(server.store.getDoc('default').etag, before.etag, 'the refused actions leave the shared workspace unchanged');
+    assert.equal(server.store.verifyAudit().ok, true, 'the audit chain still verifies');
+  });
+  await check('an engine failure whose audit write also fails is answered once and the server keeps serving', async () => {
+    now += 61 * 1000;
+    const before = await api('GET', '/workspace', { token });
+    const resolveAction = server.host.resolveAction, audit = server.store.audit;
+    const unhandled = []; const onUnhandled = e => unhandled.push(e);
+    process.on('unhandledRejection', onUnhandled);
+    server.host.resolveAction = name => name === 'MES.setPriority' ? () => { throw new Error('engine failure'); } : resolveAction(name);
+    server.store.audit = async (...row) => { if (row[1] === 'action-refused') throw new Error('audit store unavailable'); return audit.apply(server.store, row); };
+    let thrown;
+    try { thrown = await api('POST', '/workspace/actions/MES.setPriority', { token, body: { args: ['WO-10001', 'High'] }, headers: { 'If-Match': before.etag } }); await new Promise(r => setTimeout(r, 50)); }
+    finally { server.host.resolveAction = resolveAction; server.store.audit = audit; process.off('unhandledRejection', onUnhandled); }
+    assert.equal(thrown.status, 500);
+    assert.match(thrown.json.reference, /^[0-9A-F]{12}$/);
+    assert.deepEqual(unhandled.map(String), [], 'no second response is attempted, so nothing is left unhandled');
+    assert.equal((await api('GET', '/workspace', { token })).status, 200, 'the server keeps serving');
+  });
+  await check('refused-action audit rows are rate limited per account, and the suppressed count is recorded', async () => {
+    now += 61 * 1000;
+    const rows = async action => (await server.store.auditRows(5000)).filter(row => row.action === action && row.username === 'one');
+    const start = (await rows('action-refused')).length, startSuppressed = (await rows('action-refused-suppressed')).length;
+    const etag = server.store.getDoc('default').etag;
+    for (let i = 0; i < 35; i += 1) {
+      const probe = await api('POST', `/workspace/actions/MES.probe${i}`, { token, body: { args: [] }, headers: { 'If-Match': etag } });
+      assert.equal(probe.status, 404, 'every probe is still refused with 404');
+    }
+    assert.equal((await rows('action-refused')).length, start + 30, 'only the first 30 refusals in a minute are written');
+    assert.equal((await rows('action-refused-suppressed')).length, startSuppressed, 'the suppressed count waits for the next minute');
+    now += 61 * 1000;
+    assert.equal((await api('POST', '/workspace/actions/MES.probeAfter', { token, body: { args: [] }, headers: { 'If-Match': etag } })).status, 404);
+    const summary = await rows('action-refused-suppressed');
+    assert.equal(summary.length, startSuppressed + 1, 'one summary row for the suppressed minute');
+    assert.equal(JSON.parse(summary[0].detail).suppressed, 5, 'it counts the five refusals that were not written');
+    assert.equal((await rows('action-refused')).length, start + 31, 'the new minute writes its refusal again');
+    // Concurrent refusals across a minute boundary share one window: one summary row and at most 30 refusal rows.
+    for (let i = 0; i < 29; i += 1) await api('POST', `/workspace/actions/MES.fill${i}`, { token, body: { args: [] }, headers: { 'If-Match': etag } });
+    for (let i = 0; i < 4; i += 1) await api('POST', `/workspace/actions/MES.over${i}`, { token, body: { args: [] }, headers: { 'If-Match': etag } });
+    now += 61 * 1000;
+    const beforeBurst = (await rows('action-refused')).length, summariesBefore = (await rows('action-refused-suppressed')).length;
+    const burst = await Promise.all(Array.from({ length: 40 }, (_, i) => api('POST', `/workspace/actions/MES.burst${i}`, { token, body: { args: [] }, headers: { 'If-Match': etag } })));
+    assert.ok(burst.every(result => result.status === 404), 'every concurrent probe is refused');
+    assert.equal((await rows('action-refused-suppressed')).length, summariesBefore + 1, 'one summary row for the previous minute, not one per concurrent request');
+    assert.equal(JSON.parse((await rows('action-refused-suppressed'))[0].detail).suppressed, 4);
+    assert.equal((await rows('action-refused')).length, beforeBurst + 30, 'a concurrent burst writes at most 30 refusal rows in the new minute');
+    assert.equal(server.store.verifyAudit().ok, true, 'the audit chain still verifies');
+  });
   await check('bulk account writes reject client-supplied roles, grants, training and Support Access', async () => {
     const created = await api('PUT', '/auth/accounts', { token, body: { users: [
       { username: 'combined', displayName: 'Combined role account', role: 'technician', roles: ['technician'], salt: 'combined-salt', hash: sha('combined-salt', 'combined-pass-123') }
