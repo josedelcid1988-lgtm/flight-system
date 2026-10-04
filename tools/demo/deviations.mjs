@@ -211,6 +211,67 @@ const LIST = [
     why: 'Production refuses a FAIR, 8130-9 or AQI signature when the signer has no current stamp of an allowed type (expired, not yet issued, or an additional stamp paused for training, #579). The demo signs with the account\'s first Active stamp of an allowed type, as it did before that rule, so a scenario is not stopped by stamp dates. An account with no Active stamp of an allowed type is still refused.',
     find: '    const current = checked.find(c => !c.problem);\n', count: 1,
     replace: (ctx, m, id) => `    const current = checked.find(c => !c.problem) || checked[0]; /* DEMO ${id} */\n` },
+  { area: 'Separation of duties', title: 'The MRB board screen keeps the vote form open after your first vote',
+    why: 'One person can vote every seat of a board from the board screen, matching the engine relaxation D-23, so a board can be walked to its decision alone. Production shows the person who already voted a notice to switch to the next voter instead of the vote form.',
+    find: 'ownVote = m.votes.find(v => v.by?.credentialId === actorId);', count: 1,
+    replace: (ctx, m, id) => `ownVote = false /* DEMO ${id} */ && m.votes.find(v => v.by?.credentialId === actorId);` },
+  { area: 'Separation of duties', title: 'The pedigree change screen offers the second approval from the same discipline',
+    why: 'One person can give both pedigree change approvals from the work order, matching the engine relaxation D-22. Production hides the approval control once that discipline has approved.',
+    find: 'const roleTaken=c.approvals.some(a=>a.discipline===myRole);', count: 1,
+    replace: (ctx, m, id) => `const roleTaken=false/* DEMO ${id} */&&c.approvals.some(a=>a.discipline===myRole);` },
+  { area: 'Separation of duties', title: 'The person who requested a closure sees Review closure',
+    why: 'One person can request and approve closing a work order as obsolete or scrap, matching the engine relaxation D-21. Production shows the review control only to a different Quality account.',
+    find: "const canDecide=skCan('approve-wo')&&me&&r.requestedBy?.credentialId!==me.credentialId;", count: 1,
+    replace: (ctx, m, id) => `const canDecide=skCan('approve-wo')&&me&&(true/* DEMO ${id} */||r.requestedBy?.credentialId!==me.credentialId);` },
+  { area: 'Separation of duties', title: 'System QMS records same-person checks never match',
+    why: 'One person can author and review a controlled document, review and accept an analysis draft, and open and close an audit and its findings, so the System QMS records can be walked alone. Production refuses each of these to the same person.',
+    find: /if\(who\.credentialId===(?:doc\.author|d\.review\.by|finding\.openedBy|audit\.openedBy)\.credentialId\)return fail\(/g, count: 4,
+    replace: (ctx, m, id) => m.replace('if(who.credentialId===', `if(false/* DEMO ${id} */&&who.credentialId===`) },
+  { area: 'Separation of duties', title: 'The person who opened an equipment maintenance record may close it',
+    why: 'One person can take a tool out of service and verify and close its maintenance record, so the demo does not stall on equipment. Production requires a different person to verify and close it.',
+    find: 'if (item.openedBy.credentialId === verifier.credentialId) return fail(', count: 1,
+    replace: (ctx, m, id) => `if (false /* DEMO ${id} */ && item.openedBy.credentialId === verifier.credentialId) return fail(` },
+  { area: 'Separation of duties', title: 'The author or reviewer of a controlled document may release it',
+    why: 'One person can author, review and release a controlled document, so a document can be walked to Released alone. Production requires a third person, different from the author and the reviewer.',
+    find: 'if([doc.author.credentialId,doc.reviewer.credentialId].includes(who.credentialId))return fail(', count: 1,
+    replace: (ctx, m, id) => `if(false/* DEMO ${id} */&&[doc.author.credentialId,doc.reviewer.credentialId].includes(who.credentialId))return fail(` },
+  { area: 'Separation of duties', title: 'System QMS records validate when one person signed every step',
+    why: 'The workspace check accepts a controlled document reviewed or released by its author and an audit or finding closed by the person who opened it, matching the two rules above, so a demo workspace stays valid. Production rejects each of these records.',
+    find: /reviewers\.includes\(doc\.(?:reviewer|releaser)\.credentialId\)|[fa]\.closer\.credentialId!==[fa]\.openedBy\.credentialId/g, count: 4,
+    replace: (ctx, m, id) => m.startsWith('reviewers') ? `(false/* DEMO ${id} */&&${m})` : `(true/* DEMO ${id} */||${m})` },
+  { area: 'Separation of duties', title: 'Equipment maintenance validates when the opener closed it',
+    why: 'The workspace check accepts a maintenance record verified and closed by the person who opened it, matching the closing rule lifted above, so the change saves instead of rolling back. Production rejects such a record.',
+    find: 'item.closedBy.credentialId !== item.openedBy.credentialId', count: 1,
+    replace: (ctx, m, id) => `(true /* DEMO ${id} */ || ${m})` },
+  { area: 'Separation of duties', title: 'Pedigree change text says one person may give both approvals',
+    why: 'The pedigree change dialog, panel, request and approval messages and their history entries match the relaxations D-22 and D-49, so a solo walk-through is not told to find a second discipline. Production keeps the different discipline wording.',
+    find: /First approval recorded\. A second approval from a different discipline is needed\.|One more approval from a different discipline required\.|Second approval must come from a different discipline; General User accounts cannot approve\.|Two approvals from different disciplines required\. Reason: \$\{|Two approvals from different disciplines are needed\.|two approvals from two different disciplines \(/g, count: 6,
+    // The first approval message is a single-quoted string; the others sit inside template literals.
+    replace: (ctx, m, id) => m.startsWith('First') ? `First approval recorded. A second approval is needed; in this demo the same person may give it.'/* DEMO ${id} */+'`
+      : `\${''/* DEMO ${id} */}` + (m.startsWith('One') ? 'One more approval required; in this demo the same person may give it.'
+      : m.startsWith('Second') ? 'Two approvals are needed; in this demo one person may give both. General User accounts cannot approve.'
+      : m.startsWith('two') ? 'two approvals; in this demo one person may give both. Approvers hold an approving role ('
+      // The request history line ends in the reason; recorded history already in a workspace is left as written.
+      : m.includes('Reason') ? 'Two approvals required; in this demo one person may give both. Reason: ${'
+      : 'Two approvals are needed; in this demo one person may give both.') },
+  { area: 'Separation of duties', title: 'Closure request text says the requester may review it',
+    why: 'The pending closure banner matches the relaxation D-50, which shows Review closure to the requester, so it does not tell a solo walk-through to find another person. Production asks for Quality approval from a different person.',
+    find: 'Needs Quality approval from a different person.', count: 1,
+    replace: (ctx, m, id) => `\${''/* DEMO ${id} */}Needs Quality approval; in this demo the requester may review it.` },
+  { area: 'Separation of duties', title: 'Analysis draft review message says the reviewer may accept it',
+    why: 'The message after an analysis draft is reviewed matches the relaxation D-51, so a solo walk-through is told its real next step. Production says a different qualified person must accept it.',
+    find: 'reviewed. A different qualified person must accept it.', count: 1,
+    replace: (ctx, m, id) => `reviewed.\${''/* DEMO ${id} */} In this demo the reviewer may accept it next.` },
+  { area: 'Separation of duties', title: 'System QMS text says one person may close findings and audits and sign every document role',
+    why: 'The help text under Open audit, the note on an open audit card and the controlled document summary match the relaxations D-51, D-53 and D-54, which let the person who recorded a finding close it and its audit, and let one person author, review and release a document, so a solo walk-through is not told another person must sign. Production says a different person signs each closure, the audit author cannot close the audit, and the author, reviewer and releaser are three different people.',
+    // The three sentences are single-quoted MES constants read by both the legacy and the React System QMS page.
+    find: "MES.AUDIT_FINDING_CLOSE_HELP = 'The person who records a finding cannot close it. A different person signs each closure.';\n  MES.AUDIT_CLOSE_WAIT = 'Close every finding before closing this audit. The audit author cannot close it.';\n  MES.CONTROLLED_DOC_PEOPLE = 'The author, reviewer, and releaser must be three different people.';", count: 1,
+    replace: (ctx, m, id) => `MES.AUDIT_FINDING_CLOSE_HELP = /* DEMO ${id} */ 'In this demo the person who records a finding may also sign it closed.';\n  MES.AUDIT_CLOSE_WAIT = /* DEMO ${id} */ 'Close every finding before closing this audit. In this demo the audit author may close it.';\n  MES.CONTROLLED_DOC_PEOPLE = /* DEMO ${id} */ 'In this demo one person may author, review and release a revision.';` },
+  { area: 'Separation of duties', title: 'FAIR box 22 text says the verifier may sign it',
+    why: 'The message after a FAIR is verified, the Hangar task, the box 22 panel heading, help and waiting text match the relaxation D-33, which lets the verifier sign box 22, so a solo walk-through is not told another person must sign. Production says a second person, other than the verifier, reviews and approves the FAIR in box 22.',
+    // The five sentences are single-quoted MES constants read by the engine, the Hangar task, and the legacy and React FAIR panels.
+    find: "MES.FAIR_VERIFIED_NEXT = 'FAIR verified. A second person reviews and approves it in box 22 next.';\n  MES.FAIR_BOX22_TASK = 'a second person signs box 22';\n  MES.FAIR_BOX22_HEADING = 'Blocks 22 and 23 · FAIR reviewed / approved by (a second person)';\n  MES.FAIR_BOX22_HELP = 'AS9102 Rev C: someone other than the verifier reviews and approves the FAIR here. The Skyryse QA approval waits for it.';\n  MES.FAIR_BOX22_WAIT = 'Waiting for a second person';", count: 1,
+    replace: (ctx, m, id) => `MES.FAIR_VERIFIED_NEXT = /* DEMO ${id} */ 'FAIR verified. In this demo the verifier may also sign box 22 next.';\n  MES.FAIR_BOX22_TASK = /* DEMO ${id} */ 'in this demo the verifier may sign box 22';\n  MES.FAIR_BOX22_HEADING = /* DEMO ${id} */ 'Blocks 22 and 23 · FAIR reviewed / approved by (in this demo the verifier may sign)';\n  MES.FAIR_BOX22_HELP = /* DEMO ${id} */ 'AS9102 Rev C review and approval. In this demo the verifier may sign it. The Skyryse QA approval waits for it.';\n  MES.FAIR_BOX22_WAIT = /* DEMO ${id} */ 'Waiting for box 22; in this demo the verifier may sign it';` },
 ];
 
 export const DEVIATIONS = LIST.map((d, i) => Object.freeze({ ...d, id: `D-${i + 1}` }));

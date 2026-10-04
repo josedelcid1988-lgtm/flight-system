@@ -64,6 +64,23 @@ ok('the demo reads and writes accounts only under skyryse-mes-demo-auth-v1',!/['
  ok('the demo keeps its session, lockout, security log, sign-in tokens, drafts and evidence under demo keys',shared.every(k=>!new RegExp(`['"]skyryse-mes-${k}-v1['"]`).test(curated)&&new RegExp(`['"]skyryse-mes-demo-${k}-v1['"]`).test(curated)),shared.filter(k=>new RegExp(`['"]skyryse-mes-${k}-v1['"]`).test(curated)).join(','));
  ok('production keeps those keys unchanged',shared.every(k=>new RegExp(`['"]skyryse-mes-${k}-v1['"]`).test(prod)));}
 
+// ---- solo hand-off text (D-56 to D-60): the demo never tells one person to find another; production still does ----
+{const HANDOFF=['First approval recorded. A second approval from a different discipline is needed.','One more approval from a different discipline required.',
+   'Second approval must come from a different discipline; General User accounts cannot approve.','Two approvals from different disciplines required. Reason: ${','Two approvals from different disciplines are needed.',
+   'two approvals from two different disciplines (','Needs Quality approval from a different person.','reviewed. A different qualified person must accept it.',
+   'The person who records a finding cannot close it. A different person signs each closure.',
+   'The audit author cannot close it.','The author, reviewer, and releaser must be three different people.',
+   'A second person reviews and approves it in box 22 next.','a second person signs box 22','approved by (a second person)',
+   'someone other than the verifier reviews and approves the FAIR here.','Waiting for a second person'];
+ const SOLO=['in this demo the same person may give it.','in this demo one person may give both.','in this demo the requester may review it.','In this demo the reviewer may accept it next.',
+   'In this demo the person who records a finding may also sign it closed.','In this demo the audit author may close it.',
+   'In this demo one person may author, review and release a revision.',
+   'FAIR verified. In this demo the verifier may also sign box 22 next.','in this demo the verifier may sign box 22','(in this demo the verifier may sign)',
+   'In this demo the verifier may sign it.','Waiting for box 22; in this demo the verifier may sign it'];
+ ok('production keeps every different-person hand-off line',HANDOFF.every(s=>prod.includes(s)),HANDOFF.filter(s=>!prod.includes(s)).join(' | '));
+ ok('the demo shows none of the different-person hand-off lines',HANDOFF.every(s=>!curated.includes(s)&&!qa150.includes(s)),HANDOFF.filter(s=>curated.includes(s)).join(' | '));
+ ok('the demo shows the solo next step instead',SOLO.every(s=>curated.includes(s)),SOLO.filter(s=>!curated.includes(s)).join(' | '));
+ ok('production shows none of the solo next-step lines',SOLO.every(s=>!prod.includes(s)),SOLO.filter(s=>prod.includes(s)).join(' | '));}
 // ---- in the browser ----
 const b=await chromium.launch(process.env.CHROME_PATH?{executablePath:process.env.CHROME_PATH}:{});
 const errs=[];
@@ -211,9 +228,16 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  ok('a second open finds nothing left to remove and records nothing new',again===1,String(again));
  // The accounts the older demo made still work in the demo itself.
  await p.evaluate(()=>sessionStorage.removeItem('skyryse-mes-session-v1'));
- await p.goto('file://'+FIXTURES+'demo_publish.html');await p.waitForFunction(()=>!!document.querySelector('#sk-boot input[name=username]'));
- await p.locator('#sk-boot input[name=username]').fill('qa.boss');await p.locator('#sk-boot input[name=password]').fill('chosen-pass-1');
- await p.locator('#sk-boot form').evaluate(f=>f.requestSubmit());await p.waitForFunction(()=>!document.getElementById('sk-boot'),null,{timeout:20000});
+ // The harness can lose the demo account record or the sign-in across a page load (#556): up to three times, the
+ // record is put back if it is missing and the sign-in is tried again. The assertion below is unchanged.
+ {const demoAuth=await p.evaluate(()=>localStorage.getItem('skyryse-mes-demo-auth-v1'));
+  for(let i=0;i<3;i++){
+   await p.evaluate(a=>{if(a&&!/"qa\.boss"/.test(localStorage.getItem('skyryse-mes-demo-auth-v1')||''))localStorage.setItem('skyryse-mes-demo-auth-v1',a);},demoAuth);
+   await p.goto('file://'+FIXTURES+'demo_publish.html');await p.waitForFunction(()=>!!document.querySelector('#sk-boot input[name=username]'),null,{timeout:20000}).catch(()=>{});
+   if(!await p.locator('#sk-boot input[name=username]').count())continue;
+   await p.locator('#sk-boot input[name=username]').fill('qa.boss');await p.locator('#sk-boot input[name=password]').fill('chosen-pass-1');
+   await p.locator('#sk-boot form').evaluate(f=>f.requestSubmit());
+   if(await p.waitForFunction(()=>!document.getElementById('sk-boot'),null,{timeout:20000}).then(()=>true,()=>false))break;}}
  ok('an account made in the older demo signs in to the demo with its chosen password',await p.evaluate(()=>skAuth.user()&&skAuth.user().username)==='qa.boss');
  await p.evaluate(()=>sessionStorage.removeItem('skyryse-mes-demo-session-v1'));
  // Clearing the browser's site data reopens it: production starts over with first-account setup.
@@ -259,9 +283,16 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  // If the record did not survive that reload, a second page of the origin writes it, as another tab would, and stays
  // open until this tab sees it: a write from a page that reloaded or closed just after can be lost (#556).
  {const other=await ctx.newPage();await other.goto('file://'+FIXTURES+BLANK);
-  await other.evaluate(v=>{if(!localStorage.getItem('skyryse-mes-legacy-demo-review-v1'))localStorage.setItem('skyryse-mes-legacy-demo-review-v1',v);},v);
-  for(const end=Date.now()+60000;Date.now()<end;){if(await p.evaluate(()=>!!localStorage.getItem('skyryse-mes-legacy-demo-review-v1')).catch(()=>false))break;await p.waitForTimeout(250);}
-  await p.reload();await p.waitForTimeout(900);await other.close();}
+  // The page is read once it has decided (the gate shown, or a signed-in user), not a fixed 900 ms after the reload.
+  // The harness can lose the record again across that reload, or lose the reload itself, so up to three times the
+  // other page puts the record back if it is missing, this tab waits until it sees it, and reloads.
+  for(let i=0;i<3;i++){
+   await other.evaluate(v=>{if(!localStorage.getItem('skyryse-mes-legacy-demo-review-v1'))localStorage.setItem('skyryse-mes-legacy-demo-review-v1',v);},v);
+   for(const end=Date.now()+60000;Date.now()<end;){if(await p.evaluate(()=>!!localStorage.getItem('skyryse-mes-legacy-demo-review-v1')).catch(()=>false))break;await p.waitForTimeout(250);}
+   await p.reload().catch(()=>{});
+   await p.waitForFunction(()=>!!document.getElementById('sk-legacy-review')||!!(window.skAuth&&skAuth.user()),null,{timeout:20000}).catch(()=>{});
+   if(await p.evaluate(()=>!!document.getElementById('sk-legacy-review')).catch(()=>false))break;}
+  await other.close();}
  const open=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),user:window.skAuth&&skAuth.user()&&skAuth.user().username}));
  ok('that tab is then closed and its Operations session ends',open.gate&&!open.user,JSON.stringify(open));
  await ctx.close();}
@@ -281,15 +312,23 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
   await s.goto('file://'+FIXTURES+'publish.html');await s.waitForFunction(()=>!document.getElementById('sk-login').hidden,null,{timeout:20000});
  // A page already open on the sign-in screen (an active signed-in tab would rewrite shared storage from its own copy).
  // The seeding page stays open until this page sees the seed: a page closed just after its write can lose it (#556).
+ // Even then the seed can miss a tab entirely, so each tab that needs it writes the same accounts itself when they have
+ // not arrived and loads again. Nothing else has been written yet, so this cannot replace the leftovers added below.
+ const accounts=JSON.stringify({users:[{username:'ops9',displayName:'Ops Nine',...H,role:'ops',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'},{username:'mlee',displayName:'Morgan Lee',...H,role:'qm',createdAt:'2026-09-01T00:00:00.000Z',createdBy:'mlee'}]});
+ const seedIfMissing=pg=>pg.evaluate(a=>{if(!/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||''))localStorage.setItem('skyryse-mes-auth-v1',a);},accounts);
  const open=await ctx.newPage();open.on('pageerror',e=>errs.push(e.message));
- await open.goto('file://'+FIXTURES+'publish.html');await open.waitForFunction(()=>!document.getElementById('sk-login').hidden&&/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||''),null,{timeout:60000});
+ for(let i=0;;i++){await open.goto('file://'+FIXTURES+'publish.html');
+  if(await open.waitForFunction(()=>!document.getElementById('sk-login').hidden&&/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||''),null,{timeout:15000}).then(()=>true,()=>false))break;
+  if(i>=4)throw new Error('the seeded accounts never reached the open tab');await seedIfMissing(open);await open.waitForTimeout(500);}
  await s.close();
  // The leftovers are written by the finding page itself before it loads (a write from another tab arrives asynchronously).
  const leftovers=()=>{if(sessionStorage.getItem('left'))return;sessionStorage.setItem('left','1');const a=JSON.parse(localStorage.getItem('skyryse-mes-auth-v1'));if(!a.users.some(u=>u.username==='master')){a.users.push({username:'master',displayName:'Master Access',salt:'00',hash:'f'.repeat(64),role:'admin',createdAt:'2026-09-17T00:00:00.000Z',createdBy:'demo build'});localStorage.setItem('skyryse-mes-auth-v1',JSON.stringify(a));localStorage.setItem('skyryse-mes-sync-queue-v1',JSON.stringify([{clientWriteId:'old-demo-w',storeKey:'skyryse-mes-work-order-qa100-v1',entityType:'order',entityId:'WO-10009',operation:'upsert',payloadJson:'{}'},{clientWriteId:'prod-w',storeKey:'skyryse-mes-work-order-v1',entityType:'order',entityId:'WO-1',operation:'upsert',payloadJson:'{}'}]));}};
  // The finding page waits on a blank page of the origin until the seed has reached it, so its leftovers are added to
  // the seeded accounts, not to an empty list (#556).
  const p=await ctx.newPage();p.on('pageerror',e=>errs.push(e.message));
- await p.goto('file://'+FIXTURES+BLANK);await p.waitForFunction(()=>/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||''),null,{timeout:60000});
+ await p.goto('file://'+FIXTURES+BLANK);
+ if(!await p.waitForFunction(()=>/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||''),null,{timeout:15000}).then(()=>true,()=>false)){
+  await seedIfMissing(p);await p.waitForFunction(()=>/"mlee"/.test(localStorage.getItem('skyryse-mes-auth-v1')||''),null,{timeout:15000});}
  await p.addInitScript(leftovers);
  await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(2500);
  const f1=await p.evaluate(()=>({gate:(document.getElementById('sk-legacy-review')||{}).textContent||null,stored:localStorage.getItem('skyryse-mes-legacy-demo-review-v1'),users:JSON.parse(localStorage.getItem('skyryse-mes-auth-v1')).users.map(u=>u.username),queue:JSON.parse(localStorage.getItem('skyryse-mes-sync-queue-v1')||'[]').map(x=>x.clientWriteId),ev:JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').filter(e=>/^legacy-demo-/.test(e.type))}));
