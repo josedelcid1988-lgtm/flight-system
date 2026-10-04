@@ -1155,6 +1155,41 @@ export function createServer(options = {}) {
         void drainExports();
         send(res, 202, { id: job.id, status: job.status, exportId: job.exportId }); return;
       }
+      // -- access review: the account list and its lockouts for the read-only access review report, managers only.
+      // The gate counts only active roles: an extra QA Manager or Master Access role whose training is not current
+      // in the shared workspace does not open it, as in the page. It sends the version (ETag) of the workspace it read, so
+      // the page derives the report only from that same version. It changes nothing; the page derives every status
+      // from the same authority functions it enforces with. --
+      if (route === '/auth/access-report' && m === 'GET') {
+        // One snapshot: the caller's own account, the workspace, every account and the lockouts are read in one
+        // transaction under the authority lock that role, grant and Support Access changes take (with PostgreSQL it
+        // also takes the workspace lock; SQLite's transaction holds the write lock), so no change lands between the
+        // reads and a just-demoted manager is refused. The transaction is rolled back: the report writes nothing.
+        let report = null, refused = false;
+        await store.transaction(async tx => {
+          await tx.lockAuthority();
+          // The report instant is taken here, once, before anything is evaluated: the manager gate, every account's roles
+          // and capabilities, the lockouts and the generation time are all decided at it, so a training or stamp that
+          // lapses at Pacific midnight while the accounts are read cannot make the report disagree with its own time.
+          const at = Date.now(), atIso = new Date(at).toISOString();
+          const caller = await tx.account(session.username), row = await tx.getDoc(TENANT);
+          let reviewState = null;
+          if (row) { try { const parsed = host.MES.upgrade(structuredClone(JSON.parse(row.json))); reviewState = parsed && host.MES.validate(parsed) ? parsed : null; } catch { reviewState = null; } }
+          if (!caller || !host.rolesOf(caller, reviewState, atIso).some(role => ['qm', 'admin'].includes(role))) { refused = true; return false; }
+          // Lockouts change with every failed sign-in and are not under the authority lock, so they are read for one
+          // instant, and that instant is the report's generation time: each lockout listed is one in force then. One
+          // set by a failed sign-in after that instant (while the query ran) is left out; a locked account refuses
+          // further sign-ins before they are counted, so its last failure is the one that locked it.
+          // Each account also carries the roles and capabilities this server enforces for it, from the same functions the
+          // gates use, so roles kept in an older account record (several standard roles in `roles`) are reported as held.
+          const users = (await tx.accounts()).map(a => ({ ...publicAccount(a), enforced: { roles: host.rolesOf(a, reviewState, atIso), capabilities: host.capsOf(a, reviewState, atIso) } }));
+          const lockouts = (await tx.lockouts(at)).filter(l => !l.lastFailedAt || !(Date.parse(l.lastFailedAt) > at));
+          report = { generatedAt: atIso, by: session.username, workspaceEtag: row ? row.etag : null, users, lockouts };
+          return false;
+        });
+        if (refused || !report) { send(res, 403, { error: 'Only a QA Manager or Master Access account opens the access review report. Ask one of them for a copy.' }); return; }
+        send(res, 200, report); return;
+      }
       // -- lockouts: listed and cleared by a manager, one named user at a time, with a reason, audited --
       if (route === '/auth/lockouts' && m === 'GET') { if (!await manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can see lockouts.' }); return; } send(res, 200, { lockouts: await store.lockouts() }); return; }
       if (route === '/auth/unlock' && m === 'POST') {

@@ -49,20 +49,21 @@ export function createHost(indexPath, html = fs.readFileSync(indexPath, 'utf8'))
     vm.runInContext(blocks[key], context, { filename: `index.html#${key}` });
   }
   const { MES, FlightPlan, FlightManeuver, MESPrint, __roles: roles } = sandbox;
-  const rolesOf = (account, state) => {
+  const rolesOf = (account, state, at) => {
     const primary = roles.ROLES.some(role => role.key === (account && account.role)) ? account.role : 'general';
     const standard = (Array.isArray(account && account.roles) ? account.roles : [primary]).filter(key => roles.ROLES.some(role => role.key === key));
     const valid = [...new Set([primary, ...standard])];
     for (const key of (Array.isArray(account && account.extraRoles) ? account.extraRoles : [])) {
       if (!roles.ROLES.some(role => role.key === key) || valid.includes(key)) continue;
       const code = account.roleTraining && account.roleTraining[key] && account.roleTraining[key].code;
-      if (trainingCurrent(state, account, code)) valid.push(key);
+      if (trainingCurrent(state, account, code, at)) valid.push(key);
     }
     return valid;
   };
-  const trainingCurrent = (state, account, code) => {
+  // `at` is an ISO instant; left out, every check reads the current time. The access review passes the one instant it reports.
+  const trainingCurrent = (state, account, code, at) => {
     if (!state || !account || !code || typeof MES.trainingCurrentFor !== 'function') return false;
-    try { return MES.trainingCurrentFor(state, account.username, code).ok === true; } catch { return false; }
+    try { return MES.trainingCurrentFor(state, account.username, code, at).ok === true; } catch { return false; }
   };
   const grantedCaps = ['conformity', 'aqi-sign'];
   const grantValid = (account, cap, grant) => {
@@ -75,13 +76,14 @@ export function createHost(indexPath, html = fs.readFileSync(indexPath, 'utf8'))
     return grant.hash === expected;
   };
   const roleOf = (account, state) => { const assigned = rolesOf(account, state); return assigned.includes('admin') ? 'admin' : assigned.includes('qm') ? 'qm' : assigned.includes('qs') ? 'qs' : assigned[0]; };
-  const capsOf = (account, state) => {
-    const stamped = typeof MES.hasValidInspectionStamp === 'function' && MES.hasValidInspectionStamp(state, account && account.username);
-    const held = new Set(rolesOf(account, state).flatMap(key => roles.ROLE_CAPS[key] || roles.EVERYONE).filter(cap => !grantedCaps.includes(cap) && (cap !== 'inspect-steps' || stamped)));
+  const capsOf = (account, state, at) => {
+    const stamped = typeof MES.hasValidInspectionStamp === 'function' && MES.hasValidInspectionStamp(state, account && account.username, at);
+    const assigned = rolesOf(account, state, at);
+    const held = new Set(assigned.flatMap(key => roles.ROLE_CAPS[key] || roles.EVERYONE).filter(cap => !grantedCaps.includes(cap) && (cap !== 'inspect-steps' || stamped)));
     for (const cap of grantedCaps) {
       const grant = account && account.grants && account.grants[cap];
-      const eligible = rolesOf(account, state).some(key => (roles.ROLE_CAPS[key] || roles.EVERYONE).includes(cap));
-      if (eligible && grantValid(account, cap, grant) && trainingCurrent(state, account, grant.trainingCode)) held.add(cap);
+      const eligible = assigned.some(key => (roles.ROLE_CAPS[key] || roles.EVERYONE).includes(cap));
+      if (eligible && grantValid(account, cap, grant) && trainingCurrent(state, account, grant.trainingCode, at)) held.add(cap);
     }
     return [...held];
   };

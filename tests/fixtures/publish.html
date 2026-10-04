@@ -1884,22 +1884,130 @@ function skBoot(){
  // An account holds a primary role and may hold more standard roles; its abilities are the union.
  // Expanded authority (an extra role or an authority grant) cites a training; it works only while that
  // training is current on the person's record, and pauses, without being revoked, while it is not.
- function trainingOk(u,code){try{if(!u||!code||!window.MES||typeof window.MES.trainingCurrentFor!=='function'||typeof state==='undefined'||!state)return false;return window.MES.trainingCurrentFor(state,u.username,code).ok;}catch(e){return false;}}
- function extraRoleActive(u,k){var t=u&&u.roleTraining&&u.roleTraining[k];return !!(t&&trainingOk(u,t.code));}
- function rolesOf(u,all){var out=[primaryRole(u)];(u&&Array.isArray(u.extraRoles)?u.extraRoles:[]).forEach(function(k){if(ROLES.some(function(r){return r.key===k;})&&out.indexOf(k)<0&&(all||extraRoleActive(u,k)))out.push(k);});return out;}
+ function trainingOk(u,code,at){try{if(!u||!code||!window.MES||typeof window.MES.trainingCurrentFor!=='function'||typeof state==='undefined'||!state)return false;return window.MES.trainingCurrentFor(state,u.username,code,at).ok;}catch(e){return false;}}
+ function extraRoleActive(u,k,at){var t=u&&u.roleTraining&&u.roleTraining[k];return !!(t&&trainingOk(u,t.code,at));}
+ function rolesOf(u,all,at){var out=[primaryRole(u)];(u&&Array.isArray(u.extraRoles)?u.extraRoles:[]).forEach(function(k){if(ROLES.some(function(r){return r.key===k;})&&out.indexOf(k)<0&&(all||extraRoleActive(u,k,at)))out.push(k);});return out;}
  // The role that decides administration: Master Access, then QA Manager, then the primary role.
  function roleOf(u){var rs=rolesOf(u);return rs.indexOf('admin')>=0?'admin':rs.indexOf('qm')>=0?'qm':rs.indexOf('qs')>=0?'qs':rs[0];}
- function eligibleFor(u,cap){return rolesOf(u).some(function(r){return (ROLE_CAPS[r]||[]).indexOf(cap)>=0;});}
+ function eligibleFor(u,cap,at){return rolesOf(u,false,at).some(function(r){return (ROLE_CAPS[r]||[]).indexOf(cap)>=0;});}
  function grantHeld(u,cap){var g=u&&u.grants&&u.grants[cap];return !!(g&&!g.revokedAt);}
  function grantValid(u,cap,g){if(!u||!g||g.revokedAt||!g.by||g.by.account===u.username||g.by.credentialId!=='ACCT-'+g.by.account||!String(g.by.name||'').trim()||!Number.isFinite(Date.parse(g.at||''))||String(g.reason||'').trim().length<10||!g.trainingCode||!/^[0-9a-f]{64}$/.test(String(g.hash||'')))return false;var rec={account:u.username,authority:cap,action:'granted',by:g.by,at:g.at,reason:g.reason,trainingCode:g.trainingCode};return grantHash(rec)===g.hash;}
- function grantActive(u,cap){var g=u&&u.grants&&u.grants[cap];return grantHeld(u,cap)&&grantValid(u,cap,g)&&trainingOk(u,g.trainingCode);}
- function capsOf(u){var set={},stamped=null;var stampValid=function(){if(stamped===null)stamped=!!(window.MES&&typeof window.MES.hasValidInspectionStamp==='function'&&window.MES.hasValidInspectionStamp(state,u&&u.username));return stamped;};rolesOf(u).forEach(function(r){(ROLE_CAPS[r]||EVERYONE).forEach(function(c){if(GRANTED.indexOf(c)<0&&!(c==='inspect-steps'&&!stampValid()))set[c]=1;});});GRANTED.forEach(function(c){if(eligibleFor(u,c)&&grantActive(u,c))set[c]=1;});return Object.keys(set);}
+ function grantActive(u,cap,at){var g=u&&u.grants&&u.grants[cap];return grantHeld(u,cap)&&grantValid(u,cap,g)&&trainingOk(u,g.trainingCode,at);}
+ function capsOf(u,at){var set={},stamped=null;var stampValid=function(){if(stamped===null)stamped=!!(window.MES&&typeof window.MES.hasValidInspectionStamp==='function'&&window.MES.hasValidInspectionStamp(state,u&&u.username,at));return stamped;};rolesOf(u,false,at).forEach(function(r){(ROLE_CAPS[r]||EVERYONE).forEach(function(c){if(GRANTED.indexOf(c)<0&&!(c==='inspect-steps'&&!stampValid()))set[c]=1;});});GRANTED.forEach(function(c){if(eligibleFor(u,c,at)&&grantActive(u,c,at))set[c]=1;});return Object.keys(set);}
  function applyPermClasses(u){var caps=capsOf(u);document.body.setAttribute('data-role',roleOf(u));ALL_CAPS.forEach(function(c){document.body.setAttribute('data-can-'+c,caps.indexOf(c)>=0?'yes':'no');});}
  function roleLabel(k){var r=ROLES.find(function(x){return x.key===k;});return r?r.label:k;}
  var AUTHORITY_NAMES={'conformity':'Conformity inspection','aqi-sign':'AQI signature'};
  function authorityName(cap){return AUTHORITY_NAMES[cap]||cap;}
  function authorityText(u,cap){var held=grantHeld(u,cap),on=grantActive(u,cap);return authorityName(cap)+(on?': granted':held?': paused, '+u.grants[cap].trainingCode+' training not current':': not granted');}
  function authorityClass(u,cap){return grantActive(u,cap)?'closed':grantHeld(u,cap)?'high':'kitting';}
+ // ---- access review and plain reasons for blocked permissions (read only) ----------------------------------
+ // Every status here is read from the functions that enforce it: rolesOf, extraRoleActive, eligibleFor,
+ // grantHeld, grantValid, grantActive, capsOf, MES.trainingCurrentFor, MES.hasValidInspectionStamp and the stamp
+ // PIN that MES identity step-up requires (with a server, the roles and capabilities the server enforces).
+ // The text only explains their answer; nothing here changes an account, a grant, a stamp or a record.
+ function canReviewAccess(u,at){var r=rolesOf(u,false,at);return r.indexOf('admin')>=0||r.indexOf('qm')>=0;}
+ var ACCESS_REVIEW_REFUSAL='Only a QA Manager or Master Access account opens the access review report. Ask one of them for a copy.';
+ var MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+ function plainDay(d){var m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(d||''));return m?MONTHS[Number(m[2])-1]+' '+Number(m[3])+', '+m[1]:String(d||'');}
+ // One instant decides every status in a report: its generation time (the server's, when there is one). Training,
+ // stamp dates and paused roles are all read on that instant's Pacific day, so a clock that moves on while the rows
+ // are built, midnight included, cannot mix two days. With a server, the roles and capabilities are the ones the
+ // server enforces for the account (`enforced`), so a role held only in an older record's `roles` counts everywhere.
+ function reviewCtx(u,at,en){at=Number.isFinite(Date.parse(at||''))?at:new Date().toISOString();
+  var roles=en&&Array.isArray(en.roles)?en.roles.filter(function(k){return ROLES.some(function(r){return r.key===k;});}):rolesOf(u,false,at);
+  return {at:at,day:pacificDayAt(Date.parse(at)),roles:roles,caps:en&&Array.isArray(en.capabilities)?en.capabilities:capsOf(u,at),
+   eligible:function(cap){return roles.some(function(r){return (ROLE_CAPS[r]||[]).indexOf(cap)>=0;});}};}
+ function trainingWhy(username,code,at){var t=null;try{t=window.MES.trainingCurrentFor(state,username,code,at);}catch(e){}if(t&&t.ok)return code+' training is current';if(t&&t.state==='expired')return code+' training expired on '+plainDay(t.expires);if(t&&t.state==='retrain')return code+' training needs retraining on '+(t.qmsDoc?t.qmsDoc+' Rev '+t.qmsRev:'the current revision');return code+' training is not on record';}
+ function stampsOf(u){try{return (window.MES.stampRegister(state)||[]).filter(function(s){return s&&u&&s.account===u.username;});}catch(e){return [];}}
+ // A stamp is in force when the inspection stamp gate would accept it, read stamp by stamp: every stamp stays
+ // (training recorded on any of them counts), but only the one under review may answer the gate.
+ function stampInForce(u,s,at){try{var one=Object.assign({},state,{stamps:state.stamps.map(function(x){return x===s?Object.assign({},x,{buyoffType:'Quality'}):x&&x.buyoffType==='Quality'?Object.assign({},x,{buyoffType:'Under review'}):x;})});return !!window.MES.hasValidInspectionStamp(one,u.username,at);}catch(e){return false;}}
+ // A buy-off also passes MES identity step-up, which refuses a stamp with no PIN, so only a stamp in force with its
+ // PIN set can be used. Each stamp buys off its own type only (MES.stampCheck and the operation form).
+ function liveStamps(u,at){return stampsOf(u).filter(function(s){return stampInForce(u,s,at);});}
+ function stampWhy(u,s,ctx){var today=ctx.day;if(s.status!=='Active')return {text:'is '+String(s.status||'not active').toLowerCase(),fix:s.status==='Suspended'?'Ask the QA Manager to reinstate it.':'Ask the QA Manager to issue a new one.'};if(!/^\d{4}-\d{2}-\d{2}$/.test(String(s.issued||''))||s.issued>today)return {text:s.issued?'does not take effect until '+plainDay(s.issued):'has no issue date',fix:'Ask the QA Manager to check its issue date.'};if(s.expires&&s.expires<today)return {text:'expired on '+plainDay(s.expires),fix:'Ask the QA Manager to renew it.'};if(s.expansionTraining)return {text:'is paused because '+trainingWhy(u.username,s.expansionTraining,ctx.at),fix:'Record current '+s.expansionTraining+' training to resume it.'};return {text:'is not in force',fix:'Ask the QA Manager to check it.'};}
+ function extraRoleWhy(u,k,at){var t=u&&u.roleTraining&&u.roleTraining[k];return t&&t.code?trainingWhy(u.username,t.code,at):'no qualifying training is recorded for it';}
+ function authorityStatus(u,cap,ctx){var g=u&&u.grants&&u.grants[cap];
+  if(ctx.caps.indexOf(cap)>=0)return {status:'Active',reason:''};
+  if(!grantHeld(u,cap))return {status:'Not granted',reason:g&&g.revokedAt?'revoked on '+plainDay(g.revokedAt):''};
+  if(!grantValid(u,cap,g))return {status:'Not active',reason:'the grant record does not verify (granted to oneself, altered or incomplete), so it does not count'};
+  if(!ctx.eligible(cap))return {status:'Paused',reason:'no current role includes it'};
+  return {status:'Paused',reason:trainingWhy(u.username,g.trainingCode,ctx.at)};}
+ // Production: each buy-off needs a stamp in force of its type with a PIN set. The demo build lifts this (every account buys off
+ // with a demo stamp), and the report then says so instead of listing blockers the demo engine does not enforce.
+ var STAMP_GATE_ENFORCED=true;
+ function blockedReasons(u,ctx){if(!u)return [];ctx=ctx||reviewCtx(u);var out=[],caps=ctx.caps;
+  rolesOf(u,true).slice(1).forEach(function(k){if(ctx.roles.indexOf(k)>=0)return;var t=u.roleTraining&&u.roleTraining[k];out.push(roleLabel(k)+' role is paused: '+extraRoleWhy(u,k,ctx.at)+'. '+(t&&t.code?'Record current '+t.code+' training to resume it.':'A QA Manager must add the role again with a current training.'));});
+  if(ctx.eligible('inspect-steps')&&caps.indexOf('inspect-steps')<0){var qs=stampsOf(u).filter(function(s){return s.buyoffType==='Quality';});
+   if(!qs.length)out.push('Inspection is paused: no Quality stamp is assigned to this account. Ask the QA Manager to issue and assign one.');
+   else out.push('Inspection is paused: '+qs.map(function(s){var w=stampWhy(u,s,ctx);return 'Quality stamp '+s.number+' '+w.text+'. '+w.fix;}).join(' '));}
+  // Running operations is a role capability, but each buy-off also needs a stamp in force of the operation's buy-off
+  // type (MES.stampCheck) with its PIN set (MES identity step-up refuses a stamp with no PIN); only Master Access is exempt.
+  // A stamp with no PIN blocks its own buy-off type, whatever PIN another stamp of the holder's carries.
+  if((caps.indexOf('operate-steps')>=0||caps.indexOf('inspect-steps')>=0)&&STAMP_GATE_ENFORCED&&ctx.roles.indexOf('admin')<0){var live=liveStamps(u,ctx.at);
+   if(!live.length){if(caps.indexOf('operate-steps')>=0)out.push('Operation buy-off is blocked: no stamp in force is assigned to this account, and each buy-off needs one of the operation\'s buy-off type. Ask the QA Manager to issue and assign one.');}
+   else live.map(function(s){return s.buyoffType;}).filter(function(t,i,all){return all.indexOf(t)===i;}).forEach(function(t){var of=live.filter(function(s){return s.buyoffType===t;});if(of.some(function(s){return !!s.pin;}))return;
+    out.push(t+' buy-off is blocked: '+(of.length===1?'stamp '+of[0].number+' has':'stamps '+of.map(function(s){return s.number;}).join(' and ')+' have')+' no PIN yet. The stamp holder sets it in Your credentials.');});}
+  GRANTED.forEach(function(cap){if(caps.indexOf(cap)>=0)return;var st=authorityStatus(u,cap,ctx),name=authorityName(cap);
+   if(st.status==='Not granted'){if(ctx.eligible(cap))out.push(name+' is not granted: a QA Manager grants it to a named person against a current training.');return;}
+   if(st.status==='Not active'){out.push(name+' is not active: '+st.reason+'. A QA Manager must grant it again.');return;}
+   if(st.reason==='no current role includes it'){out.push(name+' is paused: no current role includes it. A QA Manager must add a role that includes it.');return;}
+   var code=u.grants[cap].trainingCode;out.push(name+' is paused: '+st.reason+'. Record current '+code+' training to resume it.');});
+  return out;}
+ // The buy-off types the account can use now: those of its stamps in force with a PIN set. Master Access needs no stamp.
+ function buyoffAbility(u,ctx){var caps=ctx.caps;if(caps.indexOf('operate-steps')<0&&caps.indexOf('inspect-steps')<0)return null;if(!STAMP_GATE_ENFORCED)return {any:true,types:[],demo:true};if(ctx.roles.indexOf('admin')>=0)return {any:true,types:[]};
+  return {any:false,types:liveStamps(u,ctx.at).filter(function(s){return !!s.pin;}).map(function(s){return s.buyoffType;}).filter(function(t,i,all){return all.indexOf(t)===i;})};}
+ function lockoutOf(u,serverLockouts,at){if(Array.isArray(serverLockouts)){var l=serverLockouts.find(function(x){return x&&x.username===u.username;});return l?{locked:true,text:'Locked until '+String(l.until||'').slice(0,16).replace('T',' ')+' UTC'}:{locked:false,text:'Not locked'};}
+  // Decided at the report instant, as every other column is: a lock that ends while the rows are built still reads as in force then.
+  var atMs=Date.parse(at||''),now=Number.isFinite(atMs)?atMs:Date.now(),st=lockState(u.username),mins=st.until>now?Math.ceil((st.until-now)/60000):0;return mins?{locked:true,text:'Locked, '+mins+' minute'+(mins===1?'':'s')+' left'}:{locked:false,text:st.fails?'Not locked ('+st.fails+' failed sign-in'+(st.fails===1?'':'s')+')':'Not locked'};}
+ // With a server, each account carries the roles and capabilities the server enforces; a role kept in an older account
+ // record (several standard roles in `roles`) is held there without a training gate, so it is listed as Active.
+ function accessReviewRows(users,serverLockouts,at){return users.map(function(u){var en=u.enforced&&Array.isArray(u.enforced.capabilities)?u.enforced:null,ctx=reviewCtx(u,at,en),caps=ctx.caps,listed=rolesOf(u,true),
+   held=ctx.roles.filter(function(k){return en&&listed.indexOf(k)<0;});return {
+   username:u.username,name:u.displayName,primaryRole:roleLabel(primaryRole(u)),
+   extraRoles:listed.slice(1).map(function(k){var on=ctx.roles.indexOf(k)>=0;return {role:roleLabel(k),status:on?'Active':'Paused',reason:on?'':extraRoleWhy(u,k,ctx.at)};}).concat(held.map(function(k){return {role:roleLabel(k),status:'Active',reason:''};})),
+   authorities:GRANTED.map(function(cap){var st=authorityStatus(u,cap,ctx);return {authority:authorityName(cap),status:st.status,reason:st.reason};}),
+   stamps:stampsOf(u).map(function(s){var valid=stampInForce(u,s,ctx.at);return {number:s.number,buyoffType:s.buyoffType,status:s.status,issued:s.issued||'',expires:s.expires||'',valid:valid,pinSet:!!s.pin,usable:valid&&!!s.pin,reason:valid?(s.pin?'':'has no PIN yet, so it cannot be used for a buy-off until the holder sets it in Your credentials'):stampWhy(u,s,ctx).text};}),
+   supportAccess:u.supportAccess===true,lockout:lockoutOf(u,serverLockouts,ctx.at),
+   capabilities:ALL_CAPS.filter(function(c){return caps.indexOf(c)>=0;}),buyoff:buyoffAbility(u,ctx),blocked:blockedReasons(u,ctx)};});}
+ // The generator is named from the same account list as the report (with a server, the account the server read).
+ // The generation time is taken once, before any row is built, and every row is decided on it.
+ function accessReview(users,serverLockouts,generatedAt,by){var me=currentUser();if(!me)return {ok:false,message:'Sign in first.'};
+  // The instant comes first: the manager gate, every row and the printed time are all decided at it.
+  var at=Number.isFinite(Date.parse(generatedAt||''))?generatedAt:new Date().toISOString();
+  if(!canReviewAccess(me,at))return {ok:false,message:ACCESS_REVIEW_REFUSAL};
+  var list=users||loadAuth().users,gen=list.find(function(u){return u&&u.username===(by||me.username);})||me;
+  var build={version:'',sha256:''};try{build=window.MES.buildStamp();}catch(e){}
+  return {ok:true,generatedAt:at,generatedBy:{name:gen.displayName,account:gen.username,credentialId:'ACCT-'+gen.username},build:build,accounts:accessReviewRows(list,serverLockouts,at)};}
+ // With a server, the page first reloads the shared workspace (training records and stamps another person may have
+ // changed), then the server checks the manager gate and supplies the account list, its lockouts, the time and the
+ // version (ETag) of the workspace it read. The report is built only when that is the version the page just loaded;
+ // if a change landed in between, the page reloads and tries once more. Every status is decided on the Pacific day,
+ // so the report is refused when this computer's Pacific day differs from the server's at the report time.
+ // A change of this page's own that the server has not confirmed yet would be lost by the reload, so it waits.
+ var ACCESS_REVIEW_CHANGED='The shared workspace changed while the access review was being built. Try again in a moment.';
+ var ACCESS_REVIEW_CLOCK='This computer\'s date does not match the server\'s, so the access review would read training and stamp dates on the wrong day. Correct the computer\'s date and time, then try again.';
+ var ACCESS_REVIEW_SAVING='Your last change is still being saved to the server. Try the access review again once it is saved.';
+ // Queued, sent-but-unconfirmed and snapshot writes all count: the report would read a workspace the server has not confirmed.
+ function accessReviewSaving(){try{return !!((typeof serverActionQueue!=='undefined'&&serverActionQueue.length)||(typeof serverActionPending!=='undefined'&&serverActionPending>0)||(typeof serverReconcilePending!=='undefined'&&serverReconcilePending)||(window.skServer&&window.skServer.sync&&window.skServer.sync.status==='saving'));}catch(e){return false;}}
+ function pacificDayAt(ms){return new Date(ms).toLocaleDateString('en-CA',{timeZone:'America/Los_Angeles'});}
+ // With a server, the account list is reloaded first, so a role another manager just gave or took away counts.
+ function refreshServerAccounts(){return serverApi('/auth/accounts').then(function(r){if(r.ok&&r.json&&Array.isArray(r.json.users))SERVER.auth=Object.assign({},SERVER.auth,{users:r.json.users});},function(){});}
+ function accessReport(){if(!currentUser())return Promise.resolve({ok:false,message:'Sign in first.'});if(!SERVER)return Promise.resolve(accessReview(null,null,new Date().toISOString()));
+  return refreshServerAccounts().then(accessReportFromServer);}
+ function accessReportFromServer(){var me=currentUser();if(!me)return {ok:false,message:'Sign in first.'};if(!canReviewAccess(me))return {ok:false,message:ACCESS_REVIEW_REFUSAL};
+  if(accessReviewSaving())return Promise.resolve({ok:false,message:ACCESS_REVIEW_SAVING});
+  var attempt=function(left){
+   var reload=typeof refreshServerWorkspace==='function'?Promise.resolve().then(refreshServerWorkspace):Promise.resolve();
+   return reload.then(function(){return serverApi('/auth/access-report');},function(e){throw {reload:e};}).then(function(r){
+    if(!r.ok||!r.json||!Array.isArray(r.json.users))return {ok:false,message:r.json&&r.json.error||'The server did not send the access review. Try again.'};
+    // A change made in this tab while the requests ran is in the page but not yet in the version the server read.
+    if(accessReviewSaving())return {ok:false,message:ACCESS_REVIEW_SAVING};
+    if(r.json.workspaceEtag&&r.json.workspaceEtag!==window.skServer.etag)return left>0?attempt(left-1):{ok:false,message:ACCESS_REVIEW_CHANGED};
+    var at=Date.parse(r.json.generatedAt||'');if(!Number.isFinite(at)||pacificDayAt(at)!==pacificDayAt(Date.now()))return {ok:false,message:ACCESS_REVIEW_CLOCK};
+    // Every row is decided at the server's generation time, so midnight passing while they are built changes nothing.
+    return accessReview(r.json.users,r.json.lockouts||[],r.json.generatedAt,r.json.by);});};
+  return attempt(1).catch(function(e){if(e&&e.reload)return {ok:false,message:'The shared workspace could not be reloaded, so the access review was not built. '+(e.reload&&e.reload.message?e.reload.message:'Try again.')};return {ok:false,message:'The server could not be reached, so the access review was not built. Try again.'};});}
  // A grant is a signed record: who granted what to whom, when and why, with a SHA-256 of that record.
  function grantHash(rec){try{return window.MES&&window.MES.sha256?window.MES.sha256(window.MES.canonical(rec)):'';}catch(e){return '';}}
   function setGrant(username,cap,on,reason,trainingCode){trainingCode=String(trainingCode||'').trim().toUpperCase();username=String(username||'').trim().toLowerCase();reason=String(reason||'').trim();var me=currentUser(),a=loadAuth(),u=a.users.find(function(x){return x.username===username;});
@@ -1964,10 +2072,16 @@ function skBoot(){
   setSupportAccess:function(username,on,reason){username=String(username||'').trim().toLowerCase();reason=String(reason||'').trim();var me=currentUser(),a=loadAuth(),u=a.users.find(function(x){return x.username===username;});if(!(me&&roleOf(me)==='admin'))return {ok:false,message:'Only a Master Access account grants or removes Support Access.'};if(!u)return {ok:false,message:'That account is not on this device.'};if(reason.length<10||reason.length>500)return {ok:false,message:'Give the reason in 10 to 500 characters.'};if(SERVER)return serverAccessChange('support',{username:username,on:!!on,reason:reason});if(u.username===me.username)return {ok:false,message:'A Master Access account cannot grant Support Access to itself.'};/* The Support Overrides log entry is written and saved first; the account changes only once it is. */var detail={username:username,on:!!on,reason:reason,recorded:false,message:''};try{window.dispatchEvent(new CustomEvent('sk-support-access',{detail:detail}));}catch(e){}if(detail.recorded!==true)return {ok:false,message:detail.message||'Support Access was not changed: its entry in the Support Overrides log could not be saved.'};if(on)u.supportAccess=true;else delete u.supportAccess;try{saveAuth(a);}catch(e){return {ok:false,message:'Support Access was not changed: browser storage refused the account change. The Support Overrides log keeps the attempt. Free browser storage and try again.'};}secEvent(on?'support-grant':'support-revoke',{username:username,by:me.username,reason:reason});return {ok:true,message:(on?'Support Access granted to ':'Support Access removed from ')+username+'.'};},
   label:function(cap){return ({'view':'view','conformity':'prepare and work an LRU conformity package','aqi-sign':'sign the 8130-9 as the authorized quality inspector (AQI)','operate':'work the floor (kit, inventory, serials, AOG, schedule, stages)','operate-steps':'run and buy off operations','inspect-steps':'check off and buy off inspection operations with a current assigned Quality stamp','safety-buyoff':'give the Safety Team PFMEA buy-off','mrb-quality':'hold the Quality seat on an MRB','mrb-me':'hold the Manufacturing Engineering seat on an MRB','mrb-eng':'hold the Engineering seat on an MRB','mrb-cert':'hold the Certification seat on an MRB','push-software':'push ATP software to an operation','accept-software':'accept or reject a software push','assign-work':'assign work to a person','post-notice':'post a notice to the floor','configure-org':'configure organization planning and resources','manage-access':'manage accounts and roles','raise-nc':'raise an NC','submit-ecr':'submit an ECR','edit-wi':'author work instructions','peer-review-wi':'peer-review a work instruction','approve-wi':'release a work instruction','create-wo':'create work orders','adjust-wo':'adjust work-order operations','split':'split a work order','approve-wo':'approve work orders and send a work order in QA review back to Building','dispo-nc':'record the NC initial disposition','approve-nc':'approve an NC','request-pedigree':'request a pedigree change','approve-pedigree':'approve a pedigree change'})[cap]||cap;},
   authorityName:authorityName,
+  canReviewAccess:function(){return canReviewAccess(currentUser());},
+  accessReport:accessReport,
+  // With a server: reload the account list (so a role given or taken in another session counts); false without one.
+  refreshAccounts:function(){return SERVER?refreshServerAccounts().then(function(){return true;}):Promise.resolve(false);},
+  blockedReasons:function(username){var me=currentUser();if(!me)return [];username=String(username||me.username).trim().toLowerCase();if(username!==me.username&&!canManageAccess(me))return [];var u=loadAuth().users.find(function(x){return x.username===username;});return u?blockedReasons(u):[];},
   ownProfileHtml:function(){var me=currentUser();if(!me)return '';var esc=function(v){return String(v).replace(/[&<>"']/g,function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];});};
    var auth=GRANTED.filter(function(c){return eligibleFor(me,c);}).map(function(c){return '<span class="pill '+authorityClass(me,c)+'">'+esc(authorityText(me,c))+'</span>';}).join(' ');
    var extra=rolesOf(me,true).slice(1).map(function(k){return roleLabel(k)+(extraRoleActive(me,k)?'':' (paused: training not current)');});
    return '<section class="own-profile" aria-labelledby="own-profile-title"><h3 id="own-profile-title">Your account</h3><dl class="dialog-context"><div><dt>Name</dt><dd>'+esc(me.displayName)+'</dd></div><div><dt>Username</dt><dd class="mono">'+esc(me.username)+'</dd></div><div><dt>Roles</dt><dd>'+esc(roleLabel(primaryRole(me)))+(extra.length?'<br><small>Also: '+esc(extra.join(', '))+'</small>':'')+'</dd></div><div><dt>Special authorities</dt><dd>'+(auth||'<span class="small muted">None for your roles</span>')+'</dd></div></dl>'
+    +(function(){var why=blockedReasons(me);return why.length?'<div class="blocked-reasons own-blocked"><p class="small"><strong>Why some permissions are blocked</strong></p><ul class="small">'+why.map(function(t){return '<li>'+esc(t)+'</li>';}).join('')+'</ul></div>':'';})()
     +(canManageAccess(me)?'<p class="small own-profile-admin">Accounts, roles, training, stamps and the master SDS book are on the Admin page. <button type="button" class="btn quiet" data-action="open-admin">Open Admin</button></p>':'<p class="small muted">Roles and training are changed by a Master Access, QA Manager or Quality Supervisor account. Stamps are issued and changed only by a Master Access or QA Manager account. Nobody changes their own.</p>')+'</section>';},
   accessHtml:function(){var a=loadAuth(),me=currentUser();if(!me)return '';var isQM=canManageAccess(me);var esc=function(v){return String(v).replace(/[<&>"]/g,'');};
    var isMaster=roleOf(me)==='admin';
@@ -14954,16 +15068,23 @@ window.SK_INTEGRATIONS = window.SK_INTEGRATIONS || {
   // Only accounts that manage access open it. The engine and the server still enforce every rule below;
   // this page only places the controls.
   var ADMIN_TABS = [['accounts', 'Accounts and roles'], ['training', 'Training'], ['stamps', 'Stamps'], ['sds', 'Master SDS book']];
-  var adminTab = 'accounts';
+  var adminTab = 'accounts', adminAccountsCheckedAt = 0;
   function adminAllowed() { return !!(window.skAuth && window.skAuth.can && window.skAuth.can('manage-access')); }
   window.renderAdmin = function () {
     if (!adminAllowed()) return '<section class="admin-page admin-refused"><div class="page-heading"><div><h1>Admin</h1></div></div><div class="panel"><div class="inline-info warning" role="alert"><p><strong>Admin is not available to your account.</strong> Accounts, roles, training, stamps and the master SDS book are managed by a Master Access, QA Manager or Quality Supervisor account.</p><p>Ask one of them to make the change. Your own stamps and PIN are under Your credentials.</p></div></div></section>';
     var parts = registerHtml() || { sds: '', training: '', stamps: '' };
-    var html = { accounts: window.skAuth.accessHtml(), training: parts.training, stamps: parts.stamps, sds: parts.sds };
+    // With a server, reload the account list in the background (at most every 30 s) and draw the page again if the
+    // report action should now show or hide: a role given or taken in another session then needs no page reload.
+    var canReport = window.skAuth.canReviewAccess();
+    if (window.skServer && window.skServer.active && Date.now() - adminAccountsCheckedAt > 30000) {
+      adminAccountsCheckedAt = Date.now();
+      window.skAuth.refreshAccounts().then(function () { if (view === 'admin' && window.skAuth.canReviewAccess() !== canReport) render(); }).catch(function () {});
+    }
+    var html = { accounts: window.skAuth.accessHtml() + blockedPanelHtml(), training: parts.training, stamps: parts.stamps, sds: parts.sds };
     if (!ADMIN_TABS.some(function (t) { return t[0] === adminTab; })) adminTab = 'accounts';
     var tabs = ADMIN_TABS.map(function (t) { var on = t[0] === adminTab; return '<button type="button" role="tab" class="admin-tab" id="admin-tab-' + t[0] + '" data-admin-tab="' + t[0] + '" aria-controls="admin-panel-' + t[0] + '" aria-selected="' + on + '" tabindex="' + (on ? 0 : -1) + '">' + t[1] + '</button>'; }).join('');
     var panels = ADMIN_TABS.map(function (t) { return '<div class="admin-panel" role="tabpanel" id="admin-panel-' + t[0] + '" aria-labelledby="admin-tab-' + t[0] + '"' + (t[0] === adminTab ? '' : ' hidden') + '>' + html[t[0]] + '</div>'; }).join('');
-    return '<section class="admin-page"><div class="page-heading"><div><h1>Admin</h1><p class="muted">Accounts, roles, training, stamps and the master SDS book. Each change is recorded with your name and the time. Authority grants, added or removed roles and training requirement changes also record the reason you give. Nobody changes their own roles, records their own training or issues their own stamp.</p></div></div><div class="admin-tabs" role="tablist" aria-label="Admin sections">' + tabs + '</div>' + panels + '</section>';
+    return '<section class="admin-page"><div class="page-heading"><div><h1>Admin</h1><p class="muted">Accounts, roles, training, stamps and the master SDS book. Each change is recorded with your name and the time. Authority grants, added or removed roles and training requirement changes also record the reason you give. Nobody changes their own roles, records their own training or issues their own stamp.</p></div>' + (window.skAuth.canReviewAccess() ? '<div class="page-actions"><button type="button" class="btn" data-action="access-report">Access review report</button></div>' : '') + '</div><div class="admin-tabs" role="tablist" aria-label="Admin sections">' + tabs + '</div>' + panels + '</section>';
   };
   function adminShowTab(key, focus) {
     adminTab = key;
@@ -14999,6 +15120,43 @@ window.SK_INTEGRATIONS = window.SK_INTEGRATIONS || {
     profileDialog();
   }
   window.skAdminRefresh = adminRefresh;
+  // ---- access review report and blocked-permission reasons (read only) -------------------------------------
+  // The report is built by skAuth.accessReport from the functions that enforce access; this only lays it out
+  // and prints it through printRecord, which adds the build id (and, in the demo build, the DEMO mark).
+  // Printing it writes nothing to the workspace.
+  function accessReportHtml(r) {
+    var at = String(r.generatedAt).slice(0, 16).replace('T', ' ') + ' UTC';
+    var pill = function (text, good) { return '<span class="st ' + (good ? 'ok' : 'no') + '">' + esc(text) + '</span>'; };
+    var rows = r.accounts.map(function (a) {
+      var extra = a.extraRoles.length ? a.extraRoles.map(function (x) { return esc(x.role) + ' ' + pill(x.status, x.status === 'Active') + (x.reason ? '<br><small>' + esc(x.reason) + '</small>' : ''); }).join('<br>') : '<span class="muted">None</span>';
+      var auth = a.authorities.map(function (x) { return esc(x.authority) + ': ' + pill(x.status, x.status === 'Active') + (x.reason ? '<br><small>' + esc(x.reason) + '</small>' : ''); }).join('<br>');
+      var stamps = a.stamps.length ? a.stamps.map(function (s) { return '<span class="mono">' + esc(s.number) + '</span> ' + esc(s.buyoffType) + ', ' + esc(s.status) + '<br><small>Issued ' + esc(s.issued || 'not recorded') + ', expires ' + esc(s.expires || 'never') + '</small><br>' + pill(s.valid ? (s.pinSet ? 'Valid now' : 'In force, no PIN yet') : 'Not valid now', s.valid && s.pinSet) + (s.reason ? ' <small>' + esc(s.reason) + '</small>' : ''); }).join('<br>') : '<span class="muted">None</span>';
+      var caps = a.capabilities.map(function (c) { return esc(window.skAuth.label(c)); }).join('; ');
+      // Buy-off needs a stamp in force with its PIN set, of the operation's own buy-off type; Master Access needs none.
+      var buyoff = a.buyoff ? '<br><strong>Buy-off with:</strong> ' + (a.buyoff.any ? (a.buyoff.demo ? 'any buy-off type (the demo build buys off with a demo stamp, with no type or PIN check)' : 'any buy-off type (Master Access needs no stamp)') : a.buyoff.types.length ? esc(a.buyoff.types.join(', ')) + ' stamp' + (a.buyoff.types.length === 1 ? '' : 's') + ' only' : '<span class="muted">no stamp in force with its PIN set, so no buy-off</span>') : '';
+      var why = a.blocked.length ? '<ul>' + a.blocked.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul>' : '<span class="muted">Nothing blocked or paused</span>';
+      return '<tr data-review-account="' + esc(a.username) + '"><th scope="row">' + esc(a.name) + '<br><small class="mono">' + esc(a.username) + '</small></th><td>' + esc(a.primaryRole) + '</td><td>' + extra + '</td><td>' + auth + '</td><td>' + stamps + '</td><td>' + (a.supportAccess ? pill('Yes', false) : 'No') + '</td><td>' + pill(a.lockout.text, !a.lockout.locked) + '</td></tr><tr class="detail"><td colspan="7"><strong>Can:</strong> ' + (caps || '<span class="muted">nothing</span>') + buyoff + '<br><strong>Blocked or paused:</strong> ' + why + '</td></tr>';
+    }).join('');
+    return '<!doctype html><html><head><meta charset="utf-8"><title>Access review ' + esc(at) + '</title><style>body{font:11px/1.4 Arial,Helvetica,sans-serif;color:#111;margin:24px}h1{font-size:18px;margin:0 0 4px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #999;padding:4px 6px;text-align:left;vertical-align:top}thead th{background:#eee}tr.detail td{border-top:0;background:#fafafa}.kv{width:auto;margin:8px 0 14px}.kv th{background:none;border:0;padding:2px 12px 2px 0}.kv td{border:0;padding:2px 0}.mono{font-family:Menlo,Consolas,monospace}.muted{color:#666}.st{display:inline-block;border:1px solid #111;padding:0 4px;font-weight:700}.st.no{border-style:dashed}ul{margin:2px 0 0 16px;padding:0}footer{margin-top:14px;font-size:10px;color:#555}@media print{body{margin:10mm}tr{page-break-inside:avoid}}</style></head><body>'
+      + '<h1>Access review: who can do what</h1><table class="kv"><tbody><tr><th>Generated</th><td>' + esc(at) + '</td></tr><tr><th>Generated by</th><td>' + esc(r.generatedBy.name) + ' · ' + esc(r.generatedBy.credentialId) + '</td></tr><tr><th>Build</th><td class="mono">' + esc(r.build.version) + ' · index.html SHA-256 ' + esc(r.build.sha256) + '</td></tr><tr><th>Accounts</th><td>' + r.accounts.length + '</td></tr></tbody></table>'
+      + '<p>Every status is read from the rules the system enforces at the time above. An extra role or an authority grant is paused, not revoked, while its training is not current. A grant record that does not verify does not count.</p>'
+      + '<table class="review"><thead><tr><th scope="col">Account</th><th scope="col">Primary role</th><th scope="col">Extra roles</th><th scope="col">Granted authorities</th><th scope="col">Inspection stamps</th><th scope="col">Support Access</th><th scope="col">Sign-in lockout</th></tr></thead><tbody>' + rows + '</tbody></table>'
+      + '<footer>Skyryse · Flight System · access review · uncontrolled when printed</footer></body></html>';
+  }
+  function blockedPanelHtml() {
+    var users = (window.skAuth && window.skAuth.users) ? window.skAuth.users() : [];
+    var items = users.map(function (u) { var why = window.skAuth.blockedReasons(u.username); return why.length ? '<li data-blocked-account="' + esc(u.username) + '"><strong>' + esc(u.name) + '</strong> <small class="muted">' + esc(u.username) + '</small><ul>' + why.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul></li>' : ''; }).join('');
+    return '<section class="access-panel blocked-reasons"><h3>Blocked or paused permissions</h3>' + (items ? '<ul class="blocked-list">' + items + '</ul>' : '<p class="small muted">No account has a blocked or paused permission.</p>') + '</section>';
+  }
+  document.addEventListener('click', function (ev) {
+    var b = ev.target.closest && ev.target.closest('[data-action="access-report"]'); if (!b) return;
+    ev.preventDefault();
+    window.skAuth.accessReport().then(function (r) {
+      if (!r.ok) { notify(r.message); return; }
+      printRecord(accessReportHtml(r), 'access-review-' + String(r.generatedAt).slice(0, 10) + '.html');
+    });
+  });
+  window.skAccessReportHtml = accessReportHtml;
   var pinFrom = 'page';
   function applyStampChange(id, patch) {
     var r = window.MES.updateStamp(state, id, patch);

@@ -38,8 +38,8 @@ const LIST = [
     replace: (ctx, m, id) => `const KEY='skyryse-mes-work-order-qa100-v1'; /* DEMO ${id} */` },
   { area: 'Roles', title: 'Full capabilities for accounts that are not pilot seats',
     why: 'A solo walk-through can run every workflow. Pilot seats keep their real role.',
-    find: 'function capsOf(u){', count: 1,
-    replace: (ctx, m, id) => `function capsOf(u){if(u&&window.__DEMO_PILOT.indexOf(u.username)<0)return ALL_CAPS;/* DEMO ${id} */` },
+    find: 'function capsOf(u,at){', count: 1,
+    replace: (ctx, m, id) => `function capsOf(u,at){if(u&&window.__DEMO_PILOT.indexOf(u.username)<0)return ALL_CAPS;/* DEMO ${id} */` },
   { area: 'Roles', title: 'Access management for accounts that are not pilot seats',
     why: 'Anyone walking the demo can add accounts and change roles. Pilot seats keep their real role.',
     find: "function canManageAccess(u){var r=roleOf(u);return r==='admin'||r==='qm'||r==='qs';}", count: 1,
@@ -143,8 +143,8 @@ const LIST = [
     replace: (ctx, m, id) => `  const wiPeerReviewRefusal = (state, wi) => false /* DEMO ${id} */ && wiAuthors(wi).has(actor(state).credentialId) ?` },
   { area: 'Roles', title: 'Authorities follow the role without a QA Manager grant',
     why: 'Conformity work and AQI signatures work for eligible demo accounts without a named grant or current training record, so scenarios run without setup. Production requires a named grant and a current training record. Inspection requires an assigned active Quality stamp in production, while MRB seats follow role capabilities in both builds.',
-    find: ' function grantActive(u,cap){', count: 1,
-    replace: (ctx, m, id) => ` function grantActive(u,cap){return true;/* DEMO ${id} */` },
+    find: ' function grantActive(u,cap,at){', count: 1,
+    replace: (ctx, m, id) => ` function grantActive(u,cap,at){return true;/* DEMO ${id} */` },
   { area: 'Separation of duties', title: 'The person who verified a FAIR may sign box 22',
     why: 'One person can verify a FAIR and review it in box 22, so an FAI order can be walked alone. Production refuses this to every role, Master Access and Support Access included. The QA approval still waits for box 22.',
     find: '    if (fair.verified && fair.verified.by && by.credentialId === fair.verified.by.credentialId) return fail(', count: 1,
@@ -211,6 +211,10 @@ const LIST = [
     why: 'Production refuses a FAIR, 8130-9 or AQI signature when the signer has no current stamp of an allowed type (expired, not yet issued, or an additional stamp paused for training, #579). The demo signs with the account\'s first Active stamp of an allowed type, as it did before that rule, so a scenario is not stopped by stamp dates. An account with no Active stamp of an allowed type is still refused.',
     find: '    const current = checked.find(c => !c.problem);\n', count: 1,
     replace: (ctx, m, id) => `    const current = checked.find(c => !c.problem) || checked[0]; /* DEMO ${id} */\n` },
+  { area: 'Stamps', title: 'The access review reports buy-off access without the stamp gate',
+    why: 'Every demo account buys off with a demo stamp, with no stamp of the operation\'s type and no PIN (the stamp deviations above), so the access review report lists no stamp or PIN blocker for a buy-off and says the account can buy off any type. The stamp rows still show each real stamp as it is. Production reports the gate it enforces.',
+    find: ' var STAMP_GATE_ENFORCED=true;\n', count: 1,
+    replace: (ctx, m, id) => ` var STAMP_GATE_ENFORCED=false;/* DEMO ${id} */\n` },
 ];
 
 export const DEVIATIONS = LIST.map((d, i) => Object.freeze({ ...d, id: `D-${i + 1}` }));

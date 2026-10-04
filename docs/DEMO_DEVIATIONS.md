@@ -19,7 +19,7 @@ The accounts `tech`, `quality`, `mfgeng`, `operations`, `engineering` are pilot 
 their real role (Technician, Quality, Manufacturing Engineering, Operations, Engineering) so a pilot
 can rehearse the real hand-offs. Every other demo account (`demo`, `master`, `safety`,
 `certification` and any account a person creates) has full access (D-6 to D-36). The stamp,
-PIN and separation-of-duties relaxations (D-13 to D-47; D-20 to D-33) apply to every
+PIN and separation-of-duties relaxations (D-13 to D-48; D-20 to D-33) apply to every
 demo account so no scenario stalls. Sign in with any account and the password `demo1234`.
 
 Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-28 to D-29).
@@ -85,3 +85,4 @@ Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-2
 | D-45 | Accounts | Local sign-in only | Whatever identity provider the production file or the page sets, the demo signs in only with its own local accounts (D-4) and the password demo1234. It never starts the production single sign-on redirect, never receives a production identity token, and signing out never calls the production provider. | 1 |
 | D-46 | Accounts | Never the production server | Whatever server setting a deployment, proxy or page puts in front of the demo (window.FLIGHT_SERVER, which the Flight System server writes only into its production page), the demo removes it before any of its own scripts run and keeps it unset, so the demo never signs in to the production server, never loads or writes the shared production workspace, and always works on its own browser storage under its relaxed rules. | 1 |
 | D-47 | Stamps | FAIR and 8130-9 signatures accept a lapsed register stamp | Production refuses a FAIR, 8130-9 or AQI signature when the signer has no current stamp of an allowed type (expired, not yet issued, or an additional stamp paused for training, #579). The demo signs with the account's first Active stamp of an allowed type, as it did before that rule, so a scenario is not stopped by stamp dates. An account with no Active stamp of an allowed type is still refused. | 1 |
+| D-48 | Stamps | The access review reports buy-off access without the stamp gate | Every demo account buys off with a demo stamp, with no stamp of the operation's type and no PIN (the stamp deviations above), so the access review report lists no stamp or PIN blocker for a buy-off and says the account can buy off any type. The stamp rows still show each real stamp as it is. Production reports the gate it enforces. | 1 |
