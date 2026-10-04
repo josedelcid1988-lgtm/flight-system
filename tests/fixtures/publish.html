@@ -1905,7 +1905,7 @@ function skBoot(){
  // grantHeld, grantValid, grantActive, capsOf, MES.trainingCurrentFor, MES.hasValidInspectionStamp and the stamp
  // PIN that MES identity step-up requires (with a server, the roles and capabilities the server enforces).
  // The text only explains their answer; nothing here changes an account, a grant, a stamp or a record.
- function canReviewAccess(u){var r=roleOf(u);return r==='admin'||r==='qm';}
+ function canReviewAccess(u,at){var r=rolesOf(u,false,at);return r.indexOf('admin')>=0||r.indexOf('qm')>=0;}
  var ACCESS_REVIEW_REFUSAL='Only a QA Manager or Master Access account opens the access review report. Ask one of them for a copy.';
  var MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
  function plainDay(d){var m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(d||''));return m?MONTHS[Number(m[2])-1]+' '+Number(m[3])+', '+m[1]:String(d||'');}
@@ -1933,6 +1933,9 @@ function skBoot(){
   if(!grantValid(u,cap,g))return {status:'Not active',reason:'the grant record does not verify (granted to oneself, altered or incomplete), so it does not count'};
   if(!ctx.eligible(cap))return {status:'Paused',reason:'no current role includes it'};
   return {status:'Paused',reason:trainingWhy(u.username,g.trainingCode,ctx.at)};}
+ // Production: each buy-off needs a stamp in force of its type with a PIN set. The demo build lifts this (every account buys off
+ // with a demo stamp), and the report then says so instead of listing blockers the demo engine does not enforce.
+ var STAMP_GATE_ENFORCED=true;
  function blockedReasons(u,ctx){if(!u)return [];ctx=ctx||reviewCtx(u);var out=[],caps=ctx.caps;
   rolesOf(u,true).slice(1).forEach(function(k){if(ctx.roles.indexOf(k)>=0)return;var t=u.roleTraining&&u.roleTraining[k];out.push(roleLabel(k)+' role is paused: '+extraRoleWhy(u,k,ctx.at)+'. '+(t&&t.code?'Record current '+t.code+' training to resume it.':'A QA Manager must add the role again with a current training.'));});
   if(ctx.eligible('inspect-steps')&&caps.indexOf('inspect-steps')<0){var qs=stampsOf(u).filter(function(s){return s.buyoffType==='Quality';});
@@ -1941,7 +1944,7 @@ function skBoot(){
   // Running operations is a role capability, but each buy-off also needs a stamp in force of the operation's buy-off
   // type (MES.stampCheck) with its PIN set (MES identity step-up refuses a stamp with no PIN); only Master Access is exempt.
   // A stamp with no PIN blocks its own buy-off type, whatever PIN another stamp of the holder's carries.
-  if((caps.indexOf('operate-steps')>=0||caps.indexOf('inspect-steps')>=0)&&ctx.roles.indexOf('admin')<0){var live=liveStamps(u,ctx.at);
+  if((caps.indexOf('operate-steps')>=0||caps.indexOf('inspect-steps')>=0)&&STAMP_GATE_ENFORCED&&ctx.roles.indexOf('admin')<0){var live=liveStamps(u,ctx.at);
    if(!live.length){if(caps.indexOf('operate-steps')>=0)out.push('Operation buy-off is blocked: no stamp in force is assigned to this account, and each buy-off needs one of the operation\'s buy-off type. Ask the QA Manager to issue and assign one.');}
    else live.map(function(s){return s.buyoffType;}).filter(function(t,i,all){return all.indexOf(t)===i;}).forEach(function(t){var of=live.filter(function(s){return s.buyoffType===t;});if(of.some(function(s){return !!s.pin;}))return;
     out.push(t+' buy-off is blocked: '+(of.length===1?'stamp '+of[0].number+' has':'stamps '+of.map(function(s){return s.number;}).join(' and ')+' have')+' no PIN yet. The stamp holder sets it in Your credentials.');});}
@@ -1952,10 +1955,11 @@ function skBoot(){
    var code=u.grants[cap].trainingCode;out.push(name+' is paused: '+st.reason+'. Record current '+code+' training to resume it.');});
   return out;}
  // The buy-off types the account can use now: those of its stamps in force with a PIN set. Master Access needs no stamp.
- function buyoffAbility(u,ctx){var caps=ctx.caps;if(caps.indexOf('operate-steps')<0&&caps.indexOf('inspect-steps')<0)return null;if(ctx.roles.indexOf('admin')>=0)return {any:true,types:[]};
+ function buyoffAbility(u,ctx){var caps=ctx.caps;if(caps.indexOf('operate-steps')<0&&caps.indexOf('inspect-steps')<0)return null;if(!STAMP_GATE_ENFORCED)return {any:true,types:[],demo:true};if(ctx.roles.indexOf('admin')>=0)return {any:true,types:[]};
   return {any:false,types:liveStamps(u,ctx.at).filter(function(s){return !!s.pin;}).map(function(s){return s.buyoffType;}).filter(function(t,i,all){return all.indexOf(t)===i;})};}
- function lockoutOf(u,serverLockouts){if(Array.isArray(serverLockouts)){var l=serverLockouts.find(function(x){return x&&x.username===u.username;});return l?{locked:true,text:'Locked until '+String(l.until||'').slice(0,16).replace('T',' ')+' UTC'}:{locked:false,text:'Not locked'};}
-  var mins=lockedFor(u.username),st=lockState(u.username);return mins?{locked:true,text:'Locked, '+mins+' minute'+(mins===1?'':'s')+' left'}:{locked:false,text:st.fails?'Not locked ('+st.fails+' failed sign-in'+(st.fails===1?'':'s')+')':'Not locked'};}
+ function lockoutOf(u,serverLockouts,at){if(Array.isArray(serverLockouts)){var l=serverLockouts.find(function(x){return x&&x.username===u.username;});return l?{locked:true,text:'Locked until '+String(l.until||'').slice(0,16).replace('T',' ')+' UTC'}:{locked:false,text:'Not locked'};}
+  // Decided at the report instant, as every other column is: a lock that ends while the rows are built still reads as in force then.
+  var atMs=Date.parse(at||''),now=Number.isFinite(atMs)?atMs:Date.now(),st=lockState(u.username),mins=st.until>now?Math.ceil((st.until-now)/60000):0;return mins?{locked:true,text:'Locked, '+mins+' minute'+(mins===1?'':'s')+' left'}:{locked:false,text:st.fails?'Not locked ('+st.fails+' failed sign-in'+(st.fails===1?'':'s')+')':'Not locked'};}
  // With a server, each account carries the roles and capabilities the server enforces; a role kept in an older account
  // record (several standard roles in `roles`) is held there without a training gate, so it is listed as Active.
  function accessReviewRows(users,serverLockouts,at){return users.map(function(u){var en=u.enforced&&Array.isArray(u.enforced.capabilities)?u.enforced:null,ctx=reviewCtx(u,at,en),caps=ctx.caps,listed=rolesOf(u,true),
@@ -1964,14 +1968,16 @@ function skBoot(){
    extraRoles:listed.slice(1).map(function(k){var on=ctx.roles.indexOf(k)>=0;return {role:roleLabel(k),status:on?'Active':'Paused',reason:on?'':extraRoleWhy(u,k,ctx.at)};}).concat(held.map(function(k){return {role:roleLabel(k),status:'Active',reason:''};})),
    authorities:GRANTED.map(function(cap){var st=authorityStatus(u,cap,ctx);return {authority:authorityName(cap),status:st.status,reason:st.reason};}),
    stamps:stampsOf(u).map(function(s){var valid=stampInForce(u,s,ctx.at);return {number:s.number,buyoffType:s.buyoffType,status:s.status,issued:s.issued||'',expires:s.expires||'',valid:valid,pinSet:!!s.pin,usable:valid&&!!s.pin,reason:valid?(s.pin?'':'has no PIN yet, so it cannot be used for a buy-off until the holder sets it in Your credentials'):stampWhy(u,s,ctx).text};}),
-   supportAccess:u.supportAccess===true,lockout:lockoutOf(u,serverLockouts),
+   supportAccess:u.supportAccess===true,lockout:lockoutOf(u,serverLockouts,ctx.at),
    capabilities:ALL_CAPS.filter(function(c){return caps.indexOf(c)>=0;}),buyoff:buyoffAbility(u,ctx),blocked:blockedReasons(u,ctx)};});}
  // The generator is named from the same account list as the report (with a server, the account the server read).
  // The generation time is taken once, before any row is built, and every row is decided on it.
- function accessReview(users,serverLockouts,generatedAt,by){var me=currentUser();if(!me)return {ok:false,message:'Sign in first.'};if(!canReviewAccess(me))return {ok:false,message:ACCESS_REVIEW_REFUSAL};
+ function accessReview(users,serverLockouts,generatedAt,by){var me=currentUser();if(!me)return {ok:false,message:'Sign in first.'};
+  // The instant comes first: the manager gate, every row and the printed time are all decided at it.
+  var at=Number.isFinite(Date.parse(generatedAt||''))?generatedAt:new Date().toISOString();
+  if(!canReviewAccess(me,at))return {ok:false,message:ACCESS_REVIEW_REFUSAL};
   var list=users||loadAuth().users,gen=list.find(function(u){return u&&u.username===(by||me.username);})||me;
   var build={version:'',sha256:''};try{build=window.MES.buildStamp();}catch(e){}
-  var at=Number.isFinite(Date.parse(generatedAt||''))?generatedAt:new Date().toISOString();
   return {ok:true,generatedAt:at,generatedBy:{name:gen.displayName,account:gen.username,credentialId:'ACCT-'+gen.username},build:build,accounts:accessReviewRows(list,serverLockouts,at)};}
  // With a server, the page first reloads the shared workspace (training records and stamps another person may have
  // changed), then the server checks the manager gate and supplies the account list, its lockouts, the time and the
@@ -1987,7 +1993,7 @@ function skBoot(){
  function pacificDayAt(ms){return new Date(ms).toLocaleDateString('en-CA',{timeZone:'America/Los_Angeles'});}
  // With a server, the account list is reloaded first, so a role another manager just gave or took away counts.
  function refreshServerAccounts(){return serverApi('/auth/accounts').then(function(r){if(r.ok&&r.json&&Array.isArray(r.json.users))SERVER.auth=Object.assign({},SERVER.auth,{users:r.json.users});},function(){});}
- function accessReport(){if(!currentUser())return Promise.resolve({ok:false,message:'Sign in first.'});if(!SERVER)return Promise.resolve(canReviewAccess(currentUser())?accessReview():{ok:false,message:ACCESS_REVIEW_REFUSAL});
+ function accessReport(){if(!currentUser())return Promise.resolve({ok:false,message:'Sign in first.'});if(!SERVER)return Promise.resolve(accessReview(null,null,new Date().toISOString()));
   return refreshServerAccounts().then(accessReportFromServer);}
  function accessReportFromServer(){var me=currentUser();if(!me)return {ok:false,message:'Sign in first.'};if(!canReviewAccess(me))return {ok:false,message:ACCESS_REVIEW_REFUSAL};
   if(accessReviewSaving())return Promise.resolve({ok:false,message:ACCESS_REVIEW_SAVING});
@@ -15127,7 +15133,7 @@ window.SK_INTEGRATIONS = window.SK_INTEGRATIONS || {
       var stamps = a.stamps.length ? a.stamps.map(function (s) { return '<span class="mono">' + esc(s.number) + '</span> ' + esc(s.buyoffType) + ', ' + esc(s.status) + '<br><small>Issued ' + esc(s.issued || 'not recorded') + ', expires ' + esc(s.expires || 'never') + '</small><br>' + pill(s.valid ? (s.pinSet ? 'Valid now' : 'In force, no PIN yet') : 'Not valid now', s.valid && s.pinSet) + (s.reason ? ' <small>' + esc(s.reason) + '</small>' : ''); }).join('<br>') : '<span class="muted">None</span>';
       var caps = a.capabilities.map(function (c) { return esc(window.skAuth.label(c)); }).join('; ');
       // Buy-off needs a stamp in force with its PIN set, of the operation's own buy-off type; Master Access needs none.
-      var buyoff = a.buyoff ? '<br><strong>Buy-off with:</strong> ' + (a.buyoff.any ? 'any buy-off type (Master Access needs no stamp)' : a.buyoff.types.length ? esc(a.buyoff.types.join(', ')) + ' stamp' + (a.buyoff.types.length === 1 ? '' : 's') + ' only' : '<span class="muted">no stamp in force with its PIN set, so no buy-off</span>') : '';
+      var buyoff = a.buyoff ? '<br><strong>Buy-off with:</strong> ' + (a.buyoff.any ? (a.buyoff.demo ? 'any buy-off type (the demo build buys off with a demo stamp, with no type or PIN check)' : 'any buy-off type (Master Access needs no stamp)') : a.buyoff.types.length ? esc(a.buyoff.types.join(', ')) + ' stamp' + (a.buyoff.types.length === 1 ? '' : 's') + ' only' : '<span class="muted">no stamp in force with its PIN set, so no buy-off</span>') : '';
       var why = a.blocked.length ? '<ul>' + a.blocked.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul>' : '<span class="muted">Nothing blocked or paused</span>';
       return '<tr data-review-account="' + esc(a.username) + '"><th scope="row">' + esc(a.name) + '<br><small class="mono">' + esc(a.username) + '</small></th><td>' + esc(a.primaryRole) + '</td><td>' + extra + '</td><td>' + auth + '</td><td>' + stamps + '</td><td>' + (a.supportAccess ? pill('Yes', false) : 'No') + '</td><td>' + pill(a.lockout.text, !a.lockout.locked) + '</td></tr><tr class="detail"><td colspan="7"><strong>Can:</strong> ' + (caps || '<span class="muted">nothing</span>') + buyoff + '<br><strong>Blocked or paused:</strong> ' + why + '</td></tr>';
     }).join('');

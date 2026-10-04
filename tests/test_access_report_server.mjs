@@ -137,6 +137,54 @@ try {
     assert.equal(r.status, 403, JSON.stringify(r.json));
     assert.ok(!r.json || !('users' in r.json), 'no account list is sent');
   });
+  // One instant decides the whole report (#TBD): the manager gate, every account's enforced roles and capabilities, the
+  // lockouts and the generation time. A training that lapses while the accounts are read, or a clock already on a later
+  // day, cannot make the report disagree with the time it prints.
+  const SKEW = 3 * 365 * 86400000;
+  const clock = async (when, fn) => {
+    const realNow = Date.now, realLock = server.store.lockAuthority.bind(server.store), realAccounts = server.store.accounts.bind(server.store), realTx = server.store.transaction.bind(server.store);
+    let inTx = false;
+    const shift = () => { Date.now = () => realNow() + SKEW; };
+    server.store.transaction = async txFn => { inTx = true; try { return await realTx(txFn); } finally { inTx = false; } };
+    if (when === 'after-lock') server.store.lockAuthority = async () => { const r = await realLock(); shift(); return r; };
+    if (when === 'after-accounts') server.store.accounts = (...args) => { const r = realAccounts(...args); if (inTx) shift(); return r; };
+    try { return await fn(); } finally { Date.now = realNow; server.store.lockAuthority = realLock; server.store.accounts = realAccounts; server.store.transaction = realTx; }
+  };
+  const extraQm = async username => server.store.upsertAccount({ username, displayName: `User ${username}`, role: 'technician', roles: ['technician'], extraRoles: ['qm'], roleTraining: { qm: { code: 'ESD', at: new Date().toISOString(), by: 'ar-admin' } }, grants: {}, grantHistory: [], supportAccess: false, salt: '', hash: await makeHash(`${username}-pass-1`), createdBy: 'ar-admin' });
+  await extraQm('ar-trained-qm');
+  const trainedState = server.host.MES.seed();
+  const recorded = server.host.withAccount(await server.store.account('ar-admin'), () => server.host.MES.recordTraining(trainedState, { account: 'ar-trained-qm', code: 'ESD', expires: new Date(Date.now() + 2 * 365 * 86400000).toISOString().slice(0, 10), note: 'Extra QA Manager role training.' }), trainedState);
+  assert.equal(recorded.ok, true, JSON.stringify(recorded));
+  const prior = server.store.getDoc('default');
+  server.store.putDoc('default', JSON.stringify(trainedState), prior && prior.etag, 'ar-admin');
+  const trainedToken = await signIn('ar-trained-qm', 'ar-trained-qm-pass-1');
+  await check('a training-backed QA Manager opens the report now (control for the clock checks)', async () => {
+    const r = await api('GET', '/auth/access-report', { token: trainedToken });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    assert.ok(r.json.users.find(u => u.username === 'ar-trained-qm').enforced.roles.includes('qm'));
+  });
+  await check('the instant is taken before the accounts are read: a clock that moves on while they are read changes nothing', async () => {
+    const start = Date.now();
+    const r = await clock('after-accounts', () => api('GET', '/auth/access-report', { token: adminToken }));
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    assert.ok(Math.abs(Date.parse(r.json.generatedAt) - start) < 60000, `generated at the instant the report started, not after the clock moved: ${r.json.generatedAt}`);
+    const trained = r.json.users.find(u => u.username === 'ar-trained-qm');
+    assert.ok(trained.enforced.roles.includes('qm') && trained.enforced.capabilities.includes('approve-nc'), 'its role and capabilities are those in force at the printed instant');
+  });
+  await check('every account is evaluated at the generation time: a later instant reads the lapsed training as paused', async () => {
+    const start = Date.now();
+    const r = await clock('after-lock', () => api('GET', '/auth/access-report', { token: adminToken }));
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    assert.ok(Date.parse(r.json.generatedAt) - start > SKEW - 60000, 'the report is generated at the later instant');
+    const trained = r.json.users.find(u => u.username === 'ar-trained-qm');
+    assert.ok(!trained.enforced.roles.includes('qm') && !trained.enforced.capabilities.includes('approve-nc'), `training lapsed by ${r.json.generatedAt}, so the role is paused: ${JSON.stringify(trained.enforced)}`);
+  });
+  await check('the manager gate is decided at the same instant: a role paused at the generation time is refused', async () => {
+    const r = await clock('after-lock', () => api('GET', '/auth/access-report', { token: trainedToken }));
+    assert.equal(r.status, 403, JSON.stringify(r.json));
+    assert.ok(!r.json || !('users' in r.json), 'no account list is sent');
+    assert.equal((await api('GET', '/auth/access-report', { token: trainedToken })).status, 200, 'the same account is let in at an instant when its training is current');
+  });
   await check('the refusal text carries no em dash', async () => {
     const r = await api('GET', '/auth/access-report', { token: techToken });
     assert.ok(!/—/.test(r.json.error));

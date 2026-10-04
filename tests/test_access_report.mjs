@@ -178,6 +178,41 @@ ok('a clock that moves on while the rows are built changes no status: each is de
 ok('a report generated three years on reads the same stamp as expired (the instant is what decides)',jump.later.ok&&jump.later.stamp&&jump.later.stamp.valid===false&&/^expired on /.test(jump.later.stamp.reason),JSON.stringify(jump.later));
 ok('the page clock is restored after the check',await run(()=>Math.abs(Date.now()-new Date().getTime())<1000&&new Date().getFullYear()<new Date(Date.now()+3*365*86400000).getFullYear()));
 
+// A lockout that ends while the rows are built still reads as in force at the report's time, with the time left counted
+// from that instant (#TBD). Refusal path: a report generated ten minutes on reads the same lock as ended.
+await as('pqm');
+const lock=await run(async([LOCK])=>{const RealDate=Date,realStamp=MES.hasValidInspectionStamp,skew=10*60000;let shifted=false;
+  localStorage.setItem(LOCK,JSON.stringify({ttech:{fails:0,until:RealDate.now()+3*60000-5000}}));
+  class Later extends RealDate{constructor(...a){if(a.length)super(...a);else super(RealDate.now()+skew);}static now(){return RealDate.now()+skew;}}
+  const row=r=>((r.accounts||[]).find(a=>a.username==='ttech')||{}).lockout;
+  let during,later;
+  MES.hasValidInspectionStamp=function(){if(!shifted){shifted=true;window.Date=Later;}return realStamp.apply(this,arguments);};
+  try{during=row(await skAuth.accessReport());}finally{window.Date=RealDate;MES.hasValidInspectionStamp=realStamp;}
+  window.Date=Later;try{later=row(await skAuth.accessReport());}finally{window.Date=RealDate;}
+  return {shifted,during,later};},[LOCK]);
+ok('a lock that ends while the rows are built still reads as in force at the report time, minutes counted from that instant',lock.shifted&&lock.during&&lock.during.locked===true&&lock.during.text==='Locked, 3 minutes left',JSON.stringify(lock));
+ok('a report generated after the lock ended reads the account as not locked',lock.later&&lock.later.locked===false&&lock.later.text==='Not locked',JSON.stringify(lock.later));
+
+// The manager gate is decided at the report's time too: QA Manager held only as a training-backed extra role opens the
+// report, also when the clock moves on between the gate and the rows; a report generated after the training lapses is refused.
+await run(async([AUTH])=>{const a=JSON.parse(localStorage.getItem(AUTH));const salt='00112233445566778899aabbccddeeff';const hex=b=>[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');const hash=hex(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(salt+':demo1234')));
+  if(!a.users.some(u=>u.username==='xqm'))a.users.push({username:'xqm',displayName:'Xi Extra QM',salt,hash,role:'technician',createdAt:new Date().toISOString(),createdBy:'jdoe',extraRoles:['qm'],roleTraining:{qm:{code:MES.trainingCatalog(state).find(t=>t.status==='Active').code,at:new Date().toISOString(),by:'jdoe'}}});
+  localStorage.setItem(AUTH,JSON.stringify(a));},[AUTH]);
+await as('jdoe');
+const xt=await run(([f])=>{const code=MES.trainingCatalog(state).find(t=>t.status==='Active').code;const r=MES.recordTraining(state,{account:'xqm',code,expires:f});save();return r;},[future()]);
+ok('setup: current training recorded for the extra QA Manager role',xt&&xt.ok,JSON.stringify(xt));
+await as('xqm');
+const gate=await run(async()=>{const RealDate=Date,realTr=MES.trainingCurrentFor,skew=3*365*86400000;let shifted=false;
+  class Later extends RealDate{constructor(...a){if(a.length)super(...a);else super(RealDate.now()+skew);}static now(){return RealDate.now()+skew;}}
+  const start=RealDate.now(),normal=await skAuth.accessReport();let during,later;
+  MES.trainingCurrentFor=function(){if(!shifted){shifted=true;window.Date=Later;}return realTr.apply(this,arguments);};
+  try{during=await skAuth.accessReport();}finally{window.Date=RealDate;MES.trainingCurrentFor=realTr;}
+  window.Date=Later;try{later=await skAuth.accessReport();}finally{window.Date=RealDate;}
+  return {shifted,start,normal:{ok:normal.ok},during:{ok:during.ok,generatedAt:during.generatedAt,message:during.message},later:{ok:later.ok,message:later.message,accounts:later.accounts}};});
+ok('a QA Manager role held by current training opens the report',gate.normal.ok===true,JSON.stringify(gate.normal));
+ok('the gate is decided at the report time: a clock that moves on after that instant does not refuse it, and the report keeps its time',gate.shifted&&gate.during.ok===true&&Math.abs(Date.parse(gate.during.generatedAt)-gate.start)<60000,JSON.stringify(gate.during));
+ok('a report generated after the training lapsed is refused with the plain message and lists no account',gate.later.ok===false&&gate.later.message==='Only a QA Manager or Master Access account opens the access review report. Ask one of them for a copy.'&&!gate.later.accounts,JSON.stringify(gate.later));
+
 // Two invalid Quality stamps with different problems: each one is named with its own remedy.
 await as('jdoe');
 const two=await run(([f])=>{const s=MES.issueStamp(state,{name:'Tam Tampered',buyoffType:'Quality',account:'tamp',expires:f});if(!s.ok)return {s};
@@ -192,9 +227,18 @@ await d.locator('input[name=username]').fill('demo');await d.locator('input[name
 await d.waitForFunction(()=>typeof view!=='undefined'&&!document.getElementById('sk-boot'),null,{timeout:15000});await d.waitForTimeout(800);
 if(!await d.evaluate(()=>skAuth.canReviewAccess())){await d.evaluate(S=>{sessionStorage.setItem(S,'master');window.dispatchEvent(new Event('sk-auth'));},SESSION);await d.waitForTimeout(300);}
 ok('demo: a manager account can open the report',await d.evaluate(()=>skAuth.canReviewAccess()));
+// The demo engine buys off with a demo stamp (no type, no PIN), so the demo report must not list the production stamp
+// blockers: accounts with no usable stamp still read as able to buy off, and a role without buy-off still reads as none (#TBD).
+const demoRep=await d.evaluate(()=>skAuth.accessReport());
+const demoAcc=demoRep.accounts||[];
+const demoOps=demoAcc.filter(a=>a.capabilities.includes('operate-steps')||a.capabilities.includes('inspect-steps'));
+ok('demo: every account that can buy off reads as able to buy off any type, though none has a usable stamp',demoRep.ok&&demoOps.length>0&&demoOps.every(a=>a.buyoff&&a.buyoff.any===true&&a.buyoff.demo===true&&!a.stamps.some(s=>s.usable)),JSON.stringify(demoOps.map(a=>[a.username,a.buyoff])));
+ok('demo: no stamp or PIN buy-off blocker is listed',demoAcc.every(a=>!a.blocked.some(x=>/buy-off is blocked/.test(x))),JSON.stringify(demoAcc.map(a=>a.blocked)));
+ok('demo: an account whose role has no buy-off still reads as none',demoAcc.filter(a=>!a.capabilities.includes('operate-steps')&&!a.capabilities.includes('inspect-steps')).every(a=>a.buyoff===null),JSON.stringify(demoAcc.map(a=>[a.username,a.buyoff])));
 await d.evaluate(()=>{view='admin';render();});
 const demoHtml=await printReport(d);
 ok('the demo print carries DEMO, NOT FOR ACCEPTANCE',/DEMO, NOT FOR ACCEPTANCE/.test(demoHtml)&&/Access review: who can do what/.test(demoHtml));
+ok('the demo print says buy-off uses a demo stamp, not the production stamp gate',/the demo build buys off with a demo stamp, with no type or PIN check/.test(demoHtml)&&!/no stamp in force with its PIN set, so no buy-off/.test(demoHtml));
 await d.close();
 
 ok('no page errors',errs.length===0,JSON.stringify(errs));

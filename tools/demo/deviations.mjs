@@ -211,6 +211,10 @@ const LIST = [
     why: 'Production refuses a FAIR, 8130-9 or AQI signature when the signer has no current stamp of an allowed type (expired, not yet issued, or an additional stamp paused for training, #579). The demo signs with the account\'s first Active stamp of an allowed type, as it did before that rule, so a scenario is not stopped by stamp dates. An account with no Active stamp of an allowed type is still refused.',
     find: '    const current = checked.find(c => !c.problem);\n', count: 1,
     replace: (ctx, m, id) => `    const current = checked.find(c => !c.problem) || checked[0]; /* DEMO ${id} */\n` },
+  { area: 'Stamps', title: 'The access review reports buy-off access without the stamp gate',
+    why: 'Every demo account buys off with a demo stamp, with no stamp of the operation\'s type and no PIN (the stamp deviations above), so the access review report lists no stamp or PIN blocker for a buy-off and says the account can buy off any type. The stamp rows still show each real stamp as it is. Production reports the gate it enforces.',
+    find: ' var STAMP_GATE_ENFORCED=true;\n', count: 1,
+    replace: (ctx, m, id) => ` var STAMP_GATE_ENFORCED=false;/* DEMO ${id} */\n` },
 ];
 
 export const DEVIATIONS = LIST.map((d, i) => Object.freeze({ ...d, id: `D-${i + 1}` }));
