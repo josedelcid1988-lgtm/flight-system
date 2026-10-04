@@ -158,12 +158,14 @@ const repair = walk('seed-curated', 'WO-10003', 'Repair', {}, state => { MES.get
   as(me, () => MES.dispositionTicket(state, parentId, created.id, { decision: 'Rework', note: 'Rework J3.' }));
   const approved = as(qe, () => MES.resolveTicket(state, parentId, created.id, 'Rework approved for the affected unit.', { defectCode: 'DIM', subCode: 'DIM-02', quantity: 1, serials: serials.slice(0, 1) }));
   const sr = (parent.splitRequests || []).find(x => x.ticketId === created.id);
+  const beforeSplit = structuredClone(state);
   const split = sr ? as(me, () => MES.splitRequestOrder(state, parentId, sr.id)) : { ok: false, message: 'no split request' };
   const child = split.ok ? MES.getOrder(state, split.id) : null;
   const moved = child && child.tickets.find(t => t.id === created.id);
   ok('Split: the approved Rework NC moves to the new order', approved.ok && split.ok && !!moved, JSON.stringify([approved, split]));
   ok('Split: the moved plan records the order it was approved on', !!moved && plain(moved.reworkPlan.carriedFrom) && moved.reworkPlan.carriedFrom.orderId === parentId);
   ok('Split: the moved approval validates and verifies on the new order', MES.validate(state) && verify(state).ok, JSON.stringify(verify(state).failures));
+  ok('Split: the server write gate accepts the split', MES.reworkRecordChanges(beforeSplit, state) === null, String(MES.reworkRecordChanges(beforeSplit, state)));
   if (moved) {
     const add = as(me, () => reworkOp(state, split.id, created.id, 'Rework'));
     const rel = as(qe2, () => MES.approveSequenceChange(state, split.id));
@@ -513,6 +515,59 @@ const repair = walk('seed-curated', 'WO-10003', 'Repair', {}, state => { MES.get
   ok('Register cap: with room for one more the approval is signed and no key is dropped', room.approved.ok && plain(room.t.reworkPlan) && room.signed.length === 10000 && room.signed[0] === fill(1)[0] && room.signed.includes(`${room.created.id}@${room.t.createdAt}`) && MES.validate(room.state), JSON.stringify([room.approved, room.signed.length]));
   const next = host.withAccount(qm, () => MES.createTicket(room.state, 'WO-10006', MES.getOrder(room.state, 'WO-10006').operations[0].id, { type: 'NC', title: 'Another finding', description: 'Another finding.', hold: false }), room.state);
   ok('Register cap: a ticket raised after the register fills is numbered past the registered ones', next.ok && Number(next.id.split("-").at(-1)) > 109998, JSON.stringify(next));
+}
+
+// ---- Codex P1s on #602 (21b0041): signed rework records are append-only against the stored workspace ----
+{
+  const state = MES.upgrade(structuredClone(seed('seed-curated')));
+  const as = (who, fn) => host.withAccount(who, fn, state);
+  const id = 'WO-10006', order = MES.getOrder(state, id);
+  const op = order.operations.find(item => !item.done) || order.operations[0];
+  const created = as(qm, () => MES.createTicket(state, id, op.id, { type: 'NC', title: 'Torque out of spec', description: 'J3 torque below the drawing value.', hold: true }));
+  as(me, () => MES.dispositionTicket(state, id, created.id, { decision: 'Rework', note: 'Rework J3.' }));
+  const snap0 = structuredClone(state);
+  as(qe, () => MES.resolveTicket(state, id, created.id, 'Rework approved.', { defectCode: 'DIM', subCode: 'DIM-02' }));
+  const snap1 = structuredClone(state);
+  as(me, () => reworkOp(state, id, created.id, 'Rework'));
+  as(qe2, () => MES.approveSequenceChange(state, id));
+  const snap2 = structuredClone(state);
+  const gate = MES.reworkRecordChanges;
+  const edit = (from, fn) => { const next = structuredClone(from); fn(next, MES.getOrder(next, id).tickets.find(t => t.id === created.id)); return next; };
+  ok('Write gate: a first write has nothing stored to compare with', gate(null, snap2) === null);
+  ok('Write gate: signing the approval is accepted', gate(snap0, snap1) === null, String(gate(snap0, snap1)));
+  ok('Write gate: signing the release is accepted', gate(snap1, snap2) === null, String(gate(snap1, snap2)));
+  ok('Write gate: an unchanged workspace is accepted', gate(snap2, structuredClone(snap2)) === null);
+  const archived = structuredClone(snap2); archived.orders = archived.orders.filter(o => o.id !== id);
+  ok('Write gate: moving the whole work order to the archive is accepted', gate(snap2, archived) === null, String(gate(snap2, archived)));
+  // Codex P1 4175474022: renaming a signed ticket, then stripping it, evades the register that is matched by number.
+  const renamed = edit(snap1, (s, t) => { t.id = 'NC-0099'; delete t.reworkPlan; delete t.dispo; delete t.affected; });
+  ok('Rename: the engine alone cannot see it, which is why the server gate exists', MES.validate(renamed) === true);
+  ok('Rename: the write gate refuses a renamed and stripped signed ticket', /no longer on work order WO-10006/.test(gate(snap1, renamed) || ''), String(gate(snap1, renamed)));
+  const removed = edit(snap1, (s, t) => { MES.getOrder(s, id).tickets = MES.getOrder(s, id).tickets.filter(x => x !== t); });
+  ok('Write gate: removing a signed ticket from a live work order is refused', /no longer on work order/.test(gate(snap1, removed) || ''), String(gate(snap1, removed)));
+  const noApproval = edit(snap1, (s, t) => { delete t.reworkPlan.manifest; });
+  ok('Write gate: removing a signed approval is refused', /signed Quality approval/.test(gate(snap1, noApproval) || ''), String(gate(snap1, noApproval)));
+  const reapproved = edit(snap1, (s, t) => { t.reworkPlan.manifest = { ...t.reworkPlan.manifest, hash: 'f'.repeat(64) }; });
+  ok('Write gate: altering a signed approval is refused', /signed Quality approval/.test(gate(snap1, reapproved) || ''), String(gate(snap1, reapproved)));
+  const noRelease = edit(snap2, (s, t) => { delete t.manifest; });
+  ok('Write gate: removing a signed release is refused', /signed QA release/.test(gate(snap2, noRelease) || ''), String(gate(snap2, noRelease)));
+  // Codex P1 4175474016: carriedFrom alone moves a signed approval onto an unrelated work order that shares an operation id.
+  const transplanted = edit(snap1, (s, t) => { const from = MES.getOrder(s, id), to = MES.getOrder(s, 'WO-10005'); from.tickets = from.tickets.filter(x => x !== t); t.reworkPlan.opId = null; t.reworkPlan.carriedFrom = { orderId: id }; to.tickets.push(t); });
+  ok('Transplant: the sibling order shares the operation id', MES.getOrder(snap1, 'WO-10005').operations.some(o => o.id === op.id));
+  ok('Transplant: the engine refuses an approval carried onto an order that was not split from its own', MES.validate(transplanted) === false && !verify(transplanted).ok, JSON.stringify(verify(transplanted).failures));
+  ok('Transplant: the write gate refuses it too', /which was not split from it/.test(gate(snap1, transplanted) || ''), String(gate(snap1, transplanted)));
+  // The seal: append-only against the stored copy.
+  const unsealed = edit(snap2, s => { delete s.reworkLegacySeal; });
+  ok('Write gate: removing the seal is refused', /predate signing/.test(gate(snap2, unsealed) || ''), String(gate(snap2, unsealed)));
+  const resealed = edit(snap2, s => { s.reworkLegacySeal.sealedAt = '2030-01-01T00:00:00.000Z'; });
+  ok('Write gate: replacing the seal time is refused', /predate signing/.test(gate(snap2, resealed) || ''), String(gate(snap2, resealed)));
+  const shrunk = edit(snap2, s => { s.reworkLegacySeal.signed = []; });
+  ok('Write gate: dropping a key from the signed register is refused', /register of signed/.test(gate(snap2, shrunk) || ''), String(gate(snap2, shrunk)));
+  const widened = edit(snap2, s => { s.reworkLegacySeal.tickets = [...s.reworkLegacySeal.tickets, 'NC-0777@2026-01-01T00:00:00.000Z']; });
+  ok('Write gate: adding to the approvals that predate signing is refused', /predate signing/.test(gate(snap2, widened) || ''), String(gate(snap2, widened)));
+  // The server runs the gate on every commit, right after the calibration log gate.
+  const serverSource = fs.readFileSync(fileURLToPath(new URL('../server/server.mjs', import.meta.url)), 'utf8');
+  ok('Write gate: server.mjs runs it on every commit against the stored workspace', /host\.MES\.reworkRecordChanges\(beforeState, state\)/.test(serverSource) && serverSource.indexOf('calibrationLogChanges(beforeState, state)') < serverSource.indexOf('reworkRecordChanges(beforeState, state)'));
 }
 
 console.log(fails.length ? `FAILS ${JSON.stringify(fails)}` : 'FAILS []');
