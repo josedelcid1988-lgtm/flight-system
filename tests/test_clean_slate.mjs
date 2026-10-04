@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { createHost } from '../server/mes-host.mjs';
+import { createServer } from '../server/server.mjs';
 import { SAMPLE_WIS, loadSampleInPage } from './lib/production-sample.mjs';
 
 const here = rel => fileURLToPath(new URL(rel, import.meta.url));
@@ -191,9 +192,61 @@ const prod = createHost(here('../index.html'));
     check('rejecting a sequence change removes the added operation\'s kit line when its lot was chosen but not verified', !!aRej && aRej.ok && clip(a) === undefined && issued(a) === 0 && MES.validate(ls) === true, `${aAdd && aAdd.message} | ${aPick && aPick.message} | ${aRej && aRej.message}`);
     const b = order(), bAdd = b && addClip(b), bPick = bAdd && bAdd.ok && pick(b, true), bRej = bPick && bPick.ok && reject(b);
     check('a verified kit line stays as recorded when the sequence change is rejected (its 8 stay issued to the order)', !!bRej && bRej.ok && !!clip(b) && clip(b).ready === true && issued(b) === 8 && MES.validate(ls) === true, `${bAdd && bAdd.message} | ${bPick && bPick.message} | ${bRej && bRej.message}`);
+    check('the kept verified line names no removed operation after the rollback', !!clip(b) && clip(b).forOps === undefined, JSON.stringify(clip(b) && clip(b).forOps));
     const c = order(), cAdd = c && addClip(c), cPick = cAdd && cAdd.ok && pick(c, false);
     const cRem = cPick && cPick.ok && prod.withAccount(me, () => MES.removeOrderOperation(ls, c.id, cAdd.opId, 'Not needed on this order'), ls);
     check('removing an operation removes its kit line when the lot was chosen but not verified', !!cRem && cRem.ok && clip(c) === undefined && MES.validate(ls) === true, `${cAdd && cAdd.message} | ${cPick && cPick.message} | ${cRem && cRem.message}`);
+    // Issue #545: a lot chosen but not verified has issued nothing, so another operation's BOM can add to that line.
+    const e = order(), eAdd = e && addClip(e), ePick = eAdd && eAdd.ok && pick(e, false), eMore = ePick && ePick.ok && addClip(e);
+    check('an added operation\'s BOM adds to a kit line whose lot was chosen but not verified (8 plus 8)', !!eMore && eMore.ok && clip(e).required === 16 && clip(e).lot === 'LOT-CLIP-1' && clip(e).ready === false && issued(e) === 0 && MES.validate(ls) === true, `${eAdd && eAdd.message} | ${ePick && ePick.message} | ${eMore && eMore.message}`);
+    const f = order(), fAdd = f && addClip(f), fPick = fAdd && fAdd.ok && pick(f, true), fBefore = f && JSON.stringify(f), fMore = fPick && fPick.ok && addClip(f);
+    check('an added operation\'s BOM on a verified kit line is still refused with the next step, the order unchanged', !!fMore && !fMore.ok && /already issued to this order/.test(fMore.message) && JSON.stringify(f) === fBefore, fMore && fMore.message);
+  }
+  {
+    // Issue #614: a rollback that needs more than a drawn line holds is refused until the line goes back to stock. A
+    // released op needing 5 of BOM-007 is removed and replaced by one needing 1; the 1 is issued; QA rejects.
+    const rb = load(prod, MES.seed());
+    rb.masterWIs = JSON.parse(JSON.stringify(qtyState.masterWIs));
+    const rw = rb.masterWIs.find(w => w.id === qtyWi.id && w.revision === qtyWi.revision);
+    rw.operations.forEach((op, i) => { if (i === 0) op.materials = [{ partNumber: 'BOM-007', name: 'Spacer', required: 5 }]; else delete op.materials; });
+    prod.withAccount(admin, () => MES.postInventoryTransaction(rb, { type: 'Receive', partNumber: 'BOM-007', lot: 'LOT-SPACER-1', quantity: 40, buildClass: 'Production', conformityStatus: 'Accepted', conformityRef: 'NS-LOT-SPACER-1', note: 'Receipt for the rollback shortfall test' }), rb);
+    const toKitting = o => prod.withAccount(admin, () => { if (MES.requiresReleaseQA(o)) o.release = { status: 'Approved', name: 'QA Peer', role: 'Quality Engineer', credentialId: 'ACCT-qapeer', at: new Date().toISOString(), note: 'test' }; return MES.advance(rb, o.id); }, rb);
+    const order = () => { const r = prod.withAccount(admin, () => MES.addOrder(rb, { masterWI: `${rw.id}|${rw.revision}`, pedigree: 'Production', subcategory: 'Mfg.', quantity: 1, aircraft: MES.AIRCRAFT[0], site: MES.SITES[0] }), rb); const o = r.ok ? MES.getOrder(rb, r.id) : null; return o && toKitting(o).ok ? o : null; };
+    const spacer = o => o.materials.find(m => m.partNumber === 'BOM-007');
+    const verify = (o, ready) => prod.withAccount(admin, () => { const m = spacer(o); const a = ready ? MES.setMaterialLot(rb, o.id, m.id, 'LOT-SPACER-1') : { ok: true }; return a.ok ? MES.setMaterial(rb, o.id, m.id, ready) : a; }, rb);
+    const remove = (o, opId) => prod.withAccount(me, () => MES.removeOrderOperation(rb, o.id, opId, 'Replaced on this order'), rb);
+    const reject = o => prod.withAccount(qa, () => MES.rejectSequenceChange(rb, o.id, 'Keep the released sequence for this order.'), rb);
+    const issued = o => -(rb.inventoryLedger.transactions.filter(t => t.orderId === o.id && t.partNumber === 'BOM-007').reduce((n, t) => n + t.quantity, 0));
+    const a = order(), first = a && a.operations[0].id;
+    const aRem = a && remove(a, first);
+    const aAdd = aRem && aRem.ok && prod.withAccount(me, () => MES.addOrderOperation(rb, a.id, { title: 'Fit spacer', description: 'Fit one spacer', steps: 'Fit spacer', position: a.operations.length, buyoffType: 'Technician', classification: 'Manufacturing', callouts: [], bom: [{ partNumber: 'BOM-007', name: 'Spacer', required: 1 }] }), rb);
+    const aPick = aAdd && aAdd.ok && verify(a, true);
+    const before = a && JSON.stringify(rb);
+    const refused = aPick && aPick.ok && reject(a);
+    check('setup: the replacement operation\'s line of 1 is issued while the sequence change awaits QA', !!aPick && aPick.ok && spacer(a).required === 1 && spacer(a).ready === true && issued(a) === 1, `${aRem && aRem.message} | ${aAdd && aAdd.message} | ${aPick && aPick.message}`);
+    check('rejecting a sequence change that would leave a drawn line short of the released need is refused with the next step, nothing changed', !!refused && !refused.ok && /has 1 drawn for the changed operations, and the released sequence needs 5/.test(refused.message) && /Mark it missing on the Kitting tab/.test(refused.message) && JSON.stringify(rb) === before, refused && refused.message);
+    const withdrawn = a && prod.withAccount(me, () => MES.rejectSequenceChange(rb, a.id, 'Withdraw the replacement.', 'withdraw'), rb);
+    check('withdrawing the same sequence change is refused the same way, nothing changed', !!withdrawn && !withdrawn.ok && /released sequence needs 5/.test(withdrawn.message) && JSON.stringify(rb) === before, withdrawn && withdrawn.message);
+    // Outside Kitting a kit line can't go back to stock, so the refusal names the way forward that exists.
+    if (a) a.status = 'Building';
+    const building = a && reject(a);
+    if (a) a.status = 'Kitting';
+    check('outside Kitting the same refusal says to release the change and add the operation back, nothing changed', !!building && !building.ok && /goes back to stock only during Kitting, so QA can release the change instead/.test(building.message) && JSON.stringify(rb) === before, building && building.message);
+    const back = a && verify(a, false), done = back && back.ok && reject(a);
+    check('once the line is marked missing (its 1 back to stock) the rejection restores the released kit: 5 for the restored operation', !!done && done.ok && spacer(a).required === 5 && spacer(a).ready === false && JSON.stringify(spacer(a).forOps) === JSON.stringify([first]) && issued(a) === 0 && MES.validate(rb) === true, `${back && back.message} | ${done && done.message} | ${JSON.stringify(a && spacer(a))}`);
+    // A drawn line whose own operation was removed and is restored by the rollback covers it: no refusal.
+    const b = order(), bFirst = b && b.operations[0].id, bPick = b && verify(b, true), bRem = bPick && bPick.ok && remove(b, bFirst), bRej = bRem && bRem.ok && reject(b);
+    check('a drawn line kept through an operation removal covers that operation when the rollback restores it', !!bRej && bRej.ok && spacer(b).required === 5 && spacer(b).ready === true && JSON.stringify(spacer(b).forOps) === JSON.stringify([bFirst]) && issued(b) === 5 && MES.validate(rb) === true, `${bPick && bPick.message} | ${bRem && bRem.message} | ${bRej && bRej.message}`);
+    // Codex on #331: a kit line holding more than its only operation's BOM share (a starter kit line merged with the
+    // BOM) goes back to that baseline when the operation is removed, and the rollback adds the share back.
+    const c = order(), cFirst = c && c.operations[0].id;
+    if (c) spacer(c).required += 1;
+    const cRem = c && remove(c, cFirst);
+    check('removing the only operation of a kit line with a baseline keeps the baseline (6 less 5 leaves 1)', !!cRem && cRem.ok && !!spacer(c) && spacer(c).required === 1 && Array.isArray(spacer(c).forOps) && spacer(c).forOps.length === 0 && MES.validate(rb) === true, `${cRem && cRem.message} ${JSON.stringify(c && spacer(c))}`);
+    const cRej = cRem && cRem.ok && reject(c);
+    check('rejecting that change adds the restored operation\'s share back to the baseline (1 plus 5)', !!cRej && cRej.ok && spacer(c).required === 6 && JSON.stringify(spacer(c).forOps) === JSON.stringify([cFirst]) && MES.validate(rb) === true, `${cRej && cRej.message} ${JSON.stringify(c && spacer(c))}`);
+    const d = order(), dRem = d && remove(d, d.operations[0].id);
+    check('removing the only operation of a kit line with no baseline still removes the line', !!dRem && dRem.ok && spacer(d) === undefined && MES.validate(rb) === true, dRem && dRem.message);
   }
   {
     // A split moves the issued share of a kit line on the inventory ledger too (Codex review on #331): a return from
@@ -302,7 +355,7 @@ const prod = createHost(here('../index.html'));
   const { MES } = prod;
   const legacy = JSON.parse(read('fixtures/workspace_v82_before_clean_slate.json'));
   legacy.masterWIs = [];
-  check('an empty WI library is refused once a work order cites a master WI, with a plain reason', MES.validate(legacy) === false && /Master WI library is empty, but work orders, planned orders or PFMEAs in this workspace cite master WIs/.test((MES.diagnose(legacy) || {}).detail || ''));
+  check('an empty WI library is refused once a work order cites a master WI, with a plain reason', MES.validate(legacy) === false && /Master WI library is empty, but work orders, planned orders, PFMEAs, open process MCRs or open WI review tasks in this workspace cite master WIs/.test((MES.diagnose(legacy) || {}).detail || ''));
   // A PFMEA names a WI revision too (Codex review on #331): emptying the library under it is refused as well.
   const withPfmea = load(prod, MES.seed());
   withPfmea.masterWIs = JSON.parse(JSON.stringify(SAMPLE_WIS));
@@ -310,7 +363,29 @@ const prod = createHost(here('../index.html'));
   const opened = prod.withAccount(admin, () => prod.FlightManeuver.openPFMEA(withPfmea, draft.id, draft.revision), withPfmea);
   check('a PFMEA is opened on a WI revision for the check', opened.ok && MES.validate(withPfmea) === true, opened.message);
   withPfmea.masterWIs = [];
-  check('an empty WI library is refused while a PFMEA cites a master WI', MES.validate(withPfmea) === false && /PFMEAs in this workspace cite master WIs/.test((MES.diagnose(withPfmea) || {}).detail || ''));
+  check('an empty WI library is refused while a PFMEA cites a master WI', MES.validate(withPfmea) === false && /PFMEAs, open process MCRs or open WI review tasks in this workspace cite master WIs/.test((MES.diagnose(withPfmea) || {}).detail || ''));
+  // An open process MCR names a WI revision and operation (issue #615): emptying the library under it is refused, so
+  // the MCR is not orphaned. A closed MCR is a record only and does not hold the library.
+  const withMcr = load(prod, MES.seed());
+  withMcr.masterWIs = JSON.parse(JSON.stringify(SAMPLE_WIS));
+  const mwi = withMcr.masterWIs.find(w => w.status === 'Released');
+  const mcr = prod.withAccount(me, () => MES.submitECRRequest(withMcr, { type: 'process', wiId: mwi.id, wiRevision: mwi.revision, opId: mwi.operations[0].id, title: 'Clarify the torque step', description: 'Add the torque value to step A.', reason: 'Operators asked for the value.' }), withMcr);
+  check('a process MCR is submitted on a released WI for the check', mcr.ok && MES.validate(withMcr) === true, mcr.message);
+  withMcr.masterWIs = [];
+  check('an empty WI library is refused while an open process MCR cites a master WI', MES.validate(withMcr) === false && /open process MCRs/.test((MES.diagnose(withMcr) || {}).detail || ''), JSON.stringify(MES.diagnose(withMcr)));
+  withMcr.ecrRequests.forEach(e => Object.assign(e, { status: 'Rejected', closedReason: 'Not needed after review.', closedBy: { name: 'Quinn Manager', role: 'QA Manager', credentialId: 'ACCT-qa-manager' }, closedAt: now }));
+  check('a closed process MCR does not hold the library: the empty library is valid again', MES.validate(withMcr) === true, JSON.stringify(MES.diagnose(withMcr)));
+  // An open WI review task names a WI revision too (Codex on #331): emptying the library under it is refused, so the
+  // review is not closed automatically for a WI that is gone.
+  const withTask = load(prod, MES.seed());
+  withTask.masterWIs = JSON.parse(JSON.stringify(SAMPLE_WIS));
+  const twi = withTask.masterWIs.find(w => w.status === 'Draft');
+  const task = prod.withAccount(qa, () => MES.assignWork(withTask, { type: 'qa-review-wi', wiId: twi.id, wiRevision: twi.revision, assigneeUsername: 'qa-peer', assigneeName: 'QA Peer' }), withTask);
+  check('a WI review task is assigned for the check', task.ok && MES.validate(withTask) === true, task.message);
+  withTask.masterWIs = [];
+  check('an empty WI library is refused while an open WI review task cites a master WI', MES.validate(withTask) === false && /open WI review tasks/.test((MES.diagnose(withTask) || {}).detail || ''), JSON.stringify(MES.diagnose(withTask)));
+  withTask.assignments.forEach(a => Object.assign(a, { status: 'Done', doneAt: now }));
+  check('a finished WI review task does not hold the library', MES.validate(withTask) === true, JSON.stringify(MES.diagnose(withTask)));
   // A workspace saved before the WI library existed (no masterWIs key, orders with no WI link) gets an empty library.
   // Earlier builds invented sample released WIs and linked its orders to them; production does not invent records.
   const preLibrary = JSON.parse(read('fixtures/workspace_v82_before_clean_slate.json'));
@@ -442,6 +517,48 @@ const prod = createHost(here('../index.html'));
     check('no page error on any screen', errors.length === 0, errors.join(' | '));
   } finally { await browser.close(); }
   console.log('errors ' + JSON.stringify(errors));
+}
+
+// ---- the production server: the first Master Access sign-in creates an empty shared workspace ------------------------
+// The pilot runs in server mode. Before the clean slate a fresh server's first workspace carried 11 master WIs with a
+// "QA reviewer · SR-QA-001" history signer, planned orders PO-20001 to PO-20005, their planning blockers, placeholder
+// stamps SKY-0000 to SKY-0006, and the app code shipped sample stock and calibrated tools. None of it may appear.
+{
+  const server = createServer({ dbPath: ':memory:', host: '127.0.0.1', quiet: true, setupCode: 'clean-slate-setup-code' });
+  const browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {});
+  const errors = [];
+  try {
+    const port = await server.listenAsync(0, '127.0.0.1');
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    page.on('pageerror', e => errors.push(e.message));
+    await page.goto(`http://127.0.0.1:${port}/`);
+    await page.locator('#sk-login').waitFor({ state: 'visible' });
+    const password = 'Test-' + crypto.randomUUID();
+    await page.locator('#sk-displayname').fill('Go Live');
+    await page.locator('#sk-username').fill('go-live');
+    await page.locator('#sk-password').fill(password);
+    await page.locator('#sk-confirm').fill(password);
+    await page.locator('#sk-setup').fill('clean-slate-setup-code');
+    await page.locator('#sk-login-submit').click();
+    await page.waitForFunction(() => window.skServer?.sync?.status === 'synced', null, { timeout: 30000 });
+    const account = server.store.account('go-live');
+    check('server mode: the first sign-in creates the Master Access account', !!account && server.host.rolesOf(account).includes('admin'), JSON.stringify(account && { role: account.role, roles: account.roles }));
+    const row = await server.store.getDoc('default');
+    const doc = row ? JSON.parse(row.json) : null;
+    check('server mode: the first sign-in stores a shared workspace that validates', !!doc && server.host.MES.validate(doc) === true, row ? JSON.stringify(server.host.MES.diagnose(doc)) : 'no workspace stored');
+    if (doc) {
+      check('server mode: the first workspace has no master WIs', Array.isArray(doc.masterWIs) && doc.masterWIs.length === 0, JSON.stringify((doc.masterWIs || []).map(w => w.id)));
+      check('server mode: the first workspace has no planned orders', !(doc.plannedOrders || []).length, JSON.stringify((doc.plannedOrders || []).map(p => p.id)));
+      check('server mode: the first workspace has no planning blockers', !(doc.blockers || []).length, JSON.stringify(doc.blockers));
+      check('server mode: the first workspace has no stamps, placeholder or otherwise', Array.isArray(doc.stamps) && doc.stamps.length === 0, JSON.stringify(doc.stamps));
+      check('server mode: the first workspace has no work orders, calibration entries or Flight Maneuver records', !(doc.orders || []).length && !(doc.calibrationLog || []).length && ['ncs', 'cars', 'mrb', 'sprs', 'pfmeas'].every(k => !((doc.maneuver || {})[k] || []).length));
+      check('server mode: the stored workspace carries no sample record text', !/SR-QA-001|SKY-000[0-6]|PO-2000[1-5]|Morgan Lee|LOT-2401-0088/.test(row.json));
+    }
+    const shipped = await page.evaluate(() => ({ tools: MES.CAL_TOOLS.length, snapshot: MES.CAL_SNAPSHOT, stock: Object.keys(MES.NETSUITE_STOCK).length, lots: MES.availableLots('SR-2401').length, wis: state.masterWIs.length, planned: FlightPlan.list(state).length, stamps: state.stamps.length }));
+    check('server mode: the page ships no sample stock or calibrated tools and shows an empty workspace', shipped.tools === 0 && shipped.snapshot === '' && shipped.stock === 0 && shipped.lots === 0 && shipped.wis === 0 && shipped.planned === 0 && shipped.stamps === 0, JSON.stringify(shipped));
+    check('server mode: the engine host ships no sample stock or calibrated tools', server.host.MES.CAL_TOOLS.length === 0 && Object.keys(server.host.MES.NETSUITE_STOCK).length === 0);
+    check('server mode: no page error during the first sign-in', errors.length === 0, errors.join(' | '));
+  } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
 }
 
 console.log(`checks ${checks} pass ${checks - FAILS.length} fail ${FAILS.length}`);

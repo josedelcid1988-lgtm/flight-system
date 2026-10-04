@@ -4742,8 +4742,11 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const form3PlanValid=plan=>plain(plan)&&Array.isArray(plan.characteristics)&&plan.characteristics.length>=1&&plan.characteristics.length<=400&&Number.isInteger(plan.balloonCount)&&plan.balloonCount===plan.characteristics.length&&unique(plan.characteristics.map(x=>x.balloon))&&plan.characteristics.every(x=>plain(x)&&Number.isInteger(x.balloon)&&x.balloon>0&&str(x.characteristic,120)&&str(x.requirement,200))&&plan.sha256===sha256(canonical(plan.characteristics))&&snapshotValid(plan.by)&&timestamp(plan.at)&&qualityManifestValid(plan.manifest)&&canonical(plan.manifest.subject)===canonical(form3PlanSubject(plan))&&plan.manifest.hash===sha256(canonical(form3PlanSubject(plan)));
   const masterWIValid = wi => plain(wi) && str(wi.id, 24) && /^MWI-\d{4}$/.test(wi.id) && str(wi.revision, 4) && WI_STATUSES.includes(wi.status) && !!partDefinition(wi.partNumber) && partDefinition(wi.partNumber).revisions.includes(wi.partRevision) && str(wi.title, 120) && Array.isArray(wi.operations) && wi.operations.length >= 1 && wi.operations.length <= 20 && unique(wi.operations.map(op => op && op.id)) && wi.operations.every(wiOperationValid) && Array.isArray(wi.history) && wi.history.length <= 200 && (wi.peerReview === undefined || (snapshotValid(wi.peerReview) && timestamp(wi.peerReview.at))) && (wi.qaReview === undefined || (snapshotValid(wi.qaReview) && timestamp(wi.qaReview.at))) && pfmeaValid(wi) && (wi.form3Plan===undefined||form3PlanValid(wi.form3Plan)) && impactValid(wi) && (wi.drawingReleased === undefined || typeof wi.drawingReleased === 'boolean') && (wi.status !== 'Unreleased' || wi.drawingReleased === false) && (wi.eco === undefined || str(wi.eco, 40)) && (wi.drawingRef === undefined || str(wi.drawingRef, 80, 0));
   // A new production workspace starts with an empty library (issue #247). An empty library is valid only while no work
-  // order, planned order or PFMEA cites a master WI, so a library emptied under existing work still stops the load.
-  const masterWIsCited = state => plain(state) && ((Array.isArray(state.orders) && state.orders.some(o => plain(o) && plain(o.masterWI))) || (Array.isArray(state.plannedOrders) && state.plannedOrders.length > 0) || (plain(state.maneuver) && Array.isArray(state.maneuver.pfmeas) && state.maneuver.pfmeas.length > 0));
+  // order, planned order, PFMEA, open process MCR (issue #615) or open WI review assignment cites a master WI, so a
+  // library emptied under existing work still stops the load instead of orphaning the record that cites it.
+  const MCR_CLOSED = Object.freeze(['Incorporated', 'Rejected', 'Withdrawn', 'Declined', 'Closed']);
+  const WI_REVIEW_TASKS = Object.freeze(['review-wi', 'peer-review-wi', 'qa-review-wi']);
+  const masterWIsCited = state => plain(state) && ((Array.isArray(state.orders) && state.orders.some(o => plain(o) && plain(o.masterWI))) || (Array.isArray(state.plannedOrders) && state.plannedOrders.length > 0) || (plain(state.maneuver) && Array.isArray(state.maneuver.pfmeas) && state.maneuver.pfmeas.length > 0) || (Array.isArray(state.ecrRequests) && state.ecrRequests.some(e => plain(e) && e.type === 'process' && !!e.wiId && !MCR_CLOSED.includes(e.status))) || (Array.isArray(state.assignments) && state.assignments.some(a => plain(a) && a.status === 'Open' && WI_REVIEW_TASKS.includes(a.type) && !!a.wiId)));
   const masterWIsValid = (list, state) => Array.isArray(list) && (list.length >= 1 || !masterWIsCited(state)) && list.length <= 200 && unique(list.map(wi => wi && `${wi.id}/${wi.revision}`)) && list.every(masterWIValid);
   function masterWIInvalidField(wi) {
     if (!plain(wi)) return 'record';
@@ -5192,14 +5195,39 @@ const OP_BOM_MAX = 12;
   // A kit line is drawn once it is verified (the Issue is posted then) or filled from a sub-assembly. A lot chosen but
   // not verified has issued nothing, so the line can still follow the operations.
   const kitLineDrawn = m => m.ready === true || !!m.source;
+  // What a BOM kit line must hold once the operations go back to `restored`: its baseline (what it holds beyond the
+  // BOM lines of the operations it names) plus what the restored operations' BOM lines ask for. An operation removed
+  // during the change still sits on a drawn line's forOps; its share is read from the restored sequence.
+  // This relies on mergeBOMIntoKit naming every operation whose BOM a line carries: a restored operation that uses the
+  // part but is not named on forOps would be counted twice and the rollback refused when the line in fact covers it.
+  function rollbackKitNeed(m, restored, changedOps) {
+    const share = (ops, id) => opBOMShare(ops.find(item => item.id === id), m.partNumber);
+    const named = id => changedOps.some(item => item.id === id) ? share(changedOps, id) : share(restored, id);
+    const base = Math.max(0, m.required - m.forOps.reduce((n, id) => n + named(id), 0));
+    const ops = restored.filter(op => opBOMShare(op, m.partNumber) > 0).map(op => op.id);
+    return { base, ops, need: base + ops.reduce((n, id) => n + share(restored, id), 0) };
+  }
+  // A drawn line can't follow a rollback that needs more than was drawn (issue #614): the restored operations would
+  // run under-kitted. Returns the refusal with the way forward, or null when every drawn BOM line still covers them.
+  function rollbackKitShortfall(order, restored, changedOps) {
+    for (const m of Array.isArray(order.materials) ? order.materials : []) {
+      if (!kitLineDrawn(m) || !Array.isArray(m.forOps)) continue;
+      const { need } = rollbackKitNeed(m, restored, changedOps);
+      if (need > m.required) return `${m.name} (${m.partNumber}) has ${m.required} drawn for the changed operations, and the released sequence needs ${need}. ${order.status === 'Kitting' ? 'Mark it missing on the Kitting tab so its lot goes back to stock, then reject or withdraw the sequence change again.' : 'A kit line goes back to stock only during Kitting, so QA can release the change instead and Manufacturing Engineering can add the operation back with a new sequence change.'}`;
+    }
+    return null;
+  }
   function rebuildKitFromOps(order, changedOps) {
     const share = (ops, id, part) => opBOMShare(ops.find(item => item.id === id), part);
     const kept = [];
     for (const m of Array.isArray(order.materials) ? order.materials : []) {
-      if (!Array.isArray(m.forOps) || !m.forOps.length) { kept.push(m); continue; }
-      const base = Math.max(0, m.required - m.forOps.reduce((n, id) => n + share(changedOps, id, m.partNumber), 0));
-      const ops = order.operations.filter(op => opBOMShare(op, m.partNumber) > 0).map(op => op.id);
-      if (kitLineDrawn(m)) { kept.push(m); continue; }
+      // A line without forOps never came from an operation BOM. An empty forOps is a BOM line reduced to its baseline
+      // when its only operation was removed (dropBOMFromKit), so a restored operation asks for its share again.
+      if (!Array.isArray(m.forOps)) { kept.push(m); continue; }
+      const { base, ops } = rollbackKitNeed(m, order.operations, changedOps);
+      // A drawn line keeps what was drawn (rollbackKitShortfall refused any rollback it no longer covers) and names
+      // only the restored operations that use it, so no removed operation id stays on the record.
+      if (kitLineDrawn(m)) { if (ops.length) m.forOps = ops.slice(0, 20); else delete m.forOps; kept.push(m); continue; }
       if (!ops.length && !base) continue;
       if (ops.length) m.forOps = ops.slice(0, 20); else delete m.forOps;
       m.required = Math.min(999, Math.max(1, base + ops.reduce((n, id) => n + share(order.operations, id, m.partNumber), 0)));
@@ -5218,6 +5246,8 @@ const OP_BOM_MAX = 12;
   }
   // Removing the operation removes what it alone put in the kit, as long as it is not drawn yet. On a line it shares
   // with other operations, its own share comes off the requirement, never below what the remaining operations ask for.
+  // A line that held more than its only operation's share (a starter kit line merged with the BOM) goes back to that
+  // baseline with an empty forOps, so a rollback that restores the operation can add its share back.
   function dropBOMFromKit(order, opId) {
     const kit = Array.isArray(order.materials) ? order.materials : [];
     const op = order.operations.find(item => item.id === opId);
@@ -5231,6 +5261,8 @@ const OP_BOM_MAX = 12;
         m.required = Math.min(999, Math.max(1, remaining, m.required - opBOMShare(op, m.partNumber)));
         return true;
       }
+      const base = m.required - opBOMShare(op, m.partNumber);
+      if (base >= 1) { m.forOps = []; m.required = base; return true; }
       return false;
     });
   }
@@ -5537,8 +5569,9 @@ const OP_BOM_MAX = 12;
       const kit = Array.isArray(order.materials) ? order.materials : [], parts = new Set(kit.map(m => m.partNumber));
       const fresh = bom.lines.filter(line => !parts.has(line.partNumber));
       if (kit.length + fresh.length > KIT_MAX) return fail(`This operation's BOM adds ${fresh.length} new part${fresh.length === 1 ? '' : 's'} to a kit of ${kit.length} lines, and a work order kit holds up to ${KIT_MAX}. Take parts off this operation's BOM, or build them on a separate work order.`);
-      // A kit line already issued holds what was issued for it: more demand on it would show as ready while short.
-      const issued = bom.lines.map(line => kit.find(item => item.partNumber === line.partNumber && (item.ready || item.lot || item.source))).find(Boolean);
+      // A kit line already drawn holds what was issued for it: more demand on it would show as ready while short. A lot
+      // chosen but not verified has issued nothing, so the line can take the added demand (issue #545).
+      const issued = bom.lines.map(line => kit.find(item => item.partNumber === line.partNumber && kitLineDrawn(item))).find(Boolean);
       if (issued) return fail(`${issued.name} (${issued.partNumber}) is already issued to this order, so this operation's BOM can't add to it. ${order.status === 'Kitting' ? 'Mark it missing on the Kitting tab so its lot goes back to stock, add the operation, then kit the line again.' : 'Build the extra parts on a separate work order, or take the part off this operation\'s BOM.'}`);
       if (order.status === 'Building' && fresh.length) return fail(`The build has started, so every kit line must already be verified, and this operation's BOM adds ${fresh.length} new part${fresh.length === 1 ? '' : 's'} to the kit. Build them on a separate work order, or take them off this operation's BOM.`);
       for (const line of bom.lines) { const m = kit.find(item => item.partNumber === line.partNumber); if (m && m.required + line.required > KIT_LINE_MAX) return fail(`${line.partNumber} would need ${m.required + line.required} on this kit, and a kit line holds up to ${KIT_LINE_MAX}. Build the extra on a separate work order.`); }
@@ -8302,6 +8335,8 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     else { const d = denied('approve-wo', 'reject a sequence change'); if (d) return d; }
     if (!Array.isArray(order.sequenceBaseline)) return fail('The original sequence was not captured, so this change cannot be rolled back automatically. Edit the operations back, then release.');
     const text = reasonText(reason); if (!text) return fail('Enter a reason of 5 to 500 characters.');
+    const shortfall = rollbackKitShortfall(order, order.sequenceBaseline, order.operations);
+    if (shortfall) return fail(shortfall);
     const who = actor(state), at = new Date().toISOString();
     const changed = order.operations;
     order.operations = order.sequenceBaseline;
@@ -8424,7 +8459,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     { const chain = calibrationChainProblem(state); if (chain) return { where: chain.id, detail: `${chain.detail} The saved calibration log was not changed. Restore the workspace from the last good copy or export, then have a QA Manager compare the calibration log with the calibration records.`, fix: null }; }
     { const reference = calibrationReferenceProblem(state); if (reference) return { where: reference.id, detail: `${reference.detail} The saved workspace was not changed; a QA Manager must review this buy-off against the calibration log.`, fix: null }; }
     if (!supportLogValid(state.supportLog)) return { where: 'supportLog', detail: 'The Support Overrides log has a malformed or duplicate entry.', fix: s => { const seen = new Set(); const keep = [], bad = []; (Array.isArray(s.supportLog) ? s.supportLog : []).forEach(e => (supportEntryValid(e) && !seen.has(e.id) && seen.add(e.id) ? keep : bad).push(e)); s.supportLog = keep.slice(0, SUPPORT_LOG_MAX); s.supportLogQuarantine = [...bad, ...(Array.isArray(s.supportLogQuarantine) ? s.supportLogQuarantine : [])].slice(0, 1000); } };
-    if (Object.hasOwn(state, 'masterWIs') && Array.isArray(state.masterWIs) && !state.masterWIs.length && masterWIsCited(state)) return { where: 'Master WI library', detail: 'The Master WI library is empty, but work orders, planned orders or PFMEAs in this workspace cite master WIs. The library was lost or removed, so the change was not saved. Restore the workspace from the last good copy or export.', fix: null };
+    if (Object.hasOwn(state, 'masterWIs') && Array.isArray(state.masterWIs) && !state.masterWIs.length && masterWIsCited(state)) return { where: 'Master WI library', detail: 'The Master WI library is empty, but work orders, planned orders, PFMEAs, open process MCRs or open WI review tasks in this workspace cite master WIs. The library was lost or removed, so the change was not saved. Restore the workspace from the last good copy or export.', fix: null };
     if (Object.hasOwn(state, 'masterWIs') && !masterWIsValid(state.masterWIs, state)) {
       const wi = Array.isArray(state.masterWIs) ? state.masterWIs.find(item => !masterWIValid(item)) : null;
       const field = wi ? masterWIInvalidField(wi) : 'masterWIs';
