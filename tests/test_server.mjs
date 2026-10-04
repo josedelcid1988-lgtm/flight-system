@@ -356,7 +356,16 @@ try {
     const setOf = (source, name) => { const found = new RegExp(`${name}\\s*=\\s*new Set\\((\\[[^\\]]*\\])\\)`).exec(source); assert.ok(found, `${name} is declared`); return JSON.stringify(Function(`return ${found[1]}`)().sort()); };
     assert.equal(setOf(page, 'serverMutatorExact'), setOf(host, 'actionExact'), 'page and server exact action lists match');
     assert.equal(setOf(page, 'serverMutatorExclude'), setOf(host, 'actionExclude'), 'page and server excluded action lists match');
-    assert.equal(setOf(page, 'serverMutatorAllow'), setOf(host, 'actionAllow'), 'page and server reviewed command lists match');
+    const hostAllow = /const actionAllow = Object\.freeze\((\[[^\]]*\])\)/.exec(host);
+    assert.ok(hostAllow, 'the server declares its reviewed command list as a frozen list');
+    assert.equal(setOf(page, 'serverMutatorAllow'), JSON.stringify(Function(`return ${hostAllow[1]}`)().sort()), 'page and server reviewed command lists match');
+    // Every call the page sends to the server is one the server runs: the page routes an engine function to the
+    // server exactly when its own four constants say so, and each of those must be on the server's list (#594).
+    const pageRule = Function(`${/const serverMutatorName=[^\n]*/.exec(page)[0]}\n${/const serverMutatorExact=[^\n]*/.exec(page)[0]}\n${/const serverMutatorExclude=[^\n]*/.exec(page)[0]}\n${/const serverMutatorAllow=[^\n]*/.exec(page)[0]}\nreturn (namespace, name) => (serverMutatorName.test(name) || serverMutatorExact.has(name)) && !serverMutatorExclude.has(name) && serverMutatorAllow.has(namespace + '.' + name);`)();
+    const sent = [];
+    for (const ns of ['MES', 'FlightPlan', 'FlightManeuver']) for (const key of Object.keys(server.host[ns])) if (typeof server.host[ns][key] === 'function' && pageRule(ns, key)) sent.push(`${ns}.${key}`);
+    for (const name of sent) assert.equal(typeof server.host.resolveAction(name), 'function', `${name}, which the page sends to the server, is allowed`);
+    assert.deepEqual(sent.sort(), [...server.host.actionAllow].sort(), 'the page sends exactly the commands the server allows');
     assert.equal(/const serverMutatorName=(\/\^\(\?:[^/]*\)\/i)/.exec(page)?.[1], /const actionName = (\/\^\(\?:[^/]*\)\/i)/.exec(host)?.[1], 'page and server command-name patterns match');
     assert.equal(server.host.resolveAction('MES.icalExport'), null, 'calendar export stays a read and is not exposed as a mutation command');
     assert.equal(server.host.resolveAction('MES.verifyAIActionLog'), null, 'AI action-log verification stays a read and is not exposed as a mutation command');

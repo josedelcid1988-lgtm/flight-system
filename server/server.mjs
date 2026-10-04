@@ -942,7 +942,7 @@ export function createServer(options = {}) {
       const action = /^\/workspace\/actions\/([A-Za-z0-9_.]+)$/.exec(route);
       if (action && m === 'POST') {
         const fn = host.resolveAction(action[1]);
-        if (!fn) { send(res, 404, { error: `No action named ${action[1]}.` }); return; }
+        if (!fn) { await store.audit(session.username, 'action-refused', { action: action[1].slice(0, 120), message: 'Not a reviewed engine command.' }); send(res, 404, { error: `No action named ${action[1]}.` }); return; }
         const body = await readJson(req), args = Array.isArray(body.args) ? body.args : [];
         if (action[1] === 'MES.configureModelAdapter' && args[0]?.enabled === true) {
           const settingName = String(args[0]?.settingName || '');
