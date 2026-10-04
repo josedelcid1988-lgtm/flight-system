@@ -133,7 +133,7 @@ realm('globalThis.Date = globalThis.__RealDate;')();
 
 // ---- #589: one torque rule for adding and editing an operation -----------------------------------------------------
 {
-  const stripes = ['Apply torque stripe', 'Apply torque stripe to both B-nuts', 'Inspect torque stripes', 'Apply torque striping', 'Apply torque seal to B-nut', 'Apply torque sealant', 'Remove the existing torque stripe from the affected fastener(s)', 'Apply a new torque stripe across fastener and substrate.', 'Verify torque stripe is unbroken',
+  const stripes = ['Apply torque stripe', "Inspect torque stripe's condition", "Verify torque seal's integrity", 'Apply torque stripe to both B-nuts', 'Inspect torque stripes', 'Apply torque striping', 'Apply torque seal to B-nut', 'Apply torque sealant', 'Remove the existing torque stripe from the affected fastener(s)', 'Apply a new torque stripe across fastener and substrate.', 'Verify torque stripe is unbroken',
     // Fifth review: noun and passive forms of marker work.
     'Torque stripe inspection', 'Torque stripe shall be applied across the nut', 'Torque seal is intact on each fastener', 'Torque stripe applied to all B-nuts',
     // Sixth review: a count after "to" is not a torque target.
