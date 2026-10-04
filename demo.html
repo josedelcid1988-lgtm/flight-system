@@ -4222,7 +4222,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     return version < 3 || (unique(state.orders.flatMap(order => order.operations.flatMap(operation => operation.evidence.map(item => item.id)))) && state.orders.every(order => !order.sourceTicket || state.orders.some(source => source.id === order.sourceTicket.orderId && source.tickets.some(ticket => ticket.id === order.sourceTicket.ticketId))));
   }
 
-  const validate = state => !hasProtoKey(state) && validateVersion(state, 3) && (!Object.hasOwn(state, 'masterWIs') || masterWIsValid(state.masterWIs));
+  const validate = state => !hasProtoKey(state) && validateVersion(state, 3) && (!Object.hasOwn(state, 'masterWIs') || masterWIsValid(state.masterWIs)) && recordIdsValid(state);
 
   // Buy-off types, inspection points, operation sequence changes, and master WIs (master work orders).
   const BUYOFF_TYPES = Object.freeze(['Technician', 'Quality', 'A&P', 'Engineering', '8130-9 Authorized Inspector', 'Conformity Inspector']);
@@ -4337,6 +4337,80 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const EXTERNAL_CLASSES = Object.freeze([EXTERNAL_CLASS, EXTERNAL_TEST_CLASS]);
   const isExternal = c => EXTERNAL_CLASSES.includes(c);
   const SHA_RE = /^[0-9a-f]{7,40}$/i, REPO_RE = /^https:\/\/[A-Za-z0-9.-]+(?::\d+)?\/(?:[A-Za-z0-9._~-]+\/){1,}[A-Za-z0-9._~-]+\/?$/;
+  // Record ids come from a stored high-water mark, never from the list length (#585). A list trimmed to its cap, or a
+  // record removed from it, would otherwise give the next record an id that is still, or was once, in use, and every
+  // lookup by id would land on the older record. The mark is the highest number ever used for a prefix: workspace
+  // ids in state.idCounters (ASG, WOR, NTC), software push ids per ATP operation in op.atp.idCounters (PUSH). A
+  // workspace saved before the mark starts from the highest id it holds. The id formats do not change.
+  const RECORD_ID_LISTS = Object.freeze([['assignments', 'ASG'], ['woRequests', 'WOR'], ['notices', 'NTC']]);
+  const recordIdNumber = (id, prefix) => { const m = /^([A-Z]+)-(\d{1,9})$/.exec(String(id ?? '')); return m && m[1] === prefix ? Number(m[2]) : 0; };
+  const highestRecordId = (list, prefix) => (Array.isArray(list) ? list : []).reduce((n, item) => Math.max(n, recordIdNumber(item?.id, prefix)), 0);
+  const recordCounter = (holder, prefix) => { const value = plain(holder?.idCounters) ? holder.idCounters[prefix] : undefined; return Number.isSafeInteger(value) && value >= 0 ? value : 0; };
+  // Raises the stored mark to the highest id in the list. Called before a record is removed, so its number is kept.
+  const markRecordIds = (holder, prefix, list) => { const n = Math.max(recordCounter(holder, prefix), highestRecordId(list, prefix)); if (n > 0 || plain(holder.idCounters)) holder.idCounters = { ...(plain(holder.idCounters) ? holder.idCounters : {}), [prefix]: n }; };
+  function nextRecordId(holder, prefix, list, pad) {
+    const n = Math.max(recordCounter(holder, prefix), highestRecordId(list, prefix)) + 1;
+    holder.idCounters = { ...(plain(holder.idCounters) ? holder.idCounters : {}), [prefix]: n };
+    return `${prefix}-${String(n).padStart(pad, '0')}`;
+  }
+  const recordIdsUnique = list => unique(list.filter(item => plain(item) && typeof item.id === 'string').map(item => item.id));
+  // Each list holds an id once, and a stored mark is never below an id in its list.
+  const recordCountersValid = (holder, prefixes, lists) => holder.idCounters === undefined || (plain(holder.idCounters) && Object.entries(holder.idCounters).every(([prefix, value]) => prefixes.includes(prefix) && Number.isSafeInteger(value) && value >= 0) && prefixes.every((prefix, i) => recordCounter(holder, prefix) >= highestRecordId(lists[i], prefix)));
+  // The operations an order holds now and, while a sequence change waits for QA, the copies it would restore.
+  const recordIdOperations = order => [order?.operations, order?.sequenceBaseline].flatMap(list => (Array.isArray(list) ? list.filter(plain) : []));
+  // The record a reference saved before #585 named, among the records sharing its id (in list order). The old lookups
+  // took the first match, so it named the first record, unless only one of them existed when the reference was made.
+  const recordTime = value => { const t = Date.parse(value); return Number.isFinite(t) ? t : null; };
+  const legacyRecordTarget = (items, madeAt) => { const made = recordTime(madeAt); const before = made === null ? [] : items.filter(x => recordTime(x.at) !== null && recordTime(x.at) <= made); return before.length === 1 ? before[0] : items[0]; };
+  const pushIdsValid = op => !plain(op?.atp) || !Array.isArray(op.atp.pushes) || (recordIdsUnique(op.atp.pushes) && recordCountersValid(op.atp, ['PUSH'], [op.atp.pushes]));
+  const recordIdsValid = state => RECORD_ID_LISTS.every(([key]) => !Array.isArray(state[key]) || recordIdsUnique(state[key])) && recordCountersValid(state, RECORD_ID_LISTS.map(([, prefix]) => prefix), RECORD_ID_LISTS.map(([key]) => state[key])) &&
+    (Array.isArray(state.orders) ? state.orders : []).every(order => recordIdOperations(order).every(pushIdsValid));
+  // A workspace saved with repeated ids (#585) keeps its first record under each id; each later repeat, whatever its
+  // old form, gets a new id in the list's format from the mark, so every id names one record. Then the marks are set from the highest ids held.
+  // Keeps only the prefixes a holder may carry, each a whole number of 0 or more, so repair never leaves a mark that
+  // validation refuses.
+  const normalizeRecordCounters = (holder, prefixes) => { if (holder.idCounters === undefined) return; const kept = {}; if (plain(holder.idCounters)) for (const prefix of prefixes) { const value = holder.idCounters[prefix]; if (Number.isSafeInteger(value) && value >= 0) kept[prefix] = value; } holder.idCounters = kept; };
+  function repairRecordIds(state) {
+    // Returns the records sharing each repeated id, before renumbering, so references can follow the one they named.
+    const renumber = (holder, prefix, list, pad) => { if (!Array.isArray(list)) return new Map(); markRecordIds(holder, prefix, list); const shared = new Map(); list.forEach(item => { if (plain(item) && typeof item.id === 'string') shared.set(item.id, [...(shared.get(item.id) || []), item]); }); const seen = new Set(); list.forEach(item => { if (!plain(item) || typeof item.id !== 'string') return; if (seen.has(item.id)) item.id = nextRecordId(holder, prefix, list, pad); seen.add(item.id); }); return new Map([...shared].filter(([, items]) => items.length > 1)); };
+    normalizeRecordCounters(state, RECORD_ID_LISTS.map(([, prefix]) => prefix));
+    const shared = Object.fromEntries(RECORD_ID_LISTS.map(([key, prefix]) => [key, renumber(state, prefix, state[key], 4)]));
+    const assignments = Array.isArray(state.assignments) ? state.assignments.filter(plain) : [];
+    assignments.forEach(a => {
+      // A work order request assignment keeps the request it named.
+      if (a.type === 'wo-request' && shared.woRequests.has(a.worId)) a.worId = legacyRecordTarget(shared.woRequests.get(a.worId), a.at).id;
+      // A reassigned task links to the assignment that replaced it, made at the moment it was reassigned.
+      if (shared.assignments.has(a.reassignedTo)) { const items = shared.assignments.get(a.reassignedTo); const made = items.filter(x => x !== a && x.at === a.doneAt); a.reassignedTo = (made.find(x => x.type === a.type) || made[0] || items[0]).id; }
+    });
+    // A review assignment's push is found once, across the operation and the copy a pending sequence change holds,
+    // before any push is renumbered. One that names its push by time keeps it. One saved before the time was kept
+    // names what the old lookup found: the operation's own push (the first under its id), or the held copy's when
+    // only that one existed when the assignment was made. It is pinned to it only where its id is ambiguous.
+    const pushTargets = [];
+    (Array.isArray(state.orders) ? state.orders : []).forEach(order => assignments.forEach(a => {
+      if (!plain(order) || a.type !== 'review-push' || a.orderId !== order.id || typeof a.pushId !== 'string') return;
+      const current = Array.isArray(order.operations) ? order.operations.find(x => plain(x) && x.id === a.opId) : null;
+      const lists = [current, heldOp(order, a.opId)].map(op => (plain(op?.atp) && Array.isArray(op.atp.pushes) ? op.atp.pushes.filter(x => plain(x) && x.id === a.pushId) : []));
+      const all = lists.flat();
+      if (!all.length || (new Set(all.map(x => `${x.at}|${x.sha}`)).size < 2 && lists.every(list => list.length < 2))) return;
+      const made = recordTime(a.at), existed = list => made !== null && list.some(x => recordTime(x.at) !== null && recordTime(x.at) <= made);
+      const target = (a.pushAt && all.find(x => x.at === a.pushAt)) || legacyRecordTarget(lists.find(existed) || lists.find(list => list.length), a.at);
+      if (target) pushTargets.push([a, target]);
+    }));
+    // Every ATP push list with a stored mark, or with a repeated id, is normalized, on the operations and on the copies a pending sequence change holds; a list with neither is left
+    // untouched, so a signed operation gains no new field.
+    (Array.isArray(state.orders) ? state.orders : []).forEach(order => recordIdOperations(order).forEach(op => {
+      if (!plain(op?.atp) || !Array.isArray(op.atp.pushes)) return;
+      if (op.atp.idCounters === undefined && recordIdsUnique(op.atp.pushes)) return;
+      normalizeRecordCounters(op.atp, ['PUSH']);
+      const pushes = renumber(op.atp, 'PUSH', op.atp.pushes, 0);
+      if (!pushes.size) return;
+      // The baseline follows the push it was accepted from (accepting sets reviewedAt and acceptedAt together).
+      const baseline = op.atp.baseline, accepted = plain(baseline) && pushes.get(baseline.acceptedFrom);
+      if (accepted) { const from = accepted.find(x => x.status === 'Accepted' && x.reviewedAt === baseline.acceptedAt) || accepted.find(x => x.status === 'Accepted' && x.sha === baseline.sha && x.version === baseline.version); if (from) baseline.acceptedFrom = from.id; }
+    }));
+    pushTargets.forEach(([a, target]) => { a.pushId = target.id; if (typeof target.at === 'string') a.pushAt = target.at; });
+  }
   const atpPending = op => (op && op.atp && Array.isArray(op.atp.pushes) ? op.atp.pushes : []).filter(push => push.status === 'Pending');
   const atpValid = op => op.atp === undefined || (plain(op.atp) && REPO_RE.test(op.atp.repo) && plain(op.atp.baseline) && SHA_RE.test(op.atp.baseline.sha) && str(op.atp.baseline.version, 40) && Array.isArray(op.atp.pushes) && op.atp.pushes.length <= 50 && op.atp.pushes.every(push => plain(push) && str(push.id, 20) && SHA_RE.test(push.sha) && str(push.version, 40) && str(push.message ?? '', 200, 0) && ['Pending', 'Accepted', 'Rejected'].includes(push.status)));
   function atpFor(input) {
@@ -4348,8 +4422,25 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   }
   const ASSIGN_TYPES = Object.freeze({ 'create-wo': 'Create a work order', 'add-op': 'Add an operation', 'approve-ecr': 'Approve an ECR', split: 'Split an order', op: 'Work an operation', ticket: 'Handle an NC', 'review-wi': 'Review a master WI', 'review-push': 'Review an ATP software push', ecr: 'Work an ECR', 'wo-request': 'Create a requested work order', 'peer-review-wi': 'Peer-review a master WI', 'qa-review-wi': 'QA-review a master WI' });
   const assignmentValid = a => plain(a) && str(a.id, 20) && Object.hasOwn(ASSIGN_TYPES, a.type) && plain(a.assignee) && str(a.assignee.username, 40) && str(a.assignee.name, 60) && ['Open', 'Done', 'Reassigned'].includes(a.status);
+  // An operation removed by a sequence change still waiting for QA is kept in the change's baseline; a rejection or
+  // withdrawal puts it back. Its open assignments stay open until the change is released (#585). A push is matched by
+  // id and by the time it was recorded, so a push on a later operation that reuses the id is never taken for it.
+  const heldOp = (order, opId) => pendingSequenceChange(order) && Array.isArray(order.sequenceBaseline) ? order.sequenceBaseline.find(x => plain(x) && x.id === opId) || null : null;
+  // The push a review assignment names: by id and, once kept, push time, on the operation or on the copy a pending
+  // sequence change holds. held is true when only the held copy has it, so the review waits on that change.
+  const namedReviewPush = (state, a) => {
+    const order = plain(a) && (Array.isArray(state?.orders) ? state.orders : []).find(o => plain(o) && o.id === a.orderId);
+    if (!order) return null;
+    const named = op => (plain(op?.atp) && Array.isArray(op.atp.pushes) ? op.atp.pushes : []).find(x => plain(x) && x.id === a.pushId && (!a.pushAt || x.at === a.pushAt));
+    const current = Array.isArray(order.operations) ? order.operations.find(x => plain(x) && x.id === a.opId) : null, held = heldOp(order, a.opId);
+    const push = named(current);
+    if (push) return { order, op: current, push, held: false };
+    const kept = named(held);
+    return kept ? { order, op: held, push: kept, held: true } : null;
+  };
   function syncAssignments(state) {
     if (!Array.isArray(state.assignments)) state.assignments = [];
+    markRecordIds(state, 'ASG', state.assignments);
     state.assignments = state.assignments.filter(assignmentValid);
     const now = new Date().toISOString();
     state.assignments.filter(a => a.status === 'Open').forEach(a => {
@@ -4361,12 +4452,12 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       else if (a.type === 'peer-review-wi') { const wi = findWI(state, a.wiId, a.wiRevision); done = !wi || wi.status !== 'Draft' || !!wi.peerReview; }
       else if (a.type === 'qa-review-wi') { const wi = findWI(state, a.wiId, a.wiRevision); done = !wi || wi.status !== 'Draft'; }
       else if (!order && a.type !== 'review-wi') done = false;
-      else if (a.type === 'op') { const op = order.operations.find(x => x.id === a.opId); done = !op || op.done; }
+      else if (a.type === 'op') { const op = order.operations.find(x => x.id === a.opId) || heldOp(order, a.opId); done = !op || op.done; }
       else if (a.type === 'ticket') { const t = order.tickets.find(x => x.id === a.ticketId); done = !t || t.status !== 'Open' || !!t.dispo && `ACCT-${a.assignee.username}` === t.dispo.credentialId; }
       else if (a.type === 'approve-ecr') done = !engineeringChange(order);
       else if (a.type === 'split') done = Array.isArray(order.splitInto) && order.splitInto.length > (a.splitCount || 0);
       else if (a.type === 'review-wi') { const wi = findWI(state, a.wiId, a.wiRevision); done = !wi || wi.status !== 'Draft' || !!wi.peerReview; }
-      else if (a.type === 'review-push') { const op = order.operations.find(x => x.id === a.opId); const push = op?.atp?.pushes.find(x => x.id === a.pushId); done = !push || push.status !== 'Pending'; }
+      else if (a.type === 'review-push') { const push = namedReviewPush(state, a)?.push; done = !push || push.status !== 'Pending'; }
       if (done) Object.assign(a, { status: 'Done', doneAt: now, autoClosed: true });
     });
     return state;
@@ -4398,15 +4489,16 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (type === 'split' && (!['Draft', 'Kitting'].includes(order.status) || order.quantity < 2)) return fail('Only a Draft or Kitting order with a quantity of 2 or more can be split.');
     if (type === 'approve-ecr' && !engineeringChange(order)) return fail(`${order.id} has no engineering change waiting for approval.`);
     if (type === 'op') { op = order.operations.find(x => x.id === input.opId); if (!op) return fail('Choose the operation.'); if (op.done) return fail('That operation is already bought off.'); }
-    if (type === 'review-push') { op = order.operations.find(x => x.id === input.opId); push = op?.atp?.pushes.find(x => x.id === input.pushId); if (!push || push.status !== 'Pending') return fail('Choose a pending software push.'); }
+    // A reassignment names the push by id and time, so a review of a push on a held operation stays on that push.
+    if (type === 'review-push') { const found = namedReviewPush(state, { orderId: order.id, opId: input.opId, pushId: input.pushId, pushAt: typeof input.pushAt === 'string' && input.pushAt ? input.pushAt : undefined }); op = found?.op; push = found?.push; if (!push || push.status !== 'Pending') return fail('Choose a pending software push.'); }
     if (type === 'ticket') { ticket = order.tickets.find(x => x.id === input.ticketId); if (!ticket) return fail('Choose the NC.'); if (ticket.status !== 'Open') return fail('That NC is already closed.'); if(ticket.dispo&&`ACCT-${username}`===ticket.dispo.credentialId)return fail('Choose a different Quality reviewer. The person who recorded the disposition cannot approve it.'); }
     const who = actor(state), at = new Date().toISOString();
-    const key = a => [a.type, a.orderId || '', a.opId || '', a.ticketId || '', a.wiId || '', a.wiRevision || '', a.pushId || '', a.ecrId || '', a.worId || ''].join('|');
-    const entry = { id: `ASG-${String(state.assignments.length + 1).padStart(4, '0')}`, type, assignee: { username, name }, ...(order ? { orderId: order.id } : {}), ...(op ? { opId: op.id } : {}), ...(ticket ? { ticketId: ticket.id } : {}), ...(wi ? { wiId: wi.id, wiRevision: wi.revision } : {}), ...(push ? { pushId: push.id } : {}), ...(ecr ? { ecrId: ecr.id } : {}), ...(wor ? { worId: wor.id } : {}), ...(type === 'split' ? { splitCount: (order.splitInto || []).length } : {}), ...(note ? { note } : {}), ...(due ? { due } : {}), status: 'Open', by: who, at };
+    const key = a => [a.type, a.orderId || '', a.opId || '', a.ticketId || '', a.wiId || '', a.wiRevision || '', a.pushId || '', a.pushAt || '', a.ecrId || '', a.worId || ''].join('|');
+    const entry = { id: nextRecordId(state, 'ASG', state.assignments, 4), type, assignee: { username, name }, ...(order ? { orderId: order.id } : {}), ...(op ? { opId: op.id } : {}), ...(ticket ? { ticketId: ticket.id } : {}), ...(wi ? { wiId: wi.id, wiRevision: wi.revision } : {}), ...(push ? { pushId: push.id, pushAt: push.at } : {}), ...(ecr ? { ecrId: ecr.id } : {}), ...(wor ? { worId: wor.id } : {}), ...(type === 'split' ? { splitCount: (order.splitInto || []).length } : {}), ...(note ? { note } : {}), ...(due ? { due } : {}), status: 'Open', by: who, at };
     state.assignments.filter(a => a.status === 'Open' && key(a) === key(entry) && ['op', 'ticket', 'review-wi', 'review-push', 'ecr', 'wo-request', 'peer-review-wi', 'qa-review-wi'].includes(type)).forEach(a => Object.assign(a, { status: 'Reassigned', doneAt: at }));
     if (input.replaces) { const old = state.assignments.find(a => a.id === input.replaces && a.status === 'Open'); if (old) Object.assign(old, { status: 'Reassigned', doneAt: at, reassignedTo: entry.id }); }
     state.assignments = [...state.assignments, entry].slice(-500);
-    const label = type === 'op' ? `Op ${opNumber(order, op.id)} (${op.title})` : type === 'ticket' ? ticket.id : type === 'review-push' ? `software push ${push.version} on Op ${opNumber(order, op.id)}` : type === 'review-wi' || type === 'peer-review-wi' || type === 'qa-review-wi' ? `${ASSIGN_TYPES[type].toLowerCase()} ${wiKey(wi)}` : type === 'ecr' ? ecr.id : type === 'wo-request' ? wor.id : ASSIGN_TYPES[type].toLowerCase();
+    const label = type === 'op' ? `Op ${opNumber(order, op.id)} (${op.title})` : type === 'ticket' ? ticket.id : type === 'review-push' ? `software push ${push.version} on Op ${order.operations.some(x => x.id === op.id) ? opNumber(order, op.id) : op.id}` : type === 'review-wi' || type === 'peer-review-wi' || type === 'qa-review-wi' ? `${ASSIGN_TYPES[type].toLowerCase()} ${wiKey(wi)}` : type === 'ecr' ? ecr.id : type === 'wo-request' ? wor.id : ASSIGN_TYPES[type].toLowerCase();
     if (wi) wiLog(state, wi, `Review assigned to ${name} by ${who.name}.`);
     if (order) record(state, order, `Assigned to ${name}: ${label}${due ? `, due ${due}` : ''}. Assigned by ${who.name}.`);
     return { ok: true, message: `${ASSIGN_TYPES[type]} assigned to ${name}.`, id: entry.id };
@@ -4529,7 +4621,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const needBy = String(input?.needBy ?? '').trim(), reason = String(input?.reason ?? '').trim();
     if (needBy && !/^\d{4}-\d{2}-\d{2}$/.test(needBy)) return fail('Use a valid need-by date.');
     if (!str(reason, 500)) return fail('Explain what the work order is for (up to 500 characters).');
-    const entry = { id: `WOR-${String(list.length + 1).padStart(4, '0')}`, partNumber: part.partNumber, quantity: qty, pedigree: input.pedigree, subcategory: input.subcategory, ...(input.aircraft && AIRCRAFT.includes(input.aircraft) ? { aircraft: input.aircraft } : {}), ...(needBy ? { needBy } : {}), reason, status: 'Open', requestedBy: actor(state), at: new Date().toISOString() };
+    const entry = { id: nextRecordId(state, 'WOR', list, 4), partNumber: part.partNumber, quantity: qty, pedigree: input.pedigree, subcategory: input.subcategory, ...(input.aircraft && AIRCRAFT.includes(input.aircraft) ? { aircraft: input.aircraft } : {}), ...(needBy ? { needBy } : {}), reason, status: 'Open', requestedBy: actor(state), at: new Date().toISOString() };
     state.woRequests = [...list, entry].slice(-500);
     return { ok: true, id: entry.id, message: `${entry.id} sent. Manufacturing Engineering will create the work order.` };
   }
@@ -4563,7 +4655,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (kind === 'QMS change' && !str(doc, 40)) return fail('Enter the QMS document number, for example QP-7.5-001.');
     if (!str(rev, 10, 0)) return fail('Keep the revision under 10 characters.');
     if (effective && !/^\d{4}-\d{2}-\d{2}$/.test(effective)) return fail('Use a valid effective date.');
-    const entry = { id: `NTC-${String(list.length + 1).padStart(4, '0')}`, kind, title, body, ...(mention ? { mention } : {}), ...(kind === 'QMS change' ? { doc: { number: doc, ...(rev ? { revision: rev } : {}), ...(effective ? { effective } : {}) }, ackRequired: input.ackRequired === true, acks: [] } : {}), pinned: input.pinned === true, by: actor(state), at: new Date().toISOString() };
+    const entry = { id: nextRecordId(state, 'NTC', list, 4), kind, title, body, ...(mention ? { mention } : {}), ...(kind === 'QMS change' ? { doc: { number: doc, ...(rev ? { revision: rev } : {}), ...(effective ? { effective } : {}) }, ackRequired: input.ackRequired === true, acks: [] } : {}), pinned: input.pinned === true, by: actor(state), at: new Date().toISOString() };
     state.notices = [...list, entry].slice(-200);
     return { ok: true, id: entry.id, message: `${kind} posted.` };
   }
@@ -4581,7 +4673,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     const me = actor(state);
     if (n.by?.credentialId !== me.credentialId && !can('post-notice')) return fail('Only the poster or leadership can change this announcement.');
     if (action === 'pin') { n.pinned = !n.pinned; return { ok: true, message: n.pinned ? 'Pinned to the top.' : 'Unpinned.' }; }
-    if (action === 'remove') { state.notices = state.notices.filter(x => x.id !== id); return { ok: true, message: 'Announcement removed.' }; }
+    if (action === 'remove') { markRecordIds(state, 'NTC', state.notices); state.notices = state.notices.filter(x => x.id !== id); return { ok: true, message: 'Announcement removed.' }; }
     return fail('Unknown action.');
   }
   function pruneExpiredNotices(state) {
@@ -4594,7 +4686,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
       return !Number.isFinite(at) || at >= cutoff;
     });
     const removed = notices.length - kept.length;
-    if (removed) state.notices = kept;
+    if (removed) { markRecordIds(state, 'NTC', notices); state.notices = kept; }
     return { ok: true, removed, message: removed ? `${removed} expired announcement${removed === 1 ? '' : 's'} removed.` : 'No expired announcements.' };
   }
   const CLOSURE_REASONS = Object.freeze(['Obsolete', 'Scrap']);
@@ -4691,7 +4783,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (sha === op.atp.baseline.sha) return fail('That commit is already the approved baseline. No push is needed.');
     if (atpPending(op).some(push => push.sha === sha)) return fail('That commit is already waiting for Software Engineering.');
     const at = new Date().toISOString();
-    const push = { id: `PUSH-${op.atp.pushes.length + 1}`, sha, version, message, by: actor(state), at, status: 'Pending' };
+    const push = { id: nextRecordId(op.atp, 'PUSH', op.atp.pushes, 0), sha, version, message, by: actor(state), at, status: 'Pending' };
     op.atp.pushes = [...op.atp.pushes, push].slice(-50);
     record(state, order, `Software pushed to Op ${opNumber(order, op.id)} (${op.title}): ${version} · ${sha.slice(0, 7)}. Software Engineering acceptance required before buy-off.`);
     return { ok: true, message: `Push recorded. Software Engineering must accept ${version} before Op ${opNumber(order, op.id)} can be bought off.` };
@@ -5435,7 +5527,10 @@ const OP_BOM_MAX = 12;
     const position = Number(input.position), min = firstInsertIndex(order);
     if (!Number.isInteger(position) || position < min || position > order.operations.length) return fail('New operations can’t be inserted before completed or in-progress work.');
     let n = 1;
-    while (order.operations.some(op => op.id === `op-add-${n}`)) n++;
+    // An id a pending sequence change still holds in its baseline, or an open assignment still names, is never handed
+    // to a new operation (#585): a rejection would bring the old operation back, and the assignment would follow the new one.
+    const heldIds = new Set([...(pendingSequenceChange(order) && Array.isArray(order.sequenceBaseline) ? order.sequenceBaseline.filter(plain).map(x => x.id) : []), ...(Array.isArray(state.assignments) ? state.assignments.filter(a => plain(a) && a.status === 'Open' && a.orderId === order.id && a.opId).map(a => a.opId) : [])]);
+    while (order.operations.some(op => op.id === `op-add-${n}`) || heldIds.has(`op-add-${n}`)) n++;
     const op = { id: `op-add-${n}`, title, description, done: false, note: '', buyoff: null, evidence: [], requiresRecording: false, steps: structured ? structured.map((step, i) => ({ id: `step-${i + 1}`, title: step.title, instruction: step.instruction, recordsTorque: /torque(?!\s*(stripe|seal|paint|mark))/i.test(step.title + ' ' + step.instruction), ...(step.consumables.length ? { consumables: step.consumables } : {}), ...(step.image ? { image: { dataUrl: step.image.dataUrl, caption: String(step.image.caption ?? '').trim().slice(0, 200), name: String(step.image.name ?? '').slice(0, 120) } } : {}) })) : lines.map((line, i) => ({ id: `step-${i + 1}`, title: line.length > 80 ? `${line.slice(0, 77)}…` : line, instruction: line, recordsTorque: /torque(?!\s*(stripe|seal|paint|mark))/i.test(line) })), stepChecks: {}, buyoffType: input.buyoffType, inspectionPoint, requiresTooling, classification, ...operationType(classification), ...(registeredSubcode ? { subCode: registeredSubcode.code } : {}), ...(sourceCode ? { subCode: sourceCode.code, sourceInspectionPlan: { code: sourceCode.code, name: sourceCode.name, leadDays: sourceCode.leadDays, notificationText: sourceCode.notificationText } } : {}), ...(poCheck?.po ? { externalPO: poCheck.po } : {}), ...(poCheck?.request ? { poRequest: { ...poCheck.request, requestedBy: actor(state), requestedAt: new Date().toISOString() } } : {}), ...(atpCheck?.atp ? { atp: atpCheck.atp } : {}), ...(atpCheck?.deferred ? { atpLinkDeferred: true } : {}), addedToSequence: true, callouts: calloutList(input.callouts), ...(trainingList(input.training, state).length ? { training: trainingList(input.training, state) } : {}), ...(calloutList(input.callouts).includes('ESD') ? { grounding: groundingFor(calloutList(input.callouts), input.grounding) } : {}), ...(calloutList(input.callouts).includes('FOD') ? { fodLevel: fodLevelFor(calloutList(input.callouts), input.fodLevel) } : {}), ...(calloutList(input.callouts).includes('MSDS') && msdsLinksFor(input.msdsLinks).links ? { msdsLinks: msdsLinksFor(input.msdsLinks).links } : {}) };
     if (calloutList(input.callouts).includes('MSDS') && msdsLinksFor(input.msdsLinks).error) return fail(msdsLinksFor(input.msdsLinks).error);
     const bom = readBOM(input.bom);
@@ -6906,7 +7001,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     try {
       state = renameKitOp(migrateEngineeringChanges(migrateSplitIds(state)));
       try { migrateChangeIds(state); } catch (e) {}
-      if (plain(state)) { sealCalibrationLog(state); markCalibrationStart(state); }
+      if (plain(state)) { sealCalibrationLog(state); markCalibrationStart(state); repairRecordIds(state); }
       if (validate(state)) { const migrated = JSON.parse(JSON.stringify(state)); ['audits','certifications','supplierApprovals','qualityValues','qualityVerdicts'].forEach(key=>{if(!Array.isArray(migrated[key]))migrated[key]=[];}); migrateOperationTypes(migrated); return validate(migrated) ? migrated : JSON.parse(JSON.stringify(state)); }
       if (!validateVersion(state, 1) && !validateVersion(state, 2)) return null;
       const upgraded = JSON.parse(JSON.stringify(state));
@@ -8262,6 +8357,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (state.orders.length > MAX_ORDERS) return { where: 'orders', detail: `${state.orders.length} work orders; the workspace holds ${MAX_ORDERS}.`, fix: null };
     const dupOrders = state.orders.map(o => o && o.id).filter((id, i, a) => a.indexOf(id) !== i);
     if (dupOrders.length) return { where: dupOrders[0], detail: `Duplicate work order id ${dupOrders[0]}.`, fix: null };
+    if (!recordIdsValid(state)) return { where: 'record ids', detail: 'An assignment, work order request, notice or ATP software push id is used twice, or a stored id counter is below an id in use. Reload the workspace so each repeated record gets its own id.', fix: s => repairRecordIds(s) };
     if (Array.isArray(state.activity)) {
       if (state.activity.length > 500) return { where: 'activity', detail: `Activity log has ${state.activity.length} events; 500 is the limit.`, fix: s => { s.activityArchive = [...(s.activity.splice(500)), ...(s.activityArchive || [])].slice(0, 10000); } };
       const seen = new Set();
@@ -8947,7 +9043,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
       unitCount, unavailableUnits, overCapacity: plannedHours > availableHours, unestimatedOperations: queue.filter(item => item.plannedHours === null).length,
       queue };
   }
-  const MES = { opNumber, atpAssets, masterAccess, buyoffCredential, diagnose, repair, quarantineOrder, NETSUITE_STOCK, availableLots, lotInStock, lotBuildClassAllowed, woRevLabel, revisionAuthority, nextWoRev, ensureRevisions, revisionEntries, rollWorkOrderRevision, addSavedView, removeSavedView, ensureSavedViews, stepLetter, addAttachment, addTicketAttachment, removeTicketAttachment, ticketAttachments, STOCK_PARTS, OP_BOM_MAX, removeAttachment, aogActive, aogDue, aogMessage, logAogBroadcast, resolveAog, AOG_THREAD, setSchedule, scheduleDays, dateOnly, editOrderOperation, AIRCRAFT, stockedUnits, setWIStepImage, PROFILE_OPTIONS, profileOptionFor, selectProfile, TORQUE_UNITS, isTorqueTool, torqueValid, inventoryReadiness, assignSerial, voidSerial, nextSerial, orderSerials, isSerialized, SERIALIZED_PARTS, autoAssignSerials, moveToInventory, markNetSuitePosted, addKitFile, linkOpToTicket, reworkOpsFor, reworkLibrary, saveReworkTemplate, removeReworkTemplate, saveOpAsReworkTemplate, approveReworkTemplate, addStandardRework, reworkHash, setWIDrawing, releaseUnreleasedWI, wiDrawingUnreleased, isInspectionOp, STD_INSPECTION, rejectInspection, logTravelerPrint, FAIR_TYPES, FAIR_REASONS, FAIR_DESIGNATORS, INDEX_TYPES, F2_KINDS, saveFairHeader, setFairIndex, addFairForm2, setFairTest, addFairChar, updateFairChar, fairReview, fairSnapshot, verifyFair, approveFair, reopenFair, fairId, SOC_SECTIONS, SOC_ITEMS, ISSUERS, CONF_CHECKS, CONF_PHASES, CONF_VALUES, CONF_CLASS, confSerials, confAuto, confGaps, confOpGate, startConformity, saveConformity, checkConformity, complete8130_9, void8130_9, aqiSign8130_9, notifyCertification, addDarFinding, acceptDarFinding, recordDarApproval, record8130_3, closeConformity, conformityState, atpAssets, faiFirstFor, issueFromOrder, returnIssuedOrder, issuableOrders, traceReport, traceReportCsv, qaReviewMasterWI, releaseWIFromPfmea, traceSearch, setImpactDecision, IMPACT_DECISIONS, linkECO, setWICriticalSafety, addPfmeaRow, updatePfmeaRow, pfmeaGate, PFMEA_HIGH, setStampPin, identityStepUp, trainingCheck, trainingStatus, TRAINING, setMsdsBook, msdsBook, tickFodItem, FOD_CHECKLIST, fodChecklistComplete, isConformityPoint, removeKitFile, netsuiteCsv, ensureMasterWIs, findWI, wiKey, nextWIRevision, addMasterWI, importMasterWIs, updateMasterWI, saveWIOperations, releaseMasterWI, reviseMasterWI, setStepCheck, BUYOFF_TYPES, OP_CLASSIFICATIONS, EXTERNAL_CLASS, EXTERNAL_TEST_CLASS, EXTERNAL_CLASSES, INSPECTION_CLASS, ATP_CLASS, isTestOperation, isATPOperation, isPartsConformityOperation, atpPending, pushATPSoftware, reviewATPPush, linkATPSoftware, addPurchaseOrder, CLOSURE_REASONS, requestOrderClosure, NOTICE_KINDS, postNotice, acknowledgeNotice, updateNotice, pruneExpiredNotices, requestWorkOrder, decideWORequest, ECR_TYPES, ECR_SOURCES, submitECRRequest, reviewFeedbackECR, linkECRJira, openProcessECRs, ecrsForOperation, incorporateECRs, decideOrderClosure, ASSIGN_TYPES, assignWork, completeAssignment, pingAssignment, syncAssignments, opAssignee, INSPECTION_BUYOFF_TYPES, pendingSequenceChange, inspectionGate, firstInsertIndex, addOrderOperation, removeOrderOperation, approveSequenceChange, toolCheck, stampCheck, hasValidInspectionStamp, stampCredential, stampHolderFor, CAL_TOOLS, CAL_SNAPSHOT, STAMP_HOLDERS, setMaterialLot, PEDIGREES, PRIORITIES, SUBCATEGORIES, PART_CATALOG, partDefinition, revisionLabel, requiresReleaseQA, releaseApproval, approveRelease, approveRelease, approveECR, approveEngineeringChange, SITES, orderSite, MESSAGE_TARGETS, seed, validate, upgrade, getOrder, summary, canAdvance, advance, setMaterial, setPriority, completeOperation, sendBackToBuilding, lastSendBack, qaFreezeMessage, closeOrder, addOrder, importWorkOrders, addAdhocOrder, splitOrder, splitRequestOrder, requestPedigreeChange, approvePedigreeChange, peerReviewMasterWI, dispositionTicket, DISPOSITIONS, MRB_PEDIGREES, ADHOC_ONLY, CALLOUTS, GROUNDING, FOD_LEVELS, CONSUMABLES, addNote, blockingTickets, createTicket, resolveTicket, returnDisposition, closeSplitRequest, DEFECT_CODES, rejectEngineeringChange, rejectSequenceChange, rejectPedigreeChange, returnRelease, returnMasterWI, withdrawClosure, closeECRRequest, updateProfile, attachEvidence, reviewEvidence, rejectEvidence, removeEvidence, ensureStamps, stampRegisterProblem, stampRegister, issueStamp, updateStamp, profileOptions, STAMP_STATUSES, sha256, canonical, protoKeyPath, signManifest, fullHistory, addMessage, setSlackThread, slackThreadValid, PLANNING_BLOCKER_KINDS, expectedPlanningBlockers: expectedPlanningBlockers, syncBlockers: syncPlanningBlockers, plannerView, bigThreeTarget, createBigThreePlan, decideBigThree, carryBigThree, proposeBigThreeTimeBlock, decideBigThreeTimeBlock, escalateBigThree, setPlanningCalendarSync, icalExport, icalImport, bigThree: state => { const principal = plannerAccount(state); const items = plannerCandidates(state, principal); return { top: items.slice(0,3), rest: items.slice(3), total: items.length }; } };
+  const MES = { opNumber, namedReviewPush, atpAssets, masterAccess, buyoffCredential, diagnose, repair, quarantineOrder, NETSUITE_STOCK, availableLots, lotInStock, lotBuildClassAllowed, woRevLabel, revisionAuthority, nextWoRev, ensureRevisions, revisionEntries, rollWorkOrderRevision, addSavedView, removeSavedView, ensureSavedViews, stepLetter, addAttachment, addTicketAttachment, removeTicketAttachment, ticketAttachments, STOCK_PARTS, OP_BOM_MAX, removeAttachment, aogActive, aogDue, aogMessage, logAogBroadcast, resolveAog, AOG_THREAD, setSchedule, scheduleDays, dateOnly, editOrderOperation, AIRCRAFT, stockedUnits, setWIStepImage, PROFILE_OPTIONS, profileOptionFor, selectProfile, TORQUE_UNITS, isTorqueTool, torqueValid, inventoryReadiness, assignSerial, voidSerial, nextSerial, orderSerials, isSerialized, SERIALIZED_PARTS, autoAssignSerials, moveToInventory, markNetSuitePosted, addKitFile, linkOpToTicket, reworkOpsFor, reworkLibrary, saveReworkTemplate, removeReworkTemplate, saveOpAsReworkTemplate, approveReworkTemplate, addStandardRework, reworkHash, setWIDrawing, releaseUnreleasedWI, wiDrawingUnreleased, isInspectionOp, STD_INSPECTION, rejectInspection, logTravelerPrint, FAIR_TYPES, FAIR_REASONS, FAIR_DESIGNATORS, INDEX_TYPES, F2_KINDS, saveFairHeader, setFairIndex, addFairForm2, setFairTest, addFairChar, updateFairChar, fairReview, fairSnapshot, verifyFair, approveFair, reopenFair, fairId, SOC_SECTIONS, SOC_ITEMS, ISSUERS, CONF_CHECKS, CONF_PHASES, CONF_VALUES, CONF_CLASS, confSerials, confAuto, confGaps, confOpGate, startConformity, saveConformity, checkConformity, complete8130_9, void8130_9, aqiSign8130_9, notifyCertification, addDarFinding, acceptDarFinding, recordDarApproval, record8130_3, closeConformity, conformityState, atpAssets, faiFirstFor, issueFromOrder, returnIssuedOrder, issuableOrders, traceReport, traceReportCsv, qaReviewMasterWI, releaseWIFromPfmea, traceSearch, setImpactDecision, IMPACT_DECISIONS, linkECO, setWICriticalSafety, addPfmeaRow, updatePfmeaRow, pfmeaGate, PFMEA_HIGH, setStampPin, identityStepUp, trainingCheck, trainingStatus, TRAINING, setMsdsBook, msdsBook, tickFodItem, FOD_CHECKLIST, fodChecklistComplete, isConformityPoint, removeKitFile, netsuiteCsv, ensureMasterWIs, findWI, wiKey, nextWIRevision, addMasterWI, importMasterWIs, updateMasterWI, saveWIOperations, releaseMasterWI, reviseMasterWI, setStepCheck, BUYOFF_TYPES, OP_CLASSIFICATIONS, EXTERNAL_CLASS, EXTERNAL_TEST_CLASS, EXTERNAL_CLASSES, INSPECTION_CLASS, ATP_CLASS, isTestOperation, isATPOperation, isPartsConformityOperation, atpPending, pushATPSoftware, reviewATPPush, linkATPSoftware, addPurchaseOrder, CLOSURE_REASONS, requestOrderClosure, NOTICE_KINDS, postNotice, acknowledgeNotice, updateNotice, pruneExpiredNotices, requestWorkOrder, decideWORequest, ECR_TYPES, ECR_SOURCES, submitECRRequest, reviewFeedbackECR, linkECRJira, openProcessECRs, ecrsForOperation, incorporateECRs, decideOrderClosure, ASSIGN_TYPES, assignWork, completeAssignment, pingAssignment, syncAssignments, opAssignee, INSPECTION_BUYOFF_TYPES, pendingSequenceChange, inspectionGate, firstInsertIndex, addOrderOperation, removeOrderOperation, approveSequenceChange, toolCheck, stampCheck, hasValidInspectionStamp, stampCredential, stampHolderFor, CAL_TOOLS, CAL_SNAPSHOT, STAMP_HOLDERS, setMaterialLot, PEDIGREES, PRIORITIES, SUBCATEGORIES, PART_CATALOG, partDefinition, revisionLabel, requiresReleaseQA, releaseApproval, approveRelease, approveRelease, approveECR, approveEngineeringChange, SITES, orderSite, MESSAGE_TARGETS, seed, validate, upgrade, getOrder, summary, canAdvance, advance, setMaterial, setPriority, completeOperation, sendBackToBuilding, lastSendBack, qaFreezeMessage, closeOrder, addOrder, importWorkOrders, addAdhocOrder, splitOrder, splitRequestOrder, requestPedigreeChange, approvePedigreeChange, peerReviewMasterWI, dispositionTicket, DISPOSITIONS, MRB_PEDIGREES, ADHOC_ONLY, CALLOUTS, GROUNDING, FOD_LEVELS, CONSUMABLES, addNote, blockingTickets, createTicket, resolveTicket, returnDisposition, closeSplitRequest, DEFECT_CODES, rejectEngineeringChange, rejectSequenceChange, rejectPedigreeChange, returnRelease, returnMasterWI, withdrawClosure, closeECRRequest, updateProfile, attachEvidence, reviewEvidence, rejectEvidence, removeEvidence, ensureStamps, stampRegisterProblem, stampRegister, issueStamp, updateStamp, profileOptions, STAMP_STATUSES, sha256, canonical, protoKeyPath, signManifest, fullHistory, addMessage, setSlackThread, slackThreadValid, PLANNING_BLOCKER_KINDS, expectedPlanningBlockers: expectedPlanningBlockers, syncBlockers: syncPlanningBlockers, plannerView, bigThreeTarget, createBigThreePlan, decideBigThree, carryBigThree, proposeBigThreeTimeBlock, decideBigThreeTimeBlock, escalateBigThree, setPlanningCalendarSync, icalExport, icalImport, bigThree: state => { const principal = plannerAccount(state); const items = plannerCandidates(state, principal); return { top: items.slice(0,3), rest: items.slice(3), total: items.length }; } };
   Object.assign(MES,{openAudit,closeAuditFinding,closeAudit,issueCertification,approveSupplier,storeQualityValue,recordQualityVerdict,QUALITY_KINDS,qualityRecordsValid,CONTROLLED_DOCUMENT_KINDS,createControlledDocument,startControlledDocumentRevision,reviewControlledDocument,releaseControlledDocument,controlledDocumentsValid,AI_GOVERNANCE_PROCEDURES,AI_RISK_REGISTER,configureModelAdapter,recordAIAction,verifyAIActionLog,governanceExport,aiGovernanceValid,FLIGHT_SKILLS,FORM3_PLAN,setForm3Plan,setSkillTrigger,runSkill,attachSkillEventTriggers,reviewSkillDraft,updateSkillDraft,acceptSkillDraft});
   Object.assign(MES,{plannerStatus, WORK_CENTERS, EQUIPMENT_UNITS, equipmentUnitsFor, addEquipmentArea, addEquipmentUnit, MAINTENANCE_TYPES, PROJECT_LIFECYCLES, PROJECT_SENSITIVITY, OBJECTIVE_STATUSES, ensureProjects, createProject, addProjectObjective, addProjectMilestone, milestoneRisks, setProjectSensitivity, linkWorkOrderProject, projectLaborRollup, sprintCapacity, createSprint, sprintReport, recordMaintenance, closeMaintenance, recordExternalReceipt, equipmentValid, openMaintenanceFor, workCenterQueue, workCenterCapacity, clockOnOperation, clockOffOperation, laborMinutes, INVENTORY_TRANSACTION_TYPES, BUILD_CLASSES, LOT_CONFORMITY_STATUSES, ensureInventoryLedger, inventoryLedgerValid, inventoryLots, availableLotsFromLedger, postInventoryTransaction});
   const validateWithPlanner = MES.validate;
@@ -10943,7 +11039,7 @@ function assignmentLabel(a){
   if(a.type==='qa-review-wi')return `QA review ${a.wiId} Rev ${a.wiRevision}`;
   if(a.type==='ecr'){const e=(state.ecrRequests||[]).find(x=>x.id===a.ecrId);return `${a.ecrId}${e?` · ${e.title}`:''}`;}
   if(a.type==='wo-request'){const r=(state.woRequests||[]).find(x=>x.id===a.worId);return `Create work order · ${r?`${r.partNumber} × ${r.quantity}`:a.worId}`;}
-  if(a.type==='review-push'){const p=op?.atp?.pushes.find(x=>x.id===a.pushId);return `Review software push ${p?.version||''}${op?` · Op ${operationNumber(o,op.id)}`:''}`;}
+  if(a.type==='review-push'){const r=MES.namedReviewPush(state,a);return `Review software push ${r?.push?.version||''}${r&&!r.held?` · Op ${operationNumber(o,r.op.id)}`:''}${r?.held?' · held by a sequence change waiting for QA':''}`;}
   return MES.ASSIGN_TYPES[a.type]||a.type;
 }
 function assignmentRow(a,mine){
@@ -11016,7 +11112,7 @@ document.addEventListener('click',e=>{
   if(a.type==='split'){go(stageTab(MES.getOrder(state,a.orderId)));return splitDialog();}
   if(a.type==='op')return go('operations',a.opId);
   if(a.type==='ticket'){go('quality');return ticketDialog(a.ticketId);}
-  if(a.type==='review-push'){go('operations',a.opId);return atpReviewDialog(a.opId,a.pushId);}
+  if(a.type==='review-push'){const r=MES.namedReviewPush(state,a);if(r?.held)return notify('This software review is for an operation a sequence change waiting for QA would remove. Review it after the change is rejected; it closes when the change is released.');go('operations',a.opId);return atpReviewDialog(a.opId,r?.push?.id||a.pushId);}
 });
 // #542: the latest QA send back to Building, shown while the work order is back in Building.
 function sendBackBanner(o){const e=MES.lastSendBack(o);if(!e||o.status!=='Building')return '';return `<div class="inline-info warning send-back-banner" role="status">${icon('alert')}<p><strong>Sent back by QA:</strong> ${esc(e.rationale)}, ${esc(e.by?.name||'')}, ${date(e.at)}${e.ticketId?` <span class="small">· Linked ${esc(e.ticketId)}</span>`:''}<br><span class="small">Changes follow the QA-approved rules (sequence change, engineering change). Return the work order through Send to QA.</span></p></div>`;}
@@ -11255,7 +11351,7 @@ document.addEventListener('submit',e=>{
   const a=(state.assignments||[]).find(x=>x.id===f.dataset.id);const sel=$('#reassign-user');
   if(!a||!sel.value){$('#reassign-error').textContent='Choose a person.';return;}
   if(sel.value===a.assignee.username){$('#reassign-error').textContent=`Already assigned to ${a.assignee.name}.`;return;}
-  const r=MES.assignWork(state,{type:a.type,orderId:a.orderId,opId:a.opId,ticketId:a.ticketId,wiId:a.wiId,wiRevision:a.wiRevision,pushId:a.pushId,ecrId:a.ecrId,worId:a.worId,assigneeUsername:sel.value,assigneeName:sel.selectedOptions[0]?.dataset.name||sel.value,due:$('#reassign-due').value,note:$('#reassign-note').value,replaces:a.id});
+  const r=MES.assignWork(state,{type:a.type,orderId:a.orderId,opId:a.opId,ticketId:a.ticketId,wiId:a.wiId,wiRevision:a.wiRevision,pushId:a.pushId,pushAt:a.pushAt,ecrId:a.ecrId,worId:a.worId,assigneeUsername:sel.value,assigneeName:sel.selectedOptions[0]?.dataset.name||sel.value,due:$('#reassign-due').value,note:$('#reassign-note').value,replaces:a.id});
   if(!r.ok){$('#reassign-error').textContent=r.message;return;}
   if(!save())return;$('#dialog').close();render();notify(r.message.replace(' assigned to ',' reassigned to '));
 });
