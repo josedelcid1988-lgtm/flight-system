@@ -57,7 +57,7 @@ Every demo page and every print and download shows DEMO, NOT FOR ACCEPTANCE (D-2
 | D-17 | Stamps | PIN step-up lifted for FAIR and 8130-9 signatures | The inspector signing a FAIR or an 8130-9 is not asked for a stamp PIN. The PIN check itself is unchanged. | 1 |
 | D-18 | Stamps | Stamp PIN fields optional at buy-off | The buy-off panel and the stamp prompt do not require a PIN, since a demo stamp is not asked for one. | 2 |
 | D-19 | Stamps | Buy-off form does not pre-check the stamp in the browser | The engine is the only check (and the stamp deviations above relax it), so the form never blocks on a demo stamp. | 1 |
-| D-20 | Separation of duties | Engine separation-of-duties comparisons never match | One person can author and approve, request and decide, prepare and sign, so a flow can be walked alone. Production enforces every one of these. | 14 |
+| D-20 | Separation of duties | Engine separation-of-duties comparisons never match | One person can author and approve, request and decide, prepare and sign, so a flow can be walked alone. Production enforces every one of these. | 16 |
 | D-21 | Separation of duties | Closure, software push and change approval self-checks never match | Same as the rule above for the checks that compare against the current actor held in a local variable. | 3 |
 | D-22 | Separation of duties | Two approvals from one discipline allowed | A pedigree change can be approved twice from the same discipline. | 1 |
 | D-23 | Separation of duties | Flight Maneuver same-person checks never match | Root cause and verification, and one person one MRB seat, are lifted in the demo. | 1 |

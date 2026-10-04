@@ -3667,6 +3667,8 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // Split numbers already taken under a base order id. A closed split order may have moved to the server archive, so the
   // numbers its parent (or any live order) still lists in splitInto or engineeringSplits stay reserved too.
   const usedSplitNumbers = (state, base) => new Set(state.orders.flatMap(o => [o.id, ...(Array.isArray(o.splitInto) ? o.splitInto : []), ...(Array.isArray(o.engineeringSplits) ? o.engineeringSplits.map(split => split && split.orderId) : [])]).filter(id => typeof id === 'string' && id.startsWith(`${base}-Split-`)).map(id => parseInt(id.slice(`${base}-Split-`.length), 10)));
+  // The credential of the person who created a work order, read from its first history entry.
+  const orderCreatorCredential = order => { const first = [...(order.historyArchive || []), ...(order.history || [])][0]; return first && typeof first.actor === 'string' ? first.actor.split(' · ')[1] || '' : ''; };
   const selfApprovalMessage = 'The requester cannot approve their own engineering change. Use a different QA credential.';
   // #542: once a work order is sent to QA it is frozen. Only QA records (NC, notes, messages, QA evidence files, FAIR,
   // conformity and 8130-9, Review & close) may be written; anything else waits for a signed QA send back to Building.
@@ -7720,6 +7722,10 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     // re-releases each order at its new quantity, the way QA re-releases an applied engineering change (#697).
     const rerelease = requiresReleaseQA(order) && !!releaseApproval(order);
     if (rerelease && !isQAProfile(actor(state))) return fail(`${order.id} carries a QA release for ${order.quantity} unit${order.quantity === 1 ? '' : 's'}, and this split changes that quantity. Ask a Quality Engineer or QA Manager to fulfil the split request: they re-release both work orders at their new quantities.`);
+    // The re-release is an independent Quality signature, as approveRelease requires: not the person who created the
+    // work order, and not the person who raised the split request.
+    if (rerelease && orderCreatorCredential(order) === '__demo_never_matches__' /* DEMO D-20 */) return fail(`Separation of duties: the person who created ${order.id} cannot re-release it. A different Quality Engineer or QA Manager must fulfil this split request.`);
+    if (rerelease && sr.requestedBy?.credentialId === '__demo_never_matches__' /* DEMO D-20 */) return fail(`Separation of duties: the person who raised ${sr.id} cannot also re-release the work orders it changes. A different Quality Engineer or QA Manager must fulfil it.`);
     const qty = Number(sr.quantity);
     if (!Number.isInteger(qty) || qty < 1 || qty >= order.quantity) return fail(`This request covers ${sr.quantity} of ${order.quantity} units. Close it as Not required instead.`);
     if (state.orders.length >= MAX_ORDERS) return fail('A workspace holds up to 250 work orders. Reset the workspace to start again.');
@@ -7761,7 +7767,10 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     const applied = appliedEngineeringChange(order);
     const splitAt = new Date(Math.max(Date.now(), applied ? Date.parse(applied.qaApproval.at) : 0)).toISOString();
     if (applied) order.engineeringSplits = [...(Array.isArray(order.engineeringSplits) ? order.engineeringSplits : []), { orderId: id, requestId: sr.id, quantity: qty, afterChange: applied.id, by: actor(state), at: splitAt }];
-    if (rerelease) [order, child].forEach(o => { o.releaseApproval = { ...actor(state), at: splitAt, virtual: true, configuration: releaseConfiguration(o) }; });
+    if (rerelease) [order, child].forEach(o => {
+      o.releaseApproval = { ...actor(state), at: splitAt, virtual: true, configuration: releaseConfiguration(o) };
+      o.releaseApproval.manifest = signManifest(state, 'QA re-release after split', { orderId: o.id, revision: o.revision, woRev: o.woRev, configuration: o.releaseApproval.configuration, splitRequestId: sr.id, parentOrderId: order.id, childOrderId: id }, splitAt);
+    });
     order.splitInto = [...(Array.isArray(order.splitInto) ? order.splitInto : []), id];
     state.orders.splice(state.orders.indexOf(order) + 1, 0, child);
     ensureInventory(state);
@@ -8107,11 +8116,22 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
         if (serials.length !== qty) return fail(`Select ${qty} serial number${qty === 1 ? '' : 's'} to match the affected quantity.`);
       }
     }
+    if (qty < order.quantity) {
+      // Up to 50 split requests are kept, and never one an engineering split record points at; refuse before anything
+      // changes when all 50 are such requests, so the NC is never pointed at a request that was dropped.
+      const held = Array.isArray(order.splitRequests) ? order.splitRequests : [];
+      const recorded = new Set((Array.isArray(order.engineeringSplits) ? order.engineeringSplits : []).map(split => split && split.requestId));
+      if (held.length >= 50 && held.every(item => recorded.has(item && item.id))) return fail(`${order.id} already keeps 50 split requests that its engineering split records point at, the most a work order holds. Record all ${order.quantity} units as affected, or move units to their own work order first.`);
+    }
     const reviewer = actor(state), reviewedAt = new Date(Math.max(Date.now(), Date.parse(ticket.createdAt))).toISOString();
     ticket.affected = { quantity: qty, of: order.quantity, serials, defectCode: codeDef.code, defectName: codeDef.name, subCode: subDef.code, subName: subDef.name, subDefinition: subDef.def, recordedBy: reviewer, recordedAt: reviewedAt };
     if (qty < order.quantity) {
       const requests = Array.isArray(order.splitRequests) ? order.splitRequests : [];
-      const sr = { id: `SPR-${order.id.slice(3)}-${requests.length + 1}`, ticketId: ticket.id, quantity: qty, of: order.quantity, serials, reason: `${ticket.id} ${ticket.dispo.decision}: ${qty} of ${order.quantity} units affected (${defectLabel}).`, status: 'Open', requestedBy: reviewer, at: reviewedAt };
+      // Number from the highest kept request, not the count: the 50 cap can drop older requests, and a count would then
+      // reuse the id of a request still kept.
+      const prefix = `SPR-${order.id.slice(3)}-`;
+      const next = Math.max(requests.length, ...requests.map(item => plain(item) && typeof item.id === 'string' && item.id.startsWith(prefix) ? parseInt(item.id.slice(prefix.length), 10) || 0 : 0)) + 1;
+      const sr = { id: `${prefix}${next}`, ticketId: ticket.id, quantity: qty, of: order.quantity, serials, reason: `${ticket.id} ${ticket.dispo.decision}: ${qty} of ${order.quantity} units affected (${defectLabel}).`, status: 'Open', requestedBy: reviewer, at: reviewedAt };
       // Keep at most 50, but never drop a request an engineering split record points at (validation matches them).
       const recorded = new Set((Array.isArray(order.engineeringSplits) ? order.engineeringSplits : []).map(split => split && split.requestId));
       const kept = [...requests, sr];

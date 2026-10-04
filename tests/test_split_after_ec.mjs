@@ -189,6 +189,15 @@ function openSplitRequest(state, n, quantity) {
   ok('Quality raises a 51st split request through the NC flow', raised.ok && dispo.ok && resolved.ok && after.splitRequests.length === 50 && after.splitRequests.at(-1).ticketId === ticketId, JSON.stringify([raised, dispo, resolved, after.splitRequests.length]));
   ok('the request a split record points at is kept and an older one is dropped', after.splitRequests.some(r => r.id === spr) && !after.splitRequests.some(r => r.id === `SPR-${ID.slice(3)}-F0`), JSON.stringify(after.splitRequests.slice(0, 2).map(r => r.id)));
   ok('the workspace still validates after the cap', MES.validate(state), JSON.stringify(MES.diagnose(state)));
+  // Jinx on 53d41e8: after the cap drops a request, the next id comes from the highest kept number, not the count, so
+  // it never repeats a request that is still kept.
+  const first = after.splitRequests.at(-1).id;
+  const raised2 = host.withAccount(tech, () => MES.createTicket(state, ID, op.id, { type: 'NC', title: 'Dent on one unit', description: 'Small dent found on one unit.', hold: true }), state);
+  const ticket2 = raised2.id || MES.getOrder(state, ID).tickets.at(-1)?.id;
+  assert.ok(host.withAccount(me, () => MES.dispositionTicket(state, ID, ticket2, { decision: 'Rework', note: 'Dress out the dent.' }), state).ok);
+  const resolved2 = host.withAccount(qm, () => MES.resolveTicket(state, ID, ticket2, 'Approved for rework.', { defectCode: 'DMG', subCode: 'DMG-01', quantity: 1, serials: [] }), state);
+  const ids = MES.getOrder(state, ID).splitRequests.map(r => r.id);
+  ok('the next split request after the cap gets a new id that no kept request uses', resolved2.ok && first === `SPR-${ID.slice(3)}-51` && ids.at(-1) === `SPR-${ID.slice(3)}-52` && new Set(ids).size === ids.length && MES.validate(state), JSON.stringify([resolved2, ids.slice(-3)]));
 }
 
 {
@@ -248,16 +257,27 @@ function openSplitRequest(state, n, quantity) {
     if (withChange) applyChange(state, { quantity: 4, reason: 'Two more units for the build.' });
     const label = withChange ? 'after an applied change' : 'with no engineering change';
     ok(`the FAI order with a QA release validates (${label})`, MES.validate(state), JSON.stringify(MES.diagnose(state)));
-    const reviewer = { name: 'Quincy Manager', role: 'Quality Manager', credentialId: 'ACCT-split-qm' };
+    // Raised by a second QA Manager; a different Quality account (Quincy Manager) fulfils it.
+    const reviewer = { name: 'Quinn Second', role: 'Quality Manager', credentialId: 'ACCT-split-qm2' };
     q.splitRequests = [{ id: `SPR-${ID.slice(3)}-1`, ticketId: 'NC-99001', quantity: 1, of: q.quantity, serials: [], reason: 'NC-99001 Rework: 1 unit affected.', status: 'Open', requestedBy: reviewer, at: new Date().toISOString() }];
     const before = snap(state);
     const refused = host.withAccount(me, () => MES.splitRequestOrder(state, ID, `SPR-${ID.slice(3)}-1`), state);
     ok(`a non-Quality account is refused, naming the QA release and who can fulfil it (${label})`, refused.ok === false && refused.message === `${ID} carries a QA release for ${q.quantity} unit${q.quantity === 1 ? '' : 's'}, and this split changes that quantity. Ask a Quality Engineer or QA Manager to fulfil the split request: they re-release both work orders at their new quantities.` && NO_EM_DASH(refused.message) && snap(state) === before, JSON.stringify(refused));
+    // Codex P1 on 53d41e8: the re-release is an independent Quality signature. The work order's creator and the
+    // person who raised the split request are refused, and nothing changes.
+    const creator = { username: 'master', displayName: 'Flight Master', role: 'qm' };
+    const byCreator = host.withAccount(creator, () => MES.splitRequestOrder(state, ID, `SPR-${ID.slice(3)}-1`), state);
+    ok(`the work order's creator cannot re-release it (${label})`, byCreator.ok === false && byCreator.message === `Separation of duties: the person who created ${ID} cannot re-release it. A different Quality Engineer or QA Manager must fulfil this split request.` && snap(state) === before, JSON.stringify(byCreator));
+    const requester = { username: 'split-qm2', displayName: 'Quinn Second', role: 'qm' };
+    const byRequester = host.withAccount(requester, () => MES.splitRequestOrder(state, ID, `SPR-${ID.slice(3)}-1`), state);
+    ok(`the person who raised the split request cannot re-release the orders (${label})`, byRequester.ok === false && byRequester.message === `Separation of duties: the person who raised SPR-${ID.slice(3)}-1 cannot also re-release the work orders it changes. A different Quality Engineer or QA Manager must fulfil it.` && snap(state) === before, JSON.stringify(byRequester));
     const total = q.quantity;
     const r = host.withAccount(qm, () => MES.splitRequestOrder(state, ID, `SPR-${ID.slice(3)}-1`), state);
     const parent = MES.getOrder(state, ID), child = MES.getOrder(state, r.id);
     ok(`Quality fulfils the split request and the workspace validates (${label})`, r.ok && r.message.endsWith('Both work orders are re-released by QA at their new quantities.') && MES.validate(state) && MES.diagnose(state) === null, JSON.stringify([r, MES.diagnose(state)]));
     ok(`both orders carry a QA release for their new quantity, signed by the Quality account that split them (${label})`, parent.releaseApproval.configuration.quantity === total - 1 && child.releaseApproval.configuration.quantity === 1 && [parent, child].every(x => x.releaseApproval.credentialId === 'ACCT-split-qm' && x.releaseApproval.role === 'Quality Manager'), JSON.stringify([parent.releaseApproval, child.releaseApproval]));
+    // Codex P1 on 53d41e8: both re-release approvals carry a SHA-256 signature manifest, and the workspace verifies.
+    ok(`both re-release approvals carry a signed SHA-256 manifest (${label})`, [parent, child].every(x => { const m = x.releaseApproval.manifest; return m && m.meaning === 'QA re-release after split' && m.algorithm === 'SHA-256' && /^[0-9a-f]{64}$/.test(m.hash) && m.signer?.credentialId === 'ACCT-split-qm' && m.at === x.releaseApproval.at && m.subject.orderId === x.id && m.subject.configuration.quantity === x.quantity; }) && MES.verifyManifests(state).ok, JSON.stringify([parent.releaseApproval.manifest, MES.verifyManifests(state).failures]));
     ok(`the parent history names the QA re-release (${label})`, parent.history.some(e => e.action.includes(`QA re-release by Quincy Manager (ACCT-split-qm): ${ID} at ${total - 1} unit${total - 1 === 1 ? '' : 's'}, ${r.id} at 1.`)));
     const repaired = JSON.parse(JSON.stringify(state)); MES.repair(repaired);
     ok(`repair clears no release approval and sets nothing aside (${label})`, !(repaired.quarantine || []).length && !!MES.getOrder(repaired, ID).releaseApproval && !!MES.getOrder(repaired, r.id).releaseApproval);
@@ -267,6 +287,26 @@ function openSplitRequest(state, n, quantity) {
   applyChange(state, { quantity: 4, reason: 'Two more units for the build.' });
   const byMe = host.withAccount(me, () => MES.splitRequestOrder(state, ID, openSplitRequest(state, 1, 1)), state);
   ok('Manufacturing Engineering still fulfils a split request on an order with no QA release', byMe.ok && MES.validate(state), JSON.stringify(byMe));
+}
+{
+  // Codex P2 on 53d41e8: when all 50 kept split requests are ones engineering split records point at, Quality raising
+  // one more is refused before anything changes, so the NC is never pointed at a request that was dropped.
+  const state = fresh();
+  applyChange(state, { quantity: 60, reason: 'Build the full lot on one order.' });
+  const o = MES.getOrder(state, ID);
+  o.status = 'Building'; o.materials.forEach(m => { m.ready = true; });
+  for (let n = 1; n <= 50; n++) assert.ok(host.withAccount(qm, () => MES.splitRequestOrder(state, ID, openSplitRequest(state, n, 1)), state).ok);
+  ok('fifty split requests after a quantity change all record and validate', MES.getOrder(state, ID).engineeringSplits.length === 50 && MES.getOrder(state, ID).splitRequests.length === 50 && MES.getOrder(state, ID).quantity === 10 && MES.validate(state), JSON.stringify(MES.diagnose(state)));
+  const op = MES.getOrder(state, ID).operations.find(x => !x.done && !x.evidence.length);
+  const tech = { username: 'split-tech', displayName: 'Tara Technician', role: 'tech' };
+  const raised = host.withAccount(tech, () => MES.createTicket(state, ID, op.id, { type: 'NC', title: 'Scratch on one unit', description: 'Light scratch found on one unit.', hold: true }), state);
+  const ticketId = raised.id || MES.getOrder(state, ID).tickets.at(-1)?.id;
+  assert.ok(host.withAccount(me, () => MES.dispositionTicket(state, ID, ticketId, { decision: 'Rework', note: 'Polish out the scratch.' }), state).ok);
+  const before = snap(state);
+  const r = host.withAccount(qm, () => MES.resolveTicket(state, ID, ticketId, 'Approved for rework.', { defectCode: 'DMG', subCode: 'DMG-01', quantity: 1, serials: [] }), state);
+  ok('a 51st split request is refused with a plain message and nothing changes', r.ok === false && r.message === `${ID} already keeps 50 split requests that its engineering split records point at, the most a work order holds. Record all 10 units as affected, or move units to their own work order first.` && NO_EM_DASH(r.message) && snap(state) === before, JSON.stringify(r));
+  const all = host.withAccount(qm, () => MES.resolveTicket(state, ID, ticketId, 'Approved for rework.', { defectCode: 'DMG', subCode: 'DMG-01', quantity: 10, serials: [] }), state);
+  ok('recording every unit as affected still works and raises no split request', all.ok && MES.getOrder(state, ID).splitRequests.length === 50 && MES.validate(state), JSON.stringify(all));
 }
 // ---- Part 2: the Split quantity dialog in the demo build ----
 {
