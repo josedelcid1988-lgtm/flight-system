@@ -90,7 +90,7 @@ const openBoard = (h, state) => h.withAccount(qm, () => {
   // Removing once the record is closed: refused for every role, the QA Manager included, and the file stays.
   check('a Quality manager cancels the CAR for the closed record check', run(qm, () => FlightManeuver.cancelCAR(state, car.id, 'Raised in error.')).ok);
   // A problem report taken to Closed through the engine: raised, sent to Jira, closed from Jira, with a file on it first.
-  const spr = run(qm, () => FlightManeuver.raiseSPR(state, { title: 'Fault code on start', partNumber: 'SR-FC-200', serial: 'FC-200-00003', foundAt: 'HIL', defectCode: 'TEST', subCode: 'TEST-01', description: 'Fault code on first start.', occurred: new Date().toISOString().slice(0, 10) }));
+  const spr = run(qm, () => FlightManeuver.raiseSPR(state, { title: 'Fault code on start', partNumber: 'SR-FC-200', serial: 'FC-200-00003', foundAt: 'HIL', defectCode: 'TEST', subCode: 'TEST-01', description: 'Fault code on first start.', occurred: MES.siteToday() }));
   const sprAttached = spr.ok && run(technician, () => FlightManeuver.addRecordFile(state, 'sprs', spr.id, photo)).ok;
   const sprClosed = sprAttached && run(qm, () => FlightManeuver.linkSPRJira(state, spr.id, 'SPR-123')).ok && run(qm, () => FlightManeuver.closeSPR(state, spr.id, 'Resolved in Jira.')).ok;
   const closedSpr = spr.ok && FlightManeuver.get(state, 'sprs', spr.id);

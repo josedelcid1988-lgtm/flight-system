@@ -1,6 +1,7 @@
 (function(){
 const T=window.__T=window.__T||[];
-const today=d=>new Date(Date.now()+(d||0)*86400000).toISOString().slice(0,10);
+// Dates count from the site (Pacific) day the engine checks against, not the UTC day (#587, #588).
+const today=d=>new Date(Date.parse(MES.siteToday())+(d||0)*86400000).toISOString().slice(0,10);
 let FLOW='';
 function st(role,label,fields,fn){const t0=performance.now();let r;try{r=fn();}catch(e){r={ok:false,message:'EXCEPTION '+e.message};}
   const ok=!(r&&r.ok===false)&&r!==false;T.push({flow:FLOW,role,label,fields:fields||0,ok,msg:ok?'':(r&&r.message)||'failed',ms:Math.round(performance.now()-t0)});

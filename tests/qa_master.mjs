@@ -91,7 +91,7 @@ try {
       assert(MES.validate(s),'Valid after FAIR approval');}
     {const s=structuredClone(base),o=s.orders.find(o=>o.conformity?.some(p=>p.form));
       assert(o,'8130-9 signature fixture');const p=o.conformity.find(p=>p.form);
-      p.status='8130-9 completed';p.aqi=null;p.mdlReceived=new Date().toISOString().slice(0,10);
+      p.status='8130-9 completed';p.aqi=null;p.mdlReceived=MES.siteToday();
       p.form.prepared.by.credentialId='ACCT-master-test';
       // The person who completed the 8130-9 may sign as AQI only after acknowledging the warning; it is recorded.
       const self=MES.aqiSign8130_9(structuredClone(s),o.id,p.serial,{});

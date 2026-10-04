@@ -80,7 +80,7 @@ await run(o=>{render();},O); await p.waitForTimeout(200);
 step('conformity panel offers start',{ok:await run(()=>!!document.querySelector('[data-form="conf-start"]')),message:'no start form'});
 step('start package',await S(([o,s])=>MES.startConformity(state,o,{serial:s,jira:'conf-12',rfc:''}),[O,sn]));
 no('duplicate package refused',await run(([o,s])=>MES.startConformity(structuredClone(state),o,{serial:s}),[O,sn]));
-step('package details',await S(([o,s])=>MES.saveConformity(state,o,s,{mdlRev:'G',mdlReceived:new Date().toISOString().slice(0,10),staging:'Cage B, shelf 2'}),[O,sn]));
+step('package details',await S(([o,s])=>MES.saveConformity(state,o,s,{mdlRev:'G',mdlReceived:MES.siteToday(),staging:'Cage B, shelf 2'}),[O,sn]));
 no('1.3 needs MDL',await run(([o,s])=>{const x=structuredClone(state);MES.saveConformity(x,o,s,{mdlRev:''});return MES.checkConformity(x,o,s,'1.3',true);},[O,sn]));
 for(const k of ['1.2','1.3','1.4','3.1','3.2','3.3','3.4','4.1a','4.1b','4.1c','4.1d','4.2']) { const r=await S(([o,s,k])=>MES.checkConformity(state,o,s,k,true),[O,sn,k]); step('step '+k,r); }
 no('N/A without justification refused',await run(([o,s])=>MES.checkConformity(structuredClone(state),o,s,'3.3',{value:'N/A',note:''}),[O,sn]));
@@ -113,14 +113,14 @@ step('AQI signs (master, AI stamp)',await S(([o,s])=>MES.aqiSign8130_9(state,o,s
 no('notify before tag refused',await run(([o,s])=>MES.notifyCertification(structuredClone(state),o,s),[O,sn]));
 for(const k of ['6.3a','6.3b']) step('step '+k,await S(([o,s,k])=>MES.checkConformity(state,o,s,k,true),[O,sn,k]));
 step('notify Certification',await S(([o,s])=>MES.notifyCertification(state,o,s),[O,sn]));
-step('DAR details',await S(([o,s])=>MES.saveConformity(state,o,s,{darName:'J. Rivera',darDesignation:'DAR-F 123',darDate:new Date().toISOString().slice(0,10)}),[O,sn]));
+step('DAR details',await S(([o,s])=>MES.saveConformity(state,o,s,{darName:'J. Rivera',darDesignation:'DAR-F 123',darDate:MES.siteToday()}),[O,sn]));
 step('step 7.2',await S(([o,s])=>MES.checkConformity(state,o,s,'7.2',true),[O,sn]));
 step('DAR finding',await S(([o,s])=>MES.addDarFinding(state,o,s,{text:'Data plate font below drawing minimum',owner:'Ops Manager',rcca:''}),[O,sn]));
-no('approval blocked by open finding',await run(([o,s])=>MES.recordDarApproval(structuredClone(state),o,s,{name:'J. Rivera',designation:'DAR-F 123',date:new Date().toISOString().slice(0,10),aqiPresent:true,fieldsSigned:true}),[O,sn]));
+no('approval blocked by open finding',await run(([o,s])=>MES.recordDarApproval(structuredClone(state),o,s,{name:'J. Rivera',designation:'DAR-F 123',date:MES.siteToday(),aqiPresent:true,fieldsSigned:true}),[O,sn]));
 no('finding needs DAR acceptance',await run(([o,s])=>MES.acceptDarFinding(structuredClone(state),o,s,'F-1',{rcca:'RCCA-9',resolution:'Replaced plate',dar:false}),[O,sn]));
 step('finding accepted',await S(([o,s])=>MES.acceptDarFinding(state,o,s,'F-1',{rcca:'RCCA-9',resolution:'Replaced data plate per drawing',dar:true}),[O,sn]));
-step('DAR approval: CONFORMED',await S(([o,s])=>MES.recordDarApproval(state,o,s,{name:'J. Rivera',designation:'DAR-F 123',date:new Date().toISOString().slice(0,10),aqiPresent:true,fieldsSigned:true}),[O,sn]));
-step('8130-3 recorded',await S(([o,s])=>MES.record8130_3(state,o,s,{number:'fc-0001',issuer:'DAR',issuerName:'J. Rivera DAR-F 123',date:new Date().toISOString().slice(0,10),block11:'PROTOTYPE'}),[O,sn]));
+step('DAR approval: CONFORMED',await S(([o,s])=>MES.recordDarApproval(state,o,s,{name:'J. Rivera',designation:'DAR-F 123',date:MES.siteToday(),aqiPresent:true,fieldsSigned:true}),[O,sn]));
+step('8130-3 recorded',await S(([o,s])=>MES.record8130_3(state,o,s,{number:'fc-0001',issuer:'DAR',issuerName:'J. Rivera DAR-F 123',date:MES.siteToday(),block11:'PROTOTYPE'}),[O,sn]));
 for(const k of ['7.6','7.7']) step('step '+k,await S(([o,s,k])=>MES.checkConformity(state,o,s,k,true),[O,sn,k]));
 step('close package',await S(([o,s])=>MES.closeConformity(state,o,s),[O,sn]));
 await valid('package closed');

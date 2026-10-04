@@ -11,6 +11,56 @@ What changed in Flight System, newest first. The build id is set in `VERSION.md`
 the end of `VERSION.md` names the exact files and the suite results for the build. Storage keys, form
 numbers and record number formats have not changed in any entry below.
 
+## Hermes audit sweep: site-day dates, one torque rule, inspection buy-off on edit, print note (#587 to #592)
+
+- **Dates use the site day (#587, #588).** Record date checks compared against the UTC calendar day, which is
+  already tomorrow from 5 pm PDT (4 pm PST) to midnight Pacific. They now use the Pacific site day
+  (`MES.siteToday()`, built on the existing `pacificDay` helper): consumable shelf life at step check-off, source
+  inspection dates, the MDL received date and its 30-day age, the 8130-9 flight or operational check date, the
+  DAR signature date and its floor (the site day of the AQI signature, not the UTC day of its timestamp), the
+  date recorded on a FAIR characteristic result (Form 3 block 9B), the default planned start of a new or ad hoc
+  work order, the start of a work order converted from a planned order, the CAR due date ("cannot be in the
+  past") and the problem report date ("cannot be in the future"). The source-inspection dialog's date limit
+  follows the same day, and so do the defaults of Raise SPR, Create work order and Ad hoc work order (planned
+  start the site day, planned finish a week later). The printed 8130-9, the conformity package checklist, the FAIR
+  signature blocks (legacy and React) and the certification notice date each signature on the site day too, so an evening AQI signature
+  and the DAR acceptance it allows carry the same date.
+- **One torque rule (#589, #659).** `MES.stepRecordsTorque` decides whether a step records a torque value. A step
+  that mentions torque (or "torquing") records one unless every mention is marker work in one closed shape. A stripe, seal, paint,
+  mark or witness mark word follows "torque", then only known inspection, condition or passive words ("visual
+  inspection", "is intact", "missing on", "damage", "as found") up to the end of the clause or a preposition. Either a marker verb or an
+  "inspection of" comes before it in the same clause ("Apply red torque stripe to the B-nut", "Perform visual
+  inspection of torque stripe"), or one of those words follows ("Torque stripe adhesion check"). A preservation or
+  prohibition verb ("Do not disturb torque stripe", "Avoid damaging torque seal", "Preserve") counts as a marker verb.
+  A marker verb carries across "and" or "or" to the next marker phrase when only its object comes between ("Apply
+  red torque stripe to the nut and blue torque stripe to the bolt"), never across another clause ("Inspect torque
+  stripe; clean the fitting and torque seal per WI-123" records). An adverb before "torque" ("and carefully torque
+  seal per WI-123") makes it a torque command. Any other word after the marker, such as the part ("torque seal
+  retaining nut", "torque seal electrical connector"), makes it a torque action, so an unlisted word records the
+  value instead of skipping it. A torque action ("Carefully torque seal nut", "Retorque seal nut", "Torque sealing
+  plug per WI-123"), any step that says tighten, retighten, secure or fasten in any form, even with no torque word in the text (unless a prohibition such as "Do not", "Avoid" or "Never" comes immediately before the verb:
+  "Do not tighten the B-nut" is exempt, "Do not loosen the locknut prior to tightening the B-nut" is not), and any
+  step that names a torque target always record the value, tool and unit. "At specified torque locations" is exempt only beside marker work on the same step. Adding and
+  editing an operation, default steps and the migration of older steps (title and instruction read as two
+  sentences) all use it, so "Apply torque stripe" no longer asks for a torque reading after an edit. An unchanged
+  step keeps its saved setting. Workspaces saved under the old add rule hold a false setting for real torque steps
+  ("Torque sealing plug to 35 in-lb"). When a workspace loads, an unfinished step of an operation that was added to an
+  open order (id `op-add-N`) with a false setting is raised to recording torque if the rule now requires it, because
+  those settings always came from the rule. A step cloned from a master WI keeps the setting its author chose in the
+  WI editor. A step that is already checked, a step of a closed order and a released master WI step keep their saved
+  setting, and a true setting is never lowered.
+- **Inspection buy-off on edit (#590).** Two checks that could never fail were removed. Editing an Inspection or
+  Source Inspection operation to a buy-off that is not an inspection buy-off is refused before anything changes
+  (the edit already refused it for Inspection, later in the function; Source Inspection was not covered). The
+  Edit operation dialog now offers only inspection buy-offs for a Source Inspection operation too.
+- **Print note (#592).** The Team discussion print note again reads "Internal prints include this discussion.
+  External prints omit all messages and Slack links." in the legacy page and the React work order, instead of a
+  lone lock icon.
+- **Tests.** `test_sweep_hermes_engine` (clock pinned to 17:30 Pacific) and `test_sweep_hermes_ui` are new. The
+  qa_multi "Print record validates before printing" flow (#591) now drives `printWorkOrder`: an invalid workspace
+  and an unknown print mode open no preview and say why, and a valid order opens one. Tests that fed the UTC day
+  into these checks now use `MES.siteToday()`.
+
 ## Work orders frozen in QA review; signed QA send back to Building (#542)
 
 QA Manager decision: once a work order is sent to QA, no changes are allowed. Saved workspaces open as they are.
