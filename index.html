@@ -2332,7 +2332,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const TORQUE_MARKER_COORDINATED = /\b(?:and|or)(?:\s+(?:the|a|an|each|all|both|any|other|remaining|same|new|fresh|existing|bright|dark|light|continuous|tamper-evident|visible|red|blue|green|yellow|white|black|orange|purple|pink))*\s+$/i;
   const TORQUE_MARKER_OBJECT = /^\s*(?:(?:to|on|onto|across|at|of|for|over|from|with|between|in)(?:\s+(?!(?:and|or|then|torque|tighten|tightening|install|installing|clean|cleaning|remove|removing|replace|replacing|apply|applying|inspect|inspecting|lubricate|lubricating|now|also|again|finally)\b|[a-z-]*ly\b)[a-z0-9][a-z0-9-]*)+\s*)?$/i;
   const stepRecordsTorque = text => {
-    const t = String(text ?? ''), mentions = [...t.matchAll(/torque/gi)];
+    const t = String(text ?? ''), mentions = [...t.matchAll(/torque|torquing/gi)];
     if (!mentions.length) return false;
     if (TORQUE_TARGET.test(t) || tightens(t)) return true;
     const kinds = [];

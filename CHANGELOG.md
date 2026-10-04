@@ -26,7 +26,7 @@ numbers and record number formats have not changed in any entry below.
   signature blocks (legacy and React) and the certification notice date each signature on the site day too, so an evening AQI signature
   and the DAR acceptance it allows carry the same date.
 - **One torque rule (#589, #659).** `MES.stepRecordsTorque` decides whether a step records a torque value. A step
-  that mentions torque records one unless every mention is marker work in one closed shape. A stripe, seal, paint,
+  that mentions torque (or "torquing") records one unless every mention is marker work in one closed shape. A stripe, seal, paint,
   mark or witness mark word follows "torque", then only known inspection, condition or passive words ("visual
   inspection", "is intact", "missing on", "damage", "as found") up to the end of the clause or a preposition. Either a marker verb or an
   "inspection of" comes before it in the same clause ("Apply red torque stripe to the B-nut", "Perform visual
