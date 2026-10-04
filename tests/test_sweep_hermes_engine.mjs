@@ -165,7 +165,7 @@ realm('globalThis.Date = globalThis.__RealDate;')();
     // Twenty-sixth review: preservation and prohibition steps apply no torque.
     'Do not disturb torque stripe', 'Avoid damaging torque seal', "Don't remove torque stripe", 'Preserve torque stripe on each B-nut', 'Keep torque seal intact',
     // Twenty-seventh review: a prohibited tightening applies no torque.
-    'Do not tighten the B-nut; inspect torque stripe for damage', 'Never tighten, only inspect torque stripe', 'Avoid tightening the fitting while you inspect torque seal'];
+    'Do not tighten the B-nut', 'Avoid tightening the fitting', 'Do not tighten the B-nut; inspect torque stripe for damage', 'Never tighten, only inspect torque stripe', 'Avoid tightening the fitting while you inspect torque seal'];
   check('MES.stepRecordsTorque: a step that is only torque stripe, seal, paint or mark work records no torque', stripes.every(t => MES.stepRecordsTorque(t) === false), stripes.filter(t => MES.stepRecordsTorque(t)).join(', '));
   // Review of PR #605: a torque action on marked or sealed parts still records the value, tool and unit.
   // Second review: a torque action on seal-named hardware with a torque target records it too.
@@ -219,7 +219,9 @@ realm('globalThis.Date = globalThis.__RealDate;')();
     // Security review of 723b0e4: a positive fastening verb is a torque action even beside specified torque locations.
     'Secure bolts at specified torque locations and apply torque stripe', 'Fasten the B-nut at specified torque points; inspect torque stripe', 'Secure the fitting, then apply torque seal',
     // Review of 52165bf: every inflection of retighten is a tighten verb.
-    'Retightening the B-nut; inspect torque stripe', 'Retightened the B-nut; inspect torque seal', 'Retightens the B-nut; inspect torque stripe', 'Re-securing the fitting; inspect torque stripe'];
+    'Retightening the B-nut; inspect torque stripe', 'Retightened the B-nut; inspect torque seal', 'Retightens the B-nut; inspect torque stripe', 'Re-securing the fitting; inspect torque stripe',
+    // Review of 0d4ec85: a tighten verb records torque with no torque word, and "without" can require tightening.
+    'Tighten the B-nut', 'Retighten the B-nut', 'Assembly is incomplete without tightening the B-nut; inspect torque stripe'];
   check('MES.stepRecordsTorque: a torque action records a torque value, also on marked, paint-marked, sealed or seal-named parts', actions.every(t => MES.stepRecordsTorque(t) === true), actions.filter(t => !MES.stepRecordsTorque(t)).join(', '));
   const state = fresh(), order = state.orders.find(o => o.status === 'Draft' && o.operations.length), op = order.operations[0];
   op.steps = [{ id: 'step-1', title: 'Install bracket', instruction: 'Install bracket', recordsTorque: true }];

@@ -2387,7 +2387,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   // A tighten verb that follows a prohibition in the same clause ("Do not tighten the B-nut; inspect torque stripe") applies no torque.
   // A prohibition cancels a tighten verb only when it comes immediately before it ("Do not tighten the B-nut", "Avoid tightening").
   // Anything between them, such as "Do not loosen the locknut prior to tightening the B-nut", leaves the tightening in force.
-  const TORQUE_PROHIBITION = /\b(?:do\s+not|don't|never|avoid|avoiding|without|must\s+not|shall\s+not|should\s+not)(?:\s+(?:ever|again|further|more|just|simply|even|yet))*\s+$/i;
+  const TORQUE_PROHIBITION = /\b(?:do\s+not|don't|never|avoid|avoiding|must\s+not|shall\s+not|should\s+not)(?:\s+(?:ever|again|further|more|just|simply|even|yet))*\s+$/i;
   const tightens = text => [...text.matchAll(TORQUE_TIGHTEN)].some(m => !TORQUE_PROHIBITION.test(text.slice(0, m.index)));
   const TORQUE_PLACE = /\bspecified\s+$/i, TORQUE_PLACE_AFTER = /^torque\s+(?:locations?|points?|positions?)\b/i;
   const TORQUE_MARKER = '(?:witness\\s+)?(?:stripes?|striping|seals?|sealing|sealant|paints?|painting|marks?|marking)';
@@ -2400,7 +2400,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const TORQUE_MARKER_OBJECT = /^\s*(?:(?:to|on|onto|across|at|of|for|over|from|with|between|in)(?:\s+(?!(?:and|or|then|torque|tighten|tightening|install|installing|clean|cleaning|remove|removing|replace|replacing|apply|applying|inspect|inspecting|lubricate|lubricating|now|also|again|finally)\b|[a-z-]*ly\b)[a-z0-9][a-z0-9-]*)+\s*)?$/i;
   const stepRecordsTorque = text => {
     const t = String(text ?? ''), mentions = [...t.matchAll(/torque|torquing/gi)];
-    if (!mentions.length) return false;
+    if (!mentions.length) return tightens(t);
     if (TORQUE_TARGET.test(t) || tightens(t)) return true;
     const kinds = [];
     let markerEnd = -1;
