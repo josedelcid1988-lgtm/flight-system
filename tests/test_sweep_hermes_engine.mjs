@@ -221,7 +221,9 @@ realm('globalThis.Date = globalThis.__RealDate;')();
     // Review of 52165bf: every inflection of retighten is a tighten verb.
     'Retightening the B-nut; inspect torque stripe', 'Retightened the B-nut; inspect torque seal', 'Retightens the B-nut; inspect torque stripe', 'Re-securing the fitting; inspect torque stripe',
     // Review of 0d4ec85: a tighten verb records torque with no torque word, and "without" can require tightening.
-    'Tighten the B-nut', 'Retighten the B-nut', 'Assembly is incomplete without tightening the B-nut; inspect torque stripe'];
+    'Tighten the B-nut', 'Retighten the B-nut', 'Assembly is incomplete without tightening the B-nut; inspect torque stripe',
+    // Review of 962a158: a torque target records torque even with no torque word.
+    'Apply 35 in-lb to the B-nut', 'Install nut to 35 in-lb'];
   check('MES.stepRecordsTorque: a torque action records a torque value, also on marked, paint-marked, sealed or seal-named parts', actions.every(t => MES.stepRecordsTorque(t) === true), actions.filter(t => !MES.stepRecordsTorque(t)).join(', '));
   const state = fresh(), order = state.orders.find(o => o.status === 'Draft' && o.operations.length), op = order.operations[0];
   op.steps = [{ id: 'step-1', title: 'Install bracket', instruction: 'Install bracket', recordsTorque: true }];
