@@ -215,7 +215,9 @@ realm('globalThis.Date = globalThis.__RealDate;')();
     // Security review of 98cdfeb: a prohibition cancels only the tighten verb right after it.
     'Do not loosen the locknut prior to tightening the B-nut; inspect torque stripe', 'Do not disturb the harness following tightening of the B-nut; inspect torque stripe', 'Do not loosen or tighten the B-nut; inspect torque stripe', 'Do not over-tighten the B-nut; inspect torque stripe',
     // Review of 723b0e4: "torquing" is a torque action even though it does not contain the word torque.
-    'Remove torque seal before torquing the fastener', 'Remove torque stripe before re-torquing the fastener', 'Begin torquing the B-nut', 'Torquing sequence per drawing'];
+    'Remove torque seal before torquing the fastener', 'Remove torque stripe before re-torquing the fastener', 'Begin torquing the B-nut', 'Torquing sequence per drawing',
+    // Security review of 723b0e4: a positive fastening verb is a torque action even beside specified torque locations.
+    'Secure bolts at specified torque locations and apply torque stripe', 'Fasten the B-nut at specified torque points; inspect torque stripe', 'Secure the fitting, then apply torque seal'];
   check('MES.stepRecordsTorque: a torque action records a torque value, also on marked, paint-marked, sealed or seal-named parts', actions.every(t => MES.stepRecordsTorque(t) === true), actions.filter(t => !MES.stepRecordsTorque(t)).join(', '));
   const state = fresh(), order = state.orders.find(o => o.status === 'Draft' && o.operations.length), op = order.operations[0];
   op.steps = [{ id: 'step-1', title: 'Install bracket', instruction: 'Install bracket', recordsTorque: true }];
