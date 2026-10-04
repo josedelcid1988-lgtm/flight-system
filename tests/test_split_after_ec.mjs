@@ -135,29 +135,60 @@ function openSplitRequest(state, n, quantity) {
   tampered('a split record dated before its change was applied fails validation', o => { o.engineeringSplits[0].at = '2000-01-01T00:00:00.000Z'; });
   tampered('a split record without a signer fails validation', o => { delete o.engineeringSplits[0].by; });
   tampered('a split record on an order with no engineering change fails validation', o => { delete o.engineeringChanges; });
+  // Codex P1 on 7488308: a split record must match the fulfilled split request and the parent's splitInto list.
+  tampered('a split record naming a split request the order does not hold fails validation', o => { o.engineeringSplits[0].requestId = 'SPR-FAKE'; });
+  tampered('a split record whose split request is not completed fails validation', o => { o.splitRequests[0].status = 'Open'; });
+  tampered('a split record whose quantity differs from its split request fails validation', o => { o.splitRequests[0].quantity = 2; });
+  tampered('a split record whose child is not on the split request fails validation', o => { o.splitRequests[0].orderId = 'WO-99999'; });
+  tampered('a split record whose child is not in the parent split list fails validation', o => { o.splitInto = []; });
+  tampered('a split record signed by someone other than the person who closed the request fails validation', o => { o.engineeringSplits[0].by = { ...o.engineeringSplits[0].by, name: 'Someone Else', credentialId: 'ACCT-other' }; });
+  tampered('a split record dated differently from its split request fails validation', o => { o.splitRequests[0].closedAt = new Date(Date.parse(o.splitRequests[0].closedAt) + 1000).toISOString(); });
+  {
+    // A child still in the workspace must name the parent; the diagnosis says what is wrong.
+    const copy = JSON.parse(JSON.stringify(state));
+    MES.getOrder(copy, r.id).splitFrom = 'WO-10001';
+    const d = MES.diagnose(copy);
+    ok('a split child that does not name its parent fails validation, with a plain diagnosis', !MES.validate(copy) && d?.where === ID && d.detail === `${ID} records a split onto a work order that does not name it as the order it was split from.` && NO_EM_DASH(d.detail), JSON.stringify(d));
+    // A closed child may move to the server archive; the parent's record stays valid without it.
+    const archived = JSON.parse(JSON.stringify(state));
+    // archiveOrders takes the order and its activity out of the workspace.
+    archived.orders = archived.orders.filter(o => o.id !== r.id);
+    archived.activity = archived.activity.filter(a => a.orderId !== r.id);
+    ok('the parent stays valid once the split child has left the workspace', MES.validate(archived), JSON.stringify(MES.diagnose(archived)));
+  }
 }
 {
-  // A quantity change applied before the build: two split requests in a row both record against it.
-  const state = fresh();
-  const ec = applyChange(state, { quantity: 4, reason: 'Two more units for the build.' });
-  const first = host.withAccount(qm, () => MES.splitRequestOrder(state, ID, openSplitRequest(state, 1, 1)), state);
-  const second = host.withAccount(qm, () => MES.splitRequestOrder(state, ID, openSplitRequest(state, 2, 2)), state);
-  const o = MES.getOrder(state, ID);
-  ok('two split requests after a quantity change both run and the workspace validates', first.ok && second.ok && o.quantity === 1 && o.engineeringSplits.map(s => s.quantity).join() === '1,2' && o.engineeringSplits.every(s => s.afterChange === ec) && MES.validate(state), JSON.stringify([first, second, MES.diagnose(state)]));
-  // The hand split stays refused on the same order: the change records still name 4 units.
-  const before = snap(state);
-  const hand = host.withAccount(qm, () => MES.splitOrder(state, ID, 1), state);
-  ok('a split by hand is still refused after an applied change', hand.ok === false && hand.message.startsWith(`Engineering change ${ec} set this work order to 4 units,`) && snap(state) === before, JSON.stringify(hand));
-}
-{
-  // A pending change still holds a split request, and nothing is recorded.
+  // Codex's example: an approved quantity of 4 lowered to 3 with an invented split record and no split request.
   const state = fresh();
   applyChange(state, { quantity: 4, reason: 'Two more units for the build.' });
+  const o = MES.getOrder(state, ID), ec = o.engineeringChanges.at(-1);
+  o.quantity = 3;
+  o.engineeringSplits = [{ orderId: 'WO-99999', requestId: 'SPR-FAKE', quantity: 1, afterChange: ec.id, by: { name: 'Quincy Manager', role: 'Quality Manager', credentialId: 'ACCT-split-qm' }, at: ec.qaApproval.at }];
+  ok('a fabricated split record with no split request behind it fails validation', !MES.validate(state) && /engineering change record is malformed/.test(MES.diagnose(state)?.detail || ''), JSON.stringify(MES.diagnose(state)));
+}
+{
+  // More than 50 split requests: Quality raising one more drops the oldest, but never the request a split record
+  // points at, so the record still validates.
+  const state = fresh();
+  const op = MES.getOrder(state, ID).operations.find(o => !o.done && !o.evidence.length);
+  applyChange(state, { quantity: 3, reason: 'One more unit for the build.' });
+  const o = MES.getOrder(state, ID);
+  o.status = 'Building'; o.materials.forEach(m => { m.ready = true; });
+  assert.ok(MES.validate(state), JSON.stringify(MES.diagnose(state)));
   const spr = openSplitRequest(state, 1, 1);
-  assert.ok(host.withAccount(me, () => MES.submitEngineeringChange(state, ID, { quantity: 5, reason: 'One more unit.' }), state).ok);
-  const before = snap(state);
-  const r = host.withAccount(qm, () => MES.splitRequestOrder(state, ID, spr), state);
-  ok('a split request with a pending engineering change keeps the hold message and changes nothing', r.ok === false && r.message === 'An engineering change is pending. QA re-release is required before work can continue.' && snap(state) === before, JSON.stringify(r));
+  assert.ok(host.withAccount(qm, () => MES.splitRequestOrder(state, ID, spr), state).ok);
+  const filler = Array.from({ length: 49 }, (_, i) => ({ id: `SPR-${ID.slice(3)}-F${i}`, ticketId: `NC-F${i}`, quantity: 1, of: 2, serials: [], reason: 'Filler request.', status: 'Not required', requestedBy: o.splitRequests[0].requestedBy, at: o.splitRequests[0].at }));
+  o.splitRequests = [o.splitRequests[0], ...filler];
+  assert.ok(MES.validate(state), JSON.stringify(MES.diagnose(state)));
+  const tech = { username: 'split-tech', displayName: 'Tara Technician', role: 'tech' };
+  const raised = host.withAccount(tech, () => MES.createTicket(state, ID, op.id, { type: 'NC', title: 'Scratch on one unit', description: 'Light scratch found on one unit.', hold: true }), state);
+  const ticketId = raised.id || MES.getOrder(state, ID).tickets.at(-1)?.id;
+  const dispo = host.withAccount(me, () => MES.dispositionTicket(state, ID, ticketId, { decision: 'Rework', note: 'Polish out the scratch.' }), state);
+  const resolved = host.withAccount(qm, () => MES.resolveTicket(state, ID, ticketId, 'Approved for rework.', { defectCode: 'DMG', subCode: 'DMG-01', quantity: 1, serials: [] }), state);
+  const after = MES.getOrder(state, ID);
+  ok('Quality raises a 51st split request through the NC flow', raised.ok && dispo.ok && resolved.ok && after.splitRequests.length === 50 && after.splitRequests.at(-1).ticketId === ticketId, JSON.stringify([raised, dispo, resolved, after.splitRequests.length]));
+  ok('the request a split record points at is kept and an older one is dropped', after.splitRequests.some(r => r.id === spr) && !after.splitRequests.some(r => r.id === `SPR-${ID.slice(3)}-F0`), JSON.stringify(after.splitRequests.slice(0, 2).map(r => r.id)));
+  ok('the workspace still validates after the cap', MES.validate(state), JSON.stringify(MES.diagnose(state)));
 }
 
 // ---- Part 2: the Split quantity dialog in the demo build ----

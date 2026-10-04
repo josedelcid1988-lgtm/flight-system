@@ -3631,14 +3631,22 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
   const engineeringApprovalValid = (approval, since) => plain(approval) && isQAProfile(approval) && approval.virtual === true && timestamp(approval.at) && approval.at >= since;
   const engineeringPlanValid = (plan, order) => plain(plan) && str(plan.revision, 24) && count(plan.quantity) && Array.isArray(plan.instructions) && plan.instructions.length <= 20 && unique(plan.instructions.map(item => item && item.operationId)) && plan.instructions.every(item => plain(item) && order.operations.some(operation => operation.id === item.operationId) && str(item.description, 400) && !!item.description.trim());
 
-  const engineeringSplitsValid = (splits, changes) => Array.isArray(splits) && splits.length > 0 && splits.length <= 99 && unique(splits.map(split => split && split.orderId)) && splits.every(split => plain(split) && str(split.orderId, 64) && str(split.requestId, 64) && count(split.quantity) && snapshotValid(split.by) && timestamp(split.at) && changes.some(change => plain(change) && change.id === split.afterChange && change.status === 'Applied' && plain(change.qaApproval) && split.at >= change.qaApproval.at));
+  // Each split record must match the fulfilled split request it came from (same child order, quantity, closer and time)
+  // and the parent's splitInto list, so a record cannot be added on its own to excuse a quantity change.
+  const engineeringSplitMatchesRequest = (split, order) => {
+    const request = (Array.isArray(order.splitRequests) ? order.splitRequests : []).find(item => plain(item) && item.id === split.requestId);
+    return !!request && request.status === 'Split completed' && request.orderId === split.orderId && request.quantity === split.quantity && request.closedAt === split.at && plain(request.closedBy) && request.closedBy.credentialId === split.by.credentialId && request.closedBy.name === split.by.name && Array.isArray(order.splitInto) && order.splitInto.includes(split.orderId);
+  };
+  const engineeringSplitsValid = (splits, changes, order) => Array.isArray(splits) && splits.length > 0 && splits.length <= 99 && unique(splits.map(split => split && split.orderId)) && unique(splits.map(split => split && split.requestId)) && splits.every(split => plain(split) && str(split.orderId, 64) && str(split.requestId, 64) && count(split.quantity) && snapshotValid(split.by) && timestamp(split.at) && changes.some(change => plain(change) && change.id === split.afterChange && change.status === 'Applied' && plain(change.qaApproval) && split.at >= change.qaApproval.at) && engineeringSplitMatchesRequest(split, order));
+  // A split child still in the workspace must name the parent it came from. A closed child may have moved to the archive.
+  const engineeringSplitChildMismatch = state => state.orders.find(order => Array.isArray(order.engineeringSplits) && order.engineeringSplits.some(split => { const child = state.orders.find(item => item.id === split.orderId); return child && child.splitFrom !== order.id; })) || null;
 
   function engineeringChangesValid(order) {
     if (!Object.hasOwn(order, 'engineeringChanges')) return !Object.hasOwn(order, 'engineeringSplits');
     const changes = order.engineeringChanges;
     if (!Array.isArray(changes) || !changes.length || changes.length > 20 || !unique(changes.map(change => change && change.id))) return false;
     const splits = Object.hasOwn(order, 'engineeringSplits') ? order.engineeringSplits : null;
-    if (splits !== null && !engineeringSplitsValid(splits, changes)) return false;
+    if (splits !== null && !engineeringSplitsValid(splits, changes, order)) return false;
     const movedAfter = change => (splits || []).filter(split => split.afterChange === change.id).reduce((sum, split) => sum + split.quantity, 0);
     let revision, quantity;
     const instructions = new Map();
@@ -4164,7 +4172,7 @@ if(window.skIdentityPending){window.addEventListener('sk-identity-ready',skBoot,
     if (!(plain(state) && state.version === version && Array.isArray(state.orders) && state.orders.length <= MAX_ORDERS && unique(state.orders.map(order => order && order.id)) && state.orders.every(order => orderValid(order, version)) && Array.isArray(state.activity) && state.activity.length <= 500 && unique(state.activity.map(event => event && event.id)) && state.activity.every(event => eventValid(event) && state.orders.some(order => order.id === event.orderId)) && supportLogValid(state.supportLog) && trainingCatalogValid(state.trainingCatalog) && trainingRecordsValid(state.trainingRecords) && qualityRecordsValid(state))) return false;
     if (version === 1) return !Object.hasOwn(state, 'profile');
     if (!profileValid(state.profile) || !unique(state.orders.flatMap(order => order.tickets.map(ticket => ticket.id))) || !unique(state.orders.flatMap(order => order.reports.map(report => report.id)))) return false;
-    return version < 3 || (unique(state.orders.flatMap(order => order.operations.flatMap(operation => operation.evidence.map(item => item.id)))) && state.orders.every(order => !order.sourceTicket || state.orders.some(source => source.id === order.sourceTicket.orderId && source.tickets.some(ticket => ticket.id === order.sourceTicket.ticketId))));
+    return version < 3 || (unique(state.orders.flatMap(order => order.operations.flatMap(operation => operation.evidence.map(item => item.id)))) && state.orders.every(order => !order.sourceTicket || state.orders.some(source => source.id === order.sourceTicket.orderId && source.tickets.some(ticket => ticket.id === order.sourceTicket.ticketId))) && !engineeringSplitChildMismatch(state));
   }
 
   const validate = state => !hasProtoKey(state) && validateVersion(state, 3) && (!Object.hasOwn(state, 'masterWIs') || masterWIsValid(state.masterWIs));
@@ -7676,7 +7684,8 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     order.quantity -= qty;
     // After an applied engineering change the signed records keep their quantity; the move is recorded beside them.
     const applied = appliedEngineeringChange(order);
-    if (applied) order.engineeringSplits = [...(Array.isArray(order.engineeringSplits) ? order.engineeringSplits : []), { orderId: id, requestId: sr.id, quantity: qty, afterChange: applied.id, by: actor(state), at: new Date(Math.max(Date.now(), Date.parse(applied.qaApproval.at))).toISOString() }];
+    const splitAt = new Date(Math.max(Date.now(), applied ? Date.parse(applied.qaApproval.at) : 0)).toISOString();
+    if (applied) order.engineeringSplits = [...(Array.isArray(order.engineeringSplits) ? order.engineeringSplits : []), { orderId: id, requestId: sr.id, quantity: qty, afterChange: applied.id, by: actor(state), at: splitAt }];
     order.splitInto = [...(Array.isArray(order.splitInto) ? order.splitInto : []), id];
     state.orders.splice(state.orders.indexOf(order) + 1, 0, child);
     ensureInventory(state);
@@ -7686,7 +7695,7 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     moving.forEach((entry, n) => { entry.orderId = id; entry.unit = n + 1; });
     orderSerials(state, order).forEach((entry, n) => { entry.unit = n + 1; });
     ensureRevisions(state);
-    Object.assign(sr, { status: 'Split completed', note: `${qty} unit${qty === 1 ? '' : 's'} moved onto ${id}.`, closedBy: actor(state), closedAt: new Date().toISOString(), orderId: id });
+    Object.assign(sr, { status: 'Split completed', note: `${qty} unit${qty === 1 ? '' : 's'} moved onto ${id}.`, closedBy: actor(state), closedAt: splitAt, orderId: id });
     record(state, child, `Split from ${order.id} for ${sr.id}: ${qty} of ${order.quantity + qty} units moved with their completed operations.${moving.length ? ` Serials moved: ${moving.map(e => e.serial).join(', ')}.` : ''}${ticket ? ` ${ticket.id} moved with these units.` : ''}${recopied ? ` ${recopied} evidence record${recopied === 1 ? '' : 's'} copied as metadata; the recordings stay on ${order.id}.` : ''}`);
     record(state, order, `Split request ${sr.id} fulfilled: ${qty} affected unit${qty === 1 ? '' : 's'} moved onto ${id}. ${order.quantity} remain on this order.${ticket ? ` ${ticket.id} moved to ${id}, so this order continues without that hold.` : ''}${applied ? ` Engineering change ${applied.id} stays as approved at ${applied.after.quantity} unit${applied.after.quantity === 1 ? '' : 's'}; this split is recorded against it.` : ''}`);
     return { ok: true, id, message: `${id} created with ${qty} unit${qty === 1 ? '' : 's'}${ticket ? ` and ${ticket.id}` : ''}. ${order.quantity} remain on ${order.id}.` };
@@ -8027,7 +8036,11 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (qty < order.quantity) {
       const requests = Array.isArray(order.splitRequests) ? order.splitRequests : [];
       const sr = { id: `SPR-${order.id.slice(3)}-${requests.length + 1}`, ticketId: ticket.id, quantity: qty, of: order.quantity, serials, reason: `${ticket.id} ${ticket.dispo.decision}: ${qty} of ${order.quantity} units affected (${defectLabel}).`, status: 'Open', requestedBy: reviewer, at: reviewedAt };
-      order.splitRequests = [...requests, sr].slice(-50);
+      // Keep at most 50, but never drop a request an engineering split record points at (validation matches them).
+      const recorded = new Set((Array.isArray(order.engineeringSplits) ? order.engineeringSplits : []).map(split => split && split.requestId));
+      const kept = [...requests, sr];
+      while (kept.length > 50) { const drop = kept.findIndex(item => !recorded.has(item && item.id)); if (drop < 0) break; kept.splice(drop, 1); }
+      order.splitRequests = kept;
       ticket.splitRequestId = sr.id;
       record(state, order, `Split request ${sr.id} raised by Quality for ${ticket.id}: move ${qty} affected unit${qty === 1 ? '' : 's'}${serials.length ? ` (${serials.join(', ')})` : ''} onto their own work order.`, 'Quality reviewer');
     }
@@ -8289,6 +8302,8 @@ function ticketAttachments(ticket) { return Array.isArray(ticket.attachments) ? 
     if (dupE) return { where: dupE, detail: `Evidence id ${dupE} appears twice.`, fix: null };
     const orphanSrc = state.orders.find(o => o.sourceTicket && !state.orders.some(src => src.id === o.sourceTicket.orderId && src.tickets.some(t => t.id === o.sourceTicket.ticketId)));
     if (orphanSrc) return { where: orphanSrc.id, detail: `${orphanSrc.id} points at a source ticket that no longer exists.`, fix: s => { const x = s.orders.find(o => o.id === orphanSrc.id); delete x.sourceTicket; } };
+    const splitParent = engineeringSplitChildMismatch(state);
+    if (splitParent) return { where: splitParent.id, detail: `${splitParent.id} records a split onto a work order that does not name it as the order it was split from.`, fix: null };
     return { where: 'workspace', detail: 'The workspace fails a validation rule that could not be isolated.', fix: null };
   }
   // Move one order out of the workspace, with its activity, keeping it in the saved copy.
