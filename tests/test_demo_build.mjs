@@ -261,7 +261,8 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  {const other=await ctx.newPage();await other.goto('file://'+FIXTURES+BLANK);
   await other.evaluate(v=>{if(!localStorage.getItem('skyryse-mes-legacy-demo-review-v1'))localStorage.setItem('skyryse-mes-legacy-demo-review-v1',v);},v);
   for(const end=Date.now()+60000;Date.now()<end;){if(await p.evaluate(()=>!!localStorage.getItem('skyryse-mes-legacy-demo-review-v1')).catch(()=>false))break;await p.waitForTimeout(250);}
-  await p.reload();await p.waitForTimeout(900);await other.close();}
+  // Wait for the review gate to render rather than a fixed delay; under parallel CI load 900 ms was not always enough (#559).
+  await p.reload();await p.waitForFunction(()=>!!document.getElementById('sk-legacy-review'),null,{timeout:20000}).catch(()=>{});await other.close();}
  const open=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),user:window.skAuth&&skAuth.user()&&skAuth.user().username}));
  ok('that tab is then closed and its Operations session ends',open.gate&&!open.user,JSON.stringify(open));
  await ctx.close();}
