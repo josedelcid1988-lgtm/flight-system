@@ -413,6 +413,8 @@ export function createServer(options = {}) {
     // The calibration log is append-only against the stored copy: a write that drops, changes or reorders an entry
     // the server holds is refused, whatever the head in the new document says (#116, #117).
     { const changed = host.MES.calibrationLogChanges(beforeState, state); if (changed) return { problem: changed }; }
+    // Signed Rework and Repair approvals and releases are append-only against the stored copy too (#602).
+    { const changed = host.MES.reworkRecordChanges(beforeState, state); if (changed) return { problem: changed }; }
     // Superseded calibration entries an archive record in this write moved out of the live log (#130) go to the
     // calibration archive exactly as the stored log held them, in the same transaction as the document write.
     const calibrationRows = host.MES.calibrationArchivedEntries(beforeState, state).map(({ entry, recordId }) => { const json = JSON.stringify(entry); return { id: entry.id, tag: entry.tag, recordId, json, sha256: sha256hex(json), by: username }; });

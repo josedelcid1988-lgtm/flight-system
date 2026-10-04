@@ -80,10 +80,11 @@ export function inspectMigration(input, host = createHost(path.join(ROOT, 'index
       evidenceRecords: evidence.length
     },
     accounts: { count: auth.users.length, roles: Object.fromEntries([...new Set(auth.users.flatMap(rolesOf))].map(role => [role, auth.users.filter(user => rolesOf(user).includes(role)).length])), multipleRoles: multipleRoles },
-    manifests: { verified: manifests.checked, legacyUnverifiable: manifests.legacy, complete: manifests.complete },
+    manifests: { verified: manifests.checked, legacyUnverifiable: manifests.legacy, legacyUnsigned: manifests.unsignedLegacy.length, complete: manifests.complete },
     evidence: { bytesIncluded: evidence.length - missingMedia.length, missingMedia },
     warnings: [
       ...(manifests.legacy ? [`${manifests.legacy} pre-existing signature manifest(s) have no stored subject and cannot be cryptographically recomputed.`] : []),
+      ...(manifests.unsignedLegacy.length ? [`${manifests.unsignedLegacy.length} Rework or Repair approval or release record(s) predate their signature manifest (#581) and are carried as recorded, not signature-verified: ${manifests.unsignedLegacy.join(', ')}.`] : []),
       ...(missingMedia.length ? [`${missingMedia.length} IndexedDB recording(s) are absent from the export. Their metadata and signatures will be preserved, but their bytes cannot be migrated.`] : []),
       ...(needsTraining.length ? [`These accounts hold a role with inspection, MRB or Master Access authority, or more than one role, but have no current training record in the workspace, so the server will not create them unless they already exist there: ${needsTraining.join(', ')}. Record their training, export again, or migrate them with a role that does not carry that authority.`] : []),
       ...(multipleRoles.length ? [`These accounts carry multiple roles. The server preserves each assigned role: each is created with its first role, then the others are added through the audited role-change route citing the person's current training: ${multipleRoles.join(', ')}.`] : []),
