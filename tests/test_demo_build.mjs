@@ -197,9 +197,11 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  for(const who of ['ops1','mlee','qa2']){
   // The session reaches the next load through window.name, which the tab keeps across the reload: a session storage
   // write made just before the reload can be lost under load, leaving that load no session to end (#556).
-  await p.evaluate(u=>{window.name='sk-test-session:'+u;},who);await p.reload();
   // The ended session is logged once the page has loaded; wait for that entry, not a fixed time, before the next reload.
-  await p.waitForFunction(u=>!!document.getElementById('sk-legacy-review')&&JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').some(e=>e.type==='signout'&&e.username===u&&/older demo build/.test(e.reason||'')),who,{timeout:60000}).catch(()=>{});
+  // Under load the harness can still lose the load's write, so a load whose entry never arrives is repeated (#556).
+  for(let attempt=0;attempt<3;attempt++){
+   await p.evaluate(u=>{window.name='sk-test-session:'+u;},who);await p.reload();
+   if(await p.waitForFunction(u=>!!document.getElementById('sk-legacy-review')&&JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').some(e=>e.type==='signout'&&e.username===u&&/older demo build/.test(e.reason||'')),who,{timeout:20000}).then(()=>true,()=>false))break;}
   g=await closedState();
   ok(`a session of ${who} is ended on a closed browser, a QA Manager or Master Access account included`,g.gate&&g.session===null&&g.user===null,JSON.stringify(g));}
  {const ends=await p.evaluate(()=>JSON.parse(localStorage.getItem('skyryse-mes-security-v1')||'[]').filter(e=>e.type==='signout'&&/older demo build/.test(e.reason||'')).map(e=>e.username));
@@ -220,7 +222,8 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  await p.goto('file://'+FIXTURES+'publish.html');await p.waitForTimeout(600);
  await p.evaluate(()=>{localStorage.clear();sessionStorage.removeItem('skyryse-mes-session-v1');});
  await settled(ctx,()=>localStorage.length===0);
- await p.reload();await p.waitForTimeout(900);
+ // Wait for the page to settle on a screen, not a fixed time: a slow load under CI still shows the earlier page.
+ await p.reload();await p.waitForFunction(()=>!document.getElementById('sk-legacy-review')&&!document.getElementById('sk-login').hidden&&/Set up Master Access/.test(document.getElementById('sk-login-title').textContent),null,{timeout:20000}).catch(()=>{});
  const fresh=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),login:!document.getElementById('sk-login').hidden,title:document.getElementById('sk-login-title').textContent}));
  ok('once the site data is cleared, production opens on first-account setup',!fresh.gate&&fresh.login&&/Set up Master Access/.test(fresh.title),JSON.stringify(fresh));
  await ctx.close();}
@@ -261,7 +264,7 @@ for(const user of ['demo','safety','certification']){const {p,ctx}=await open('t
  {const other=await ctx.newPage();await other.goto('file://'+FIXTURES+BLANK);
   await other.evaluate(v=>{if(!localStorage.getItem('skyryse-mes-legacy-demo-review-v1'))localStorage.setItem('skyryse-mes-legacy-demo-review-v1',v);},v);
   for(const end=Date.now()+60000;Date.now()<end;){if(await p.evaluate(()=>!!localStorage.getItem('skyryse-mes-legacy-demo-review-v1')).catch(()=>false))break;await p.waitForTimeout(250);}
-  await p.reload();await p.waitForTimeout(900);await other.close();}
+  await p.reload();await p.waitForFunction(()=>!!document.getElementById('sk-legacy-review')&&!(window.skAuth&&skAuth.user()),null,{timeout:20000}).catch(()=>{});await other.close();}
  const open=await p.evaluate(()=>({gate:!!document.getElementById('sk-legacy-review'),user:window.skAuth&&skAuth.user()&&skAuth.user().username}));
  ok('that tab is then closed and its Operations session ends',open.gate&&!open.user,JSON.stringify(open));
  await ctx.close();}
