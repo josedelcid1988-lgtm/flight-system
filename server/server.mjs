@@ -225,8 +225,29 @@ export function createServer(options = {}) {
     ? send(res, 401, { error: req.sessionExpired === 'idle' ? `Your session ended after ${idleMinutes} minutes without activity. Sign in again to continue; what you typed on this page is kept.` : `Your session reached its ${maxHours}-hour limit. Sign in again to continue; what you typed on this page is kept.`, code: 'SESSION_EXPIRED', reason: req.sessionExpired })
     : send(res, 401, { error: 'Signed in elsewhere or session expired.', code: 'SESSION_REVOKED' });
   const accountRoles = account => [...new Set([...(Array.isArray(account && account.roles) && account.roles.length ? account.roles : [host.roleOf(account)]), ...(Array.isArray(account && account.extraRoles) ? account.extraRoles : [])])];
-  const manages = account => accountRoles(account).some(role => ['qm', 'admin'].includes(role));
-  const supervises = account => !manages(account) && accountRoles(account).includes('qs');
+  // The route gate counts roles the way the engine and /auth/access do (#580): an extra role counts only while its
+  // role training is current in the stored workspace. With no readable workspace only the primary and standard roles
+  // count, never an extra role whose training cannot be checked.
+  // The upgraded state is cached like the evidence-id set below: reused only while the stored row has the same ETag
+  // and byte-identical JSON, so any write forces a rebuild before the next decision.
+  let gateCache = null;
+  const gateState = async () => {
+    try {
+      const doc = await store.getDoc(TENANT);
+      if (!doc) { gateCache = null; return null; }
+      if (gateCache && gateCache.etag === doc.etag && gateCache.json === doc.json) return gateCache.state;
+      const state = host.MES.upgrade(structuredClone(JSON.parse(doc.json))) || null;
+      gateCache = { etag: doc.etag, json: doc.json, state };
+      return state;
+    } catch { return null; }
+  };
+  const managesIn = (account, state) => host.rolesOf(account, state).some(role => ['qm', 'admin'].includes(role));
+  const supervisesIn = (account, state) => !managesIn(account, state) && host.rolesOf(account, state).includes('qs');
+  const manages = async account => managesIn(account, await gateState());
+  const stateOfRow = row => { if (!row) return null; try { return host.MES.upgrade(structuredClone(JSON.parse(row.json))) || null; } catch { return null; } };
+  // A manager-only write decides authority again from the actor and the workspace as its transaction reads them, after
+  // lockAuthority and right before it writes (#580): a role's training can lapse while the request is open.
+  const managesInTx = async (tx, username) => { await tx.lockAuthority(); const account = await tx.account(username); return !!account && managesIn(account, stateOfRow(await tx.getDoc(TENANT))); };
   // Lockouts are kept in SQLite, so a restart does not clear a brute-force lockout.
   const lockedFor = async username => { const f = await store.lockout(username); return f.until > Date.now() ? Math.ceil((f.until - Date.now()) / 60000) : 0; };
   const noteFailure = async username => { const r = await store.noteFailedSignin(username, LOCK_AFTER, Date.now() + LOCK_MS); if (r.locked) await store.audit(username, 'lockout', { minutes: LOCK_MS / 60000 }); return { n: r.fails, until: r.until }; };
@@ -270,7 +291,7 @@ export function createServer(options = {}) {
   const evidenceProblem = async (prev, next, session) => {
     const changed = host.MES.evidenceChanges ? host.MES.evidenceChanges(prev, next) : null;
     if (changed) return changed;
-    if (session && !manages(session.account)) {
+    if (session && !await manages(session.account)) {
       const named = evidenceIdsInWorkspace(prev);
       for (const key of evidenceIdsInWorkspace(next)) {
         if (named.has(key)) continue;
@@ -315,7 +336,7 @@ export function createServer(options = {}) {
     return namedEvidenceCache.ids;
   };
   const mayReadEvidence = async (session, row) => {
-    if (manages(session.account) || row.uploadedBy === session.username) return true;
+    if (row.uploadedBy === session.username || await manages(session.account)) return true;
     if ((await liveEvidenceIds()).has(row.id)) return true;
     return !!await store.archiveNamesEvidence(row.id);
   };
@@ -688,7 +709,8 @@ export function createServer(options = {}) {
           const body = await readJson(req), incoming = Array.isArray(body.users) ? body.users : [];
           const existing = await store.accounts(), session = await sessionOf(req);
           const firstRun = existing.length === 0;
-          if (!firstRun && !(session && (manages(session.account) || supervises(session.account)))) { send(res, 403, { error: 'Only a Master Access, QA Manager, or Quality Supervisor account can manage accounts.' }); return; }
+          const actorState = firstRun || !session ? null : await gateState();
+          if (!firstRun && !(session && (managesIn(session.account, actorState) || supervisesIn(session.account, actorState)))) { send(res, 403, { error: 'Only a Master Access, QA Manager, or Quality Supervisor account can manage accounts.' }); return; }
           if (firstRun && incoming.length !== 1) { send(res, 400, { error: 'The first account is created alone.' }); return; }
           if (firstRun && !setupCodeMatches(body.setupCode)) { await store.audit(null, 'first-account-refused', { reason: 'setup code missing or wrong' }); send(res, 403, { error: 'Enter the setup code shown in the server console when it started. The first account becomes Master Access, so it needs that code.' }); return; }
           await wrapped;
@@ -709,6 +731,11 @@ export function createServer(options = {}) {
             // with the authority profile this request read before the transaction.
             await tx.lockAuthority();
             const current = await tx.accounts();
+            // Authority is decided again here, from the actor and the workspace as this transaction reads them (#580): a
+            // role's training can lapse, or a retraining requirement land, between the check above and this commit.
+            const txState = stateOfRow(await tx.getDoc(TENANT));
+            const txActor = session ? current.find(x => x.username === session.username) || null : null;
+            if (!firstRun && !(txActor && (managesIn(txActor, txState) || supervisesIn(txActor, txState)))) { refusal = { status: 403, error: 'Only a Master Access, QA Manager, or Quality Supervisor account can manage accounts.' }; return false; }
             if (firstRun && current.length) { refusal = { status: 409, error: 'An account was created on this server while you were setting it up. Sign in with it instead.' }; return false; }
             for (const u of incoming) {
               const username = String(u.username || '').trim().toLowerCase();
@@ -743,7 +770,7 @@ export function createServer(options = {}) {
                   refusal = { status: 403, error: `Account ${username}: a role with inspection or MRB authority requires a current training record. Create the account without that role, record training, then assign the role.` }; return false;
                 }
               }
-              if (!firstRun && supervises(session.account)) {
+              if (!firstRun && supervisesIn(txActor, txState)) {
                 const protectedTarget = cur && accountRoles(cur).some(value => ['qm', 'admin'].includes(value));
                 if (protectedTarget) {
                   const unchanged = role === cur.role && JSON.stringify(roles) === JSON.stringify(accountRoles(cur)) && String(u.displayName).trim() === cur.displayName && (!hasHash || prepared.get(u) === cur.hash) && JSON.stringify(u.grants || cur.grants || {}) === JSON.stringify(cur.grants || {}) && JSON.stringify(u.grantHistory || cur.grantHistory || []) === JSON.stringify(cur.grantHistory || []) && (Object.hasOwn(u, 'supportAccess') ? u.supportAccess === true : cur.supportAccess === true) === (cur.supportAccess === true);
@@ -761,7 +788,9 @@ export function createServer(options = {}) {
               if (!cur) await tx.audit(session ? session.username : username, 'account-create', { username, role, roles, trainingCode: requiresTraining ? String(u.trainingCode).trim().toUpperCase() : null });
             }
             // Refuse to demote the last manager.
-            if (!(await tx.accounts()).some(manages)) { refusal = { status: 409, error: 'At least one QA Manager or Master Access account must remain.' }; return false; }
+            // This structural rule counts listed roles, as it did before training gating; it is synchronous so no Promise is
+            // mistaken for a manager.
+            if (!(await tx.accounts()).some(account => accountRoles(account).some(role => ['qm', 'admin'].includes(role)))) { refusal = { status: 409, error: 'At least one QA Manager or Master Access account must remain.' }; return false; }
             return true;
           });
           if (refusal) { send(res, refusal.status, { error: refusal.error }); return; }
@@ -883,7 +912,7 @@ export function createServer(options = {}) {
         let doc;
         try { doc = await readJson(req); } catch (e) { if (e.status === 400 || e.status === 413) await auditRefusal(e.status, e.status === 413 ? 'request body over the size limit' : 'request body is not JSON'); throw e; }
         const ifMatch = req.headers['if-match'] || null;
-        if (!manages(session.account)) { await auditRefusal(403, currentWorkspace ? 'initialized workspace is action-only' : 'only QA Manager or Master Access may initialize'); send(res, 403, { error: currentWorkspace ? 'The shared workspace is initialized and cannot be replaced as a snapshot. Use a server-authorized record action or the approved migration procedure.' : 'Only QA Manager or Master Access can initialize the shared workspace.' }); return; }
+        if (!await manages(session.account)) { await auditRefusal(403, currentWorkspace ? 'initialized workspace is action-only' : 'only QA Manager or Master Access may initialize'); send(res, 403, { error: currentWorkspace ? 'The shared workspace is initialized and cannot be replaced as a snapshot. Use a server-authorized record action or the approved migration procedure.' : 'Only QA Manager or Master Access can initialize the shared workspace.' }); return; }
         if (currentWorkspace) {
           if (!ifMatch) { await auditRefusal(428, 'missing If-Match', { etag: currentWorkspace.etag }); send(res, 428, { error: 'Include the current workspace ETag in If-Match.' }); return; }
           if (currentWorkspace.etag !== ifMatch) { await auditRefusal(409, 'stale If-Match', { etag: currentWorkspace.etag }); res.writeHead(409, { 'Content-Type': MIME['.json'], ETag: currentWorkspace.etag }); res.end(JSON.stringify({ error: 'The workspace changed on another device. Reload to continue.', etag: currentWorkspace.etag })); return; }
@@ -970,21 +999,28 @@ export function createServer(options = {}) {
         res.writeHead(200, { 'Content-Type': row.mime, 'Content-Length': bytes.length, 'X-Evidence-Sha256': row.sha256, 'Cache-Control': 'private, no-store' }); res.end(bytes); return;
       }
       if (ev && ev[2] === '/supersede' && m === 'POST') {
-        if (!manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can supersede evidence.' }); return; }
+        if (!await manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can supersede evidence.' }); return; }
         const body = await readJson(req), by = String(body.by || ''), reason = String(body.reason || '').trim();
         const row = await store.evidenceMeta(ev[1]);
         if (!row) { send(res, 404, { error: `The server holds no recording ${ev[1]}.` }); return; }
         if (row.supersededBy) { send(res, 409, { error: `${ev[1]} was already superseded by ${row.supersededBy}.` }); return; }
         if (!EVIDENCE_ID.test(by) || by === ev[1] || !await store.evidenceMeta(by)) { send(res, 400, { error: 'Upload the replacement recording first, then name its EV ID in "by".' }); return; }
         if (reason.length < 3 || reason.length > 300) { send(res, 400, { error: 'Give the reason for superseding (3 to 300 characters).' }); return; }
-        const out = await store.supersedeEvidence(ev[1], by, reason);
+        let out = null, allowed = true;
+        await store.transaction(async tx => {
+          if (!await managesInTx(tx, session.username)) { allowed = false; return false; }
+          out = await tx.supersedeEvidence(ev[1], by, reason);
+          if (!out) return false;
+          await tx.audit(session.username, 'evidence-supersede', { id: ev[1], by, reason });
+          return true;
+        });
+        if (!allowed) { send(res, 403, { error: 'Only a Master Access or QA Manager account can supersede evidence.' }); return; }
         // The update applies only while the row is unsuperseded; a request that lost that race changes nothing and is not audited.
         if (!out) { const now = await store.evidenceMeta(ev[1]); send(res, 409, { error: `${ev[1]} was already superseded by ${now?.supersededBy || 'another recording'}.` }); return; }
-        await store.audit(session.username, 'evidence-supersede', { id: ev[1], by, reason });
         send(res, 200, out); return;
       }
       if (route === '/evidence/report' && m === 'GET') {
-        if (!manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can read the evidence report.' }); return; }
+        if (!await manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can read the evidence report.' }); return; }
         const { state } = await loadState(), refs = evidenceRefs(state), rows = await store.evidenceList();
         const named = new Set(refs.map(r => r.e.copyOf || r.e.id));
         send(res, 200, {
@@ -1074,7 +1110,7 @@ export function createServer(options = {}) {
       // final record and the delivery worker starts only after that transaction commits.
       if (route === '/record-exports/status' && m === 'GET') { send(res, 200, { outstanding: await store.pendingExportCount() }); return; }
       if (route === '/record-exports/settings') {
-        if (!manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can configure record exports.' }); return; }
+        if (!await manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can configure record exports.' }); return; }
         if (m === 'GET') { send(res, 200, { recordTypes: EXPORT_RECORD_TYPES, settings: await store.exportSettings() }); return; }
         if (m === 'PUT') {
           const body = await readJson(req), recordType = String(body.recordType || ''), enabled = body.enabled;
@@ -1091,23 +1127,31 @@ export function createServer(options = {}) {
           const oldValue = await store.exportSetting(recordType);
           const setting = { recordType, enabled, destinationKind, destination, tokenSetting, namingPattern, updatedBy: session.username, rationale };
           let saved;
-          await store.transaction(async tx => { saved = await tx.putExportSetting(setting); await tx.audit(session.username, 'record-export-setting', { recordType, oldValue, newValue: saved, rationale }); return true; });
+          let allowed = true;
+          await store.transaction(async tx => { if (!await managesInTx(tx, session.username)) { allowed = false; return false; } saved = await tx.putExportSetting(setting); await tx.audit(session.username, 'record-export-setting', { recordType, oldValue, newValue: saved, rationale }); return true; });
+          if (!allowed) { send(res, 403, { error: 'Only a Master Access or QA Manager account can configure record exports.' }); return; }
           send(res, 200, { setting: saved }); return;
         }
       }
       if (route === '/record-exports/jobs' && m === 'GET') {
-        if (!manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can read record export delivery logs.' }); return; }
+        if (!await manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can read record export delivery logs.' }); return; }
         const jobs = await store.exportJobs(200);
         send(res, 200, { jobs: await Promise.all(jobs.map(async job => ({ ...job, payload: undefined, history: await store.exportLog(job.id, 100) }))) }); return;
       }
       const exportRetry = /^\/record-exports\/jobs\/(JOB-[A-F0-9]+)\/retry$/.exec(route);
       if (exportRetry && m === 'POST') {
-        if (!manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can retry record exports.' }); return; }
-        const current = await store.exportJob(exportRetry[1]);
-        if (!current) { send(res, 404, { error: 'Record export job not found.' }); return; }
-        if (current.status !== 'failed') { send(res, 409, { error: `This export is ${current.status}; only a failed delivery can be retried.` }); return; }
-        const job = await store.retryExportJob(current.id, session.username);
-        if (!job) { send(res, 409, { error: 'This export changed before the retry could be queued. Reload the delivery history and try again.' }); return; }
+        if (!await manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can retry record exports.' }); return; }
+        // Authority, the job's status and the retry are decided under one transaction, so a lapse cannot land between them.
+        const outcome = await store.transaction(async tx => {
+          if (!await managesInTx(tx, session.username)) return { status: 403, error: 'Only a Master Access or QA Manager account can retry record exports.' };
+          const current = await tx.exportJob(exportRetry[1]);
+          if (!current) return { status: 404, error: 'Record export job not found.' };
+          if (current.status !== 'failed') return { status: 409, error: `This export is ${current.status}; only a failed delivery can be retried.` };
+          const job = await tx.retryExportJob(current.id, session.username);
+          return job ? { job } : { status: 409, error: 'This export changed before the retry could be queued. Reload the delivery history and try again.' };
+        });
+        if (!outcome.job) { send(res, outcome.status, { error: outcome.error }); return; }
+        const job = outcome.job;
         void drainExports();
         send(res, 202, { id: job.id, status: job.status, exportId: job.exportId }); return;
       }
@@ -1143,15 +1187,20 @@ export function createServer(options = {}) {
         send(res, 200, report); return;
       }
       // -- lockouts: listed and cleared by a manager, one named user at a time, with a reason, audited --
-      if (route === '/auth/lockouts' && m === 'GET') { if (!manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can see lockouts.' }); return; } send(res, 200, { lockouts: await store.lockouts() }); return; }
+      if (route === '/auth/lockouts' && m === 'GET') { if (!await manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can see lockouts.' }); return; } send(res, 200, { lockouts: await store.lockouts() }); return; }
       if (route === '/auth/unlock' && m === 'POST') {
-        if (!manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can unlock an account.' }); return; }
+        if (!await manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can unlock an account.' }); return; }
         const body = await readJson(req), username = String(body.username || '').trim().toLowerCase(), reason = String(body.reason || '').trim();
-        const r = await unlockAccount(store, username, reason, session.username);
+        let r = null;
+        await store.transaction(async tx => {
+          if (!await managesInTx(tx, session.username)) { r = { status: 403, body: { error: 'Only a Master Access or QA Manager account can unlock an account.' } }; return false; }
+          r = await unlockAccount(tx, username, reason, session.username);
+          return r.status < 300;
+        });
         send(res, r.status, r.body); return;
       }
-      if (route === '/auth/hash-report' && m === 'GET') { if (!manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can read the password hash report.' }); return; } await wrapped; send(res, 200, { params: SCRYPT, ...await hashReport() }); return; }
-      if (route === '/audit' && m === 'GET') { if (!manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can read the audit log.' }); return; } send(res, 200, { rows: await store.auditRows(Number(url.searchParams.get('limit')) || 200) }); return; }
+      if (route === '/auth/hash-report' && m === 'GET') { if (!await manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can read the password hash report.' }); return; } await wrapped; send(res, 200, { params: SCRYPT, ...await hashReport() }); return; }
+      if (route === '/audit' && m === 'GET') { if (!await manages(session.account)) { send(res, 403, { error: 'Only a Master Access or QA Manager account can read the audit log.' }); return; } send(res, 200, { rows: await store.auditRows(Number(url.searchParams.get('limit')) || 200) }); return; }
       send(res, 404, { error: 'Not found' });
     } catch (e) {
       if (e.status === 413) { send(res, 413, { error: e.message, limit: MAX_REQUEST_BYTES }, { Connection: 'close' }); return; }
